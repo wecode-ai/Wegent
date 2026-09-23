@@ -712,6 +712,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const [securityBusy, setSecurityBusy] = useState(false);
   const canAddEvidence = item?.human_work?.can_submit === true;
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
@@ -3155,6 +3156,41 @@ export function TodoEditor(props: TodoEditorProps) {
                           ) : null}
                           {assigneeSelect}
                         </span>
+                      ) : null}
+                      {item &&
+                      project?.project_store === "backend" &&
+                      canAssign ? (
+                        <select
+                          data-testid="cloud-issue-security-level"
+                          aria-label={t("todo.issue_security", "任务可见范围")}
+                          value={item.security_level ?? "open"}
+                          disabled={securityBusy}
+                          onChange={async (event) => {
+                            if (!editProps) return;
+                            setSecurityBusy(true);
+                            try {
+                              const updated = await editorPort.issues.update(
+                                item.id,
+                                {
+                                  version: item.version,
+                                  security_level: event.target.value as
+                                    | "open"
+                                    | "related",
+                                },
+                              );
+                              editProps.onUpdated(updated);
+                            } finally {
+                              setSecurityBusy(false);
+                            }
+                          }}
+                        >
+                          <option value="open">
+                            {t("todo.issue_security_open", "项目可访问者可见")}
+                          </option>
+                          <option value="related">
+                            {t("todo.issue_security_related", "仅相关人员可见")}
+                          </option>
+                        </select>
                       ) : null}
                     </span>
                     {executionTaskCount > 0 || executionStartedAt ? (

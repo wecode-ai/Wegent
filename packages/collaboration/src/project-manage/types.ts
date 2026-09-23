@@ -4,15 +4,8 @@
 
 import type { ComponentType, ReactNode } from "react";
 
-export type ProjectManageRole =
-  | "Owner"
-  | "Maintainer"
-  | "Developer"
-  | "Reporter";
-export type ProjectManageVisibility =
-  | "private"
-  | "public_restricted"
-  | "public";
+export type ProjectManageRole = "Owner" | "Maintainer" | "Developer" | "Viewer";
+export type ProjectManageVisibility = "private" | "public";
 export type ProjectManageStatusColor =
   | "gray"
   | "blue"
@@ -60,6 +53,8 @@ export interface ProjectManageProject {
     statuses: ProjectManageStatus[];
   };
   visibility?: ProjectManageVisibility;
+  public_access?: { role: "Developer" | "Viewer" } | null;
+  default_issue_security?: "open" | "related";
   tags: string[];
   version: number;
 }
@@ -88,6 +83,8 @@ export interface ProjectManageUpdate {
   version: number;
   tags?: string[];
   visibility?: ProjectManageVisibility;
+  public_access?: { role: "Developer" | "Viewer" };
+  default_issue_security?: "open" | "related";
   card_display?: {
     show_assignee: boolean;
     show_priority: boolean;

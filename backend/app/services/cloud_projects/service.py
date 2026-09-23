@@ -30,6 +30,8 @@ from app.schemas.cloud_project import (
     normalize_provider_config,
 )
 from app.services.cloud_project_visibility import (
+    AUTHENTICATED_ENTITY_ID,
+    AUTHENTICATED_ENTITY_TYPE,
     accessible_cloud_projects,
     workspace_project_ids,
 )
@@ -148,7 +150,7 @@ class CloudProjectService:
                 "project_store": "backend",
                 "task_provider": values.task_provider,
                 "provider_config": provider_config,
-                "visibility": values.visibility,
+                "default_issue_security": values.default_issue_security,
                 "tags": [],
                 "board_config": CloudProjectBoardConfig().model_dump(),
             },
@@ -171,6 +173,21 @@ class CloudProjectService:
                     status=MemberStatus.APPROVED.value,
                 )
             )
+            if values.visibility == "public":
+                db.add(
+                    ResourceMember.create(
+                        resource_type=ResourceType.CLOUD_PROJECT.value,
+                        resource_id=int(project.id),
+                        entity_type=AUTHENTICATED_ENTITY_TYPE,
+                        entity_id=AUTHENTICATED_ENTITY_ID,
+                        role=(
+                            values.public_access.role
+                            if values.public_access
+                            else "Viewer"
+                        ),
+                        status=MemberStatus.APPROVED.value,
+                    )
+                )
             ensure_resource_grant(
                 db,
                 workspace_id=workspace.id,
@@ -205,13 +222,11 @@ class CloudProjectService:
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
+            db, project_id, user_id, BaseRole.Viewer
         ).project
 
     def access(self, db: Session, project_id: int, user_id: int):
-        return require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        return require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
 
     def update(
         self,
@@ -234,6 +249,8 @@ class CloudProjectService:
             or "workflow_definition" in values.model_fields_set
             or "execution_environment" in values.model_fields_set
             or "visibility" in values.model_fields_set
+            or "public_access" in values.model_fields_set
+            or "default_issue_security" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
             if "tags" in values.model_fields_set and values.tags is not None:
@@ -349,20 +366,67 @@ class CloudProjectService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
                     ) from exc
                 updates.pop("provider_config", None)
-            if (
-                "visibility" in values.model_fields_set
-                and values.visibility is not None
-            ):
+            if values.default_issue_security is not None:
                 if (
-                    values.visibility == "public_restricted"
-                    and project.task_provider != "local"
+                    project.task_provider == "dingtalk_aitable"
+                    and values.default_issue_security != "open"
                 ):
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        "Related-task visibility is only available for built-in tasks",
+                        "DingTalk table records use DingTalk permissions",
                     )
-                metadata["visibility"] = values.visibility
+                metadata["default_issue_security"] = values.default_issue_security
+            updates.pop("default_issue_security", None)
+            if (
+                "visibility" in values.model_fields_set
+                or "public_access" in values.model_fields_set
+            ):
+                grant = (
+                    db.query(ResourceMember)
+                    .filter(
+                        ResourceMember.resource_type
+                        == ResourceType.CLOUD_PROJECT.value,
+                        ResourceMember.resource_id == project.id,
+                        ResourceMember.entity_type == AUTHENTICATED_ENTITY_TYPE,
+                        ResourceMember.entity_id == AUTHENTICATED_ENTITY_ID,
+                    )
+                    .one_or_none()
+                )
+                visible = (
+                    values.visibility != "private"
+                    if values.visibility is not None
+                    else grant is not None
+                    and grant.status == MemberStatus.APPROVED.value
+                )
+                if not visible and values.public_access is not None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Private projects cannot grant public access",
+                    )
+                if visible:
+                    role = (
+                        values.public_access.role
+                        if values.public_access
+                        else (grant.role if grant else "Viewer")
+                    )
+                    if grant is None:
+                        db.add(
+                            ResourceMember.create(
+                                resource_type=ResourceType.CLOUD_PROJECT.value,
+                                resource_id=int(project.id),
+                                entity_type=AUTHENTICATED_ENTITY_TYPE,
+                                entity_id=AUTHENTICATED_ENTITY_ID,
+                                role=role,
+                                status=MemberStatus.APPROVED.value,
+                            )
+                        )
+                    else:
+                        grant.role = role
+                        grant.status = MemberStatus.APPROVED.value
+                elif grant is not None:
+                    db.delete(grant)
                 updates.pop("visibility", None)
+                updates.pop("public_access", None)
             updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)

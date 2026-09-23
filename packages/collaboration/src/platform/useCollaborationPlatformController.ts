@@ -863,7 +863,9 @@ export function useCollaborationPlatformController({
           description?: string;
           projectKey?: string;
           taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
-          visibility?: "private" | "public_restricted" | "public";
+          visibility?: "private" | "public";
+          publicAccess?: { role: "Developer" | "Viewer" };
+          defaultIssueSecurity?: "open" | "related";
           providerConfig?: Record<string, unknown>;
         },
         workspaceId = location.workspaceId,

@@ -4703,7 +4703,7 @@ describe("Issue permission separation in the real shared editor", () => {
     await render(
       <IssueDetail
         api={api}
-        project={{ ...project, access_role: "Reporter" }}
+        project={{ ...project, access_role: "Developer" }}
         issue={{ ...issue, can_edit: false, can_view_detail: true }}
         allIssues={[issue]}
         comments={[]}

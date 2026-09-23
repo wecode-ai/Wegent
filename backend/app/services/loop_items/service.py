@@ -85,7 +85,13 @@ from app.services.loop_item_unread import (
     is_unread,
     mark_loop_item_read,
 )
-from app.services.loop_items.access import can_view_item, related_item_filter
+from app.services.loop_items.access import (
+    can_view_item,
+    default_issue_security,
+    item_security,
+    related_item_filter,
+    visible_item_filter,
+)
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
@@ -147,19 +153,12 @@ class LoopItemService:
         db: Session,
         cloud_project_id: int,
         user_id: int,
-        required_role: BaseRole = BaseRole.Reporter,
-        *,
-        allow_public_visitor: bool = False,
+        required_role: BaseRole = BaseRole.Viewer,
     ) -> CloudProjectAccess:
         access = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, cloud_project_id, user_id, BaseRole.Viewer
         )
-        if access.is_public_visitor:
-            if not allow_public_visitor:
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
-                )
-        elif not has_permission(access.role, required_role):
+        if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         project = access.project
         if project.task_provider != "local":
@@ -195,7 +194,7 @@ class LoopItemService:
         access: CloudProjectAccess | None = None,
     ) -> dict[str, object]:
         access = access or require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
         can_view_detail, can_edit = self._item_permissions(db, access, item, user_id)
         permissions = issue_permissions(
@@ -207,6 +206,7 @@ class LoopItemService:
             **item.__dict__,
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
+            "security_level": item_security(item, access.project),
             "permissions": {
                 "edit_content": permissions.edit_content,
                 "comment": permissions.comment,
@@ -390,7 +390,7 @@ class LoopItemService:
         action: IssueAction | None = None,
     ) -> CloudProjectAccess:
         access = require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
         can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
@@ -420,7 +420,7 @@ class LoopItemService:
             db,
             item.cloud_project_id,
             collaborator_user_id,
-            BaseRole.RestrictedAnalyst,
+            BaseRole.Viewer,
         )
         collaborator = (
             db.query(LoopItemCollaborator)
@@ -510,7 +510,6 @@ class LoopItemService:
             cloud_project_id,
             user_id,
             BaseRole.Developer,
-            allow_public_visitor=True,
         )
         if values.parent_id is not None:
             self._require_parent(db, values.parent_id, cloud_project_id)
@@ -533,6 +532,7 @@ class LoopItemService:
         team_id = payload.get("assignee_team_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
+        task_metadata["security_level"] = default_issue_security(project)
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
         elif values.parent_id is None:
@@ -772,15 +772,13 @@ class LoopItemService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> list[LoopItem]:
-        access = self._require_internal_task_project(
-            db, cloud_project_id, user_id, allow_public_visitor=True
-        )
+        access = self._require_internal_task_project(db, cloud_project_id, user_id)
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == cloud_project_id,
             loop_datetime_is_unset(LoopItem.deleted_at),
         )
-        if access.restricts_unrelated_issues:
-            query = query.filter(related_item_filter(user_id))
+        if not has_permission(access.role, BaseRole.Maintainer):
+            query = query.filter(visible_item_filter(user_id, access.project))
         if assignee_type == "user" and assignee_id:
             try:
                 assignee_user_id = int(assignee_id)
@@ -1323,6 +1321,10 @@ class LoopItemService:
         values: LoopItemUpdate,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        if "security_level" in values.model_fields_set:
+            require_cloud_project_role(
+                db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
+            )
         if "status" in values.model_fields_set and values.status != item.status:
             from app.services.human_issue_work import human_issue_work_service
 
@@ -1357,6 +1359,7 @@ class LoopItemService:
                 "automation_rule_id",
                 "notify_assignee",
                 "assignee_group_id",
+                "security_level",
             },
             exclude_unset=True,
         )
@@ -1378,6 +1381,7 @@ class LoopItemService:
                 "parent_id",
                 "tags",
                 "workflow",
+                "security_level",
             )
         )
         if "assignee_team_id" in values.model_fields_set:
@@ -1411,12 +1415,15 @@ class LoopItemService:
             "tags" in values.model_fields_set
             or "workflow" in values.model_fields_set
             or "execution_config" in values.model_fields_set
+            or "security_level" in values.model_fields_set
         ):
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.
             metadata = dict(item.metadata_json or {})
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
+            if "security_level" in values.model_fields_set:
+                metadata["security_level"] = values.security_level
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
                 metadata["workflow"] = (
@@ -1732,7 +1739,7 @@ class LoopItemService:
                     "Robot is not active in this project",
                 )
             access = require_cloud_project_role(
-                db, project_id, user_id, BaseRole.Reporter
+                db, project_id, user_id, BaseRole.Viewer
             )
             if not self._agent_visible_to_user(agent, user_id, access.role):
                 raise HTTPException(
@@ -2163,14 +2170,14 @@ class LoopItemService:
         """List soft-deleted TODOs of a project, most recently deleted first."""
 
         access = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+            db, cloud_project_id, user_id, BaseRole.Viewer
         )
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == cloud_project_id,
             ~loop_datetime_is_unset(LoopItem.deleted_at),
         )
-        if access.is_public_visitor:
-            query = query.filter(LoopItem.created_by_user_id == user_id)
+        if not has_permission(access.role, BaseRole.Maintainer):
+            query = query.filter(visible_item_filter(user_id, access.project))
         return query.order_by(LoopItem.deleted_at.desc()).all()
 
     def _require_parent(
@@ -2402,9 +2409,7 @@ class LoopItemService:
     ) -> LoopItemTaskBinding:
         """Associate a runtime Task with a cloud project without choosing a TODO."""
 
-        require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Viewer)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         active = self._active_task_binding(db, values, user_id, lock=True)
         if active is not None:
@@ -2470,7 +2475,7 @@ class LoopItemService:
         project = db.get(CloudProject, binding.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         item = db.get(LoopItem, binding.loop_item_id) if binding.loop_item_id else None
         return binding, project, item
 
@@ -2614,25 +2619,9 @@ class LoopItemService:
     ) -> list[dict[str, object]]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
-        memberships = select(ResourceMember.resource_id).where(
-            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        projects = (
-            db.query(CloudProject)
-            .filter(
-                CloudProject.status == "active",
-                (CloudProject.created_by_user_id == user_id)
-                | CloudProject.id.in_(memberships)
-                | (
-                    CloudProject.metadata_json["visibility"].as_string()
-                    == "public_restricted"
-                ),
-            )
-            .all()
-        )
+        from app.services.cloud_project_visibility import accessible_cloud_projects
+
+        projects = accessible_cloud_projects(db, user_id).all()
         if not projects:
             return []
         project_by_id = {project.id: project for project in projects}
@@ -2904,7 +2893,7 @@ class LoopItemService:
                 status.HTTP_403_FORBIDDEN,
                 "Only the robot creator can approve or reject this run",
             )
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
 
     @staticmethod
     def _write_assignment_change(

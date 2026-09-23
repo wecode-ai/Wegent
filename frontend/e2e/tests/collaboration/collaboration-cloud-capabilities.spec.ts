@@ -1112,6 +1112,62 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
+  test('sets public role and default issue security independently during project creation', async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(120_000)
+    const suffix = Date.now()
+    let projectId = ''
+    let workspaceId = ''
+
+    try {
+      await page.goto('/collaboration')
+      const workspace = await createWorkspaceByApi(page, `Permission Workspace ${suffix}`)
+      workspaceId = workspace.id
+      await page.goto(`/collaboration/workspaces/${encodeURIComponent(workspace.id)}`)
+      await page.getByTestId('collaboration-workspace-project-create').click()
+      await page.getByTestId('collaboration-workspace-project-create-blank').click()
+      await page.getByTestId('collaboration-project-name-input').fill(`Permissions ${suffix}`)
+      await page.getByTestId('cloud-project-visibility-public').click()
+      await page.getByTestId('cloud-project-public-access-viewer').click()
+      await page.getByTestId('cloud-project-default-issue-security-related').click()
+      await page.getByTestId('collaboration-project-create-confirm').click()
+      await expect(page).toHaveURL(/\/projects\/[^/?]+$/)
+      projectId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
+      const project = await webApi<
+        CloudProject & {
+          visibility: string
+          public_access: { role: string } | null
+          default_issue_security: string
+        }
+      >(page, `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`)
+      expect(project.visibility).toBe('public')
+      expect(project.public_access?.role).toBe('Viewer')
+      expect(project.default_issue_security).toBe('related')
+
+      const ownerIssue = await createIssueByApi(page, project.id, `Owner issue ${suffix}`)
+      const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
+      try {
+        await expect(regular.page.getByTestId('collaboration-board')).toBeVisible()
+        await expect(regular.page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toHaveCount(
+          0
+        )
+        expect(
+          await webApiStatus(
+            regular.page,
+            `/api/v1/loop-items/${encodeURIComponent(ownerIssue.id)}`
+          )
+        ).toBe(404)
+      } finally {
+        await regular.context.close()
+      }
+    } finally {
+      if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
+    }
+  })
+
   test('shows related tasks only while keeping the project available to every signed-in user', async ({
     browser,
     page,

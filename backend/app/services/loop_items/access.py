@@ -4,7 +4,7 @@
 
 """Issue-level visibility for projects that isolate unrelated work."""
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -16,6 +16,35 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.services.cloud_projects.access import CloudProjectAccess
+from app.schemas.base_role import BaseRole, has_permission
+
+
+def default_issue_security(project: object) -> str:
+    metadata = getattr(project, "metadata_json", None)
+    if (
+        isinstance(metadata, dict)
+        and metadata.get("default_issue_security") == "related"
+    ):
+        return "related"
+    return "open"
+
+
+def item_security(item: LoopItem, project: object) -> str:
+    metadata = item.metadata_json
+    if isinstance(metadata, dict) and metadata.get("security_level") in {
+        "open",
+        "related",
+    }:
+        return str(metadata["security_level"])
+    return default_issue_security(project)
+
+
+def visible_item_filter(user_id: int, project: object) -> ColumnElement[bool]:
+    security = func.coalesce(
+        LoopItem.metadata_json["security_level"].as_string(),
+        default_issue_security(project),
+    )
+    return or_(security == "open", related_item_filter(user_id))
 
 
 def related_item_filter(user_id: int) -> ColumnElement[bool]:
@@ -58,6 +87,8 @@ def can_view_item(
     item: LoopItem,
     user_id: int,
 ) -> bool:
-    if access.restricts_unrelated_issues:
-        return is_related_item(db, item.id, user_id)
-    return not access.is_public_visitor or item.created_by_user_id == user_id
+    if has_permission(access.role, BaseRole.Maintainer):
+        return True
+    return item_security(item, access.project) == "open" or is_related_item(
+        db, item.id, user_id
+    )

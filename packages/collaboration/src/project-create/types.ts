@@ -162,8 +162,16 @@ export interface ProjectCreateLabels {
   visibility: string;
   privateVisibility: string;
   privateVisibilityDescription: string;
-  restrictedVisibility: string;
-  restrictedVisibilityDescription: string;
+  publicAccessRole: string;
+  viewerRole: string;
+  developerRole: string;
+  viewerRoleDescription: string;
+  developerRoleDescription: string;
+  defaultIssueSecurity: string;
+  openIssueSecurity: string;
+  relatedIssueSecurity: string;
+  openIssueSecurityDescription: string;
+  relatedIssueSecurityDescription: string;
   publicVisibility: string;
   publicVisibilityDescription: string;
   publicVisibilityNotice: string;

@@ -37,6 +37,8 @@ export interface WorkspaceProjectCreateInput {
   description?: string
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   includeDefaultAgent?: boolean
 }
@@ -47,6 +49,8 @@ export interface WorkspaceProjectUpdateInput {
   description?: string
   tags?: string[]
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   boardConfig?: CollaborationProject['board_config']
   cardDisplay?: CollaborationProject['card_display']
@@ -134,6 +138,7 @@ export interface WorkspaceIssueCreateInput {
 
 export interface WorkspaceIssueUpdateInput {
   version: number
+  securityLevel?: 'open' | 'related'
   title?: string
   description?: string
   status?: string

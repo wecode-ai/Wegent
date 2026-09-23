@@ -85,7 +85,7 @@ class IssueAssignmentService:
         issue_id: str,
         user_id: int,
     ) -> list[AssignmentEvent]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.RestrictedAnalyst)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         self._require_issue_project(db, project_id, issue_id)
         return list(self._active_events(db, issue_id).values())
 
@@ -200,9 +200,7 @@ class IssueAssignmentService:
         assignment_id: str,
         user_id: int,
     ) -> AssignmentEvent:
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         item = self._require_issue_project(db, project_id, issue_id)
         require_issue_action(
             access,
@@ -317,9 +315,7 @@ class IssueAssignmentService:
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-        require_cloud_project_role(
-            db, int(project.id), user_id, BaseRole.RestrictedAnalyst
-        )
+        require_cloud_project_role(db, int(project.id), user_id, BaseRole.Viewer)
         return project, item
 
     def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:

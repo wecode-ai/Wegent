@@ -994,11 +994,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           {state.location === "cloud" && (
             <section>
               <h3>{labels.visibility}</h3>
-              <div
-                className={`collaboration-project-create-grid ${
-                  state.taskProvider === "local" ? "columns-3" : "columns-2"
-                }`}
-              >
+              <div className="collaboration-project-create-grid columns-2">
                 <ChoiceButton
                   testId="cloud-project-visibility-private"
                   selected={state.visibility === "private"}
@@ -1007,16 +1003,6 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   description={labels.privateVisibilityDescription}
                   onClick={() => commands.setVisibility("private")}
                 />
-                {state.taskProvider === "local" ? (
-                  <ChoiceButton
-                    testId="cloud-project-visibility-public-restricted"
-                    selected={state.visibility === "public_restricted"}
-                    icon={<ListTodo aria-hidden="true" />}
-                    label={labels.restrictedVisibility}
-                    description={labels.restrictedVisibilityDescription}
-                    onClick={() => commands.setVisibility("public_restricted")}
-                  />
-                ) : null}
                 <ChoiceButton
                   testId="cloud-project-visibility-public"
                   selected={state.visibility === "public"}
@@ -1026,12 +1012,58 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   onClick={() => commands.setVisibility("public")}
                 />
               </div>
-              {state.visibility !== "private" && (
+              {state.visibility === "public" && (
                 <p className="collaboration-project-create-hint">
-                  {state.visibility === "public_restricted"
-                    ? labels.restrictedVisibilityDescription
-                    : labels.publicVisibilityNotice}
+                  {labels.publicVisibilityNotice}
                 </p>
+              )}
+              {state.visibility === "public" && (
+                <div>
+                  <h3>{labels.publicAccessRole}</h3>
+                  <div className="collaboration-project-create-grid columns-2">
+                    <ChoiceButton
+                      testId="cloud-project-public-access-viewer"
+                      selected={state.publicAccessRole === "Viewer"}
+                      icon={<LockKeyhole aria-hidden="true" />}
+                      label={labels.viewerRole}
+                      description={labels.viewerRoleDescription}
+                      onClick={() => commands.setPublicAccessRole("Viewer")}
+                    />
+                    <ChoiceButton
+                      testId="cloud-project-public-access-developer"
+                      selected={state.publicAccessRole === "Developer"}
+                      icon={<ListTodo aria-hidden="true" />}
+                      label={labels.developerRole}
+                      description={labels.developerRoleDescription}
+                      onClick={() => commands.setPublicAccessRole("Developer")}
+                    />
+                  </div>
+                </div>
+              )}
+              {!state.isAITableProvider && (
+                <div>
+                  <h3>{labels.defaultIssueSecurity}</h3>
+                  <div className="collaboration-project-create-grid columns-2">
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-open"
+                      selected={state.defaultIssueSecurity === "open"}
+                      icon={<Cloud aria-hidden="true" />}
+                      label={labels.openIssueSecurity}
+                      description={labels.openIssueSecurityDescription}
+                      onClick={() => commands.setDefaultIssueSecurity("open")}
+                    />
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-related"
+                      selected={state.defaultIssueSecurity === "related"}
+                      icon={<LockKeyhole aria-hidden="true" />}
+                      label={labels.relatedIssueSecurity}
+                      description={labels.relatedIssueSecurityDescription}
+                      onClick={() =>
+                        commands.setDefaultIssueSecurity("related")
+                      }
+                    />
+                  </div>
+                </div>
               )}
             </section>
           )}

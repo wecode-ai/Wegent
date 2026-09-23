@@ -3413,7 +3413,23 @@ def test_related_task_visitor_can_use_visible_task_chat_only(
     test_db.commit()
     test_db.refresh(visitor)
     project = create_project(test_db, test_user)
-    project.metadata_json = {"visibility": "public_restricted"}
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "default_issue_security": "related",
+    }
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=int(project.id),
+            entity_type="authenticated_users",
+            entity_id="*",
+            role="Developer",
+            status=MemberStatus.APPROVED.value,
+        )
+    )
     visible_task = LoopItem(
         id=f"CHAT-RELATED-{uuid.uuid4().hex[:8]}",
         cloud_project_id=project.id,
@@ -3467,19 +3483,17 @@ def test_related_task_visitor_can_use_visible_task_chat_only(
         owner_message.message.message_id
     ]
     assert visitor_message.message.content == "Visitor reply"
-    with pytest.raises(HTTPException) as privileged:
-        project_chat_service.start_agent_response(
-            test_db,
-            user_id=visitor.id,
-            request=ProjectChatAgentStart(
-                projectId=project.id,
-                taskId=visible_task.id,
-                agentId="12",
-                runtimeDeviceId="related-visitor-device",
-                runtimeTaskId="related-visitor-runtime-task",
-            ),
-        )
-    assert privileged.value.status_code == 403
+    project_chat_service.start_agent_response(
+        test_db,
+        user_id=visitor.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=visible_task.id,
+            agentId="12",
+            runtimeDeviceId="related-visitor-device",
+            runtimeTaskId="related-visitor-runtime-task",
+        ),
+    )
     with pytest.raises(HTTPException) as hidden:
         project_chat_service.subscribe(
             test_db,

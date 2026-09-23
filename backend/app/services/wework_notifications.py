@@ -164,10 +164,10 @@ def _validate_project_source(
     from app.services.loop_items.service import loop_item_service
 
     access = cloud_project_service.access(db, values.project_id, user_id)
-    if access.is_public_visitor:
+    if access.is_viewer:
         raise HTTPException(403, "Project membership required")
     recipient = cloud_project_service.access(db, values.project_id, recipient_id)
-    if recipient.is_public_visitor:
+    if recipient.is_viewer:
         raise HTTPException(403, "Recipient must be a project member")
     if values.item_id:
         if access.project.task_provider in {"github", "gitlab"}:

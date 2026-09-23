@@ -93,6 +93,12 @@ export function ProjectManageView<
   const [visibility, setVisibility] = useState<ProjectManageVisibility>(
     project.visibility ?? "private",
   );
+  const [publicAccessRole, setPublicAccessRole] = useState<
+    "Viewer" | "Developer"
+  >(project.public_access?.role ?? "Viewer");
+  const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
+    "open" | "related"
+  >(project.default_issue_security ?? "open");
 
   const [membersOpen, setMembersOpen] = useState(false);
   const memberComposerRef = useRef<HTMLDivElement>(null);
@@ -116,17 +122,9 @@ export function ProjectManageView<
     project.task_provider === "github" || project.task_provider === "gitlab"
       ? project.task_provider
       : null;
-  const relatedTaskVisibilityAvailable = project.task_provider === "local";
-  const visibilityOptions: ProjectManageVisibility[] =
-    relatedTaskVisibilityAvailable
-      ? ["private", "public_restricted", "public"]
-      : ["private", "public"];
+  const visibilityOptions: ProjectManageVisibility[] = ["private", "public"];
   const visibilityLabels: Record<ProjectManageVisibility, string> = {
     private: host.translate("todo.private_project", "私有项目"),
-    public_restricted: host.translate(
-      "todo.related_tasks_project",
-      "仅看相关任务",
-    ),
     public: host.translate("todo.public_project", "公开项目"),
   };
   const visibilityDescriptions: Record<ProjectManageVisibility, string> = {
@@ -134,13 +132,9 @@ export function ProjectManageView<
       "todo.private_project_description",
       "仅项目成员可以进入。",
     ),
-    public_restricted: host.translate(
-      "todo.related_tasks_project_description",
-      "所有人可进入，普通用户只看到自己创建、负责或参与的任务。",
-    ),
     public: host.translate(
       "todo.public_project_description",
-      "所有登录用户都可以进入并查看全部任务。",
+      "所有登录用户按所选角色进入；任务可见范围由安全级别控制。",
     ),
   };
   const [providerRepository, setProviderRepository] = useState(() =>
@@ -210,6 +204,8 @@ export function ProjectManageView<
       setDisplay(initialDisplay(project, boardCardDisplay));
       setStatuses(project.board_config?.statuses ?? []);
       setVisibility(project.visibility ?? "private");
+      setPublicAccessRole(project.public_access?.role ?? "Viewer");
+      setDefaultIssueSecurity(project.default_issue_security ?? "open");
       setProviderRepository(repositoryAddress(project));
       setProviderToken("");
       setProviderBusy(false);
@@ -240,8 +236,11 @@ export function ProjectManageView<
       setDisplay(initialDisplay(project, boardCardDisplay));
     if (!dirtyRef.current.statuses)
       setStatuses(project.board_config?.statuses ?? []);
-    if (!dirtyRef.current.visibility)
+    if (!dirtyRef.current.visibility) {
       setVisibility(project.visibility ?? "private");
+      setPublicAccessRole(project.public_access?.role ?? "Viewer");
+      setDefaultIssueSecurity(project.default_issue_security ?? "open");
+    }
     if (!dirtyRef.current.providerRepository) {
       setProviderRepository(repositoryAddress(project));
     }
@@ -369,6 +368,7 @@ export function ProjectManageView<
       const updated = await updateProject({ visibility: next }, scope);
       if (projectScopeRef.current !== scope) return;
       setVisibility(updated.visibility ?? next);
+      setPublicAccessRole(updated.public_access?.role ?? "Viewer");
       dirtyRef.current.visibility = false;
       host.trackCompleted("update");
     } catch (cause) {
@@ -382,6 +382,36 @@ export function ProjectManageView<
       );
     } finally {
       if (projectScopeRef.current === scope) setVisibilityBusy(false);
+    }
+  }
+
+  async function saveAccessSettings(
+    values: Pick<
+      ProjectManageUpdate,
+      "public_access" | "default_issue_security"
+    >,
+  ) {
+    if (visibilityBusy) return;
+    const scope = projectScopeRef.current;
+    setVisibilityBusy(true);
+    dirtyRef.current.visibility = true;
+    try {
+      const updated = await updateProject(values, scope);
+      if (projectScopeRef.current !== scope) return;
+      setPublicAccessRole(updated.public_access?.role ?? "Viewer");
+      setDefaultIssueSecurity(updated.default_issue_security ?? "open");
+      host.trackCompleted("update");
+    } catch (cause) {
+      if (projectScopeRef.current !== scope) return;
+      reportError(
+        cause,
+        host.translate("todo.update_visibility_failed", "更新项目权限失败"),
+      );
+    } finally {
+      if (projectScopeRef.current === scope) {
+        dirtyRef.current.visibility = false;
+        setVisibilityBusy(false);
+      }
     }
   }
 
@@ -836,9 +866,7 @@ export function ProjectManageView<
             <div
               className={classNames(
                 "mt-4 grid gap-1 rounded-lg bg-muted p-1",
-                relatedTaskVisibilityAvailable
-                  ? "max-w-2xl grid-cols-1 md:grid-cols-3"
-                  : "max-w-md grid-cols-2",
+                "max-w-md grid-cols-2",
               )}
             >
               {visibilityOptions.map((value) => (
@@ -865,6 +893,68 @@ export function ProjectManageView<
             <p className="mt-2 text-sm text-text-muted">
               {visibilityDescriptions[visibility]}
             </p>
+            {visibility === "public" && (
+              <label className="mt-4 flex items-center justify-between gap-3 text-sm">
+                <span>
+                  {host.translate(
+                    "todo.public_access_role",
+                    "所有登录用户的角色",
+                  )}
+                </span>
+                <select
+                  data-testid="cloud-project-public-access-role"
+                  value={publicAccessRole}
+                  disabled={visibilityBusy}
+                  onChange={(event) =>
+                    void saveAccessSettings({
+                      public_access: {
+                        role: event.target.value as "Viewer" | "Developer",
+                      },
+                    })
+                  }
+                  className="h-8 rounded-lg border border-border bg-background px-2"
+                >
+                  <option value="Viewer">Viewer</option>
+                  <option value="Developer">Developer</option>
+                </select>
+              </label>
+            )}
+            {project.task_provider !== "dingtalk_aitable" && (
+              <label className="mt-4 flex items-center justify-between gap-3 text-sm">
+                <span>
+                  {host.translate(
+                    "todo.default_issue_security",
+                    "新任务默认可见范围",
+                  )}
+                </span>
+                <select
+                  data-testid="cloud-project-default-issue-security"
+                  value={defaultIssueSecurity}
+                  disabled={visibilityBusy}
+                  onChange={(event) =>
+                    void saveAccessSettings({
+                      default_issue_security: event.target.value as
+                        | "open"
+                        | "related",
+                    })
+                  }
+                  className="h-8 rounded-lg border border-border bg-background px-2"
+                >
+                  <option value="open">
+                    {host.translate(
+                      "todo.issue_security_open",
+                      "项目可访问者可见",
+                    )}
+                  </option>
+                  <option value="related">
+                    {host.translate(
+                      "todo.issue_security_related",
+                      "仅相关人员可见",
+                    )}
+                  </option>
+                </select>
+              </label>
+            )}
           </section>
         )}
 
@@ -939,7 +1029,7 @@ export function ProjectManageView<
                     >
                       <option value="Maintainer">Maintainer</option>
                       <option value="Developer">Developer</option>
-                      <option value="Reporter">Reporter</option>
+                      <option value="Viewer">Viewer</option>
                     </select>
                   </label>
                   <div className="mt-2 max-h-52 overflow-y-auto">
@@ -1062,7 +1152,7 @@ export function ProjectManageView<
                     >
                       <option value="Maintainer">Maintainer</option>
                       <option value="Developer">Developer</option>
-                      <option value="Reporter">Reporter</option>
+                      <option value="Viewer">Viewer</option>
                     </select>
                     {host.renderTooltip({
                       label: host.translate(

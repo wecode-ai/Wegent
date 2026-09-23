@@ -828,7 +828,7 @@ def test_public_project_visitors_only_access_their_own_todo_details(
         item for item in listed_projects.json()["items"] if item["id"] == project["id"]
     )
     assert visible_project["visibility"] == "public"
-    assert visible_project["access_role"] == "RestrictedAnalyst"
+    assert visible_project["access_role"] == "Viewer"
     assert visible_project["current_user_id"] == visitor.id
     assert visible_project["current_user_name"] == visitor.user_name
 
@@ -839,8 +839,8 @@ def test_public_project_visitors_only_access_their_own_todo_details(
     assert listed_items.status_code == 200
     owner_summary = listed_items.json()["items"][0]
     assert owner_summary["id"] == owner_item["id"]
-    assert owner_summary["description"] == ""
-    assert owner_summary["can_view_detail"] is False
+    assert owner_summary["description"] == "private task details"
+    assert owner_summary["can_view_detail"] is True
     assert owner_summary["can_edit"] is False
 
     snapshot = test_client.get(
@@ -858,26 +858,14 @@ def test_public_project_visitors_only_access_their_own_todo_details(
         f"/api/v1/loop-items/{owner_item['id']}",
         headers=_auth(visitor_token),
     )
-    assert hidden_detail.status_code == 404
+    assert hidden_detail.status_code == 200
 
     visitor_item = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(visitor_token),
         json={"title": "Visitor task", "description": "visitor details"},
     )
-    assert visitor_item.status_code == 201
-    visitor_item_body = visitor_item.json()
-    assert visitor_item_body["created_by_user_id"] == visitor.id
-    assert visitor_item_body["can_view_detail"] is True
-    assert visitor_item_body["can_edit"] is True
-
-    updated = test_client.patch(
-        f"/api/v1/loop-items/{visitor_item_body['id']}",
-        headers=_auth(visitor_token),
-        json={"version": visitor_item_body["version"], "title": "Visitor task updated"},
-    )
-    assert updated.status_code == 200
-    assert updated.json()["title"] == "Visitor task updated"
+    assert visitor_item.status_code == 403
 
     external_project = test_client.post(
         "/api/v1/cloud-projects",
@@ -941,7 +929,9 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         json={
             "project_key": "RELATED",
             "name": "Related tasks only",
-            "visibility": "public_restricted",
+            "visibility": "public",
+            "public_access": {"role": "Developer"},
+            "default_issue_security": "related",
         },
     )
     assert project_response.status_code == 201
@@ -990,7 +980,7 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     visible_project = next(
         item for item in listed_projects.json()["items"] if item["id"] == project["id"]
     )
-    assert visible_project["visibility"] == "public_restricted"
+    assert visible_project["visibility"] == "public"
 
     empty_items = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
@@ -1039,7 +1029,16 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     )
     assert related_detail.status_code == 200
     assert related_detail.json()["description"] == "owner-only details"
-    assert related_detail.json()["can_edit"] is False
+    assert related_detail.json()["can_edit"] is True
+    security_update = test_client.patch(
+        f"/api/v1/loop-items/{owner_item['id']}",
+        headers=_auth(visitor_token),
+        json={
+            "version": related_detail.json()["version"],
+            "security_level": "open",
+        },
+    )
+    assert security_update.status_code == 403
 
     executions = [
         LoopItemExecution(
@@ -1105,7 +1104,7 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     }
 
 
-def test_external_project_rejects_related_task_visibility_update(
+def test_external_project_accepts_issue_security_default_update(
     test_client: TestClient,
     test_token: str,
 ) -> None:
@@ -1127,12 +1126,13 @@ def test_external_project_rejects_related_task_visibility_update(
         headers=_auth(test_token),
         json={
             "version": project["version"],
-            "visibility": "public_restricted",
+            "visibility": "public",
+            "default_issue_security": "related",
         },
     )
 
-    assert updated.status_code == 422
-    assert "only available for built-in tasks" in updated.json()["detail"]
+    assert updated.status_code == 200
+    assert updated.json()["default_issue_security"] == "related"
 
 
 def test_cloud_project_persists_external_task_provider_and_encrypted_token(
@@ -1431,6 +1431,8 @@ def test_public_github_project_enforces_issue_ownership(
             "project_key": "publicgh",
             "name": "Public GitHub",
             "visibility": "public",
+            "public_access": {"role": "Developer"},
+            "default_issue_security": "related",
             "task_provider": "github",
             "provider_config": {
                 "repository": "acme/public",
@@ -1445,8 +1447,7 @@ def test_public_github_project_enforces_issue_ownership(
     )
     assert listed.status_code == 200
     by_id = {item["id"]: item for item in listed.json()["items"]}
-    assert by_id["PUBLICGH-1"]["description"] == ""
-    assert by_id["PUBLICGH-1"]["can_view_detail"] is False
+    assert "PUBLICGH-1" not in by_id
     assert by_id["PUBLICGH-2"]["description"] == ""
     assert by_id["PUBLICGH-2"]["detail_loaded"] is False
     assert by_id["PUBLICGH-2"]["created_by_user_name"] == visitor.user_name
@@ -1459,9 +1460,35 @@ def test_public_github_project_enforces_issue_ownership(
         "/api/v1/loop-items/PUBLICGH-2", headers=_auth(visitor_token)
     )
     assert hidden.status_code == 404
+    hidden_comment = test_client.post(
+        "/api/v1/loop-items/PUBLICGH-1/comments",
+        headers=_auth(visitor_token),
+        json={"body": "should stay hidden"},
+    )
+    assert hidden_comment.status_code == 404
     assert visible.status_code == 200
     assert visible.json()["description"] == "visitor details"
     assert visible.json()["detail_loaded"] is True
+
+    test_db.add_all(
+        [
+            LoopItemExecution(
+                loop_item_id=f"PUBLICGH-{number}",
+                cloud_project_id=str(project["id"]),
+                executor_owner_user_id=visitor.id,
+                agent_id=f"github-agent-{number}",
+                status="queued",
+            )
+            for number in (1, 2)
+        ]
+    )
+    test_db.commit()
+    executions = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(visitor_token),
+    )
+    assert executions.status_code == 200
+    assert [row["loopItemId"] for row in executions.json()["items"]] == ["PUBLICGH-2"]
 
 
 def test_backend_routes_gitlab_updates_and_comments(
@@ -2866,12 +2893,12 @@ def test_cloud_project_owner_can_manage_members(
         f"/api/v1/cloud-projects/{project['id']}/members/{member_user.id}",
         headers=_auth(test_token),
         json={
-            "role": "Reporter",
+            "role": "Viewer",
             "capability_description": "Product acceptance and release checks",
         },
     )
     assert updated.status_code == 200
-    assert updated.json()["role"] == "Reporter"
+    assert updated.json()["role"] == "Viewer"
     assert updated.json()["capability_description"] == (
         "Product acceptance and release checks"
     )
