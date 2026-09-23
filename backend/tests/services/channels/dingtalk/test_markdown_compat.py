@@ -79,6 +79,13 @@ class TestTableConversion:
         assert "x | y" in row
         assert row.count("|") == 2  # two column separators only
 
+    def test_double_backslash_pipe_is_delimiter(self):
+        # "\\\\|" escapes the backslash, so the pipe still splits cells
+        content = "| a | b |\n| --- | --- |\n| x \\\\| y |"
+        result = render_for_dingtalk(content)
+        row = [line for line in result.split("\n") if "x" in line][0]
+        assert row.startswith("x \\\\ | y")  # two cells: 'x \\' and 'y'
+
     def test_nested_shorter_fence_does_not_close(self):
         content = (
             "````\n"

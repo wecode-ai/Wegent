@@ -17,7 +17,6 @@ import unicodedata
 
 _SEPARATOR_CELL = re.compile(r"^:?-+:?$")
 _FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
-_UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 
 
 def _display_width(text: str) -> int:
@@ -35,10 +34,23 @@ def _split_row(line: str) -> list[str]:
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
-    if body.endswith("|") and not body.endswith("\\|"):
-        body = body[:-1]
-    # Split on unescaped pipes only; "\|" is a literal pipe inside a cell.
-    return [cell.strip().replace("\\|", "|") for cell in _UNESCAPED_PIPE.split(body)]
+    # A pipe is a delimiter only after an even run of backslashes; "\|" is a
+    # literal pipe inside a cell, while "\\|" escapes the backslash instead.
+    cells: list[str] = []
+    start = 0
+    backslashes = 0
+    for index, char in enumerate(body):
+        if char == "\\":
+            backslashes += 1
+            continue
+        if char == "|" and backslashes % 2 == 0:
+            cells.append(body[start:index])
+            start = index + 1
+        backslashes = 0
+    cells.append(body[start:])
+    if body.endswith("|") and cells[-1] == "":
+        cells.pop()
+    return [cell.strip().replace("\\|", "|") for cell in cells]
 
 
 def _looks_like_row(line: str) -> bool:
