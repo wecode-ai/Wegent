@@ -25,6 +25,8 @@ describe('getProcessingErrorMessage', () => {
     ['multimodal_empty_response', 'multimodalEmptyResponse'],
     ['conversion_timeout', 'conversionTimeout'],
     ['indexing_timeout', 'indexingTimeout'],
+    ['external_source_missing', 'externalSourceMissing'],
+    ['external_source_unavailable', 'externalSourceUnavailable'],
   ])('localizes known code %s', (code, translationKey) => {
     expect(getProcessingErrorMessage(createError(code), translate)).toBe(
       `translated:knowledge:document.document.processingError.codes.${translationKey}`
