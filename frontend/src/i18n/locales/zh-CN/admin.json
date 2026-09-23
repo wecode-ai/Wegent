@@ -524,7 +524,8 @@
       "advanced": "高级",
       "standard": "普通",
       "wework_available": "wework 可用",
-      "wework_unavailable": "wework 不可用"
+      "wework_unavailable": "wework 不可用",
+      "whitelisted": "白名单"
     },
     "columns": {
       "id": "ID",
@@ -547,7 +548,12 @@
       "config_placeholder": "请输入 JSON 格式的模型配置",
       "is_visible": "用户可见",
       "is_advanced": "高级模型",
-      "is_wework_available": "在wework中可用"
+      "is_wework_available": "在wework中可用",
+      "allowed_users": "用户白名单",
+      "allowed_users_placeholder": "输入用户名，多个用逗号分隔（支持全角、半角）",
+      "allowed_users_hint": "用逗号分割多个用户名，支持全角、半角逗号；仅在开启白名单开关时生效",
+      "allowed_users_enabled": "仅白名单用户可用",
+      "allowed_users_enabled_hint": "开启后仅白名单中的用户可见并使用该模型；名单为空时所有用户均不可用"
     },
     "confirm": {
       "delete_title": "删除模型",

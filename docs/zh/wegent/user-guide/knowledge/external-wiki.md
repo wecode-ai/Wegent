@@ -16,7 +16,7 @@ Wiki 页面绑定到知识库。绑定后的内容会转换为普通知识文档
 | **GitLab Repo** | GitLab 仓库中的支持文件 | 仓库、分支和文件 | GitLab AppKey / Access Token |
 | **GitLab Wiki** | GitLab 项目的 Wiki 页面 | 仓库和 Wiki 页面 | GitLab AppKey / Access Token |
 
-Wiki.js 当前支持 **2.x，最低版本 2.5.300**。Wiki.js 3.x 及 2.5.300
+Wiki.js 当前支持 **2.x，最低版本 2.5.0**。Wiki.js 3.x 及 2.5.0
 之前的版本不在当前兼容范围内。
 
 GitLab Repo 支持以下文件扩展名：
@@ -54,13 +54,12 @@ pdf, doc, docx, ppt, pptx, xls, xlsx, csv, txt, md, markdown
 ### 通用条件
 
 - Wegent 后端能够访问目标 Wiki.js 或 GitLab 地址。
-- 环境开关 `EXTERNAL_DOC_SYNC_ENABLED` 已显式设置为 `true`（默认关闭）。
 - 当前用户拥有目标知识库的编辑权限。
 - 目标连接可以使用 HTTP 或 HTTPS；站点地址必须是后端实际能够连接的地址。
 
 ### Wiki.js
 
-- Wiki.js 版本为 2.5.300 或更高的 2.x。
+- Wiki.js 版本为 2.5.0 或更高的 2.x。
 - 在 **Admin → API** 创建 API Key，其权限组包含：
   - `read:pages`
   - `read:source`
@@ -198,7 +197,10 @@ AsciiDoc 或文本后进入知识库索引流程。
 
 ## 定时同步机制
 
-后台默认每天 UTC 19:00（北京时间次日凌晨 3:00）执行巡检：
+定时同步默认关闭。设置 `EXTERNAL_DOC_SYNC_ENABLED=true` 后，后台默认每天 UTC
+19:00（北京时间次日凌晨 3:00）执行巡检。该开关不影响手动导入和手动同步。
+
+每次巡检会：
 
 1. 分批扫描所有已绑定的外部 Wiki 文档。
 2. 按连接和资源范围调用对应连接器。
@@ -300,7 +302,7 @@ GitLab 项目 Wiki 由独立的 Wiki API 管理，不按代码仓库分支选择
 
 | 环境变量                                            | 默认值       | 说明                                   |
 | --------------------------------------------------- | ------------ | -------------------------------------- |
-| `EXTERNAL_DOC_SYNC_ENABLED`                         | `false`      | 外部文档绑定与定时同步总开关           |
+| `EXTERNAL_DOC_SYNC_ENABLED`                         | `false`      | 外部文档定时同步开关                   |
 | `EXTERNAL_DOC_SYNC_CRON`                            | `0 21 * * *` | 巡检调度（UTC crontab）                |
 | `EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE`                 | `500`        | 每批扫描的本地文档数                   |
 | `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`               | `10000`      | 单次运行最多处理文档数                 |

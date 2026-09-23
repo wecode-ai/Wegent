@@ -14,7 +14,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,7 @@ import {
   CORE_PLUGIN_DIRECTORIES,
   INTERNAL_CORE_PLUGIN_MANIFEST,
   INTERNAL_CORE_PLUGINS,
-  corePluginSource,
+  copyCorePlugin,
   corePluginTarget,
 } from './lib/core-plugin-resources.mjs'
 import { materializeBundledPluginResources } from './lib/bundled-plugin-resources.mjs'
@@ -57,18 +57,6 @@ async function replaceLink(source, destination) {
           : 'file'
     await symlink(resolve(source), destination, type)
   }
-}
-
-async function copyCorePlugin(weworkRoot, directory, destination) {
-  const source = corePluginSource(weworkRoot, directory)
-  const appWebRoot = join(weworkRoot, 'dsh', 'app-wework', 'web')
-  await cp(source, destination, {
-    recursive: true,
-    filter: path =>
-      !path.endsWith('.test.mjs') &&
-      (directory !== 'app-wework' ||
-        (path !== appWebRoot && !path.startsWith(`${appWebRoot}${sep}`))),
-  })
 }
 
 async function sha256(path) {
@@ -121,7 +109,14 @@ export async function prepareDevelopmentComponentResources(options) {
 
   const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
   for (const directory of CORE_PLUGIN_DIRECTORIES) {
-    await copyCorePlugin(weworkRoot, directory, join(corePluginsRoot, corePluginTarget(directory)))
+    await copyCorePlugin(
+      weworkRoot,
+      directory,
+      join(corePluginsRoot, corePluginTarget(directory)),
+      {
+        excludeAppWeb: true,
+      }
+    )
   }
   if (INTERNAL_CORE_PLUGINS.length > 0) {
     await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))

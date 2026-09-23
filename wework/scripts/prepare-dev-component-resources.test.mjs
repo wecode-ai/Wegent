@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -41,6 +41,15 @@ describe('prepare development component resources', () => {
         name: directoryName,
       })
     }
+    const internalPluginSource = corePluginSource(weworkRoot, CORE_PLUGIN_DIRECTORIES.at(-1))
+    const linkedDependency = await directory(join(fixtureRoot, 'store', 'linked-dependency'))
+    await file(join(linkedDependency, 'index.js'), 'dependency payload')
+    await mkdir(join(internalPluginSource, 'node_modules'), { recursive: true })
+    await symlink(
+      linkedDependency,
+      join(internalPluginSource, 'node_modules', 'linked-dependency'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     await file(join(weworkRoot, 'dsh', 'app-wework', 'web', 'generated.js'))
 
     await prepareDevelopmentComponentResources({
@@ -84,6 +93,14 @@ describe('prepare development component resources', () => {
       'app-wework'
     )
     await expect(readFile(join(appPluginRoot, 'web', 'generated.js'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    const internalPluginRoot = join(
+      resourcesRoot,
+      manifest.components.weworkCorePlugins.path,
+      corePluginTarget(CORE_PLUGIN_DIRECTORIES.at(-1))
+    )
+    await expect(lstat(join(internalPluginRoot, 'node_modules'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
   }, 20_000)

@@ -131,6 +131,10 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from app.services.workspace_cleanup_intents import (
+    acknowledge as _acknowledge_workspace_cleanup,
+)
+from app.services.workspace_cleanup_intents import claim as _claim_workspace_cleanup
 from app.stores.tasks import subtask_store
 from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
@@ -167,6 +171,18 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+
+
+def _claim_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _claim_workspace_cleanup(db, **kwargs)
+
+
+def _acknowledge_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _acknowledge_workspace_cleanup(db, **kwargs)
+
+
 DEVICE_TRACE_EXCLUDED_EVENTS = {
     "plugin.auth.local_lifecycle",
     "plugin.auth.automatic",
@@ -999,6 +1015,19 @@ def _project_bound_runtime_event_status(
             return None
         binding_metadata["runtime_status_event_seq"] = event_seq
         binding.metadata_json = binding_metadata
+        from app.services.human_issue_work import human_issue_work_service
+
+        if human_issue_work_service.is_direct_human_assignment(db, item_before):
+            logger.info(
+                "[IssueTaskRuntimeSync] kept human Issue status "
+                "user=%s device=%s task=%s event=%s item=%s",
+                user_id,
+                device_id,
+                task_id,
+                event_name,
+                item_before.id,
+            )
+            return None
         next_status = (
             "in_progress"
             if projected_status == "running"
@@ -1410,6 +1439,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "plugin.auth.read": "on_plugin_auth_read",
             "runtime.tasks.pull": "on_runtime_tasks_pull",
             "runtime.tasks.accept": "on_runtime_tasks_accept",
+            "runtime.workspace_cleanup.claim": "on_runtime_workspace_cleanup_claim",
+            "runtime.workspace_cleanup.accept": "on_runtime_workspace_cleanup_accept",
             "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
@@ -2593,6 +2624,62 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 error=data.get("error") if isinstance(data.get("error"), str) else None,
             )
         )
+
+    async def on_runtime_workspace_cleanup_claim(self, sid: str, data: dict) -> dict:
+        """Claim one exact cleanup version before mutating Executor state."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        runtime_device_id = session.get("device_id")
+        if not user_id or not runtime_device_id:
+            return {"success": False, "error": "Device is not registered"}
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid cleanup claim payload"}
+        intent_id = data.get("intent_id")
+        if not isinstance(intent_id, str) or not intent_id:
+            return {"success": False, "error": "intent_id is required"}
+        try:
+            issue_version = int(data.get("issue_version"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "issue_version is required"}
+        claimed = await run_sync_in_executor(
+            partial(
+                _claim_workspace_cleanup_sync,
+                owner_user_id=int(user_id),
+                runtime_device_id=str(runtime_device_id),
+                intent_id=intent_id,
+                issue_version=issue_version,
+            )
+        )
+        return {"success": claimed}
+
+    async def on_runtime_workspace_cleanup_accept(self, sid: str, data: dict) -> dict:
+        """Acknowledge one exact Issue cleanup desired-state version."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        runtime_device_id = session.get("device_id")
+        if not user_id or not runtime_device_id:
+            return {"success": False, "error": "Device is not registered"}
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid cleanup acceptance payload"}
+        intent_id = data.get("intent_id")
+        if not isinstance(intent_id, str) or not intent_id:
+            return {"success": False, "error": "intent_id is required"}
+        try:
+            issue_version = int(data.get("issue_version"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "issue_version is required"}
+        accepted = await run_sync_in_executor(
+            partial(
+                _acknowledge_workspace_cleanup_sync,
+                owner_user_id=int(user_id),
+                runtime_device_id=str(runtime_device_id),
+                intent_id=intent_id,
+                issue_version=issue_version,
+            )
+        )
+        return {"success": accepted}
 
     async def on_device_status(self, sid: str, data: dict) -> dict:
         """

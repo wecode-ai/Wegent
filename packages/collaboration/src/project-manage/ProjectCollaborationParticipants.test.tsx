@@ -29,7 +29,7 @@ describe("CollaborationParticipantsTabs", () => {
     container.remove();
   });
 
-  async function renderTabs() {
+  async function renderTabs(requestedTab?: "agents" | "members" | "groups") {
     await act(async () => {
       root.render(
         <CollaborationParticipantsTabs
@@ -40,6 +40,7 @@ describe("CollaborationParticipantsTabs", () => {
           membersLabel="项目成员"
           groupsContent={<div>Groups content</div>}
           groupsLabel="协作小组"
+          requestedTab={requestedTab}
         />,
       );
     });
@@ -92,6 +93,17 @@ describe("CollaborationParticipantsTabs", () => {
     await press(tab("groups"), "Home");
     expect(document.activeElement).toBe(tab("agents"));
     expect(tab("agents").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("selects a tab requested by the settings host", async () => {
+    await renderTabs();
+    expect(tab("agents").getAttribute("aria-selected")).toBe("true");
+
+    await renderTabs("members");
+
+    expect(tab("members").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Members content");
+    expect(container.textContent).not.toContain("Agents content");
   });
 
   it("uses the wide settings layout for collaboration resources", async () => {

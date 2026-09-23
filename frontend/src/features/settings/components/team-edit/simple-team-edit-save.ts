@@ -18,6 +18,7 @@ export interface SimpleBotFormValue {
   modelType?: ModelTypeEnum
   modelNamespace?: string
   prompt: string
+  inheritBaseCapabilities: boolean
   selectedSkills: string[]
   selectedSkillRefs: Record<string, SkillRefMeta>
   preloadSkills?: string[]
@@ -63,12 +64,18 @@ export function buildSimpleBotRequest(
   const preloadSkills = (form.preloadSkills || []).filter(skillName =>
     form.selectedSkills.includes(skillName)
   )
+  const hasFixedCapabilities =
+    form.inheritBaseCapabilities ||
+    form.selectedSkills.length > 0 ||
+    Object.keys(form.mcpServers || {}).length > 0
 
   return {
     name: getSimpleBotName(form.name, teamName),
     shell_name: form.shellName,
     agent_config: agentConfig,
     system_prompt: form.prompt.trim(),
+    inherit_base_capabilities: form.inheritBaseCapabilities,
+    capability_mode: hasFixedCapabilities ? 'manual' : 'follow_device',
     mcp_servers: form.mcpServers || {},
     default_knowledge_base_refs: form.defaultKnowledgeBaseRefs,
     skills: form.selectedSkills,

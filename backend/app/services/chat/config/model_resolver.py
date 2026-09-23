@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.user import User
 from app.schemas.kind import Bot, Model
+from app.services.adapters.public_model import is_public_model_allowed_for_user
 from app.services.capability_reference_service import get_referenced_capability
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
@@ -877,6 +879,12 @@ def _find_model_with_namespace(
     )
 
     if public_model and public_model.json:
+        # Enforce the public model user whitelist: only listed users may use it.
+        user = db.query(User).filter(User.id == user_id).first()
+        if not is_public_model_allowed_for_user(
+            public_model.json, user.user_name if user else None
+        ):
+            raise ValueError(f"Model '{model_name}' is restricted to whitelisted users")
         logger.info(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )
@@ -1143,18 +1151,18 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
-    supports_developer_role = env.get("supports_developer_role")
-    if supports_developer_role is not None:
-        logger.info(
-            "[model_resolver] _extract_model_config: "
-            f"supports_developer_role={supports_developer_role}"
-        )
-
     # Catalog model id override for Codex-compatible models
     codex_catalog_model_id = codex_catalog_model_id_from_config(env)
     if codex_catalog_model_id:
         logger.info(
             f"[model_resolver] _extract_model_config: codex_catalog_model_id={codex_catalog_model_id}"
+        )
+
+    supports_developer_role = env.get("supports_developer_role")
+    if supports_developer_role is not None:
+        logger.info(
+            "[model_resolver] _extract_model_config: "
+            "supports_developer_role configured"
         )
 
     result = {
@@ -1177,9 +1185,10 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "think_config": thinking_config,
         # User-configured temperature override
         "temperature": temperature,
-        # Whether OpenAI-compatible chat models accept developer-role messages.
-        "supports_developer_role": supports_developer_role,
     }
+    if supports_developer_role is not None:
+        # Preserve the existing response shape unless the capability is explicit.
+        result["supports_developer_role"] = supports_developer_role
     if image_config is not None:
         result["imageConfig"] = image_config
     if model_capabilities:

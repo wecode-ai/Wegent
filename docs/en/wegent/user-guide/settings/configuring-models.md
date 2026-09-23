@@ -120,6 +120,10 @@ You'll see a unified model list showing both public (system) and your personal m
 | **Base URL** | No | Custom endpoint (for proxies) |
 | **Wework Available** | No | Whether the model is shown in the wework desktop model list |
 
+The dialog defaults to **Visual configuration** for common settings. Switch to **JSON configuration** to edit the complete Model CRD `spec`, including `modelConfig`, capabilities, type-specific settings, and future fields that do not yet have form controls. For example, an OpenAI-compatible model that rejects the `developer` message role can set `spec.modelConfig.env.supports_developer_role` to `false`.
+
+JSON mode is authoritative: saving uses the displayed `spec` without overwriting it from hidden form fields. Switching back parses and fills every supported form field, while unknown fields remain in the original snapshot for later form saves. Specs without an object-valued `modelConfig.env` cannot be represented safely by the form and remain in JSON mode. The editor validates JSON structure and unsafe recursive keys, and **displays `api_key` and other secrets in plaintext**; do not copy, share, or capture screenshots of the editor. A newly stored field still needs corresponding Backend or Executor support before it can change runtime behavior.
+
 The selected provider is persisted as `spec.protocol`, and the corresponding API format (e.g. `chat/completions` for OpenAI Chat Completions, `responses` for OpenAI Responses) is persisted as `spec.apiFormat`. The **Wework Available** toggle controls `spec.isWeworkAvailable`; only models marked as available are distributed to the wework desktop client.
 
 ### Step 3: Configure Model Details

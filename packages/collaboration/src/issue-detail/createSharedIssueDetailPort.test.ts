@@ -9,6 +9,7 @@ import { createSharedIssueDetailPort } from "./createSharedIssueDetailPort";
 
 describe("createSharedIssueDetailPort", () => {
   it("owns the single cloud-to-detail mapping and delegates host file saving", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "issue-1" });
     const update = vi.fn().mockResolvedValue({ id: "issue-1" });
     const listBindings = vi.fn().mockResolvedValue([
       {
@@ -28,7 +29,7 @@ describe("createSharedIssueDetailPort", () => {
     const api = {
       issues: {
         get: vi.fn(),
-        create: vi.fn(),
+        create,
         update,
         assign: vi.fn(),
       },
@@ -85,6 +86,17 @@ describe("createSharedIssueDetailPort", () => {
     } as unknown as SharedWorkspaceApi;
 
     const port = createSharedIssueDetailPort(api, saveFile);
+
+    await port.issues.create("project-1", {
+      title: "Human-owned Issue",
+      assignee_user_id: 7,
+      notify_assignee: false,
+    });
+    expect(create).toHaveBeenCalledWith("project-1", {
+      title: "Human-owned Issue",
+      assigneeUserId: 7,
+      notifyAssignee: false,
+    });
 
     await port.issues.update("issue-1", {
       version: 7,

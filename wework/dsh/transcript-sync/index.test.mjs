@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
+import { SyncState, WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
 import { MemorySyncOutbox } from './outbox.js'
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
@@ -23,7 +23,13 @@ function turn(overrides = {}) {
 
 function state() {
   return {
-    value: { version: 4, enabled: true, transcripts: {}, preferencesHash: null },
+    value: {
+      version: 4,
+      optInVersion: 1,
+      enabled: true,
+      transcripts: {},
+      preferencesHash: null,
+    },
     async save() {},
   }
 }
@@ -78,6 +84,95 @@ test('resolves backend API and strips device-local preferences', () => {
       quickPhrases: [{ id: 'x', content: 'x' }],
     }
   )
+})
+
+test('starts new synchronization state disabled without cloud requests', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-state-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const syncState = new SyncState(join(directory, 'state.json'))
+  await syncState.load()
+  const requests = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: {},
+    state: syncState,
+    target: {},
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          requests.push(request)
+        },
+      },
+    },
+  })
+
+  await sync.start()
+
+  assert.equal(sync.enabled, false)
+  assert.equal(syncState.value.optInVersion, 1)
+  assert.deepEqual(requests, [])
+})
+
+test('resets previously enabled synchronization until the user opts in again', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-migration-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'state.json')
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      version: 4,
+      enabled: true,
+      transcripts: {
+        shared: {
+          currentSequence: 2,
+          downloadedThrough: 1,
+          downloadedArchiveIds: [7],
+          turns: [{ id: 'obsolete' }],
+        },
+      },
+      preferencesHash: 'preferences-hash',
+    })}\n`
+  )
+  const migrated = new SyncState(path)
+
+  await migrated.load()
+
+  assert.equal(migrated.value.enabled, false)
+  assert.equal(migrated.value.optInVersion, 1)
+  assert.equal(migrated.value.preferencesHash, 'preferences-hash')
+  assert.deepEqual(migrated.value.transcripts.shared.downloadedArchiveIds, [7])
+  assert.equal(Object.hasOwn(migrated.value.transcripts.shared, 'turns'), false)
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), migrated.value)
+
+  const requests = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: {},
+    state: migrated,
+    target: {},
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          requests.push(request)
+        },
+      },
+    },
+  })
+  await sync.start()
+  assert.equal(sync.enabled, false)
+  assert.deepEqual(requests, [])
+
+  await sync.setEnabled(true)
+  sync.stop()
+  const optedIn = new SyncState(path)
+  await optedIn.load()
+
+  assert.equal(optedIn.value.enabled, true)
+  assert.equal(optedIn.value.optInVersion, 1)
 })
 
 test('prefers the active cloud connection over the environment backend', async () => {
@@ -304,7 +399,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
     state: state(),
     target: {
       async status() {
-        return { available: true, importedThrough: 0 }
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
       },
       async restore(transcript, segments, options) {
         restored.push({
@@ -323,13 +418,14 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
     desktop: {
       weworkSync: {
         async request(request) {
-          if (request.path === '/wework-transcripts?includeArchived=true') {
+          if (request.path === '/wework-transcripts?includeArchived=false') {
             return {
               status: 200,
               body: {
                 items: [
                   {
                     transcriptId: 'shared',
+                    writerClientId: 'client-1',
                     currentSequence: 2,
                     archives: [
                       {
@@ -398,7 +494,7 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
     state: state(),
     target: {
       async status() {
-        return { available: true, importedThrough: 0 }
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
       },
       async restore(transcript) {
         restored.push(transcript.transcriptId)
@@ -408,7 +504,7 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
     desktop: {
       weworkSync: {
         async request(request) {
-          if (request.path === '/wework-transcripts?includeArchived=true') {
+          if (request.path === '/wework-transcripts?includeArchived=false') {
             return {
               status: 200,
               body: {
@@ -458,6 +554,79 @@ test('skips a missing cloud archive and continues restoring other transcripts', 
   assert.deepEqual(restored, ['available'])
   assert.equal(sync.state.value.transcripts.missing.downloadedThrough, 0)
   assert.equal(sync.state.value.transcripts.available.downloadedThrough, 1)
+})
+
+test('the most recent writer restores a missing parent after creating a conflict fork', async () => {
+  const restored = []
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-2',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {
+      async status(transcript) {
+        assert.equal(transcript.transcriptId, 'created-here')
+        return { available: true, importedThrough: 0, reason: 'restore_required' }
+      },
+      async restore(transcript) {
+        restored.push(transcript.transcriptId)
+        return { available: true, importedThrough: transcript.currentSequence }
+      },
+    },
+    desktop: {
+      weworkSync: {
+        async request(request) {
+          if (request.path === '/wework-transcripts?includeArchived=false') {
+            return {
+              status: 200,
+              body: {
+                items: [
+                  {
+                    transcriptId: 'created-here',
+                    writerClientId: 'client-2',
+                    currentSequence: 1,
+                    archives: [
+                      {
+                        id: 1,
+                        fromSequence: 0,
+                        toSequence: 1,
+                        sha256: 'a'.repeat(64),
+                        sizeBytes: 32,
+                        format: 'codex-snapshot.v1.tgz.aes256gcm',
+                      },
+                    ],
+                  },
+                  {
+                    transcriptId: 'fork-created-here',
+                    parentTranscriptId: 'created-here',
+                    writerClientId: 'client-2',
+                    currentSequence: 1,
+                    archives: [],
+                  },
+                ],
+              },
+            }
+          }
+          if (request.path.endsWith('/encryption-key')) {
+            return {
+              status: 200,
+              body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+            }
+          }
+          assert.match(request.path, /\/archives\/1\/download$/u)
+          await writeFile(request.downloadPath, 'fork')
+          return { status: 200, body: { path: request.downloadPath } }
+        },
+      },
+    },
+  })
+
+  await sync.pullTranscripts()
+
+  assert.deepEqual(restored, ['created-here'])
+  assert.equal(sync.state.value.transcripts['created-here'].downloadedThrough, 1)
+  assert.equal(sync.state.value.transcripts['fork-created-here'].downloadedThrough, 0)
 })
 
 test('branches deterministically when the cloud causal head changed', async () => {
@@ -892,7 +1061,7 @@ test('does not restore over a transcript with an unresolved local turn', async (
     desktop: {
       weworkSync: {
         async request(request) {
-          assert.equal(request.path, '/wework-transcripts?includeArchived=true')
+          assert.equal(request.path, '/wework-transcripts?includeArchived=false')
           return {
             status: 200,
             body: {

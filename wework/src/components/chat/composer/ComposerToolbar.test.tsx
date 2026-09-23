@@ -203,6 +203,37 @@ describe('ComposerToolbar', () => {
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
   })
 
+  it('renders the unavailable model selector after the catalog has returned models', () => {
+    const unavailableModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime' as const,
+      displayName: 'CodeX 模型不可用',
+      provider: 'local' as const,
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'unavailable' as const,
+    }
+
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[unavailableModel]}
+        selectedModel={null}
+        activeModel={unavailableModel}
+        selectedModelOptions={{}}
+        isModelSelectionReady={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-loading')).not.toBeInTheDocument()
+  })
+
   it.each([
     ['mac', '⌘'],
     ['win', 'Ctrl'],

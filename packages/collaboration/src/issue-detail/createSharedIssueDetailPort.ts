@@ -5,12 +5,14 @@
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAttachment,
+  CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
 } from "../types";
 import type { IssueWorkflowPlanView } from "./IssueWorkflowPlanSection";
 import type { WorkflowDeliverableDraft } from "./WorkflowStageCompletionDialog";
 import type { SharedWorkflowNode } from "./workflowTypes";
+import type { ExecutionDisplayStatus } from "./executionStatus";
 
 export interface SharedIssueDetailTaskBinding {
   id: string;
@@ -25,6 +27,11 @@ export interface SharedIssueDetailTaskBinding {
   workflow_node_id?: string | null;
   binding_type?: "system" | "user";
   linked_at: string;
+}
+
+export interface SharedIssueDetailTaskExecutionState {
+  status: ExecutionDisplayStatus;
+  queuePosition?: number | null;
 }
 
 export interface SharedIssueDetailCollaborator {
@@ -103,6 +110,8 @@ export interface SharedIssueDetailCreateInput {
   workflow?: Record<string, unknown> | null;
   execution_config?: Record<string, unknown> | null;
   automation_rule_id?: string | null;
+  assignee_user_id?: number | null;
+  notify_assignee?: boolean;
   creator_name?: string;
 }
 
@@ -182,6 +191,9 @@ export interface SharedIssueDetailPort {
   };
   agents: {
     list(projectId: string): Promise<SharedIssueDetailAgent[]>;
+  };
+  collaborationGroups: {
+    list(projectId: string): Promise<CollaborationGroup[]>;
   };
   deliveries: {
     list(issueId: string): Promise<SharedIssueDetailDelivery[]>;
@@ -467,6 +479,14 @@ export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
 ): SharedIssueDetailPort {
+  const projects = (
+    api as SharedIssueDetailWorkspaceApi & {
+      projects?: Pick<
+        SharedWorkspaceApi["projects"],
+        "listCollaborationGroups"
+      >;
+    }
+  ).projects;
   const workflowOperation = (
     operation:
       | SharedWorkspaceApi["workflowPlans"]["approve"]
@@ -507,6 +527,12 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.automation_rule_id !== undefined
             ? { automationRuleId: input.automation_rule_id }
+            : {}),
+          ...(input.assignee_user_id !== undefined
+            ? { assigneeUserId: input.assignee_user_id }
+            : {}),
+          ...(input.notify_assignee !== undefined
+            ? { notifyAssignee: input.notify_assignee }
             : {}),
         }),
       update: (issueId, input) =>
@@ -596,6 +622,10 @@ export function createSharedIssueDetailPort(
             status: typeof agent.status === "string" ? agent.status : undefined,
           })),
         ),
+    },
+    collaborationGroups: {
+      list: (projectId) =>
+        projects?.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
     },
     deliveries: {
       list: (issueId) =>

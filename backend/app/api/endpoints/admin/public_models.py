@@ -20,6 +20,7 @@ from app.schemas.admin import (
     PublicModelUpdate,
 )
 from app.services.adapters.public_model import (
+    explicit_public_model_visibility,
     is_public_model_visible,
     with_public_model_visibility,
 )
@@ -124,12 +125,17 @@ async def create_public_model(
             detail=f"Public model '{model_data.name}' already exists in namespace '{model_data.namespace}'",
         )
 
+    is_visible = (
+        model_data.is_visible
+        if model_data.is_visible is not None
+        else is_public_model_visible(model_data.model_json)
+    )
     new_model = Kind(
         user_id=0,
         kind="Model",
         name=model_data.name,
         namespace=model_data.namespace,
-        json=with_public_model_visibility(model_data.model_json, model_data.is_visible),
+        json=with_public_model_visibility(model_data.model_json, is_visible),
         is_active=True,
     )
     db.add(new_model)
@@ -185,9 +191,19 @@ async def update_public_model(
     if model_data.namespace is not None:
         model.namespace = model_data.namespace
     if model_data.model_json is not None:
+        json_visibility = explicit_public_model_visibility(model_data.model_json)
+        updated_visibility = (
+            model_data.is_visible
+            if model_data.is_visible is not None
+            else (
+                json_visibility
+                if json_visibility is not None
+                else is_public_model_visible(model.json)
+            )
+        )
         model.json = with_public_model_visibility(
             model_data.model_json,
-            is_public_model_visible(model.json),
+            updated_visibility,
         )
     if model_data.is_active is not None:
         model.is_active = model_data.is_active

@@ -334,6 +334,9 @@ impl LocalTaskStore {
             local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
+        if let Some(execution_environment) = input.execution_environment {
+            metadata["execution_environment"] = execution_environment;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items
@@ -489,9 +492,9 @@ impl LocalTaskStore {
                 id, resource_type, project_space, cloud_project_id, parent_id,
                 title, description, sequence_number, status, priority, sort_order,
                 metadata, version, created_at, updated_at, completed_at,
-                assignee_agent_id
+                assignee_agent_id, assignee_user_id
              ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       0, ?9, 1, ?10, ?10, ?11, ?12)",
+                       0, ?9, 1, ?10, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 project_id,
@@ -505,6 +508,7 @@ impl LocalTaskStore {
                 now,
                 completed_at,
                 None::<String>,
+                input.assignee_user_id,
             ],
         )?;
         if metadata.get("workflow").is_some_and(Value::is_object) {
@@ -609,6 +613,12 @@ impl LocalTaskStore {
         let status = input.status.or(current.status);
         let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
+        let previous_group_id = current.metadata["collaboration_group"]["id"]
+            .as_str()
+            .map(ToOwned::to_owned);
+        let requested_group_id = input.assignee_group_id.as_ref().cloned().flatten();
+        let collaboration_group_changed = input.assignee_group_id.is_some()
+            && previous_group_id.as_deref() != requested_group_id.as_deref();
         let mut metadata = current.metadata;
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if let Some(group_id) = group_id {
@@ -711,9 +721,16 @@ impl LocalTaskStore {
                 refresh_runtime_projection_additional_context(&transaction, parent_id)?;
             }
         }
-        if assignee_changed {
+        if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if let Some(agent_id) = assignee_agent_id {
+            if let Some(group_id) = requested_group_id.as_deref() {
+                local_automation::run_collaboration_group(
+                    &transaction,
+                    project_id,
+                    task_id,
+                    group_id,
+                )?;
+            } else if let Some(agent_id) = assignee_agent_id {
                 let agent =
                     get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
                         TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
@@ -787,52 +804,36 @@ impl LocalTaskStore {
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
-        validate_name(&input.name, "robot name")?;
-        validate_chat_agent_runtime(&input.runtime)?;
-        if !(1..=20).contains(&input.max_concurrent_executions) {
-            return Err(TaskRuntimeError::Invalid(
-                "Robot max concurrent executions must be between 1 and 20".to_owned(),
-            ));
-        }
-        validate_workspace_policy(&input.workspace_policy)?;
-        validate_mcp_servers(&input.mcp_servers)?;
         let connection = self.connection()?;
-        let id = format!("LA-{}", Uuid::new_v4().simple());
-        let now = now();
-        let mut metadata = json!({
-            "runtime": input.runtime,
-            "model": input.model,
-            "capability_description": input.capability_description.unwrap_or_default(),
-            "system_prompt": input.system_prompt.unwrap_or_default(),
-            "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
-            "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
-            "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
-            "max_concurrent_executions": input.max_concurrent_executions,
-            "workspace_policy": input.workspace_policy,
-            "plugins": input.plugins,
-            "additional_skills": input.additional_skills,
-            "mcp_servers": input.mcp_servers,
-        });
-        metadata["execution_device_id"] = json!(input.execution_device_id);
-        metadata["local_project_id"] = json!(input.local_project_id);
-        connection.execute(
-            "INSERT INTO loop_items (
-                id, resource_type, project_space, cloud_project_id, name, title,
-                description, status, metadata, version, created_at, updated_at,
-                created_by_user_id
-             ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
-                       ?5, ?5, ?6)",
-            params![
-                id,
-                project_id,
-                input.name,
-                metadata.to_string(),
-                now,
-                input.created_by_user_id.unwrap_or(0),
-            ],
-        )?;
+        let id = insert_chat_agent(&connection, project_id, input)?;
         drop(connection);
         self.get_chat_agent(project_id, &id)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let initialized = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM loop_items
+                WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
+                  AND deleted_at IS NULL
+             )",
+            [project_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if initialized {
+            transaction.commit()?;
+            return Ok(None);
+        }
+        let id = insert_chat_agent(&transaction, project_id, input)?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_chat_agent(project_id, &id).map(Some)
     }
 
     pub fn update_chat_agent(
@@ -856,6 +857,12 @@ impl LocalTaskStore {
         if let Some(name) = input.name.as_ref() {
             validate_name(name, "robot name")?;
         }
+        if let Some(display_name) = input.display_name.as_ref() {
+            metadata["display_name"] = json!(display_name);
+        }
+        if let Some(namespace) = input.namespace.as_ref() {
+            metadata["namespace"] = json!(namespace);
+        }
         if let Some(runtime) = input.runtime.as_ref() {
             validate_chat_agent_runtime(runtime)?;
             metadata["runtime"] = json!(runtime);
@@ -863,8 +870,17 @@ impl LocalTaskStore {
         if let Some(model) = input.model.as_ref() {
             metadata["model"] = json!(model);
         }
+        if let Some(model_type) = input.model_type.as_ref() {
+            metadata["model_type"] = json!(model_type);
+        }
+        if let Some(model_namespace) = input.model_namespace.as_ref() {
+            metadata["model_namespace"] = json!(model_namespace);
+        }
         if let Some(description) = input.capability_description.as_ref() {
             metadata["capability_description"] = json!(description);
+        }
+        if let Some(capability_mode) = input.capability_mode.as_ref() {
+            metadata["capability_mode"] = json!(capability_mode);
         }
         if let Some(prompt) = input.system_prompt.as_ref() {
             metadata["system_prompt"] = json!(prompt);
@@ -2674,6 +2690,75 @@ impl LocalTaskStore {
     }
 }
 
+fn insert_chat_agent(
+    connection: &Connection,
+    project_id: &str,
+    input: ChatAgentCreate,
+) -> Result<String, TaskRuntimeError> {
+    validate_name(&input.name, "robot name")?;
+    validate_chat_agent_runtime(&input.runtime)?;
+    if !(1..=20).contains(&input.max_concurrent_executions) {
+        return Err(TaskRuntimeError::Invalid(
+            "Robot max concurrent executions must be between 1 and 20".to_owned(),
+        ));
+    }
+    validate_workspace_policy(&input.workspace_policy)?;
+    validate_mcp_servers(&input.mcp_servers)?;
+    let capability_mode = input.capability_mode.unwrap_or_else(|| {
+        if !input.plugins.is_empty()
+            || !input.additional_skills.is_empty()
+            || input
+                .mcp_servers
+                .as_object()
+                .is_some_and(|servers| !servers.is_empty())
+        {
+            "manual".to_owned()
+        } else {
+            "follow_device".to_owned()
+        }
+    });
+    let id = format!("LA-{}", Uuid::new_v4().simple());
+    let timestamp = now();
+    let mut metadata = json!({
+        "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
+        "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
+        "runtime": input.runtime,
+        "model": input.model,
+        "model_type": input.model_type,
+        "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "capability_description": input.capability_description.unwrap_or_default(),
+        "capability_mode": capability_mode,
+        "system_prompt": input.system_prompt.unwrap_or_default(),
+        "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
+        "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
+        "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
+        "max_concurrent_executions": input.max_concurrent_executions,
+        "workspace_policy": input.workspace_policy,
+        "plugins": input.plugins,
+        "additional_skills": input.additional_skills,
+        "mcp_servers": input.mcp_servers,
+    });
+    metadata["execution_device_id"] = json!(input.execution_device_id);
+    metadata["local_project_id"] = json!(input.local_project_id);
+    connection.execute(
+        "INSERT INTO loop_items (
+            id, resource_type, project_space, cloud_project_id, name, title,
+            description, status, metadata, version, created_at, updated_at,
+            created_by_user_id
+         ) VALUES (?1, 'chat_agent', 'default', ?2, ?3, ?3, '', 'active', ?4, 1,
+                   ?5, ?5, ?6)",
+        params![
+            id,
+            project_id,
+            input.name,
+            metadata.to_string(),
+            timestamp,
+            input.created_by_user_id.unwrap_or(0),
+        ],
+    )?;
+    Ok(id)
+}
+
 fn get_effective_binding(
     connection: &Connection,
     device_id: &str,
@@ -3916,6 +4001,7 @@ pub(crate) fn numeric_id() -> String {
 
 fn map_chat_agent(row: LoopItem) -> ChatAgent {
     let metadata = row.metadata;
+    let name = row.title.or(row.name).unwrap_or_else(|| "AI".to_owned());
     let text = |key: &str, default: &str| {
         metadata
             .get(key)
@@ -3926,13 +4012,43 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
     ChatAgent {
         id: row.id.clone(),
         project_id: row.cloud_project_id.clone().unwrap_or_default(),
-        name: row.title.or(row.name).unwrap_or_else(|| "AI".to_owned()),
+        display_name: text("display_name", &name),
+        namespace: text("namespace", "default"),
+        name,
         runtime: text("runtime", "codex"),
         model: metadata
             .get("model")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        model_type: metadata
+            .get("model_type")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        model_namespace: text("model_namespace", "default"),
         capability_description: text("capability_description", ""),
+        capability_mode: metadata
+            .get("capability_mode")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| {
+                let has_manual_capabilities = metadata
+                    .get("plugins")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| !items.is_empty())
+                    || metadata
+                        .get("additional_skills")
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| !items.is_empty())
+                    || metadata
+                        .get("mcp_servers")
+                        .and_then(Value::as_object)
+                        .is_some_and(|items| !items.is_empty());
+                if has_manual_capabilities {
+                    "manual".to_owned()
+                } else {
+                    "follow_device".to_owned()
+                }
+            }),
         system_prompt: text("system_prompt", ""),
         status: row.status.unwrap_or_else(|| "active".to_owned()),
         visibility: text("visibility", "creator_admin"),
@@ -4126,8 +4242,12 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         task_title: row.get(38)?,
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
-        agent_name: row
-            .get::<_, Option<String>>(41)?
+        agent_name: agent_metadata
+            .get("display_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or(row.get::<_, Option<String>>(41)?)
             .or(row.get::<_, Option<String>>(42)?)
             .unwrap_or_else(|| "AI".to_owned()),
         agent_system_prompt: row
@@ -4306,6 +4426,8 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| execution.task_title.clone());
     let workflow_node_id = stored.get("workflow_node_id").cloned();
+    let automation_run_id = stored.get("automation_run_id").cloned();
+    let automation_role = stored.get("automation_role").cloned();
     let mut additional_context = json!({
         "task": {
             "kind": "application",
@@ -4355,6 +4477,8 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
             "cloudProjectId": execution.cloud_project_id,
             "loopItemId": execution.loop_item_id,
             "workflowNodeId": workflow_node_id,
+            "run_id": automation_run_id,
+            "automationRole": automation_role,
         },
         "additionalContext": additional_context,
     });
@@ -4407,11 +4531,23 @@ fn enqueue_ready_local_workflow_stages(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            (index, node_id, prompt, assignee_type, assignee_id)
+            let automation_role = node
+                .get("automation_role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            (
+                index,
+                node_id,
+                prompt,
+                assignee_type,
+                assignee_id,
+                automation_role,
+            )
         })
         .collect::<Vec<_>>();
     let mut queued = 0;
-    for (index, node_id, prompt, assignee_type, assignee_id) in ready {
+    for (index, node_id, prompt, assignee_type, assignee_id, automation_role) in ready {
         if assignee_type != "agent" || assignee_id.is_empty() {
             return Err(TaskRuntimeError::Invalid(format!(
                 "automated workflow stage '{node_id}' requires an agent assignee"
@@ -4445,6 +4581,7 @@ fn enqueue_ready_local_workflow_stages(
                 "message": message,
                 "workflow_node_id": node_id,
                 "automation_run_id": automation_run_id,
+                "automation_role": automation_role,
             }),
         )?;
         let execution = execution_row(connection, execution_id)?;
@@ -4724,9 +4861,14 @@ mod tests {
                 project_id,
                 ChatAgentCreate {
                     name: "Local Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
                     visibility: Some("creator_admin".to_owned()),
                     execution_environment: Some("local".to_owned()),
@@ -4742,6 +4884,32 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+
+    fn default_chat_agent_input() -> ChatAgentCreate {
+        ChatAgentCreate {
+            name: "current-device-assistant".to_owned(),
+            display_name: Some("Current device assistant".to_owned()),
+            namespace: Some("default".to_owned()),
+            runtime: "codex".to_owned(),
+            model: Some("gpt-5".to_owned()),
+            model_type: Some("public".to_owned()),
+            model_namespace: Some("default".to_owned()),
+            capability_description: None,
+            capability_mode: Some("follow_device".to_owned()),
+            system_prompt: Some(String::new()),
+            visibility: Some("creator_admin".to_owned()),
+            execution_environment: Some("local".to_owned()),
+            execution_mode: Some("auto".to_owned()),
+            execution_device_id: None,
+            max_concurrent_executions: 1,
+            workspace_policy: "project".to_owned(),
+            local_project_id: None,
+            created_by_user_id: Some(7),
+            plugins: Vec::new(),
+            additional_skills: Vec::new(),
+            mcp_servers: json!({}),
+        }
     }
 
     fn accept_and_start(store: &LocalTaskStore, claimed: &LocalExecution) -> LocalExecution {
@@ -4784,6 +4952,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -4832,6 +5001,220 @@ mod tests {
         assert_eq!(
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
+        );
+    }
+
+    #[test]
+    fn default_chat_agent_is_created_once_and_stays_deleted() {
+        let (_directory, store, project) = chat_agent_store();
+        let input = default_chat_agent_input();
+
+        let created = store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .expect("the first initialization should create an agent");
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input.clone())
+            .unwrap()
+            .is_none());
+
+        store
+            .archive_chat_agent(&project.id, &created.id, created.version)
+            .unwrap();
+        assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
+        assert!(store
+            .ensure_default_chat_agent(&project.id, input)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn default_chat_agent_initialization_is_atomic_across_store_connections() {
+        let (_directory, store, project) = chat_agent_store();
+        let db_path = store.path.clone();
+        drop(store);
+        let barrier = Arc::new(Barrier::new(2));
+        let initializers = (0..2)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let db_path = db_path.clone();
+                let project_id = project.id.clone();
+                std::thread::spawn(move || {
+                    let store = LocalTaskStore::open(db_path).unwrap();
+                    barrier.wait();
+                    store
+                        .ensure_default_chat_agent(&project_id, default_chat_agent_input())
+                        .unwrap()
+                        .is_some()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            initializers
+                .into_iter()
+                .map(|initializer| initializer.join().unwrap())
+                .filter(|created| *created)
+                .count(),
+            1
+        );
+        assert_eq!(
+            LocalTaskStore::open(db_path)
+                .unwrap()
+                .list_chat_agents(&project.id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn assigning_a_local_issue_to_a_collaboration_group_starts_its_leader() {
+        let (_directory, store, project) = chat_agent_store();
+        let leader = make_local_agent(&store, &project.id, "auto");
+        let inactive = make_local_agent(&store, &project.id, "auto");
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(metadata,'$.display_name','当前设备智能体')
+                 WHERE id=?1",
+                [&leader.id],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET status='disabled' WHERE id=?1",
+                [&inactive.id],
+            )
+            .unwrap();
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([
+                        {
+                            "id": "group-1",
+                            "name": "Delivery team",
+                            "instructions": "Coordinate the work.",
+                            "leader": {"kind": "agent", "id": leader.id},
+                            "members": [
+                                {"kind": "agent", "id": leader.id},
+                                {"kind": "agent", "id": inactive.id}
+                            ],
+                            "stages": []
+                        }
+                    ])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Ship the feature".to_owned(),
+                    description: "Implement and verify it.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let assigned = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    assignee_group_id: Some(Some("group-1".to_owned())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(assigned.metadata["collaboration_group"]["id"], "group-1");
+        assert_eq!(assigned.status.as_deref(), Some("in_progress"));
+        assert_eq!(
+            assigned.metadata["workflow"]["nodes"][0]["required_assignee_id"],
+            leader.id
+        );
+        assert_eq!(
+            assigned.metadata["workflow"]["nodes"][0]["status"],
+            "queued"
+        );
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the collaboration group leader must be queued");
+        assert_eq!(claimed.agent_id, leader.id);
+        assert_eq!(claimed.agent_name, "当前设备智能体");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(
+            payload["origin"]["automationRole"],
+            Value::String("manager".to_owned())
+        );
+        let run_id = payload["origin"]["run_id"].as_str().unwrap();
+        let candidates = store
+            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
+            .unwrap();
+        assert_eq!(candidates["robots"].as_array().unwrap().len(), 1);
+        assert_eq!(candidates["robots"][0]["name"], "当前设备智能体");
+        store
+            .submit_local_automation_workflow_plan(
+                &project.id,
+                &task.id,
+                run_id,
+                &json!({
+                    "summary": "Implement the feature.",
+                    "items": [{
+                        "client_key": "implement",
+                        "title": "Implement",
+                        "description": "Make the requested change.",
+                        "assignee_type": "agent",
+                        "assignee_id": leader.id,
+                        "assignee_name": "当前设备智能体",
+                        "rationale": "Uses the current device."
+                    }]
+                }),
+            )
+            .unwrap();
+        store
+            .complete_execution(claimed.id, Some("Plan submitted"))
+            .unwrap();
+        assert!(store
+            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
+            .is_err());
+        let planned = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the submitted plan must queue its assigned Agent");
+        assert_eq!(planned.agent_id, leader.id);
+        assert_eq!(
+            planned.execution_payload.as_ref().unwrap()["message"],
+            "Implement\n\nMake the requested change.\n\nUses the current device."
         );
     }
 
@@ -4897,6 +5280,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5012,6 +5396,7 @@ mod tests {
                     priority: "medium".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5138,6 +5523,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5236,6 +5622,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5320,6 +5707,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5381,6 +5769,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5431,6 +5820,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5499,6 +5889,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5553,9 +5944,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Creator Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5589,8 +5985,12 @@ mod tests {
         let _ = directory;
         let create: ChatAgentCreate = serde_json::from_value(json!({
             "name": "Claude implementer",
+            "display_name": "Claude Implementer",
+            "namespace": "default",
             "runtime": "claude_code",
             "model": "claude-sonnet-4-5",
+            "model_type": "public",
+            "model_namespace": "default",
             "capability_description": "Implements and reviews code",
             "system_prompt": "Use the configured capabilities.",
             "execution_environment": "local",
@@ -5613,11 +6013,17 @@ mod tests {
         .unwrap();
         let agent = store.create_chat_agent(&project.id, create).unwrap();
 
+        assert_eq!(agent.display_name, "Claude Implementer");
+        assert_eq!(agent.namespace, "default");
         assert_eq!(agent.runtime, "claude_code");
+        assert_eq!(agent.model_type.as_deref(), Some("public"));
+        assert_eq!(agent.model_namespace, "default");
+        assert_eq!(agent.capability_mode, "manual");
         assert_eq!(agent.additional_skills[0]["name"], "architecture-review");
         assert_eq!(agent.mcp_servers["github"]["command"], "github-mcp-server");
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].runtime, "claude_code");
+        assert_eq!(listed[0].display_name, "Claude Implementer");
         assert_eq!(listed[0].additional_skills, agent.additional_skills);
         assert_eq!(listed[0].mcp_servers, agent.mcp_servers);
 
@@ -5631,6 +6037,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -5703,9 +6110,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bound Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5732,9 +6144,14 @@ mod tests {
                 ChatAgentUpdate {
                     version: agent.version,
                     name: None,
+                    display_name: None,
+                    namespace: None,
                     runtime: None,
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5759,9 +6176,14 @@ mod tests {
                 ChatAgentUpdate {
                     version: updated.version,
                     name: None,
+                    display_name: None,
+                    namespace: None,
                     runtime: None,
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: None,
                     system_prompt: None,
                     status: None,
                     visibility: None,
@@ -5789,9 +6211,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot A".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5812,9 +6239,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Bot B".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5841,6 +6273,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -5913,9 +6346,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Parallel Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -5942,6 +6380,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -5990,9 +6429,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Unbound Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6019,6 +6463,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6081,6 +6526,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6125,9 +6571,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Manual Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6153,6 +6604,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6190,9 +6642,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Status Filter Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6218,6 +6675,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6268,6 +6726,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6331,6 +6790,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6409,6 +6869,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -6494,6 +6955,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6567,6 +7029,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6751,9 +7214,14 @@ mod tests {
                 &project.id,
                 ChatAgentCreate {
                     name: "Migrated Bot".to_owned(),
+                    display_name: None,
+                    namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
+                    model_type: None,
+                    model_namespace: None,
                     capability_description: None,
+                    capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: None,
                     execution_environment: Some("local".to_owned()),
@@ -6779,6 +7247,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -6826,6 +7295,43 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn create_task_persists_the_initial_human_assignee() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    automatic_processing_rules: Some(json!([{
+                        "id": "assign-another-human",
+                        "enabled": true,
+                        "triggerType": "event",
+                        "eventType": "task.created",
+                        "targetKind": "human",
+                        "targetId": "8"
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let input: TaskCreate = serde_json::from_value(json!({
+            "title": "Human-owned issue",
+            "status": "inbox",
+            "priority": "none",
+            "parent_id": null,
+            "assignee_user_id": 9001
+        }))
+        .unwrap();
+
+        let created = store.create_task(&project.id, input).unwrap();
+        let persisted = store.get_task(&project.id, &created.id).unwrap();
+
+        assert_eq!(created.assignee_user_id, Some(9001));
+        assert_eq!(persisted.assignee_user_id, Some(9001));
     }
 
     #[test]
@@ -7244,6 +7750,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7258,6 +7765,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: Some(parent.id.clone()),
                     tags: vec!["nested".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7294,6 +7802,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7308,6 +7817,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7349,6 +7859,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7414,6 +7925,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7705,6 +8217,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7743,6 +8256,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7757,6 +8271,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7811,6 +8326,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7825,6 +8341,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -7940,6 +8457,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8041,6 +8559,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -8211,6 +8730,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{

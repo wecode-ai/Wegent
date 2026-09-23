@@ -17,6 +17,8 @@ use toml_edit::DocumentMut;
 
 use crate::{agents::replace_config, logging::log_executor_event};
 
+use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
+
 pub const BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV: &str = "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
@@ -105,6 +107,7 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
     })?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    let _mutation_lock = acquire_personal_marketplace_lock(destination)?;
     let staging = parent.join(format!(".{MARKETPLACE_ID}-{}-staging", std::process::id()));
     remove_existing_path(&staging)?;
     let legacy_recovery_registry_path = parent.join(LEGACY_RECOVERY_REGISTRY_FILE);
@@ -117,13 +120,15 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         })
         .collect::<Vec<_>>();
 
-    let content_matches = destination.is_dir()
-        && fs::read_to_string(destination.join(CONTENT_HASH_FILE))
-            .is_ok_and(|stored| stored.trim() == content_hash);
     let staging_result = (|| {
-        copy_directory_recursive(if content_matches { destination } else { source }, &staging)?;
-        if !content_matches && destination.is_dir() {
+        // The content hash describes only the packaged source. It cannot prove that
+        // the mutable destination still contains every required bundled entry.
+        // Always rebuild bundled entries from the package, then merge non-bundled
+        // personal entries back into the staged marketplace.
+        copy_directory_recursive(source, &staging)?;
+        if destination.is_dir() {
             preserve_personal_plugins(destination, &staging, &codex_plugins)?;
+            preserve_personal_marketplace_state(destination, &staging)?;
         }
         for legacy_root in &pending_legacy_marketplaces {
             preserve_personal_plugins(legacy_root, &staging, &codex_plugins)?;
@@ -265,6 +270,27 @@ fn preserve_personal_plugins(
         .filter(|name| !bundled.contains(*name))
         .cloned()
         .collect::<Vec<_>>();
+    let plugins_root = existing_root.join("plugins");
+    if let Ok(entries) = fs::read_dir(&plugins_root) {
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| format!("Failed to read {}: {error}", plugins_root.display()))?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!("Failed to inspect {}: {error}", entry.path().display())
+            })?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if file_type.is_dir()
+                && !file_type.is_symlink()
+                && valid_plugin_name(&name)
+                && !bundled.contains(&name)
+                && valid_plugin_directory(&entry.path())
+            {
+                names.push(name);
+            }
+        }
+    }
     names.sort();
     names.dedup();
 
@@ -276,7 +302,8 @@ fn preserve_personal_plugins(
                 claude_entries
                     .get(&name)
                     .and_then(|entry| local_plugin_source(existing_root, entry))
-            });
+            })
+            .or_else(|| Some(existing_root.join("plugins").join(&name)));
         let Some(source) = source.filter(|path| valid_plugin_directory(path)) else {
             continue;
         };
@@ -294,6 +321,31 @@ fn preserve_personal_plugins(
         )?;
     }
     Ok(())
+}
+
+fn preserve_personal_marketplace_state(
+    existing_root: &Path,
+    staging_root: &Path,
+) -> Result<(), String> {
+    let existing_state = existing_root.join(".wegent");
+    if !existing_state.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(&existing_state).map_err(|error| {
+        format!(
+            "Failed to inspect personal marketplace state {}: {error}",
+            existing_state.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "Personal marketplace state must be a regular directory: {}",
+            existing_state.display()
+        ));
+    }
+    let staging_state = staging_root.join(".wegent");
+    remove_existing_path(&staging_state)?;
+    copy_directory_recursive(&existing_state, &staging_state)
 }
 
 fn recover_configured_personal_plugins(
@@ -865,14 +917,41 @@ mod tests {
             marketplace.content_hash
         );
 
-        fs::write(destination.join("local-marker"), "preserved").unwrap();
+        fs::create_dir_all(destination.join(".wegent/plugin-import-backups/pending")).unwrap();
+        fs::write(
+            destination.join(".wegent/plugin-copy-sources.json"),
+            r#"{"copies":[{"localPluginName":"personal-tool"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            destination.join(".wegent/plugin-import-backups/pending/rollback.json"),
+            r#"{"pluginName":"personal-tool"}"#,
+        )
+        .unwrap();
+
+        remove_existing_path(&destination.join("plugins/smart-app-builder")).unwrap();
+        fs::write(
+            destination.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[{"name":"wework-space"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            destination.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[{"name":"wework-space"}]}"#,
+        )
+        .unwrap();
         let unchanged =
             initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
 
         assert_eq!(unchanged.content_hash, marketplace.content_hash);
         assert_eq!(
-            fs::read_to_string(destination.join("local-marker")).unwrap(),
-            "preserved"
+            fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
+            "builder"
+        );
+        assert!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap()
+                .contains(&"smart-app-builder".to_owned())
         );
 
         fs::create_dir_all(destination.join("plugins/personal-tool/.codex-plugin")).unwrap();
@@ -887,20 +966,6 @@ mod tests {
             r#"{"name":"personal-tool","version":"1.0.0"}"#,
         )
         .unwrap();
-        append_manifest_entry(
-            &destination.join(".agents/plugins/marketplace.json"),
-            json!({
-                "name": "personal-tool",
-                "source": {"source": "local", "path": "./plugins/personal-tool"},
-            }),
-        )
-        .unwrap();
-        append_manifest_entry(
-            &destination.join(".claude-plugin/marketplace.json"),
-            json!({"name": "personal-tool", "source": "./plugins/personal-tool"}),
-        )
-        .unwrap();
-
         fs::write(
             source.join("plugins/smart-app-builder/README.md"),
             "updated builder",
@@ -910,7 +975,6 @@ mod tests {
             initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
 
         assert_ne!(updated.content_hash, marketplace.content_hash);
-        assert!(!destination.join("local-marker").exists());
         assert_eq!(
             fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
             "updated builder"
@@ -927,6 +991,17 @@ mod tests {
             marketplace_plugin_names(&destination.join(".claude-plugin/marketplace.json"))
                 .unwrap()
                 .contains(&"personal-tool".to_owned())
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join(".wegent/plugin-copy-sources.json")).unwrap(),
+            r#"{"copies":[{"localPluginName":"personal-tool"}]}"#
+        );
+        assert_eq!(
+            fs::read_to_string(
+                destination.join(".wegent/plugin-import-backups/pending/rollback.json")
+            )
+            .unwrap(),
+            r#"{"pluginName":"personal-tool"}"#
         );
     }
 

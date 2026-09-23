@@ -17,6 +17,7 @@ import { findWorkbenchDevice, getWorkbenchDeviceDisplayName } from '@/lib/workbe
 import type {
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
 } from '@/types/api'
@@ -53,6 +54,98 @@ interface AiChatModalProps {
     localProject: ProjectWithTasks | null
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   embedded?: boolean
+}
+
+interface AutomaticIssueTaskComposerProps {
+  project: ProjectWithTasks | null
+  deviceWorkspaceId: number | null
+  projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']
+  inheritFromTask: RuntimeTaskAddress | null
+  taskRequest: RuntimeTaskCreateRequest | null
+  runtimeContext: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  prepareTask?: AiChatModalProps['prepareTask']
+  onTaskCreated?: AiChatModalProps['onTaskCreated']
+  panelProps: Omit<
+    Parameters<typeof TemporaryChatPanel>[0],
+    'createTask' | 'projectWork' | 'currentProject'
+  >
+}
+
+const isolatedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] = {
+  workspace: { source: 'git_worktree' },
+}
+
+function automaticExecutionMode(
+  projectWork: AutomaticIssueTaskComposerProps['projectWork'],
+  inheritFromTask: RuntimeTaskAddress | null,
+  taskRequest: RuntimeTaskCreateRequest | null
+): ProjectExecutionMode {
+  if (inheritFromTask) return 'current_workspace'
+  if (taskRequest?.execution?.workspace?.source === 'git_worktree') return 'git_worktree'
+  return projectWork?.worktreeAvailability?.available ? 'git_worktree' : 'current_workspace'
+}
+
+function AutomaticIssueTaskComposer({
+  project,
+  deviceWorkspaceId,
+  projectWork,
+  inheritFromTask,
+  taskRequest,
+  runtimeContext,
+  prepareTask,
+  onTaskCreated,
+  panelProps,
+}: AutomaticIssueTaskComposerProps) {
+  const executionMode = automaticExecutionMode(projectWork, inheritFromTask, taskRequest)
+  const effectiveTaskRequest = taskRequest
+    ? {
+        ...taskRequest,
+        execution:
+          executionMode === 'git_worktree'
+            ? {
+                workspace: {
+                  source: 'git_worktree',
+                  ...(taskRequest.execution?.workspace?.source === 'git_worktree' &&
+                  taskRequest.execution.workspace.branch
+                    ? { branch: taskRequest.execution.workspace.branch }
+                    : {}),
+                },
+              }
+            : undefined,
+      }
+    : null
+  const createConversation = useProjectRuntimeTaskComposer({
+    project,
+    deviceWorkspaceId,
+    workspaceExecution:
+      inheritFromTask || effectiveTaskRequest
+        ? undefined
+        : executionMode === 'git_worktree'
+          ? isolatedWorkspaceExecution
+          : null,
+    workspaceSource: inheritFromTask,
+    taskRequest: effectiveTaskRequest,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  })
+
+  return (
+    <TemporaryChatPanel
+      {...panelProps}
+      currentProject={project}
+      createTask={createConversation}
+      projectWork={
+        projectWork
+          ? {
+              ...projectWork,
+              executionMode,
+              executionModeLocked: true,
+            }
+          : undefined
+      }
+    />
+  )
 }
 
 function lastAddressStorageKey(projectId: string | number, taskId?: string): string {
@@ -94,11 +187,35 @@ export function AiChatModal({
     () => resolveRuntimeTaskProjects(localProjects, state?.runtimeWork),
     [localProjects, state?.runtimeWork]
   )
-  const storageKey = lastAddressStorageKey(project.id, task?.id)
-  const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
-    () => initialAddress ?? storedLastAddress(storageKey)
+  const hasPreparedEnvironmentTarget = Boolean(
+    initialTaskRequest?.deviceId?.trim() && initialTaskRequest.workspacePath?.trim()
   )
-  const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
+  const storageKey = lastAddressStorageKey(project.id, task?.id)
+  const initialAddressKey = initialAddress ? JSON.stringify(initialAddress) : null
+  const hasInitialAddress = Boolean(initialAddress)
+  const [addressState, setAddressState] = useState<{
+    initialAddressKey: string | null
+    address: RuntimeTaskAddress | null
+  }>(() => ({
+    initialAddressKey,
+    address: initialAddress ?? storedLastAddress(storageKey),
+  }))
+  const currentAddress =
+    addressState.initialAddressKey === initialAddressKey
+      ? addressState.address
+      : (initialAddress ?? addressState.address)
+  const issueId = task?.id
+  const conversationAddress = useMemo(
+    () =>
+      currentAddress && issueId && project.project_store === 'backend'
+        ? {
+            ...currentAddress,
+            projectSession: { projectId: String(project.id), issueId },
+          }
+        : currentAddress,
+    [currentAddress, project.id, project.project_store, issueId]
+  )
+  const notifiedInitialAddressRef = useRef(hasInitialAddress)
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
   // mount, so explicit toggles bump the remount key; creating a new runtime
@@ -107,24 +224,14 @@ export function AiChatModal({
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
     const requestedProjectId = runtimeTaskProjectUiId(state?.runtimeWork, initialTaskRequest)
-    const matched =
-      runtimeTaskProjects.find(
-        candidate => candidate.id === (requestedProjectId ?? initialLocalProjectId)
-      ) ??
-      runtimeTaskProjects.find(candidate => String(candidate.id) === String(project.id)) ??
-      runtimeTaskProjects[0]
+    const initialProjectId = hasPreparedEnvironmentTarget
+      ? null
+      : (requestedProjectId ?? initialLocalProjectId)
+    const matched = runtimeTaskProjects.find(candidate => candidate.id === initialProjectId)
     return matched?.id ?? null
   })
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
     initialTaskRequest?.deviceWorkspaceId ?? null
-  )
-  const [executionMode, setExecutionMode] = useState<ProjectExecutionMode>(
-    initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
-      ? 'git_worktree'
-      : 'current_workspace'
-  )
-  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
-    initialTaskRequest?.execution?.workspace?.branch ?? null
   )
   const selectedLocalProject =
     runtimeTaskProjects.find(candidate => candidate.id === localProjectId) ?? null
@@ -164,47 +271,35 @@ export function AiChatModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [embedded, onClose, open])
 
-  const taskRequest = useMemo(
-    () =>
-      initialTaskRequest
+  const taskRequest = useMemo(() => {
+    if (!initialTaskRequest) return null
+    const directEnvironmentTarget =
+      !selectedLocalProject &&
+      initialTaskRequest.deviceId?.trim() &&
+      initialTaskRequest.workspacePath?.trim()
         ? {
-            ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
-            execution:
-              executionMode === 'git_worktree'
-                ? {
-                    workspace: {
-                      source: 'git_worktree' as const,
-                      ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
-                    },
-                  }
-                : undefined,
-            ...runtimeContext,
+            deviceId: initialTaskRequest.deviceId.trim(),
+            workspacePath: initialTaskRequest.workspacePath.trim(),
           }
-        : null,
-    [executionMode, initialTaskRequest, runtimeContext, worktreeBranch]
-  )
-  const createConversation = useProjectRuntimeTaskComposer({
-    project: selectedLocalProject,
-    deviceWorkspaceId: localDeviceWorkspaceId,
-    workspaceSource: inheritFromTask,
-    taskRequest,
-    runtimeContext,
-    prepareTask,
-    onTaskCreated,
-  })
-
+        : {}
+    return {
+      ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
+      ...directEnvironmentTarget,
+      ...runtimeContext,
+    }
+  }, [initialTaskRequest, runtimeContext, selectedLocalProject])
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
       if (!address) return
       window.localStorage.setItem(storageKey, JSON.stringify(address))
-      setCurrentAddress(address)
+      setAddressState({ initialAddressKey, address })
       setComposeNew(false)
       if (!notifiedInitialAddressRef.current) {
         notifiedInitialAddressRef.current = true
-        onAddressChange?.(address)
+        if (!hasInitialAddress) onAddressChange?.(address)
       }
     },
-    [onAddressChange, storageKey]
+    [hasInitialAddress, initialAddressKey, onAddressChange, storageKey]
   )
 
   const startNewConversation = useCallback(() => {
@@ -217,38 +312,47 @@ export function AiChatModal({
     options: { expanded?: boolean; key?: number; startFresh?: boolean } = {}
   ) => {
     const composer = (projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']) => (
-      <TemporaryChatPanel
+      <AutomaticIssueTaskComposer
         key={options.key}
-        currentProject={selectedLocalProject}
-        source={null}
-        instanceId={instanceId}
-        testId={testId}
-        initialInput={initialTaskInput}
-        initialAddress={options.startFresh ? null : currentAddress}
-        createTask={createConversation}
-        onAddressChange={rememberAddress}
-        runtimeContext={runtimeContext}
-        allowInitialGoal
-        emptyStateText={t(
-          'todo.issue_task_composer_empty',
-          '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
-        )}
-        placeholder={t('todo.issue_task_composer_placeholder', '描述要执行的任务')}
-        expanded={options.expanded}
-        wideComposer={options.expanded}
+        project={selectedLocalProject}
+        deviceWorkspaceId={localDeviceWorkspaceId}
         projectWork={projectWork}
-        showProjectWorkBar={Boolean(projectWork)}
-        projectWorkBarMiddleContext={<WorkItemComposerGuide integrated toolbar project={project} />}
-        projectWorkBarTrailingContext={
-          <WorkbenchHarnessSelector
-            runtime="codex"
-            harnesses={[]}
-            enabledHarnesses={[]}
-            loading={false}
-            detectionFailed={false}
-            onRuntimeChange={() => undefined}
-          />
-        }
+        inheritFromTask={inheritFromTask}
+        taskRequest={taskRequest}
+        runtimeContext={runtimeContext}
+        prepareTask={prepareTask}
+        onTaskCreated={onTaskCreated}
+        panelProps={{
+          source: null,
+          instanceId,
+          testId,
+          initialInput: initialTaskInput,
+          initialAddress: options.startFresh ? null : currentAddress,
+          onAddressChange: rememberAddress,
+          runtimeContext,
+          allowInitialGoal: true,
+          emptyStateText: t(
+            'todo.issue_task_composer_empty',
+            '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
+          ),
+          placeholder: t('todo.issue_task_composer_placeholder', '描述要执行的任务'),
+          expanded: options.expanded,
+          wideComposer: options.expanded,
+          showProjectWorkBar: Boolean(projectWork),
+          projectWorkBarMiddleContext: (
+            <WorkItemComposerGuide integrated toolbar project={project} />
+          ),
+          projectWorkBarTrailingContext: (
+            <WorkbenchHarnessSelector
+              runtime="codex"
+              harnesses={[]}
+              enabledHarnesses={[]}
+              loading={false}
+              detectionFailed={false}
+              onRuntimeChange={() => undefined}
+            />
+          ),
+        }}
       />
     )
 
@@ -256,12 +360,8 @@ export function AiChatModal({
       <ConnectedIssueProjectWork
         project={selectedLocalProject}
         selectedDeviceWorkspaceId={localDeviceWorkspaceId}
-        executionMode={executionMode}
-        worktreeBranch={worktreeBranch}
         onSelectProject={selectLocalProject}
         onSelectProjectWorkspace={selectLocalProjectWorkspace}
-        onExecutionModeChange={setExecutionMode}
-        onWorktreeBranchChange={setWorktreeBranch}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}
@@ -282,14 +382,18 @@ export function AiChatModal({
           onClose={onClose}
           onBack={onBack}
           translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
-          onOpenTask={onOpenRuntimeTask ? () => onOpenRuntimeTask(initialAddress) : undefined}
+          onOpenTask={
+            onOpenRuntimeTask
+              ? () => onOpenRuntimeTask(conversationAddress ?? initialAddress)
+              : undefined
+          }
         >
           <TemporaryChatPanel
             currentProject={selectedLocalProject}
             source={initialAddress}
             instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
             testId="work-item-task-chat-panel"
-            initialAddress={currentAddress}
+            initialAddress={conversationAddress}
             onAddressChange={rememberAddress}
             runtimeContext={runtimeContext}
             sendEphemeral={false}
@@ -376,7 +480,7 @@ export function AiChatModal({
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(initialAddress)}
+                  onClick={() => void onOpenRuntimeTask(conversationAddress ?? initialAddress)}
                   className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary transition hover:bg-muted"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
@@ -389,7 +493,7 @@ export function AiChatModal({
               source={initialAddress}
               instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
               testId="work-item-task-chat-panel"
-              initialAddress={currentAddress}
+              initialAddress={conversationAddress}
               onAddressChange={rememberAddress}
               runtimeContext={runtimeContext}
               sendEphemeral={false}

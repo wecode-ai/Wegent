@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { electronToolchainLockPath } from './lib/electron-toolchain-lock.mjs'
 import { acquireProcessLock } from './lib/process-lock.mjs'
+import { retryOperation } from './lib/retry-operation.mjs'
 
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
@@ -16,9 +17,19 @@ try {
   if (process.env.WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true') {
     await run(pnpmCommand, ['--dir', 'electron', 'install', '--frozen-lockfile'])
   }
-  await run(process.execPath, [
-    join(weworkRoot, 'electron', 'node_modules', 'electron', 'install.js'),
-  ])
+  await retryOperation(
+    () =>
+      run(process.execPath, [
+        join(weworkRoot, 'electron', 'node_modules', 'electron', 'install.js'),
+      ]),
+    {
+      onRetry: ({ attempt, attempts, delayMs }) => {
+        console.warn(
+          `Electron install attempt ${attempt}/${attempts} failed; retrying in ${delayMs}ms`
+        )
+      },
+    }
+  )
 } finally {
   await releaseToolchainLock()
 }

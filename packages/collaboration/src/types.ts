@@ -24,6 +24,7 @@ export interface CollaborationStatus {
 export interface CollaborationProject {
   id: CollaborationProjectId
   workspace_id?: string | null
+  workspace_context?: Omit<CollaborationWorkspaceNavigationContext, 'location'> | null
   public_id: string
   project_key: string
   name: string
@@ -55,6 +56,7 @@ export interface CollaborationProject {
   version: number
   created_at: string
   updated_at: string
+  metadata?: Record<string, unknown>
 }
 
 export type LocalCollaborationProject = CollaborationProject & {
@@ -64,6 +66,18 @@ export type LocalCollaborationProject = CollaborationProject & {
 export type BackendCollaborationProject = CollaborationProject & {
   project_store: 'backend'
   access_role: CollaborationRole | 'RestrictedAnalyst'
+}
+
+export interface CollaborationHumanWork {
+  assignment_id: string
+  assignee_user_id: number
+  reviewer_user_id: number | null
+  submission_message_id: string | null
+  submitted_by_user_id: number | null
+  state: 'none' | 'submitted' | 'accepted' | 'changes_requested'
+  can_start: boolean
+  can_submit: boolean
+  can_review: boolean
 }
 
 export interface CollaborationIssue {
@@ -85,6 +99,7 @@ export interface CollaborationIssue {
   execution_state?: string | null
   execution_note?: string | null
   can_approve?: boolean
+  human_work?: CollaborationHumanWork | null
   ai_state?: { status?: string | null; last_error?: string | null } | null
   title: string
   description: string
@@ -201,6 +216,7 @@ export interface CollaborationExecutionEnvironment {
   id: string
   device_id?: number
   device_key?: string
+  is_current_device?: boolean
   name: string
   kind: 'local_device' | 'cloud_host'
   coding_tools: string[]
@@ -213,11 +229,13 @@ export interface CollaborationExecutionEnvironment {
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
   location?: 'local' | 'cloud'
+  version?: number
   owner_type: 'user' | 'workspace'
   owner_id: string
   owner_name: string
   status: 'available' | 'unavailable'
   execution_environment_ids: string[]
+  project_binding_input?: Record<string, unknown>
 }
 
 export interface CollaborationPlatformResources {
@@ -397,18 +415,31 @@ export interface CollaborationCapabilities {
   projectLocation?: 'cloud' | 'local'
 }
 
+export interface CollaborationDefaultAssistant {
+  name: string
+  description: string
+  capabilitySummary?: string
+}
+
 export type CollaborationView = 'board' | 'table' | 'files' | 'manage'
 export type CollaborationRootView = 'home' | 'my-work'
+export type ProjectSettingsSectionId =
+  | 'project'
+  | 'collaboration-participants'
+  | 'environments'
+  | 'automatic-processing'
 
 export interface CollaborationLocation {
   projectId: string | null
   issueId: string | null
   view: CollaborationView
   rootView?: CollaborationRootView
+  projectSettingsSection?: ProjectSettingsSectionId | null
 }
 
 export interface CollaborationHostAdapter {
   capabilities: CollaborationCapabilities
+  defaultAssistant?: CollaborationDefaultAssistant
   location: CollaborationLocation
   navigate(location: CollaborationLocation): void
   manageResource?(kind: 'agents' | 'environments', resourceId?: string): void

@@ -431,6 +431,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CHUNK_STORAGE_ENABLED: "true"
@@ -654,6 +655,20 @@ jobs:
           --health-timeout=5s
           --health-retries=3
 
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=6
+
     steps:
       - name: Generate internal service token
         run: |
@@ -716,6 +731,17 @@ jobs:
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
+
+      - name: Restore bundled Codex cache
+        id: bundled-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+      - name: Prepare bundled Codex for local Executor
+        working-directory: ./wework
+        run: node scripts/prepare-codex-binary.mjs --materialize
 
       - name: Add local harness CLIs to PATH
         run: echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
@@ -835,6 +861,11 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: localhost:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -867,7 +898,7 @@ jobs:
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
-      - name: Start Local ClaudeCode Executor
+      - name: Start Local Executor
         env:
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
@@ -880,6 +911,9 @@ jobs:
           WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
+          WEGENT_CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
@@ -940,6 +974,7 @@ jobs:
           PY
           )
           test -x executor/target/release/wegent-executor
+          test -x "$CODEX_BINARY_PATH"
           nohup env \
             -u GIT_TOKEN_AES_KEY \
             -u GIT_TOKEN_AES_IV \

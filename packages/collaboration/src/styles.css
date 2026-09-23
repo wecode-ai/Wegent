@@ -17,6 +17,7 @@
 @import "./platform/base.css";
 @import "./platform/platform.css";
 @import "./project-board/board-cursor.css";
+@import "./project-shell/loading-skeleton.css";
 @import "./issue-detail/issueConversationDrawers.css";
 
 .collaboration-project-location input {

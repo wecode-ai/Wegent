@@ -1,3 +1,4 @@
+import { observeOperation } from '@/telemetry/observeOperation'
 import type { HttpClient } from './http'
 import type { PluginShareUserSearchItem } from './plugins'
 import { sha256Hex } from './fileHash'
@@ -183,7 +184,9 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
     },
     updateAccess(id: number, access: Pick<SmartAppAccess, 'scope' | 'targets'>) {
-      return client.put<SmartAppAccess>(`/smart-apps/${id}/access`, access)
+      return observeOperation('smart_app.share', () =>
+        client.put<SmartAppAccess>(`/smart-apps/${id}/access`, access)
+      )
     },
     initSubmission,
     completeSubmission,

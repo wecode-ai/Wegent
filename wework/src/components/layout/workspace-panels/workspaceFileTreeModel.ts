@@ -17,6 +17,18 @@ function isWindowsWorkspacePath(path: string) {
   return /^[a-z]:(?:\/|$)/i.test(normalizedPath) || normalizedPath.startsWith('//')
 }
 
+export function workspaceFileAncestorPaths(rootPath: string, filePath: string): string[] {
+  const root = normalizeWorkspacePath(rootPath)
+  const file = normalizeWorkspacePath(filePath)
+  const comparable = (path: string) => (isWindowsWorkspacePath(root) ? path.toLowerCase() : path)
+  if (!comparable(file).startsWith(`${comparable(root)}/`)) return []
+  const segments = file
+    .slice(root.length + 1)
+    .split('/')
+    .slice(0, -1)
+  return segments.map((_, index) => `${root}/${segments.slice(0, index + 1).join('/')}`)
+}
+
 function relativeWorkspacePath(rootPath: string, path: string) {
   const root = normalizeWorkspacePath(rootPath)
   const target = normalizeWorkspacePath(path)
@@ -24,7 +36,8 @@ function relativeWorkspacePath(rootPath: string, path: string) {
   const comparableRoot = windowsPath ? root.toLowerCase() : root
   const comparableTarget = windowsPath ? target.toLowerCase() : target
 
-  if (!root || comparableTarget === comparableRoot) return ''
+  if (!root) return target.replace(/^\/+/, '')
+  if (comparableTarget === comparableRoot) return ''
   if (comparableTarget.startsWith(`${comparableRoot}/`)) return target.slice(root.length + 1)
   return target.replace(/^\/+/, '')
 }

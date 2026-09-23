@@ -37,6 +37,7 @@ export function IssueDetailCloudSections({
   members,
   collaborators,
   taskBindings,
+  deviceNamesById,
   workflowPlan,
   deliveries,
   selectedDelivery,
@@ -51,6 +52,7 @@ export function IssueDetailCloudSections({
   members: CollaborationMember[];
   collaborators: WorkspaceIssueCollaborator[];
   taskBindings: WorkspaceTaskBinding[];
+  deviceNamesById?: Readonly<Record<string, string>>;
   workflowPlan: WorkspaceWorkflowPlan | null;
   deliveries: WorkspaceDelivery[];
   selectedDelivery: WorkspaceDelivery | null;
@@ -141,7 +143,10 @@ export function IssueDetailCloudSections({
             taskBindings.map((binding) => (
               <div className="shared-issue-detail-cloud-row" key={binding.id}>
                 <strong>{binding.taskTitle || binding.taskId}</strong>
-                <span>{binding.deviceId}</span>
+                <span>
+                  {deviceNamesById?.[binding.deviceId]?.trim() ||
+                    binding.deviceId}
+                </span>
               </div>
             ))
           )}
@@ -157,6 +162,7 @@ export function IssueDetailCloudSections({
           ) : (
             <IssueWorkflowPlanSection
               plan={workspaceWorkflowPlanView(workflowPlan)}
+              deviceNamesById={deviceNamesById}
               labels={{
                 title: labels.workflow,
                 status: {

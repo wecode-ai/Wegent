@@ -12,7 +12,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { TaskActivityView } from './TaskActivityView'
-import type { Attachment } from '@/types/api'
+import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
 const createProjectRuntimeTask = vi.fn()
@@ -36,14 +36,14 @@ const attachmentSelectionMock = {
   resetAttachments: vi.fn(),
 }
 
-const { runtimeWorkMock, agentsMock, openExternalUrlMock, lifecycleSnapshotMock } = vi.hoisted(
-  () => ({
+const { runtimeWorkMock, devicesMock, agentsMock, openExternalUrlMock, lifecycleSnapshotMock } =
+  vi.hoisted(() => ({
     lifecycleSnapshotMock: { value: { tasks: new Map() } },
     runtimeWorkMock: { value: null as unknown },
+    devicesMock: { value: [] as DeviceInfo[] },
     agentsMock: { value: [] as Array<Record<string, unknown>> },
     openExternalUrlMock: vi.fn().mockResolvedValue(true),
-  })
-)
+  }))
 
 const replyQueueStoreMock = vi.hoisted(() => ({ value: null as TaskReplyQueueStore | null }))
 vi.mock('./taskReplyQueue', () => ({
@@ -84,7 +84,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: runtimeWorkMock.value,
-      devices: [],
+      devices: devicesMock.value,
     },
     services: workbenchServices,
     createProjectRuntimeTask,
@@ -226,6 +226,7 @@ describe('TaskActivityView', () => {
       },
     ]
     runtimeWorkMock.value = null
+    devicesMock.value = []
     lifecycleSnapshotMock.value = { tasks: new Map() }
     createProjectRuntimeTask.mockReset()
     sendRuntimePaneMessage.mockReset()
@@ -298,6 +299,7 @@ describe('TaskActivityView', () => {
           {
             id: '11',
             name: 'Wework',
+            location: 'local',
           } as never
         }
         task={
@@ -1132,7 +1134,7 @@ describe('TaskActivityView', () => {
     )
   }, 10_000)
 
-  it('shows the newest parent comment first without scrolling to the bottom', async () => {
+  it('shows parent comments from oldest to newest without scrolling on load', async () => {
     const older = {
       ...userMessage,
       sequenceNumber: 1,
@@ -1193,13 +1195,13 @@ describe('TaskActivityView', () => {
     await screen.findByText('最新评论')
     const cards = list.querySelectorAll('.task-detail-comment-card')
     expect(cards).toHaveLength(2)
-    expect(cards[0]).toHaveTextContent('最新评论')
-    expect(cards[1]).toHaveTextContent('较早评论')
+    expect(cards[0]).toHaveTextContent('较早评论')
+    expect(cards[1]).toHaveTextContent('最新评论')
 
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('scrolls the comment list to the top when a new parent comment is sent', async () => {
+  it('scrolls the comment list to the bottom when a new parent comment is sent', async () => {
     const user = userEvent.setup()
     const client = {
       subscribe: vi.fn(async () => ({
@@ -1245,8 +1247,8 @@ describe('TaskActivityView', () => {
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '新评论')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
-    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }))
-    expect(scrollTo).not.toHaveBeenCalledWith({ top: 1200, behavior: 'auto' })
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'auto' }))
+    expect(scrollTo).not.toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
   })
 
   it('keeps linear activity auto-follow inside the comment list', async () => {
@@ -1569,12 +1571,32 @@ describe('TaskActivityView', () => {
   })
 
   it('renders a bound Issue execution as a task summary without a workflow stage', async () => {
+    devicesMock.value = [
+      {
+        id: 1,
+        device_id: 'logical-device-1',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: 'logical-device-1',
+            runtime_device_id: 'runtime-device-1',
+            status: 'online',
+          },
+        ],
+      },
+    ]
     const completedAgentMessage: ProjectChatMessage = {
       ...agentMessage,
       type: 'text',
       content: '普通 Issue 执行完成。',
+      metadata: { run_id: '8bd9eeb-b551-413e-801d-534aa32f3715' },
       status: 'completed',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      runtimeAddress: { deviceId: 'runtime-device-1', taskId: 'runtime-task-1' },
     }
     const client = {
       subscribe: vi.fn(async () => ({
@@ -1596,13 +1618,14 @@ describe('TaskActivityView', () => {
         currentUserId={1}
         project={{ id: '11', name: 'Wework' } as never}
         task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
+        deviceNamesById={{ 'logical-device-1': 'Local Executor' }}
         taskBindings={[
           {
             id: 10,
             cloud_project_id: '11',
             loop_item_id: 'WEG-1',
             task_user_id: 1,
-            device_id: 'device-1',
+            device_id: 'runtime-device-1',
             task_id: 'runtime-task-1',
             task_title: 'pwd',
             backend_task_id: null,
@@ -1616,7 +1639,10 @@ describe('TaskActivityView', () => {
 
     const card = await screen.findByTestId('cloud-task-activity-message-message-2')
     expect(card).toHaveTextContent('pwd')
-    expect(screen.getByTestId('task-activity-run-event-message-2')).toHaveTextContent('AI 执行')
+    const executionEvent = screen.getByTestId('task-activity-run-event-message-2')
+    expect(executionEvent).toHaveTextContent('AI 执行')
+    expect(executionEvent).toHaveTextContent('Local Executor')
+    expect(executionEvent).not.toHaveTextContent('8bd9eeb')
     expect(card).toHaveTextContent('普通 Issue 执行完成。')
   })
 
@@ -2314,6 +2340,7 @@ describe('TaskActivityView', () => {
       expect(cancelRuntimeTask).toHaveBeenCalledWith({
         deviceId: 'device-1',
         taskId: 'runtime-task-2',
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
       })
     )
   })
@@ -2365,7 +2392,10 @@ describe('TaskActivityView', () => {
         'new-runtime-task'
       )
       await user.click(screen.getByTestId('runtime-execution-detail-open-page'))
-      expect(openRuntimeTask).toHaveBeenCalledWith(message.runtimeAddress)
+      expect(openRuntimeTask).toHaveBeenCalledWith({
+        ...message.runtimeAddress,
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
+      })
     }
   )
 
@@ -3551,4 +3581,52 @@ describe('TaskActivityView', () => {
       '状态: 执行失败\n错误: Device went offline before dispatch'
     )
   })
+})
+
+it('starts a cloud issue comment through the project service when the assigned agent is hidden', async () => {
+  const user = userEvent.setup()
+  agentsMock.value = []
+  const client = {
+    subscribe: vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '2' },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async () => userMessage),
+    executeTaskComment: vi.fn(async () => [
+      { ...agentMessage, content: '已排队', status: 'pending' as const },
+    ]),
+    startAgentResponse: vi.fn(),
+    failAgentResponse: vi.fn(),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+  createProjectRuntimeTask.mockClear()
+  render(
+    <TaskActivityView
+      client={client}
+      currentUserId={2}
+      project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+      task={
+        {
+          id: 'WEG-1',
+          title: 'Member issue',
+          status: 'inbox',
+          version: 1,
+          assignee_agent_id: '12',
+        } as never
+      }
+    />
+  )
+  await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+  await user.click(screen.getByRole('button', { name: '发送消息' }))
+  await waitFor(() =>
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: '11',
+      taskId: 'WEG-1',
+      triggerMessageId: 'message-1',
+      attachmentIds: [],
+    })
+  )
+  expect(client.startAgentResponse).not.toHaveBeenCalled()
+  expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  expect(screen.queryByTestId('task-comment-settings-toggle')).not.toBeInTheDocument()
 })

@@ -8,7 +8,9 @@ import type { CollaborationOwnedAgent } from "../types";
 export interface ProjectAgentConfigurationRecord {
   id: string;
   name: string;
-  runtime: "codex" | "claude_code" | "wegent";
+  displayName: string;
+  definitionSource: "project" | "shared_agent";
+  executorType: "codex" | "claude_code" | null;
   status: "active" | "archived";
   version: number;
   wegentTeamId: number | null;
@@ -41,12 +43,19 @@ export function normalizeProjectAgent(
   );
   const rawTeamId = value(row, "wegentTeamId", "wegent_team_id");
   const rawDeviceId = value(row, "executionDeviceId", "execution_device_id");
+  const name = String(row.name ?? "");
+  const configuredDisplayName = String(
+    value(row, "displayName", "display_name") ?? "",
+  ).trim();
+  const displayName = configuredDisplayName || name;
   return {
     id: String(row.id),
-    name: String(row.name ?? ""),
-    runtime:
+    name,
+    displayName,
+    definitionSource: rawTeamId == null ? "project" : "shared_agent",
+    executorType:
       runtime === "wegent"
-        ? "wegent"
+        ? null
         : runtime === "claude_code"
           ? "claude_code"
           : "codex",
@@ -78,7 +87,7 @@ export function normalizeProjectAgent(
   };
 }
 
-export function createWegentProjectAgentInput(
+export function createSharedAgentBindingInput(
   team: CollaborationOwnedAgent,
 ): Record<string, unknown> {
   if (!team.team_id) {
@@ -89,4 +98,12 @@ export function createWegentProjectAgentInput(
     runtime: "wegent",
     wegentTeamId: team.team_id,
   };
+}
+
+export function createResourceAgentBindingInput(
+  agent: CollaborationOwnedAgent,
+): Record<string, unknown> {
+  return agent.project_binding_input
+    ? { ...agent.project_binding_input }
+    : createSharedAgentBindingInput(agent);
 }

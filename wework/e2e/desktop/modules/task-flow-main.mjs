@@ -125,6 +125,7 @@ import {
 import {
   verifyFollowUpSendRejectionNotice,
   verifyModelServiceConnectionError,
+  verifyModelProxyRestartRecovery,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -816,6 +817,19 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh-task')
+  control.setScenario('checkpoint_task')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    CHECKPOINT_TASK_PROMPT,
+    'checkpoint_task'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   setPhase('model-catalog-refresh')
   const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   await control.command('waitFor', modelSelector, {
@@ -841,6 +855,29 @@ async function verifyLocalModelRouting({
     text: selectedModelLabel,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+
+  setPhase('model-catalog-refresh-failure')
+  await control.command('failNextLocalCodexModelList', '')
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const failedRefreshSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.ok(
+    failedRefreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared after the local Codex catalog refresh failed'
+  )
+  assert.ok(
+    !failedRefreshSnapshot.testIds.includes('model-selector-loading'),
+    'The failed local Codex catalog refresh left a blank loading placeholder'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'model-catalog-refresh-failure.png')
 
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
@@ -1133,6 +1170,7 @@ async function main() {
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        backendEnv: desktopScenario?.backendEnv,
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         managedCloudIdentity: CLOUD_ONLY,
@@ -1147,6 +1185,7 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
+        publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
@@ -1245,6 +1284,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
       WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(resultDir, 'startup-splash.png'),
       WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
@@ -1416,6 +1456,7 @@ async function main() {
         initialRendererLocation: ready.location,
         pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
+        resultDir,
         runtimeRoot: electronCoreRuntimeRoot,
       })
       if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
@@ -3414,6 +3455,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'model-service-connection-error'
       await verifyModelServiceConnectionError({ composerSelector, control })
 
+      phase = 'model-proxy-restart-recovery'
+      await verifyModelProxyRestartRecovery({
+        composerSelector,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
+
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
       if (shouldStopAfterDesktopCheckpoint('resilience')) {
@@ -3706,7 +3755,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
@@ -3747,16 +3795,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-1-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
-        text: FILE_PANEL_ANCHOR_MARKER,
-        value: 'file-panel-anchor',
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,

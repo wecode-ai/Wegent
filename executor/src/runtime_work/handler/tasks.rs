@@ -214,7 +214,19 @@ impl RuntimeWorkRpcHandler {
                 ("last_turn_id", last_turn_id.clone()),
             ],
         );
-        let request = runtime_event_request_from_link(&source);
+        let mut source_for_fork = source.clone();
+        set_runtime_handle_model_selection(&mut source_for_fork.runtime_handle, &payload);
+        let mut request = runtime_event_request_from_link(&source_for_fork);
+        apply_runtime_payload_metadata(&mut request, &payload);
+        if let Some(model_config) = payload
+            .get("modelConfig")
+            .or_else(|| payload.get("model_config"))
+            .filter(|value| value.is_object())
+            .cloned()
+        {
+            request.model_config = model_config;
+        }
+        store_runtime_execution_request(&mut source_for_fork.runtime_handle, &request);
         self.ensure_notification_router().await;
         let response = match self
             .codex_app_server
@@ -242,7 +254,7 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
         let link = forked_task_link(
-            &source,
+            &source_for_fork,
             local_task_id.clone(),
             thread_id.clone(),
             title,
@@ -253,7 +265,20 @@ impl RuntimeWorkRpcHandler {
             }),
         );
         self.upsert_local_task(link);
-        let transcript = self.transcript(json!({ "taskId": local_task_id })).await?;
+        let (transcript, setup_error) =
+            match self.transcript(json!({ "taskId": local_task_id })).await {
+                Ok(transcript) => (Some(transcript), None),
+                Err(error) => {
+                    log_executor_event(
+                        "runtime task fork transcript failed",
+                        &[
+                            ("target_task_id", local_task_id.clone()),
+                            ("error", error.message.clone()),
+                        ],
+                    );
+                    (None, Some(error.message))
+                }
+            };
         log_executor_event(
             "runtime task fork completed",
             &[
@@ -276,6 +301,7 @@ impl RuntimeWorkRpcHandler {
             },
             "runtime": "codex",
             "transcript": transcript,
+            "setupError": setup_error,
         }))
     }
 
@@ -1568,6 +1594,7 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }));
         }
+        self.set_interaction_status(local_task_id, None);
         Ok(json!({
             "success": true,
             "accepted": true,

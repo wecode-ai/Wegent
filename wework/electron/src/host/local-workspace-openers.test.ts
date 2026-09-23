@@ -43,9 +43,15 @@ describe('local workspace openers', () => {
           )
           expect(services.reveal).not.toHaveBeenCalled()
         }
-        await expect(openFileInWorkspaceApp(opener, directory, services)).rejects.toThrow(
-          'not a regular file'
-        )
+        vi.clearAllMocks()
+        await openFileInWorkspaceApp(opener, directory, services)
+        if (opener === 'file-manager') {
+          expect(services.reveal).toHaveBeenCalledExactlyOnceWith(directory)
+          expect(services.open).not.toHaveBeenCalled()
+        } else {
+          expect(services.open).toHaveBeenCalledExactlyOnceWith(opener, directory)
+          expect(services.reveal).not.toHaveBeenCalled()
+        }
       } finally {
         await rm(directory, { recursive: true, force: true })
       }

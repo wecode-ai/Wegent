@@ -40,6 +40,10 @@ metadata:
 spec:
   systemPrompt: |
     You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process.
+  baseGhostRef:
+    name: system-default-ghost
+    namespace: default
+    user_id: 0
   mcpServers:
     github:
       env:
@@ -65,8 +69,11 @@ spec:
 | `metadata.name`      | string | 是   | Ghost 的唯一标识符                                  |
 | `metadata.namespace` | string | 是   | 命名空间，通常为 `default`                          |
 | `spec.systemPrompt`  | string | 是   | 定义智能体个性和能力的系统提示词                    |
+| `spec.baseGhostRef`  | object | 否   | 作为通用能力基线的 Ghost 引用，只支持一层继承       |
 | `spec.mcpServers`    | object | 否   | MCP 服务器配置,定义智能体的工具能力                 |
 | `spec.skills`        | array  | 否   | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
+
+`baseGhostRef` 包含 `name`、`namespace` 和 `user_id`。运行时只继承基础 Ghost 的 MCP、Skills、预加载 Skills 和插件；当前 Ghost 的同名配置优先，当前 Ghost 的 `systemPrompt` 始终保留。系统会先合并配置，再执行一次模型请求，不会分别调用两个 Ghost。嵌套的 `baseGhostRef` 不受支持。
 
 ### 业务方 MCP 服务器身份校验
 
@@ -185,6 +192,8 @@ metadata:
   namespace: default
 spec:
   isVisible: true
+  allowedUsersEnabled: true
+  allowedUsers: ["alice", "bob"]
   modelGroup: "主分组"
   modelSubGroup: "快速"
   modelCapabilities:
@@ -205,6 +214,8 @@ spec:
 | `metadata.name`        | string | 是   | Model 的唯一标识符                 |
 | `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
 | `spec.isVisible`       | boolean | 否  | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析 |
+| `spec.allowedUsers`    | array   | 否  | 公共模型的用户名白名单；仅在 `allowedUsersEnabled` 为 `true` 时生效。开关关闭时列表保留但不限制访问 |
+| `spec.allowedUsersEnabled` | boolean | 否 | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
 | `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelCapabilities` | object | 否 | LLM 聊天模型声明的多模态理解能力 |

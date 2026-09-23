@@ -195,6 +195,8 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "advancedMode": "高级",
+      "advancedModeDescription": "显示代码 Wiki",
       "createDialogDescription": "配置知识库名称、可见范围和检索设置。",
       "createDesc": "创建您的第一个知识库",
       "notebookDesc": "默认进入工作台，可对话并使用工具处理知识和数据",

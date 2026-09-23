@@ -23,6 +23,7 @@ def _bot_kind_with_ghost(
     user_id: int,
     name: str = "chat-bot",
     ghost_name: str = "chat-ghost",
+    capability_mode: str = "manual",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         user_id=user_id,
@@ -36,6 +37,7 @@ def _bot_kind_with_ghost(
             "spec": {
                 "ghostRef": {"name": ghost_name, "namespace": "default"},
                 "shellRef": {"name": "Chat", "namespace": "default"},
+                "capability_mode": capability_mode,
             },
         },
     )
@@ -113,7 +115,7 @@ class TestExtractSkillMcpToList:
         result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
 
         assert len(result) == 1
-        assert result[0]["name"] == "image-toolkit_imageFetchServer"
+        assert result[0]["name"] == "4c72508_imageFetchServer"
         assert result[0]["type"] == "streamable-http"
         assert result[0]["url"] == "http://mcp.example.com/fetch-image"
         assert result[0]["headers"]["Authorization"] == "Bearer token123"
@@ -138,8 +140,8 @@ class TestExtractSkillMcpToList:
 
         assert len(result) == 2
         names = [s["name"] for s in result]
-        assert "image-toolkit_imageFetchServer" in names
-        assert "image-toolkit_nanoBananaServer" in names
+        assert "4c72508_imageFetchServer" in names
+        assert "4c72508_nanoBananaServer" in names
 
     def test_multiple_skills_with_mcps(self):
         configs = [
@@ -166,8 +168,8 @@ class TestExtractSkillMcpToList:
 
         assert len(result) == 2
         names = [s["name"] for s in result]
-        assert "image-toolkit_imageServer" in names
-        assert "knowledge-base_kbServer" in names
+        assert "4c72508_imageServer" in names
+        assert "e6684f6_kbServer" in names
 
     def test_mixed_skills_with_and_without_mcp(self):
         configs = [
@@ -185,7 +187,7 @@ class TestExtractSkillMcpToList:
         result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
 
         assert len(result) == 1
-        assert result[0]["name"] == "with-mcp_server1"
+        assert result[0]["name"] == "339a925_server1"
 
     def test_invalid_mcp_servers_type_skipped(self):
         configs = [{"name": "bad-skill", "mcpServers": "not-a-dict"}]
@@ -313,6 +315,23 @@ class TestFilterReachableMcpServers:
 
 class TestBuildMcpServers:
     """Tests for request-level MCP server merging."""
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_follow_device_excludes_ghost_mcp_servers(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp()
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1, capability_mode="follow_device"),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert result == []
 
     @patch(
         "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
@@ -544,7 +563,7 @@ class TestPrepareMcpForCodingExecutor:
         assert len(mcp) == 2
         names = [s["name"] for s in mcp]
         assert "ghost-server" in names
-        assert "my-skill_skillServer" in names
+        assert "830fad2_skillServer" in names
         # All types should be normalized to http
         for s in mcp:
             assert s["type"] == "http"
@@ -572,7 +591,7 @@ class TestPrepareMcpForCodingExecutor:
         builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
 
         assert len(bot_config["mcp_servers"]) == 1
-        assert bot_config["mcp_servers"][0]["name"] == "my-skill_server1"
+        assert bot_config["mcp_servers"][0]["name"] == "830fad2_server1"
         assert bot_config["mcp_servers"][0]["type"] == "http"
 
     @patch.object(
@@ -669,12 +688,12 @@ class TestPrepareMcpForCodingExecutor:
 
         assert bot_config["mcp_servers"] == [
             {
-                "name": "my-skill_remote",
+                "name": "830fad2_remote",
                 "type": "streamable-http",
                 "url": "${{backend_url}}/mcp/skill",
                 "headers": {"Authorization": "Bearer ${{auth_token}}"},
             },
-            {"name": "my-skill_local", "command": "node", "args": ["skill-server.js"]},
+            {"name": "830fad2_local", "command": "node", "args": ["skill-server.js"]},
         ]
 
 

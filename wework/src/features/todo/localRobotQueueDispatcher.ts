@@ -270,17 +270,18 @@ function startQueueDispatcher(services: WorkbenchServices, source: 'local' | 'cl
         model: request.modelId ?? null,
         hasAdditionalContext: true,
       })
-      const fenced = isCloudExecution
-        ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
-        : await executionApi.startRequested(
-            execution.id,
-            deviceId,
-            taskId,
-            LOCAL_QUEUE_LEASE_SECONDS
-          )
-      if (!fenced) throw new Error('Execution is no longer dispatchable')
-      startRequested = true
-      const response = await runtimeWorkApi.createRuntimeTask(request)
+      const response = await runtimeWorkApi.createRuntimeTask(request, async () => {
+        const fenced = isCloudExecution
+          ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
+          : await executionApi.startRequested(
+              execution.id,
+              deviceId,
+              taskId,
+              LOCAL_QUEUE_LEASE_SECONDS
+            )
+        if (!fenced) throw new Error('Execution is no longer dispatchable')
+        startRequested = true
+      })
       if (response.taskId !== taskId) {
         throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
       }

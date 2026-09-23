@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { ChevronRight, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 
 export interface ResourceDestinationOption {
   id: string;
@@ -12,7 +12,8 @@ export interface ResourceDestinationOption {
   description: string;
   icon: ReactNode;
   disabled?: boolean;
-  onSelect(): void;
+  children?: ResourceDestinationOption[];
+  onSelect?(): void;
 }
 
 export function ResourceDestinationDialog({
@@ -29,14 +30,23 @@ export function ResourceDestinationDialog({
   onClose(): void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const [parentOption, setParentOption] =
+    useState<ResourceDestinationOption | null>(null);
+  const activeOptions = parentOption?.children ?? options;
   useEffect(() => {
-    const previous = document.activeElement;
-    dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     return () => {
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
+      const previous = previousFocusRef.current;
+      if (previous?.isConnected) previous.focus();
     };
   }, []);
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [parentOption]);
 
   return (
     <div
@@ -56,7 +66,8 @@ export function ResourceDestinationDialog({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.stopPropagation();
-            onClose();
+            if (parentOption) setParentOption(null);
+            else onClose();
           }
           if (event.key !== "Tab") return;
           const buttons =
@@ -76,9 +87,19 @@ export function ResourceDestinationDialog({
         }}
       >
         <header>
+          {parentOption ? (
+            <button
+              type="button"
+              aria-label={closeLabel}
+              data-testid="resource-destination-back"
+              onClick={() => setParentOption(null)}
+            >
+              <ChevronLeft aria-hidden="true" />
+            </button>
+          ) : null}
           <div>
-            <h2>{title}</h2>
-            <p>{description}</p>
+            <h2>{parentOption?.label ?? title}</h2>
+            <p>{parentOption?.description ?? description}</p>
           </div>
           <button
             type="button"
@@ -90,15 +111,19 @@ export function ResourceDestinationDialog({
           </button>
         </header>
         <div className="collaboration-resource-create-options">
-          {options.map((option) => (
+          {activeOptions.map((option) => (
             <button
               type="button"
               key={option.id}
               data-testid={option.testId}
               disabled={option.disabled}
               onClick={() => {
+                if (option.children?.length) {
+                  setParentOption(option);
+                  return;
+                }
                 onClose();
-                option.onSelect();
+                option.onSelect?.();
               }}
             >
               {option.icon}

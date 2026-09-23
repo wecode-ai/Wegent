@@ -27,6 +27,7 @@ import { canManageNamespace } from '@/utils/namespace-permissions'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
+import { useAdvancedKnowledgeMode } from '../hooks/useAdvancedKnowledgeMode'
 import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
@@ -62,6 +63,7 @@ export function KnowledgeDocumentPageMobile({
   onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
+  const { showAdvancedKnowledge, setShowAdvancedKnowledge } = useAdvancedKnowledgeMode()
   // Knowledge tree hook
   const tree = useKnowledgeTree()
 
@@ -456,6 +458,8 @@ export function KnowledgeDocumentPageMobile({
         onCreateKb={handleCreateKb}
         onOpenGroupSettings={handleOpenGroupSettings}
         canManageGroup={canManageGroup}
+        showAdvancedKnowledge={showAdvancedKnowledge}
+        onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
       />
 
       {/* Dialogs */}

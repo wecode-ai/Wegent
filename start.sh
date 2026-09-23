@@ -2166,16 +2166,17 @@ probe_service_readiness() {
     local health_path=$2
     local attempts=$3
 
+    # Bypass ambient proxies and reject HTTP errors from a listening service.
     # Try health endpoint first if provided
     if [ -n "$health_path" ]; then
-        if curl -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
+        if curl --noproxy '*' --fail -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
             echo "healthy"
             return 0
         fi
     fi
 
     # Fallback: try root endpoint or just check if port is responding
-    if curl -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
+    if curl --noproxy '*' --fail -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
         echo "healthy"
         return 0
     fi

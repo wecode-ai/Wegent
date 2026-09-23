@@ -345,7 +345,6 @@ const ModelList: React.FC<ModelListProps> = ({
     groupName,
     groupRoleMap,
   })
-
   const handleTestConnection = async (displayModel: DisplayModel) => {
     if (displayModel.isPublic) {
       // Public models cannot be tested (no API key access)

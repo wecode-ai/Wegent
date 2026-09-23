@@ -384,8 +384,8 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
-      - name: Install Wework Electron dependencies
-        run: pnpm --dir wework/electron install --frozen-lockfile
+      - name: Prepare Wework Electron dependencies
+        run: pnpm --filter wework prepare:electron
 
       - name: Test bundled code statistics hook
         run: cargo test --manifest-path wework/resources/hook-plugins/codex-code-statistics/Cargo.toml --locked
