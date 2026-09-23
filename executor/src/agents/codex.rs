@@ -3526,7 +3526,13 @@ fn build_codex_launch_config_with_route_scope(
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        launch_config.model_provider = Some(inference_provider);
+        launch_config.model_provider = Some(inference_provider.clone());
+        launch_config.config_overrides.extend(header_overrides(
+            &inference_provider,
+            request.model_config.get("default_headers"),
+            project_id.as_deref(),
+            &request.task_id,
+        ));
     }
 
     launch_config
