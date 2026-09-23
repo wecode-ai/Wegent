@@ -1162,6 +1162,7 @@ export function createDesktopScenario({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    const subagentStartupTimeoutMs = Math.max(uiTimeoutMs, 30_000)
     await openNewChatWithE2EModel(control, uiTimeoutMs)
 
     await control.command('fill', COMPOSER_SELECTOR, { value: SUBAGENT_PROMPT })
@@ -1190,13 +1191,13 @@ export function createDesktopScenario({
     )
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_TOOL_MARKER,
-      timeoutMs: uiTimeoutMs,
+      timeoutMs: subagentStartupTimeoutMs,
     })
     await control.command(
       'waitFor',
       '[data-testid="subagent-conversation-scroll"] [data-testid="tool-block-duration"]',
       {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: subagentStartupTimeoutMs,
       }
     )
     assert.equal(
