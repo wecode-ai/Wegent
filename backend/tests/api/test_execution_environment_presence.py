@@ -99,13 +99,9 @@ def test_all_environment_scopes_follow_device_heartbeats(
             assert created["status"] == expected[device.id]
 
     def assert_statuses(expected: dict[int, str]) -> None:
-        # MIGRATION-CANDIDATE(api="GET /api/devices"): remove after final confirmation.
-        # That listing route is served by Rust now; the remaining checks below
-        # cover the same presence contract through the resources and
-        # execution-environment APIs.
-        # devices = _get(test_client, headers, "/api/devices")["items"]
-        # device_statuses = {row["id"]: row["status"] for row in devices}
-        # assert device_statuses == expected
+        devices = _get(test_client, headers, "/api/devices")["items"]
+        device_statuses = {row["id"]: row["status"] for row in devices}
+        assert device_statuses == expected
         resources = _get(test_client, headers, "/api/v1/resources")[
             "execution_environments"
         ]
