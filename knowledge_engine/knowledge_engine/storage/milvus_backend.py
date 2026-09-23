@@ -489,7 +489,7 @@ class MilvusBackend(BaseStorageBackend):
         Embed the first real document batch and reuse it for the write.
 
         Args:
-            nodes: Prepared nodes that are about to be indexed
+            nodes: Embeddable prepared nodes that are about to be indexed
             embed_model: Embedding model that produces the document vectors
             declared_dim: Dimension the model declares, when it declares one
 
@@ -504,11 +504,7 @@ class MilvusBackend(BaseStorageBackend):
             EmbeddingDimensionMismatchError: When a returned vector breaks the
                 dimension the model declares.
         """
-        # Only nodes with content reach the provider; the rest are dropped by the
-        # index write anyway, and their placeholder responses must not decide the
-        # dimension of the collection.
-        embeddable = self._embeddable_nodes(nodes)
-        batch = embeddable[: self._first_batch_size(embeddable, embed_model)]
+        batch = nodes[: self._first_batch_size(nodes, embed_model)]
         if not batch:
             return None
 
