@@ -1021,6 +1021,40 @@ class TestSynchronizeExternalDocument:
         assert response.json()["index_status"] == "queued"
         assert dispatched == [document.id]
 
+    def test_reports_dingtalk_sync_dispatch_failure(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.tasks.knowledge_tasks as knowledge_tasks_module
+
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+
+        def fail_dispatch(**kwargs):
+            raise RuntimeError("broker unavailable")
+
+        monkeypatch.setattr(
+            knowledge_tasks_module,
+            "import_external_document_task",
+            SimpleNamespace(delay=fail_dispatch),
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 503
+        test_db.refresh(document)
+        assert (
+            document.processing_error_payload["code"]
+            == "external_import_dispatch_failed"
+        )
+
     def test_rejects_unsynchronized_external_document(
         self,
         import_client: TestClient,

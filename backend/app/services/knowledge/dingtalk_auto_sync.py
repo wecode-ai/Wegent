@@ -156,7 +156,7 @@ def _queue_refresh(
         result.started,
         result.reason or "queued",
     )
-    return result.started
+    return result.started and result.reason != "dispatch_failed"
 
 
 def _document_sync_config(document: KnowledgeDocument) -> dict:

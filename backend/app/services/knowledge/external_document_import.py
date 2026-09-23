@@ -165,7 +165,10 @@ class ExternalDocumentImportService:
         )
         if not refresh.started:
             return refresh
-        self._dispatch_import_task(db, refresh.document)
+        if not self._dispatch_import_task(db, refresh.document):
+            return ExternalDocumentRefreshResult(
+                refresh.document, started=True, reason="dispatch_failed"
+            )
         logger.info(
             "[External Import] Refresh queued document_id=%s kb_id=%s generation=%s "
             "previous_attachment_id=%s",
@@ -434,6 +437,10 @@ class ExternalDocumentImportService:
                 "Only synchronized external documents can be synchronized"
             )
         refresh = self.queue_source_refresh(db, document)
+        if refresh.reason == "dispatch_failed":
+            raise ExternalDocumentImportError(
+                "External import could not be started. Please retry.", status_code=503
+            )
         if not refresh.started:
             raise ExternalDocumentImportError(
                 "This document is still being processed; retry later", status_code=409
@@ -776,8 +783,8 @@ class ExternalDocumentImportService:
         return document.index_status in ACTIVE_INDEX_STATUSES
 
     @staticmethod
-    def _dispatch_import_task(db: Session, document: KnowledgeDocument) -> None:
-        """Start the background body fetch for an external document."""
+    def _dispatch_import_task(db: Session, document: KnowledgeDocument) -> bool:
+        """Start the background body fetch and report whether it was queued."""
         from app.tasks.knowledge_tasks import import_external_document_task
 
         generation = document.index_generation
@@ -805,7 +812,7 @@ class ExternalDocumentImportService:
                 document.id,
                 exc,
             )
-            return
+            return False
         logger.info(
             "[External Import] Body fetch queued document_id=%s kb_id=%s "
             "generation=%s task_id=%s",
@@ -814,6 +821,7 @@ class ExternalDocumentImportService:
             generation,
             getattr(queued, "id", None) or "unavailable",
         )
+        return True
 
 
 def run_external_document_import(
