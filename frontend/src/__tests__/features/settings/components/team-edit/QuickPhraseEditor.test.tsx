@@ -21,6 +21,14 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('QuickPhraseEditor', () => {
+  test('shows only the add action before the first phrase is added', () => {
+    render(<QuickPhraseEditor value={[]} onChange={jest.fn()} />)
+
+    expect(screen.queryByTestId('quick-phrase-input-0')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remove-quick-phrase-0')).not.toBeInTheDocument()
+    expect(screen.getByTestId('add-quick-phrase')).toBeInTheDocument()
+  })
+
   test('adds updates and removes phrases', () => {
     const onChange = jest.fn()
 
