@@ -267,6 +267,10 @@ def inject_session_id_header(
     headers = model_config.get("default_headers")
     if not isinstance(headers, dict):
         headers = {}
+    # Drop case variants so exactly one session header is forwarded.
+    for key in list(headers):
+        if isinstance(key, str) and key.lower() == SESSION_ID_HEADER:
+            del headers[key]
     headers[SESSION_ID_HEADER] = str(task_id)
     model_config["default_headers"] = headers
     return model_config

@@ -197,6 +197,11 @@ class TestInjectSessionIdHeader:
         result = inject_session_id_header(model_config, {"task_id": 9})
         assert result["default_headers"]["wecode-session-id"] == "9"
 
+    def test_removes_case_variants_before_injecting(self):
+        model_config = {"default_headers": {"Wecode-Session-Id": "old"}}
+        result = inject_session_id_header(model_config, {"task_id": 9})
+        assert result["default_headers"] == {"wecode-session-id": "9"}
+
     def test_skips_empty_task_ids(self):
         for empty in (None, "", 0, "0"):
             model_config = {"default_headers": {"user": "alice"}}
