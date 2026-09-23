@@ -252,6 +252,7 @@ export function useCollaborationPlatformController({
       if (
         !force &&
         !location.workspaceId &&
+        !location.projectId &&
         rootView === "home" &&
         navigationCacheReadyRef.current
       ) {
@@ -279,18 +280,31 @@ export function useCollaborationPlatformController({
         }));
         return;
       }
+      // A location that names one project opens it directly. Resolving which
+      // workspace the project belongs to here keeps the board from loading —
+      // and painting — the whole workspace home on the way in.
+      let workspaceId = location.workspaceId;
+      if (!workspaceId && location.projectId) {
+        try {
+          workspaceId = (await api.projects.get(location.projectId))
+            .workspace_id;
+        } catch {
+          workspaceId = null;
+        }
+        if (revision !== loadRevisionRef.current) return;
+      }
       setState((current) => ({
         ...current,
-        workspace: location.workspaceId ? current.workspace : null,
-        workspaceNavigationContext: location.workspaceId
+        workspace: workspaceId ? current.workspace : null,
+        workspaceNavigationContext: workspaceId
           ? current.workspaceNavigationContext
           : null,
-        loading: location.workspaceId
-          ? current.workspace?.id !== location.workspaceId
+        loading: workspaceId
+          ? current.workspace?.id !== workspaceId
           : !navigationCacheReadyRef.current,
         error: null,
       }));
-      if (!location.workspaceId) {
+      if (!workspaceId) {
         const sources = navigationApis?.length ? navigationApis : [api];
         const snapshots = sources.map<RootNavigationSnapshot>(() => ({
           workspaces: [],
@@ -480,10 +494,10 @@ export function useCollaborationPlatformController({
       try {
         const cachedNavigation = navigationCacheRef.current;
         const cachedWorkspace = cachedNavigation.workspaces.find(
-          (workspace) => workspace.id === location.workspaceId,
+          (workspace) => workspace.id === workspaceId,
         );
         const cachedWorkspaceProjects = cachedNavigation.projects.filter(
-          (project) => project.workspace_id === location.workspaceId,
+          (project) => project.workspace_id === workspaceId,
         );
         const targetCoveredByCache =
           Boolean(cachedWorkspace) &&
@@ -531,11 +545,9 @@ export function useCollaborationPlatformController({
         };
         if (complete) navigationCacheReadyRef.current = true;
         const workspaceSummary =
-          workspaces.find(
-            (candidate) => candidate.id === location.workspaceId,
-          ) ?? null;
+          workspaces.find((candidate) => candidate.id === workspaceId) ?? null;
         const workspaceProjects = navigationProjects.filter(
-          (project) => project.workspace_id === location.workspaceId,
+          (project) => project.workspace_id === workspaceId,
         );
         if (workspaceSummary) {
           setState((current) => ({
@@ -568,9 +580,7 @@ export function useCollaborationPlatformController({
             : parentContext
               ? { ...parentContext, location: "cloud" as const }
               : api.workspaces.getNavigationContext
-                ? await api.workspaces.getNavigationContext(
-                    location.workspaceId,
-                  )
+                ? await api.workspaces.getNavigationContext(workspaceId)
                 : null;
           if (revision !== loadRevisionRef.current) return;
           setState((current) => ({
@@ -580,7 +590,7 @@ export function useCollaborationPlatformController({
             workspaceNavigationContext,
             navigationProjects,
             projects: navigationProjects.filter(
-              (project) => project.workspace_id === location.workspaceId,
+              (project) => project.workspace_id === workspaceId,
             ),
             projectIssues: {},
             myWork: [],
@@ -602,15 +612,15 @@ export function useCollaborationPlatformController({
           workspaceView === "collaboration-groups";
         const [workspace, members, agents, collaborationGroups] =
           await Promise.all([
-            api.workspaces.get(location.workspaceId),
+            api.workspaces.get(workspaceId),
             loadsParticipants
-              ? api.workspaces.listMembers(location.workspaceId)
+              ? api.workspaces.listMembers(workspaceId)
               : Promise.resolve([]),
             loadsParticipants
-              ? api.workspaces.listAgents(location.workspaceId)
+              ? api.workspaces.listAgents(workspaceId)
               : Promise.resolve([]),
             loadsParticipants
-              ? api.workspaces.listCollaborationGroups(location.workspaceId)
+              ? api.workspaces.listCollaborationGroups(workspaceId)
               : Promise.resolve([]),
           ]);
         if (revision !== loadRevisionRef.current) return;
@@ -641,7 +651,7 @@ export function useCollaborationPlatformController({
         }));
         if (workspaceView === "home" || workspaceView === "projects") {
           void Promise.all([
-            api.workspaces.listMembers(location.workspaceId),
+            api.workspaces.listMembers(workspaceId),
             api.resources ? api.resources.list() : emptyResources,
           ])
             .then(([projectMembers, projectResources]) => {
@@ -698,7 +708,9 @@ export function useCollaborationPlatformController({
       navigationApis,
       location.projectId,
       location.rootView,
-      location.workspaceId,
+      // A project location resolves its own workspace, so the host filling in
+      // that workspace must not restart the load it already began.
+      location.projectId ? null : location.workspaceId,
       location.workspaceView,
     ],
   );

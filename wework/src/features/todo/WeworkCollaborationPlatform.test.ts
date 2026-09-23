@@ -1141,7 +1141,9 @@ describe('Wework collaboration workspace API', () => {
       )
     })
     expect(getProject).toHaveBeenCalledWith('project-missing')
-    expect(getProject).toHaveBeenCalledTimes(3)
+    // The route already names the project the failed navigation fell back to,
+    // so recovering it costs no second lookup of that project.
+    expect(getProject).toHaveBeenCalledTimes(2)
   })
 
   it('ignores stale project navigation completions', async () => {

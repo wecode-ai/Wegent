@@ -98,6 +98,29 @@ const initialLocation: CollaborationPlatformLocation = {
   projectView: 'board',
   issueId: null,
 }
+
+/**
+ * The location a route that names one project opens.
+ *
+ * The workspace a project belongs to arrives from the backend, but which project
+ * the route points at is already known, so the board opens in the same pass
+ * instead of painting the workspace home until that request returns.
+ */
+function routeProjectLocation(
+  projectRef: RuntimeProjectSpaceRef | null,
+  focusedItemId: string | null
+): CollaborationPlatformLocation | null {
+  if (!projectRef) return null
+  return {
+    platformView: 'spaces',
+    collaborationDomain: projectRef.projectStore === 'local' ? 'local' : 'cloud',
+    workspaceId: null,
+    workspaceView: 'projects',
+    projectId: String(projectRef.projectId),
+    projectView: 'board',
+    issueId: focusedItemId,
+  }
+}
 const PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
 
 function issueTaskExecutionStates(
@@ -959,11 +982,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
       ? null
       : (props.activeProjectRef ?? null)
-  const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
+  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
+    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
+  }))
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const startupReadySent = useRef(false)
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
+  const resolvedWorkspaceProjectRef = useRef<string | null>(null)
 
   useEffect(() => {
     const activeProjectId = activeProject ? String(activeProject.projectId) : null
@@ -973,36 +999,44 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     }
     if (!platformApi?.projects.get || !activeProject) return
     let cancelled = false
-    if (String(location.projectId) === activeProjectId) {
-      if (!props.focusedItemId || location.issueId === props.focusedItemId) return
+    const target = routeProjectLocation(activeProject, props.focusedItemId ?? null)
+    if (target) {
       queueMicrotask(() => {
         if (cancelled) return
-        setLocation(current => ({
-          ...current,
-          workspaceView: 'projects',
-          projectView: 'board',
-          projectSettingsSection: null,
-          issueId: props.focusedItemId ?? null,
-        }))
+        setLocation(current =>
+          String(current.projectId ?? '') === target.projectId &&
+          current.issueId === target.issueId &&
+          current.workspaceView === target.workspaceView &&
+          current.projectView === target.projectView
+            ? current
+            : { ...current, ...target, projectSettingsSection: null }
+        )
       })
-      return () => {
-        cancelled = true
-      }
     }
 
-    void platformApi.projects.get(String(activeProject.projectId)).then(project => {
-      if (cancelled || !project.workspace_id) return
-      setLocation(current => ({
-        ...current,
-        collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
-        workspaceId: project.workspace_id ?? null,
-        workspaceView: 'projects',
-        projectId: String(project.id),
-        projectView: 'board',
-        projectSettingsSection: null,
-        issueId: props.focusedItemId ?? null,
-      }))
-    })
+    // The workspace the board belongs to is the one thing the route cannot name,
+    // so it is resolved once per project without holding the board back.
+    if (resolvedWorkspaceProjectRef.current !== activeProjectId) {
+      resolvedWorkspaceProjectRef.current = activeProjectId
+      void platformApi.projects
+        .get(String(activeProject.projectId))
+        .then(project => {
+          if (cancelled) return
+          setLocation(current => {
+            const collaborationDomain = project.project_store === 'local' ? 'local' : 'cloud'
+            const workspaceId = project.workspace_id ?? null
+            if (
+              current.collaborationDomain === collaborationDomain &&
+              current.workspaceId === workspaceId
+            )
+              return current
+            return { ...current, collaborationDomain, workspaceId }
+          })
+        })
+        .catch(() => {
+          // The board still opens from the route; only its workspace stays unknown.
+        })
+    }
     return () => {
       cancelled = true
     }

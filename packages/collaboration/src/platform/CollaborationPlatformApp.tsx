@@ -4005,6 +4005,18 @@ export function CollaborationPlatformApp({
           onCreateTask={onCreateTask}
         />
       );
+  } else if (host.location.projectId) {
+    // Opening one project holds the frame instead of painting the workspace
+    // home while the project's workspace is still on its way.
+    content = (
+      <div
+        className="collaboration-platform-panel flex min-h-32 items-center justify-center p-6 text-sm text-text-secondary"
+        data-testid="collaboration-platform-opening-project"
+        role="status"
+      >
+        {messages.loading}
+      </div>
+    );
   } else if (!state.workspace) {
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
