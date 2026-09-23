@@ -246,9 +246,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            backend-rs/target
             ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml', 'backend-rs/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
@@ -495,9 +494,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ runner.temp }}/executor-target
-            backend-rs/target
             ${{ env.ELECTRON_CACHE }}
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml', 'backend-rs/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-
 
@@ -1151,9 +1149,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            backend-rs/target
             ~/Library/Caches/electron
-          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml', 'backend-rs/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-app-v1-
 
