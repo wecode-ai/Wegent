@@ -321,6 +321,7 @@ const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
 const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
 const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
+const GPT_6_SOL_MODEL_ID = 'gpt-6-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -841,6 +842,20 @@ async function verifyLocalModelRouting({
     selectedModelLabel,
     'The model selector did not expose its selected model before refresh'
   )
+
+  setPhase('model-catalog-gpt-6-sol')
+  const gpt6SolMenu = await ensureModelOptionVisible(control, GPT_6_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt6SolMenu.testIds.includes(`model-option-${GPT_6_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6 Sol'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  setPhase('model-catalog-refresh')
   await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
   const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.ok(
