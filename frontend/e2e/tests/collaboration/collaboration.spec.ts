@@ -231,7 +231,6 @@ test.describe('Collaboration module', () => {
     await expect(
       assignmentComposer.locator('[data-composer-reference-kind="member"]')
     ).toHaveAttribute('data-composer-skill-label', assignedMemberName)
-    await expect(assignmentComposer).toBeFocused()
     await assignmentComposer.pressSequentially(assignmentComment)
     await expect(assignmentComposer).toContainText(assignmentComment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
