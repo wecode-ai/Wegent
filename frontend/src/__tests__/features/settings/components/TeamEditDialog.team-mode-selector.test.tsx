@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
@@ -20,8 +20,6 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.model': 'Collaboration mode',
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
-        'settings:team.simple.advanced_toggle': 'Advanced mode',
-        'settings:team.simple.advanced_toggle_description': 'Use full configuration.',
         'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
         'team_model.solo': 'Solo',
         'team_model.pipeline': 'Pipeline',
@@ -151,7 +149,7 @@ function renderCreateDialog() {
       onClose={jest.fn()}
       teams={[]}
       setTeams={jest.fn()}
-      editingTeamId={null}
+      editingTeamId={0}
       initialTeam={null}
       bots={[]}
       setBots={jest.fn()}
@@ -160,27 +158,11 @@ function renderCreateDialog() {
   )
 }
 
-function getSelectorPanel(container: HTMLElement): HTMLElement {
-  const panel = container.querySelector('.overflow-hidden.transition-all.duration-200')
-  expect(panel).not.toBeNull()
-  return panel as HTMLElement
-}
-
 describe('TeamEditDialog team mode selector', () => {
-  it('keeps the mode selector expanded after selecting a collaboration mode', async () => {
-    const { container } = renderCreateDialog()
+  it('does not expose collaboration modes during simplified creation', () => {
+    renderCreateDialog()
 
-    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
-    fireEvent.click(screen.getByRole('button', { name: 'Solo' }))
-
-    const selectorPanel = getSelectorPanel(container)
-    expect(selectorPanel).toHaveClass('opacity-100')
-
-    fireEvent.click(screen.getByTestId('select-mode-label-pipeline'))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Pipeline' })).toBeInTheDocument()
-    })
-    expect(selectorPanel).toHaveClass('opacity-100')
+    expect(screen.queryByTestId('advanced-mode-switch')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('select-mode-label-pipeline')).not.toBeInTheDocument()
   })
 })
