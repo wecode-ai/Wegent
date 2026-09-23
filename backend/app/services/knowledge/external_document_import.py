@@ -222,11 +222,23 @@ class ExternalDocumentImportService:
             )
 
         db.refresh(document)
+        refreshed_metadata = dict(external_meta or {})
         if not synchronized:
+            external = document.external_source_config
+            if (
+                decision.previous_status == DocumentIndexStatus.SUCCESS
+                and document.is_active
+                and document.attachment_id
+                and external.get("last_success_attachment_id") is None
+            ):
+                # A legacy copy has no recorded body ID. Record the currently
+                # served attachment before a new body can replace it.
+                refreshed_metadata["last_success_attachment_id"] = (
+                    document.attachment_id
+                )
             document.is_active = False
         # Invalidate until the fetched body lands with its corresponding
         # timestamp. Overwrite the key first: the saved baseline may carry it.
-        refreshed_metadata = dict(external_meta or {})
         refreshed_metadata["source_update_time"] = None
         document.update_external_source_config(**refreshed_metadata)
         db.commit()

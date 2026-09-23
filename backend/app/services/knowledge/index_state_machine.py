@@ -696,17 +696,17 @@ def _serves_previously_indexed_body(document: KnowledgeDocument) -> bool:
     A refresh only replaces the attached body once the new one lands, so an
     attempt that failed before that leaves the attachment the last successful
     import indexed in place, and only that body's index is still in service.
-    Copies imported before that body was recorded fall back to the success
-    timestamp; one that never imported successfully has nothing to fall back
-    on.
+    Legacy copies record their served attachment before a refresh begins, so
+    a timestamp alone never makes an unindexed replacement look successful.
     """
     external = document.external_source_config
     if not document.attachment_id or not external:
         return False
     indexed_attachment_id = external.get("last_success_attachment_id")
-    if indexed_attachment_id is None:
-        return bool(external.get("last_success_at"))
-    return indexed_attachment_id == document.attachment_id
+    return (
+        indexed_attachment_id is not None
+        and indexed_attachment_id == document.attachment_id
+    )
 
 
 @trace_sync(

@@ -257,7 +257,7 @@ def test_manual_reimport_invalidates_automatic_baseline(
     assert "source_update_time" not in imported_copy.external_source_config
 
 
-def test_failed_body_fetch_cannot_mark_old_attachment_as_current(
+def test_failed_body_fetch_keeps_old_attachment_without_marking_it_current(
     test_db: Session,
     test_user: User,
     imported_copy: KnowledgeDocument,
@@ -268,14 +268,13 @@ def test_failed_body_fetch_cannot_mark_old_attachment_as_current(
     from app.services.knowledge.external_document_providers import (
         ExternalDocumentFetchError,
     )
-    from app.services.knowledge.index_state_machine import (
-        mark_document_index_succeeded,
-        prepare_document_index_enqueue,
-    )
 
     imported_copy.attachment_id = 1234
     imported_copy.is_active = True
-    imported_copy.update_external_source_config(source_update_time=1789562600000)
+    imported_copy.update_external_source_config(
+        source_update_time=1789562600000,
+        last_success_at="2026-09-17T00:00:00+00:00",
+    )
     test_db.commit()
     fetch = AsyncMock(side_effect=ExternalDocumentFetchError("New body unavailable"))
     monkeypatch.setattr(
@@ -290,13 +289,11 @@ def test_failed_body_fetch_cannot_mark_old_attachment_as_current(
     )
     test_db.refresh(imported_copy)
     assert imported_copy.attachment_id == 1234
-    assert imported_copy.index_status == DocumentIndexStatus.FAILED
-    assert "source_update_time" not in imported_copy.external_source_config
-    # Reindexing the retained attachment must not turn a failed fetch into a baseline.
-    decision = prepare_document_index_enqueue(test_db, imported_copy.id)
-    assert mark_document_index_succeeded(test_db, imported_copy.id, decision.generation)
-    test_db.refresh(imported_copy)
     assert imported_copy.index_status == DocumentIndexStatus.SUCCESS
+    assert imported_copy.is_active is True
+    assert "source_update_time" not in imported_copy.external_source_config
+    # The failed fetch established no new source baseline, so the next scan
+    # must try again even while the old attachment remains available.
     import_dispatches.clear()
     assert refresh_dingtalk_copy(
         test_db, imported_copy.id, imported_copy.index_generation

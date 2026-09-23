@@ -46,24 +46,6 @@ def create_external_import_kb(
     )
 
 
-def provider_with_fetch(fetch):
-    """Build a provider fake using the provider-neutral fetch contract."""
-
-    async def fetch_content(_db, user, external_resource_id):
-        return await fetch(user, external_resource_id)
-
-    return SimpleNamespace(
-        fetch_content=fetch_content,
-        fetch_mock=fetch,
-    )
-
-
-def patch_provider_fetch(monkeypatch, provider, fetch):
-    fake = provider_with_fetch(fetch)
-    monkeypatch.setattr(provider, "fetch_content", fake.fetch_content)
-    return fake
-
-
 def create_synced_node(
     test_db: Session,
     user_id: int,

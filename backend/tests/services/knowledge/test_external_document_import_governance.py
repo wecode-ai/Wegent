@@ -631,12 +631,20 @@ class TestExternalRefreshFailure:
         test_db: Session,
         test_user: User,
         monkeypatch: pytest.MonkeyPatch,
+        dispatch_calls: list[dict],
     ) -> None:
-        # Imported before the indexed body was recorded: the success timestamp
-        # alone still proves there was one.
+        # Refresh preparation records the served body of a legacy success.
         document = self._create_served_copy(
             test_db, test_user, indexed_attachment_id=None
         )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+        refresh = external_document_import_service.refresh_existing_document(
+            test_db, document
+        )
+        assert refresh.started
+        assert len(dispatch_calls) == 1
         provider = SimpleNamespace(
             fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
         )
@@ -646,7 +654,9 @@ class TestExternalRefreshFailure:
             lambda provider_id: provider,
         )
 
-        run_external_document_import(test_db, document, test_user, generation=1)
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
 
         test_db.refresh(document)
         assert document.index_status == DocumentIndexStatus.SUCCESS
@@ -655,7 +665,7 @@ class TestExternalRefreshFailure:
         external = document.source_config["external"]
         assert external["status"] == "sync_error"
         assert external["last_success_at"] == "2026-08-01T00:00:00+00:00"
-        assert "last_success_attachment_id" not in external
+        assert external["last_success_attachment_id"] == 777
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_import_failed"
@@ -691,6 +701,47 @@ class TestExternalRefreshFailure:
         assert document.is_active is False
         assert document.attachment_id == 999
         assert document.processing_error_payload["code"] == "external_import_failed"
+
+    def test_legacy_refresh_does_not_serve_an_unindexed_replacement(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        dispatch_calls: list[dict],
+    ) -> None:
+        document = self._create_served_copy(
+            test_db, test_user, indexed_attachment_id=None
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+
+        refresh = external_document_import_service.refresh_existing_document(
+            test_db, document
+        )
+        assert refresh.started
+        assert len(dispatch_calls) == 1
+
+        # The new body landed, but never completed indexing.
+        document.attachment_id = 999
+        test_db.commit()
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.FAILED
+        assert document.is_active is False
+        assert document.attachment_id == 999
 
     def test_stale_generation_leaves_the_newer_attempt_untouched(
         self,
