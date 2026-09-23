@@ -518,7 +518,8 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
-    capability_mode: str = "follow_device"
+    # Legacy Bots without this field keep their configured Ghost capabilities.
+    capability_mode: str = "manual"
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "

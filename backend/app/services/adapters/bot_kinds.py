@@ -2549,7 +2549,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             preload_skills=bot_dict.get("preload_skills"),
             preload_skill_refs=preload_skill_refs_meta,
             plugins=bot_dict.get("plugins"),
-            capability_mode=bot_dict.get("capability_mode", "follow_device"),
+            capability_mode=bot_dict["capability_mode"],
             inherit_base_capabilities=bot_dict.get("inherit_base_capabilities", False),
             namespace=namespace,
         )

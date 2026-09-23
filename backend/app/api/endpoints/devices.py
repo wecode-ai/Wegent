@@ -328,26 +328,25 @@ async def _device_command_env(
     return env
 
 
-# MIGRATION-CANDIDATE(api="GET /api/devices"): remove after final confirmation.
-# @router.get("", response_model=DeviceListResponse)
-# async def get_all_devices(
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(security.get_current_user),
-# ):
-#     """
-#     Get all devices for the current user (including offline).
-#
-#     Returns all registered devices with their current online status.
-#     Devices auto-register via WebSocket when they connect.
-#
-#     Returns:
-#         DeviceListResponse with all devices list
-#     """
-#     devices = await device_service.get_all_devices(db, current_user.id)
-#     return DeviceListResponse(
-#         items=[DeviceInfo(**d) for d in devices],
-#         total=len(devices),
-#     )
+@router.get("", response_model=DeviceListResponse)
+async def get_all_devices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get all devices for the current user (including offline).
+
+    Returns all registered devices with their current online status.
+    Devices auto-register via WebSocket when they connect.
+
+    Returns:
+        DeviceListResponse with all devices list
+    """
+    devices = await device_service.get_all_devices(db, current_user.id)
+    return DeviceListResponse(
+        items=[DeviceInfo(**d) for d in devices],
+        total=len(devices),
+    )
 
 
 @router.get("/online", response_model=DeviceListResponse)
