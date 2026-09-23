@@ -31,13 +31,14 @@ fn inject_session_headers_adds_upstream_variant_for_gateway() {
 }
 
 #[test]
-fn inject_session_headers_skips_empty_task_id_and_keeps_explicit_value() {
+fn inject_session_headers_skips_empty_task_id_and_overrides_stale_value() {
     let mut headers = vec![("wecode-session-id".to_owned(), "explicit".to_owned())];
     inject_session_headers(&mut headers, "");
     assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "explicit");
     inject_session_headers(&mut headers, "123");
     assert_eq!(headers.len(), 1);
-    assert_eq!(headers[0].1, "explicit");
+    assert_eq!(headers[0].1, "123");
 }
 
 #[test]

@@ -4367,12 +4367,14 @@ fn inject_session_headers(headers: &mut Vec<(String, String)>, task_id: &str) {
     if task_id.is_empty() {
         return;
     }
-    insert_missing_header(headers, "wecode-session-id", task_id);
+    // The request's task id is authoritative; replace any value coming from
+    // provider configuration so session correlation never points at a stale id.
+    insert_header(headers, "wecode-session-id", task_id);
     let targets_gateway = headers
         .iter()
         .any(|(key, _)| key.eq_ignore_ascii_case("X-Wegent-Model-Type"));
     if targets_gateway {
-        insert_missing_header(
+        insert_header(
             headers,
             "X-Wegent-Upstream-Header-wecode-session-id",
             task_id,
