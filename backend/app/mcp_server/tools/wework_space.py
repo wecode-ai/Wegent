@@ -27,6 +27,7 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectChatAgent,
     loop_datetime_is_unset,
 )
 from app.models.user import User
@@ -837,10 +838,18 @@ async def assign_board_item(
                 from app.services.board_team_execution import (
                     dispatch_board_team_assignment,
                 )
+                from app.services.loop_item_executions.wake import wake_robot_creator
 
                 await dispatch_board_team_assignment(
                     db, item=assigned, user=_user(db, token_info.user_id)
                 )
+                agent = db.get(ProjectChatAgent, assigned.assignee_agent_id)
+                if agent is not None and agent.created_by_user_id:
+                    wake_robot_creator(
+                        user_id=agent.created_by_user_id,
+                        project_id=str(project.id),
+                        agent_id=agent.id,
+                    )
             return result
         values = LoopItemAssign(
             version=int(current["version"]),

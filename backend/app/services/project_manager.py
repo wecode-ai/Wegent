@@ -18,6 +18,7 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemUpdate
 from app.schemas.project_automation import ProjectAutomationCreate
@@ -298,6 +299,33 @@ class ProjectManagerService:
         run.metadata_json = {**metadata(run), "manager_actions": actions}
         run.version += 1
         db.commit()
+        if approve and action["kind"] == "assign" and not external and item is not None:
+            if action["payload"]["assignee_type"] == "agent":
+                from app.services.board_team_execution import (
+                    schedule_board_robot_execution,
+                )
+                from app.services.loop_item_executions.wake import wake_robot_creator
+
+                agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+                if agent is not None:
+                    execution = (
+                        db.query(LoopItemExecution)
+                        .filter(
+                            LoopItemExecution.loop_item_id == item.id,
+                            LoopItemExecution.agent_id == agent.id,
+                            LoopItemExecution.status == "queued",
+                        )
+                        .order_by(LoopItemExecution.id.desc())
+                        .first()
+                    )
+                    if execution is not None:
+                        schedule_board_robot_execution(db, execution)
+                    if agent.created_by_user_id:
+                        wake_robot_creator(
+                            user_id=agent.created_by_user_id,
+                            project_id=str(project_id),
+                            agent_id=agent.id,
+                        )
         return action
 
     def get(self, db: Session, project_id: str, user_id: int) -> dict:

@@ -5135,6 +5135,63 @@ mod tests {
     }
 
     #[test]
+    fn manager_event_tags_match_the_issues_current_tags() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate urgent work",
+                        "triggers": [
+                            {"id":"on-create","kind":"event","eventType":"task.created","enabled":true,"tags":["urgent"]},
+                            {"id":"on-status","kind":"event","eventType":"task.status_changed","enabled":true,"tags":["urgent"]}
+                        ],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let routine = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Routine","tags":["routine"]})).unwrap(),
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &routine.id,
+                TaskUpdate {
+                    version: routine.version,
+                    status: Some("pending".into()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert!(store
+            .list_project_manager_runs(&project.id)
+            .unwrap()
+            .is_empty());
+
+        store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Urgent","tags":["urgent"]})).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            store.list_project_manager_runs(&project.id).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
     fn unavailable_project_manager_records_failed_run() {
         let (_directory, store, project) = chat_agent_store();
         let agent = make_local_agent(&store, &project.id, "auto");

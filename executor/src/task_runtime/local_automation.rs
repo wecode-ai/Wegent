@@ -183,14 +183,25 @@ pub(super) fn on_event_with_origin(
                 continue;
             }
             let tags = trigger["tags"].as_array().cloned().unwrap_or_default();
-            if event == "task.tag_added"
-                && !tags.is_empty()
-                && !tags
+            if !tags.is_empty() {
+                let actual_tags = if event == "task.tag_added" {
+                    added_tags.to_vec()
+                } else {
+                    get_item_from(connection, task_id, "task")?
+                        .and_then(|task| task.metadata["tags"].as_array().cloned())
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect()
+                };
+                if !tags
                     .iter()
                     .filter_map(Value::as_str)
-                    .any(|tag| added_tags.iter().any(|added| added == tag))
-            {
-                continue;
+                    .any(|tag| actual_tags.iter().any(|actual| actual == tag))
+                {
+                    continue;
+                }
             }
             run_for_manager(connection, &project, "event", Some(task_id), None)?;
             return Ok(());
