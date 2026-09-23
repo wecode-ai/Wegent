@@ -772,8 +772,7 @@ class RealCloudEnvironment {
       `UPDATE kinds
        SET json = JSON_SET(
          json,
-         '$.spec.cloudConfig.sandboxId', %s,
-         '$.spec.cloudConfig.deviceId', %s
+         '$.spec.cloudConfig', JSON_OBJECT('sandboxId', %s, 'deviceId', %s)
        )
        WHERE kind = 'Device' AND name = %s`,
       [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
