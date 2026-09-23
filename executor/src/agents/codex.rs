@@ -3141,7 +3141,7 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
-    command.env(CODEX_HOME_ENV, &codex_home);
+    command.env(CODEX_HOME_ENV, codex_home);
     command.current_dir(codex_home);
     command.env(
         "PATH",
