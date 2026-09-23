@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
@@ -250,7 +251,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       // The DingTalk push links straight at the comment, so a recipient who taps
       // the deep link lands the same way an inbox click does.
-      await control.command('reloadMainWindow', 'body')
+      await reloadMainWindow(
+        control,
+        'The main window did not come back after reloading for the mention link'
+      )
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -268,7 +272,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       // A fresh window puts the board back at its home, so the inbox click is
       // measured from the same cold start as the link above.
-      await control.command('reloadMainWindow', 'body')
+      await reloadMainWindow(
+        control,
+        'The main window did not come back after reloading for the inbox click'
+      )
       await control.command('waitFor', '[data-testid="wework-notifications-button"]', {
         timeoutMs: uiTimeoutMs,
       })
