@@ -766,6 +766,7 @@ function DeviceCard({
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
+                  aria-label={t('common.save')}
                   className="rounded p-0.5 text-primary hover:bg-primary/10"
                 >
                   <Check className="h-3.5 w-3.5" />
@@ -773,6 +774,7 @@ function DeviceCard({
                 <button
                   type="button"
                   onClick={handleCancelEdit}
+                  aria-label={t('common.cancel')}
                   className="rounded p-0.5 text-text-muted hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -790,6 +792,7 @@ function DeviceCard({
                 <button
                   type="button"
                   onClick={handleStartEdit}
+                  aria-label={t('workbench.edit')}
                   className="rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-secondary"
                 >
                   <Pencil className="h-3 w-3" />
