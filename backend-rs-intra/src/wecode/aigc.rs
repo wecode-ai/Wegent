@@ -2,11 +2,16 @@
 //!
 //! Ported from the reference implementation's `src/wecode/quota.rs`
 //! (`mod quota_service`), which mirrors `wecode/api/quota_endpoint_patch.py`:
-//! one POST per request with a 10-second total timeout carrying
+//! an upstream POST with a 10-second total timeout carrying
 //! `{"user_name": ...}`, followed by the `_transform_aigc_response` mapping.
 //! Every transport failure, non-2xx status, non-object body, or body without
 //! `user_quota` returns `None`, which the caller renders as the open-source
 //! empty quota response.
+//!
+//! Successful results are cached per user in Redis for one hour. Values no
+//! older than two minutes are returned directly; older values are returned
+//! while a startup-owned mpsc worker refreshes them. A cache miss waits for
+//! the upstream response because no stale value exists yet.
 //!
 //! The transform reads the upstream body as a JSON object rather than through
 //! a typed struct, because the source uses `dict.get(key, default)`: the
@@ -14,11 +19,15 @@
 //! `null` is echoed as `null`. A typed `Option` field cannot express that
 //! distinction.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use brz_http::{Client, Endpoint, Response as HttpResponse};
-use serde::Serialize;
+use brz_redis::Redis;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
+use tokio::sync::mpsc;
 use wegent_backend_rs::json_compat::OpaqueJson;
 
 /// `AIGC_QUOTA_URL` in `wecode/api/quota_endpoint_patch.py`.
@@ -28,6 +37,19 @@ pub(super) const AIGC_QUOTA_URL: &str =
 /// Source `_wrap_quota_endpoint`: `timeout=10` seconds for the whole call.
 const AIGC_QUOTA_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Redis lifetime for a cached quota response.
+const QUOTA_CACHE_TTL_SECONDS: u64 = 60 * 60;
+
+/// Cached quota remains fresh for two minutes. Older values are returned
+/// immediately while a refresh runs in the background.
+const QUOTA_CACHE_FRESH_SECONDS: u64 = 2 * 60;
+
+const QUOTA_CACHE_KEY_PREFIX: &str = "quota:aigc:v1:";
+
+/// Refresh work is deliberately bounded and handled by one startup worker so
+/// request handlers never spawn background tasks or overload the upstream.
+const QUOTA_REFRESH_QUEUE_CAPACITY: usize = 256;
+
 /// The POST body the source sends (`{"user_name": current_user.user_name}`).
 #[derive(Serialize)]
 struct QuotaRequest<'a> {
@@ -35,14 +57,14 @@ struct QuotaRequest<'a> {
 }
 
 /// The transformed payload consumed by the frontend.
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(super) struct QuotaDetails {
     data: QuotaData,
-    quota_source: &'static str,
-    status: &'static str,
+    quota_source: String,
+    status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct QuotaData {
     // `quota`, `usage_rate`, and `user` are passed through exactly as the
     // upstream sent them, including an explicit null and any shape at all.
@@ -51,6 +73,140 @@ struct QuotaData {
     remaining: Number,
     usage_rate: OpaqueJson,
     user: OpaqueJson,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CachedQuota {
+    fetched_at: u64,
+    quota: QuotaDetails,
+}
+
+#[async_trait]
+trait QuotaCache: Send + Sync {
+    async fn get(&self, key: &str) -> Option<Vec<u8>>;
+    async fn set(&self, key: &str, value: &[u8]);
+}
+
+struct RedisQuotaCache {
+    redis: Option<brz_redis::RedisService>,
+}
+
+#[async_trait]
+impl QuotaCache for RedisQuotaCache {
+    async fn get(&self, key: &str) -> Option<Vec<u8>> {
+        let redis = self.redis.as_ref()?;
+        match redis.get(key).await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(%error, key, "AIGC quota cache read failed");
+                None
+            }
+        }
+    }
+
+    async fn set(&self, key: &str, value: &[u8]) {
+        let Some(redis) = self.redis.as_ref() else {
+            return;
+        };
+        if let Err(error) = redis.set_ex(key, QUOTA_CACHE_TTL_SECONDS, value).await {
+            tracing::warn!(%error, key, "AIGC quota cache write failed");
+        }
+    }
+}
+
+/// Cached client for the internal AIGC quota service.
+#[derive(Clone)]
+pub(crate) struct AigcQuotaService {
+    client: AigcQuotaClient,
+    refresh_tx: mpsc::Sender<String>,
+}
+
+impl AigcQuotaService {
+    pub(super) fn new(endpoint: Endpoint, redis: Option<brz_redis::RedisService>) -> Self {
+        Self::with_cache(endpoint, Arc::new(RedisQuotaCache { redis }))
+    }
+
+    fn with_cache(endpoint: Endpoint, cache: Arc<dyn QuotaCache>) -> Self {
+        let client = AigcQuotaClient { endpoint, cache };
+        let (refresh_tx, refresh_rx) = mpsc::channel(QUOTA_REFRESH_QUEUE_CAPACITY);
+        tokio::spawn(run_refresh_worker(client.clone(), refresh_rx));
+        Self { client, refresh_tx }
+    }
+
+    /// Returns a fresh or stale cached quota when available. A cache miss
+    /// waits for the upstream service because there is no value to return.
+    pub(super) async fn fetch(&self, user_name: &str) -> Option<QuotaDetails> {
+        let key = quota_cache_key(user_name);
+        if let Some(cached) = self.client.cached(&key).await {
+            if cache_is_fresh(cached.fetched_at, unix_seconds()) {
+                return Some(cached.quota);
+            }
+
+            if let Err(error) = self.refresh_tx.try_send(user_name.to_owned()) {
+                tracing::warn!(%error, user_name, "AIGC quota refresh enqueue failed");
+            }
+            return Some(cached.quota);
+        }
+
+        self.client.refresh(user_name).await
+    }
+}
+
+#[derive(Clone)]
+struct AigcQuotaClient {
+    endpoint: Endpoint,
+    cache: Arc<dyn QuotaCache>,
+}
+
+impl AigcQuotaClient {
+    async fn cached(&self, key: &str) -> Option<CachedQuota> {
+        let payload = self.cache.get(key).await?;
+        match serde_json::from_slice(&payload) {
+            Ok(cached) => Some(cached),
+            Err(error) => {
+                tracing::warn!(%error, key, "AIGC quota cache decode failed");
+                None
+            }
+        }
+    }
+
+    async fn refresh(&self, user_name: &str) -> Option<QuotaDetails> {
+        let quota = fetch_aigc_quota(&self.endpoint, user_name).await?;
+        let cached = CachedQuota {
+            fetched_at: unix_seconds(),
+            quota: quota.clone(),
+        };
+        match serde_json::to_vec(&cached) {
+            Ok(payload) => {
+                self.cache.set(&quota_cache_key(user_name), &payload).await;
+            }
+            Err(error) => {
+                tracing::warn!(%error, user_name, "AIGC quota cache encode failed");
+            }
+        }
+        Some(quota)
+    }
+}
+
+async fn run_refresh_worker(client: AigcQuotaClient, mut refresh_rx: mpsc::Receiver<String>) {
+    while let Some(user_name) = refresh_rx.recv().await {
+        let _ = client.refresh(&user_name).await;
+    }
+}
+
+fn quota_cache_key(user_name: &str) -> String {
+    format!("{QUOTA_CACHE_KEY_PREFIX}{user_name}")
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn cache_is_fresh(fetched_at: u64, now: u64) -> bool {
+    now.saturating_sub(fetched_at) <= QUOTA_CACHE_FRESH_SECONDS
 }
 
 /// Builds the retained AIGC quota endpoint for the process lifetime.
@@ -88,7 +244,7 @@ pub(super) async fn fetch_aigc_quota(endpoint: &Endpoint, user_name: &str) -> Op
         .send()
         .await
         .map_err(|error| {
-            tracing::error!(%error, user_name, "AIGC quota service request failed");
+            tracing::warn!(%error, user_name, "AIGC quota service request failed");
         })
         .ok()?;
 
@@ -96,7 +252,7 @@ pub(super) async fn fetch_aigc_quota(endpoint: &Endpoint, user_name: &str) -> Op
     // checked before the body is read.
     let status = response.status();
     if !status.is_success() {
-        tracing::error!(%status, user_name, "AIGC quota service returned error status");
+        tracing::warn!(%status, user_name, "AIGC quota service returned error status");
         return None;
     }
 
@@ -104,7 +260,7 @@ pub(super) async fn fetch_aigc_quota(endpoint: &Endpoint, user_name: &str) -> Op
         .bytes()
         .await
         .map_err(|error| {
-            tracing::error!(%error, user_name, "AIGC quota response body read failed");
+            tracing::warn!(%error, user_name, "AIGC quota response body read failed");
         })
         .ok()?;
     parse_aigc_quota_response(&body, user_name)
@@ -119,7 +275,7 @@ fn parse_aigc_quota_response(body: &[u8], user_name: &str) -> Option<QuotaDetail
     let raw: Value = match serde_json::from_slice(body) {
         Ok(value) => value,
         Err(error) => {
-            tracing::error!(%error, user_name, "AIGC quota response body decode failed");
+            tracing::warn!(%error, user_name, "AIGC quota response body decode failed");
             return None;
         }
     };
@@ -160,8 +316,8 @@ fn transform_aigc_response(raw: &Map<String, Value>, user_quota: &Value) -> Opti
             usage_rate: passthrough(raw.get("user_usage_rate"), 0),
             user: passthrough(raw.get("username"), ""),
         },
-        quota_source: "AIGC",
-        status: "success",
+        quota_source: "AIGC".to_owned(),
+        status: "success".to_owned(),
     })
 }
 
@@ -222,7 +378,65 @@ fn sub_like_python(a: &Number, b: &Number) -> Number {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::sync::Notify;
+
     use super::*;
+
+    #[derive(Default)]
+    struct FakeQuotaCache {
+        values: Mutex<HashMap<String, Vec<u8>>>,
+        writes: AtomicUsize,
+        written: Notify,
+    }
+
+    impl FakeQuotaCache {
+        fn seed(&self, key: &str, value: Vec<u8>) {
+            self.values
+                .lock()
+                .expect("cache mutex")
+                .insert(key.to_owned(), value);
+        }
+
+        fn value(&self, key: &str) -> Option<Vec<u8>> {
+            self.values.lock().expect("cache mutex").get(key).cloned()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl QuotaCache for FakeQuotaCache {
+        async fn get(&self, key: &str) -> Option<Vec<u8>> {
+            self.value(key)
+        }
+
+        async fn set(&self, key: &str, value: &[u8]) {
+            self.values
+                .lock()
+                .expect("cache mutex")
+                .insert(key.to_owned(), value.to_vec());
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            self.written.notify_one();
+        }
+    }
+
+    fn quota(body: &str) -> QuotaDetails {
+        parse_aigc_quota_response(body.as_bytes(), "test").expect("valid quota")
+    }
+
+    fn cached_quota(body: &str, fetched_at: u64) -> Vec<u8> {
+        serde_json::to_vec(&CachedQuota {
+            fetched_at,
+            quota: quota(body),
+        })
+        .expect("cached quota serializes")
+    }
+
+    fn quota_value(quota: QuotaDetails) -> Value {
+        serde_json::to_value(quota).expect("quota serializes")
+    }
 
     /// The serialized transform output for a raw upstream body.
     fn transformed(body: &str) -> Value {
@@ -318,6 +532,148 @@ mod tests {
     /// Builds an endpoint pointed at a test server.
     fn test_endpoint(base: &str) -> Endpoint {
         build_endpoint(&format!("{base}{AIGC_QUOTA_PATH}")).expect("valid quota URL")
+    }
+
+    #[tokio::test]
+    async fn returns_a_fresh_user_cache_without_calling_upstream() {
+        let cache = Arc::new(FakeQuotaCache::default());
+        cache.seed(
+            &quota_cache_key("sifang"),
+            cached_quota(
+                r#"{"user_quota": 100, "user_usage": 25, "username": "sifang"}"#,
+                unix_seconds(),
+            ),
+        );
+        let service =
+            AigcQuotaService::with_cache(test_endpoint("http://127.0.0.1:1"), cache.clone());
+
+        let result = service.fetch("sifang").await.expect("cached quota");
+
+        assert_eq!(quota_value(result)["data"]["remaining"], 75);
+        assert_eq!(cache.writes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_cache_miss_loads_upstream_synchronously_and_caches_the_result() {
+        let (base, _requests) = serve_once(http_response(
+            "200 OK",
+            r#"{"user_quota": 100, "user_usage": 40, "username": "yansheng3"}"#,
+        ));
+        let cache = Arc::new(FakeQuotaCache::default());
+        let service = AigcQuotaService::with_cache(test_endpoint(&base), cache.clone());
+
+        let result = service.fetch("yansheng3").await.expect("upstream quota");
+
+        assert_eq!(quota_value(result)["data"]["remaining"], 60);
+        assert_eq!(cache.writes.load(Ordering::SeqCst), 1);
+        let stored: CachedQuota = serde_json::from_slice(
+            &cache
+                .value(&quota_cache_key("yansheng3"))
+                .expect("cache value"),
+        )
+        .expect("valid cached quota");
+        assert_eq!(quota_value(stored.quota)["data"]["remaining"], 60);
+    }
+
+    #[tokio::test]
+    async fn returns_stale_cache_and_queues_a_refresh() {
+        let (base, _requests) = serve_once(http_response(
+            "200 OK",
+            r#"{"user_quota": 100, "user_usage": 45, "username": "sifang"}"#,
+        ));
+        let cache = Arc::new(FakeQuotaCache::default());
+        cache.seed(
+            &quota_cache_key("sifang"),
+            cached_quota(
+                r#"{"user_quota": 100, "user_usage": 20, "username": "sifang"}"#,
+                unix_seconds() - QUOTA_CACHE_FRESH_SECONDS - 1,
+            ),
+        );
+        let service = AigcQuotaService::with_cache(test_endpoint(&base), cache.clone());
+
+        let result = service.fetch("sifang").await.expect("stale quota");
+
+        assert_eq!(quota_value(result)["data"]["remaining"], 80);
+        tokio::time::timeout(Duration::from_secs(2), cache.written.notified())
+            .await
+            .expect("background refresh writes the cache");
+        let stored: CachedQuota = serde_json::from_slice(
+            &cache
+                .value(&quota_cache_key("sifang"))
+                .expect("refreshed cache value"),
+        )
+        .expect("valid refreshed quota");
+        assert_eq!(quota_value(stored.quota)["data"]["remaining"], 55);
+    }
+
+    #[tokio::test]
+    async fn a_failed_background_refresh_keeps_the_stale_cache() {
+        let (base, requests) = serve_once(http_response("500 Internal Server Error", "boom"));
+        let cache = Arc::new(FakeQuotaCache::default());
+        let stale = cached_quota(
+            r#"{"user_quota": 100, "user_usage": 20, "username": "sifang"}"#,
+            unix_seconds() - QUOTA_CACHE_FRESH_SECONDS - 1,
+        );
+        cache.seed(&quota_cache_key("sifang"), stale.clone());
+        let service = AigcQuotaService::with_cache(test_endpoint(&base), cache.clone());
+
+        let result = service.fetch("sifang").await.expect("stale quota");
+        let request_received = tokio::task::spawn_blocking(move || {
+            requests
+                .recv_timeout(Duration::from_secs(2))
+                .expect("refresh request")
+        })
+        .await
+        .expect("request observer");
+
+        assert!(request_received.ends_with(r#"{"user_name":"sifang"}"#));
+        assert_eq!(quota_value(result)["data"]["remaining"], 80);
+        assert_eq!(cache.value(&quota_cache_key("sifang")), Some(stale));
+        assert_eq!(cache.writes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_closed_refresh_queue_still_returns_the_stale_cache() {
+        let cache = Arc::new(FakeQuotaCache::default());
+        cache.seed(
+            &quota_cache_key("sifang"),
+            cached_quota(
+                r#"{"user_quota": 100, "user_usage": 20, "username": "sifang"}"#,
+                unix_seconds() - QUOTA_CACHE_FRESH_SECONDS - 1,
+            ),
+        );
+        let (refresh_tx, refresh_rx) = mpsc::channel(1);
+        drop(refresh_rx);
+        let service = AigcQuotaService {
+            client: AigcQuotaClient {
+                endpoint: test_endpoint("http://127.0.0.1:1"),
+                cache,
+            },
+            refresh_tx,
+        };
+
+        let result = service.fetch("sifang").await.expect("stale quota");
+
+        assert_eq!(quota_value(result)["data"]["remaining"], 80);
+    }
+
+    #[tokio::test]
+    async fn no_redis_client_falls_back_to_a_synchronous_upstream_load() {
+        let (base, _requests) = serve_once(http_response(
+            "200 OK",
+            r#"{"user_quota": 50, "user_usage": 5, "username": "sifang"}"#,
+        ));
+        let service = AigcQuotaService::new(test_endpoint(&base), None);
+
+        let result = service.fetch("sifang").await.expect("upstream quota");
+
+        assert_eq!(quota_value(result)["data"]["remaining"], 45);
+    }
+
+    #[test]
+    fn cache_keys_are_isolated_by_user() {
+        assert_eq!(quota_cache_key("sifang"), "quota:aigc:v1:sifang");
+        assert_eq!(quota_cache_key("yansheng3"), "quota:aigc:v1:yansheng3");
     }
 
     #[tokio::test]

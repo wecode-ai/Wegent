@@ -11,12 +11,12 @@ async-trait = "0.1"
 base64 = "0.23.1"
 # Keep the Breeze components on exact published versions and one metrics
 # registry revision in the final backend binary.
-brz-http = { version = "=0.0.7", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-server = { version = "=0.0.15", features = ["macros", "metrics", "api-log", "slow-log"] }
-brz-logs = { version = "=0.0.8", features = ["metrics"] }
-brz-metrics = "=0.0.6"
-brz-mysql = { version = "=0.0.11", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.9", features = ["metrics", "slow-log"] }
+brz-http = { version = "=0.0.8", features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { version = "=0.0.20", features = ["macros", "metrics", "api-log", "slow-log"] }
+brz-logs = { version = "=0.0.10", features = ["metrics"] }
+brz-metrics = "=0.0.7"
+brz-mysql = { version = "=0.0.12", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.10", features = ["metrics", "slow-log"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hmac = "0.12"

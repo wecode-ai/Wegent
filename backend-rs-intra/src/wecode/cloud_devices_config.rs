@@ -20,12 +20,8 @@
 //! (`enabled`, `max_devices_per_user`, `can_create`).
 use serde::Serialize;
 
-use super::startup::SharedWecodeAppState;
-use brz_mysql::Mysql;
-use wegent_backend_rs::auth::{AuthFailure, get_current_user};
-use wegent_backend_rs::config::AuthConfig;
+use wegent_backend_rs::auth::SessionUser;
 use wegent_backend_rs::config::env_or_dotenv;
-use wegent_backend_rs::http_compat::FastApiError;
 
 /// `NEVIS_MAX_DEVICES_PER_USER` pydantic default
 /// (`wecode.config.nevis_config.NevisSettings`).
@@ -71,37 +67,19 @@ fn nevis_settings_configured(settings: [Option<String>; 4]) -> bool {
     settings.iter().all(Option::is_some)
 }
 
-/// GET /api/cloud-devices/config: the config free function, injecting the
-/// internal state and its shared public dependencies.
+/// GET /api/cloud-devices/config: the authenticated config route.
 #[brz_http_server::get("/api/cloud-devices/config", group = crate::wecode::startup::wecode_apis)]
-async fn get_cloud_device_config(
-    #[inject(wecode)] state: &SharedWecodeAppState,
-    #[header] authorization: Option<&str>,
-) -> Result<CloudDeviceConfigResponse, FastApiError> {
-    cloud_device_config(&state.app.auth, &state.app.mysql, authorization).await
+async fn get_cloud_device_config(#[auth] _user: SessionUser) -> CloudDeviceConfigResponse {
+    cloud_device_config()
 }
 
 /// Handler body for `GET /api/cloud-devices/config`.
-async fn cloud_device_config<M: Mysql>(
-    auth: &AuthConfig,
-    mysql: &M,
-    authorization: Option<&str>,
-) -> Result<CloudDeviceConfigResponse, FastApiError> {
-    let _user = match get_current_user(auth, mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
-
-    Ok(CloudDeviceConfigResponse {
+fn cloud_device_config() -> CloudDeviceConfigResponse {
+    CloudDeviceConfigResponse {
         enabled: nevis_is_configured(),
         max_devices_per_user: nevis_max_devices_per_user(),
         can_create: true,
-    })
+    }
 }
 
 #[cfg(test)]

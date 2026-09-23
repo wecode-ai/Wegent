@@ -21,7 +21,7 @@ struct GreyStatusResponse {
 }
 
 use super::startup::SharedWecodeAppState;
-use wegent_backend_rs::auth::{AuthFailure, UserRow, get_current_user};
+use wegent_backend_rs::auth::SessionUser;
 use wegent_backend_rs::http_compat::FastApiError;
 
 /// Grey test config name hardcoded in the source module.
@@ -45,34 +45,16 @@ async fn is_grey_member(service: &impl Redis, user_id: i32) -> brz_redis::RedisR
 #[brz_http_server::get("/api/grey/status", group = crate::wecode::startup::wecode_apis)]
 async fn get_grey_status(
     #[inject(wecode)] state: &SharedWecodeAppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: SessionUser,
 ) -> Result<GreyStatusResponse, FastApiError> {
-    grey_status(
-        &state.app.auth,
-        &state.app.mysql,
-        state.app.redis.as_ref(),
-        authorization,
-    )
-    .await
+    grey_status(state.app.redis.as_ref(), user).await
 }
 
 /// Handler body for `GET /api/grey/status`.
-async fn grey_status<M: brz_mysql::Mysql, R: Redis>(
-    auth: &wegent_backend_rs::config::AuthConfig,
-    mysql: &M,
+async fn grey_status<R: Redis>(
     redis: Option<&R>,
-    authorization: Option<&str>,
+    user: SessionUser,
 ) -> Result<GreyStatusResponse, FastApiError> {
-    let user: UserRow = match get_current_user(auth, mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
-
     let redis = redis.ok_or_else(internal_error)?;
     let is_member: bool = match is_grey_member(redis, user.id).await {
         Ok(value) => value,

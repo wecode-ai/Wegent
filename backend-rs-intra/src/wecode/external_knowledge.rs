@@ -21,7 +21,6 @@ use std::time::Duration;
 use brz_http_server::StatusCode;
 use serde::Deserialize;
 use serde::Serialize;
-use wegent_backend_rs::auth::{AuthFailure, UserRow, get_current_user};
 use wegent_backend_rs::config::env_or_dotenv;
 use wegent_backend_rs::http_compat::FastApiError;
 
@@ -337,12 +336,12 @@ async fn list_external_knowledge_bases(
     query: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
-    #[header] authorization: Option<&str>,
+    #[auth] user: wegent_backend_rs::auth::SessionUser,
 ) -> Result<KnowledgeBaseListResponse, ListError> {
     let params = parse_params(scope.as_deref(), query, limit.as_deref(), offset.as_deref())?;
     let response = list_knowledge_bases(
         state,
-        authorization,
+        user.id,
         &provider,
         &params.scope,
         params.query.as_deref(),
@@ -384,34 +383,17 @@ impl brz_http_server::IntoHttpError for ListError {
     }
 }
 
-/// `list_external_knowledge_bases` handler body: authenticate, resolve the
-/// employee id, then dispatch to the provider.
+/// `list_external_knowledge_bases` handler body: resolve the employee id,
+/// then dispatch to the provider.
 async fn list_knowledge_bases(
     state: &SharedWecodeAppState,
-    authorization: Option<&str>,
+    user_id: i32,
     provider_name: &str,
     scope: &str,
     query: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<KnowledgeBaseListResponse, ExternalKnowledgeError> {
-    // `security.get_current_user`: bearer decode plus the labeled `users`
-    // lookup; 401s mirror the source's HTTPException mapping.
-    let _user: UserRow = get_current_user(&state.app.auth, &state.app.mysql, authorization)
-        .await
-        .map_err(|failure| match failure {
-            AuthFailure::InvalidCredentials => ExternalKnowledgeError {
-                message: "Could not validate credentials".to_string(),
-                code: "unauthorized",
-                status: StatusCode::UNAUTHORIZED,
-            },
-            AuthFailure::UserNotActivated => ExternalKnowledgeError {
-                message: "User not activated".to_string(),
-                code: "unauthorized",
-                status: StatusCode::UNAUTHORIZED,
-            },
-        })?;
-
     // `ExternalKnowledgeService._get_ready_provider`: registry.get raises
     // 404 `provider_not_found` for unknown names.
     if provider_name != "ap" {
@@ -429,7 +411,7 @@ async fn list_knowledge_bases(
         &state.app.mysql,
         state.app.redis.as_ref(),
         state.app.erp.as_ref(),
-        _user.id,
+        user_id,
     )
     .await
     .map_err(|error| {

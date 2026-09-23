@@ -9,7 +9,8 @@ pub(crate) type SharedWecodeAppState = Arc<WecodeAppState<RedisService>>;
 
 brz_http_server::registry!(
     group = wecode_apis,
-    dependencies(wecode: SharedWecodeAppState)
+    dependencies(wecode: SharedWecodeAppState),
+    auth = wegent_backend_rs::auth::AppAuthenticator
 );
 
 /// Retain the existing public state and create private services once at startup.
@@ -40,6 +41,12 @@ pub async fn build(mut app: AppState) -> Result<SharedWecodeAppState> {
     app.workspace_repository = Arc::new(super::subscription_workspaces::ShardedWorkspaceRepository);
     app.erp = erp_provider(app.mysql.clone());
     app.user_profile = Arc::new(super::user_profile::WecodeUserProfile);
+    // The `GET /api/users/me` wrapper resolves the current user's stored Git
+    // credentials through the internal token service (`GetUserGitInfo`).
+    // `WecodeGitInfo` owns the retained token-service client.
+    app.user_git_info = Arc::new(
+        super::git_tokens::WecodeGitInfo::new().context("failed to build the Git token source")?,
+    );
     app.media_policy = Arc::new(super::media_policy::WecodeMediaPolicy);
     app.document_download_policy =
         Arc::new(super::document_download_policy::WecodeDocumentDownloadPolicy);
@@ -74,22 +81,43 @@ pub async fn build(mut app: AppState) -> Result<SharedWecodeAppState> {
     // reader (`wecode/cache/users.py`): `user:v2:data` read-through with the
     // public SQL fallback. The cache client comes from `get_redis_client()`,
     // which builds an independent client from `REDIS_URL` and optional
-    // `REDIS_SLAVE_URL`.
-    let user_cache_redis = app.redis.clone();
+    // `REDIS_SLAVE_URL` — the extension keeps its own connections instead of
+    // sharing the application client the rate limiter and other services use.
+    // An unavailable Redis leaves the public SQL reader in place, mirroring
+    // `CachedUserReader.wrap()` returning `None`.
+    let user_cache_redis = wegent_backend_rs::build_cache_client().await;
     super::user_cache::install(&mut app, user_cache_redis);
+    // `wecode.service.nevis_client.nevis_client`: one client built at import
+    // time from the Nevis settings, shared by every cloud-device endpoint.
+    let nevis_client = super::nevis::NevisClient::new(super::nevis::NevisSettings::from_env())
+        .context("failed to build the Nevis HTTP client")?;
+    // `wecode.service.cloud_device_provider.CloudDeviceProvider.
+    // _project_runtime_features`: the internal cloud store advertises the
+    // sandbox Runtime's desktop capability only while the Nevis client is
+    // configured, so the projection is decided once at startup.
+    app.cloud_runtime_features = Arc::new(
+        super::cloud_device_runtime_features::CloudDeviceRuntimeFeatures::new(
+            nevis_client.is_configured(),
+        ),
+    );
     let app = Arc::new(app);
     let aigc_quota_endpoint = super::aigc::build_endpoint(super::aigc::AIGC_QUOTA_URL)
         .context("failed to build AIGC quota endpoint")?;
+    let aigc_quota = super::aigc::AigcQuotaService::new(aigc_quota_endpoint, app.redis.clone());
     Ok(Arc::new(WecodeAppState {
         app,
         tauth_redis,
-        aigc_quota_endpoint,
+        aigc_quota,
+        nevis_client,
     }))
 }
 
 pub(crate) fn routes(
     wecode: SharedWecodeAppState,
-) -> Result<brz_http_server::Router, brz_http_server::RegistryError> {
+) -> Result<
+    brz_http_server::Router<wegent_backend_rs::auth::AppAuthenticator>,
+    brz_http_server::RegistryError,
+> {
     brz_http_server::handlers!(wecode = wecode; group = self::wecode_apis)
 }
 
@@ -118,6 +146,7 @@ mod tests {
             paths,
             [
                 "/api/aigc-video/media/playback",
+                "/api/cloud-devices/:device_id/status",
                 "/api/cloud-devices/config",
                 "/api/grey/status",
                 "/api/wecode/external-knowledge/:provider/knowledge-bases",

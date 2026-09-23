@@ -112,8 +112,72 @@ fn not_authenticated() -> wegent_backend_rs::http_compat::FastApiError {
 #[derive(Debug, Deserialize)]
 pub struct PlaybackQuery {
     pub video_url: String,
-    #[serde(default)]
-    pub share_token: Option<String>,
+}
+
+pub struct PlaybackIdentity(String);
+
+const INVALID_SHARE_TOKEN: &str = "Wegent-Aigc-Invalid-Share-Token";
+
+impl brz_http_server::Authenticator<PlaybackIdentity>
+    for wegent_backend_rs::auth::AppAuthenticator
+{
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<PlaybackIdentity, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        let bearer = wegent_backend_rs::auth::extract_authorization_token(authorization);
+        if !bearer.is_empty()
+            && let Ok(username) =
+                resolve_user(&self.state().auth, &self.state().mysql, &bearer).await
+        {
+            return Ok(PlaybackIdentity(username));
+        }
+
+        let cookie = request
+            .header("cookie")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        if let Some(token) = cookie_value(cookie, "auth_token")
+            && let Ok(username) = resolve_user(&self.state().auth, &self.state().mysql, token).await
+        {
+            return Ok(PlaybackIdentity(username));
+        }
+
+        let query = brz_http_server::__private::QueryParams::new(request.query());
+        if query.get("share_token").is_some() {
+            return Err(brz_http_server::AuthFailure::invalid_credentials(
+                INVALID_SHARE_TOKEN,
+            ));
+        }
+        Err(brz_http_server::AuthFailure::missing_credentials("Bearer"))
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a PlaybackIdentity,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: INVALID_SHARE_TOKEN,
+            } => {
+                wegent_backend_rs::http_compat::FastApiError::forbidden("Invalid task share token")
+            }
+            _ => not_authenticated(),
+        }
+        .into_http_error(arena)
+    }
 }
 
 /// Parsed cookie value: one `name=value` pair from a `Cookie` header.
@@ -136,24 +200,11 @@ fn cookie_value<'a>(cookie: Option<&'a str>, name: &str) -> Option<&'a str> {
 async fn aigc_video_playback(
     #[inject(wecode)] state: &super::startup::SharedWecodeAppState,
     video_url: String,
-    share_token: Option<String>,
-    #[header] authorization: Option<&str>,
-    #[header] cookie: Option<&str>,
+    #[auth] _identity: PlaybackIdentity,
     #[header] range: Option<&str>,
 ) -> Result<PlaybackOutcome, wegent_backend_rs::http_compat::FastApiError> {
-    let query = PlaybackQuery {
-        video_url,
-        share_token,
-    };
-    Ok(playback(
-        &state.app,
-        state.tauth_redis.as_ref(),
-        &query,
-        authorization,
-        cookie,
-        range,
-    )
-    .await)
+    let query = PlaybackQuery { video_url };
+    Ok(playback(&state.app, state.tauth_redis.as_ref(), &query, range).await)
 }
 
 /// Handler body for `GET /api/aigc-video/media/playback`.
@@ -161,38 +212,8 @@ async fn playback<R: Redis>(
     app: &wegent_backend_rs::AppState,
     redis: Option<&R>,
     query: &PlaybackQuery,
-    authorization: Option<&str>,
-    cookie: Option<&str>,
     range: Option<&str>,
 ) -> PlaybackOutcome {
-    // `_media_read_identity`: bearer (optional dependency) first, then the
-    // `auth_token` cookie. An invalid token (signature, expiry, unknown
-    // user, inactive user) resolves to `None` and falls through, so the
-    // observable error for a rejected credential is the terminal 401.
-    let bearer = wegent_backend_rs::auth::extract_authorization_token(authorization);
-    if !bearer.is_empty() {
-        match resolve_user(&app.auth, &app.mysql, &bearer).await {
-            Ok(_) => {}
-            Err(IdentityError::Degraded) => {}
-        }
-    } else if let Some(token) = cookie_value(cookie, "auth_token") {
-        match resolve_user(&app.auth, &app.mysql, token).await {
-            Ok(_) => {}
-            Err(IdentityError::Degraded) => {}
-        }
-    } else if query.share_token.is_some() {
-        // `_shared_read_identity` with a share token: `decode_share_token`
-        // needs `SHARE_TOKEN_AES_KEY`, which the deployed source does not
-        // configure; every token decrypts to `None` and raises 403.
-        return wegent_backend_rs::http_compat::FastApiError::detail(
-            StatusCode::FORBIDDEN,
-            "Invalid task share token",
-        )
-        .into();
-    } else {
-        return not_authenticated().into();
-    }
-
     let range_header = range.map(str::to_string);
 
     let Some(validated_url) = validate_playback_url(&query.video_url) else {
@@ -265,10 +286,10 @@ async fn resolve_user<M: Mysql>(
     auth: &AuthConfig,
     mysql: &M,
     token: &str,
-) -> Result<(), IdentityError> {
+) -> Result<String, IdentityError> {
     let username = verify_user_session_token(auth, token).ok_or(IdentityError::Degraded)?;
     match crate::wecode::quota::users::find_user_by_name(mysql, &username).await {
-        Ok(Some(row)) if row.users_is_active != 0 => Ok(()),
+        Ok(Some(row)) if row.users_is_active != 0 => Ok(row.users_user_name),
         _ => Err(IdentityError::Degraded),
     }
 }

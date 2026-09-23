@@ -5,6 +5,9 @@ pub(crate) use startup::build as build_app_state;
 
 mod aigc;
 mod aigc_video_playback;
+mod cloud_device_provider;
+mod cloud_device_runtime_features;
+mod cloud_device_status;
 mod cloud_devices_config;
 mod document_download_policy;
 mod employee_cache;
@@ -15,11 +18,14 @@ mod erp;
 mod erp_config;
 mod erp_provider_impl;
 mod external_knowledge;
+mod git_tokens;
 mod grey;
 mod media_policy;
 mod media_signing;
 #[cfg(test)]
 mod mysql_tests;
+mod nevis;
+mod nevis_ip_index;
 mod quota;
 mod sharding;
 mod startup;
@@ -31,12 +37,16 @@ mod video_result_urls;
 
 brz_http_server::registry!(
     group = wecode_apis,
-    dependencies(wecode: SharedWecodeAppState)
+    dependencies(wecode: SharedWecodeAppState),
+    auth = wegent_backend_rs::auth::AppAuthenticator
 );
 
 pub(crate) fn routes(
     wecode: SharedWecodeAppState,
-) -> Result<brz_http_server::Router, brz_http_server::RegistryError> {
+) -> Result<
+    brz_http_server::Router<wegent_backend_rs::auth::AppAuthenticator>,
+    brz_http_server::RegistryError,
+> {
     let exact_quota =
         brz_http_server::handlers!(wecode = Arc::clone(&wecode); group = self::wecode_apis)?;
     let other = startup::routes(wecode)?;
@@ -60,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn private_cutover_keeps_nested_quota_and_other_routes_in_python() {
+    fn private_cutover_serves_the_nested_quota_route_and_keeps_the_rest_in_python() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = wegent_backend_rs::HybridConfig::new(
             "127.0.0.1:0".parse().unwrap(),
@@ -69,8 +79,9 @@ mod tests {
         )
         .with_routes_file(&path)
         .unwrap();
+        // The inherited public cutover plus this crate's nested quota route.
         assert!(config.selects_rust(&Method::GET, "/api/quota"));
-        assert!(!config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
+        assert!(config.selects_rust(&Method::GET, "/api/quota/claude/quota"));
         // The four intra cutovers below are not active yet: their `[[routes]]`
         // entries in `config/routes.toml` stay commented out, so Python keeps
         // serving them.
