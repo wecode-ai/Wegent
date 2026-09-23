@@ -73,11 +73,8 @@ const PROCESSING_STATUSES: &str = "'queued', 'pending_conversion', 'converting',
 async fn list_artifacts(
     #[inject(state)] state: &Arc<AppState>,
     knowledge_base_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] user: crate::auth::SessionUser,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    let user = crate::auth::get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
     let body = list_artifacts_value(
         &state.mysql,
         state.redis.as_ref(),
@@ -92,18 +89,6 @@ async fn list_artifacts(
 /// `_execute`'s 404 mapping for `ArtifactNotFoundError`.
 fn not_found(detail: &str) -> FastApiError {
     FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, detail)
-}
-
-/// `security.get_current_user`'s 401 mapping.
-fn auth_error(error: crate::auth::AuthFailure) -> FastApiError {
-    match error {
-        crate::auth::AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        crate::auth::AuthFailure::UserNotActivated => {
-            FastApiError::unauthorized("User not activated")
-        }
-    }
 }
 
 /// `ArtifactService.list`: read access, the stored rows, capabilities, and

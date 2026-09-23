@@ -14,7 +14,7 @@ use brz_http_server::StatusCode;
 use brz_http_server::{Binary, HttpResponse};
 use serde::Deserialize;
 
-use super::auth::{self, AuthError, UserRow};
+use super::auth::{self, AuthError};
 use super::skill_download::{KindRow, SkillDownloadRepository};
 use crate::state::AppState;
 
@@ -126,8 +126,7 @@ async fn download_skill(
     skill_id: i32,
     namespace: Option<String>,
     task_id: Option<i64>,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
+    #[auth] current_user: auth::SkillDownloadUser,
     #[header("if-none-match")] if_none_match: Option<&str>,
 ) -> Result<HttpResponse<Binary>, SkillDownloadError> {
     download(
@@ -135,8 +134,7 @@ async fn download_skill(
         skill_id,
         namespace,
         task_id,
-        authorization,
-        x_api_key,
+        &current_user,
         if_none_match,
     )
     .await
@@ -149,33 +147,17 @@ async fn download(
     skill_id: i32,
     namespace: Option<String>,
     task_id: Option<i64>,
-    authorization: Option<&str>,
-    x_api_key: Option<&str>,
+    current_user: &auth::SkillDownloadUser,
     if_none_match: Option<&str>,
 ) -> Result<HttpResponse<Binary>, SkillDownloadError> {
     let mysql = &state.mysql;
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-    ]);
-    let headers = headers.view();
-    let current_user = auth::get_current_user(&state.auth, mysql, &headers).await?;
     let repository = SkillDownloadRepository::new(mysql, state.task_policy);
     let params = DownloadParams {
         namespace: namespace.unwrap_or_else(default_namespace),
         task_id,
     };
 
-    let resolved = match resolve_skill(
-        &repository,
-        &current_user,
-        skill_id,
-        &params,
-        state,
-        &headers,
-    )
-    .await
-    {
+    let resolved = match resolve_skill(&repository, current_user, skill_id, &params, state).await {
         Ok(resolved) => resolved,
         Err(ResolveError::Denied) => {
             return Err(SkillDownloadError::Error(forbidden(
@@ -247,11 +229,10 @@ impl From<brz_mysql::MysqlError> for ResolveError {
 /// The five-step search order. Returns `None` when the Skill is not found.
 async fn resolve_skill<M>(
     repository: &SkillDownloadRepository<'_, M>,
-    current_user: &UserRow,
+    current_user: &auth::SkillDownloadUser,
     skill_id: i32,
     params: &DownloadParams,
     state: &Arc<AppState>,
-    headers: &impl crate::headers::Headers,
 ) -> Result<Option<Resolved>, ResolveError>
 where
     M: brz_mysql::Mysql,
@@ -331,7 +312,7 @@ where
     // 5. System skill (user_id=0), restricted to admins and executor
     // credentials.
     if let Some(skill) = repository.get_skill_by_id(skill_id, 0).await? {
-        if !current_user.is_admin() && !auth::is_runtime_skill_download(&state.auth, headers) {
+        if !current_user.is_admin() && !current_user.runtime_download {
             return Err(ResolveError::Denied);
         }
         let binary_data = repository.get_skill_binary(skill_id, 0).await?;

@@ -42,7 +42,6 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -329,16 +328,16 @@ impl PydanticDateTime {
 #[brz_http_server::get("/api/subscriptions/executions")]
 async fn list_executions(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
     query: brz_http_server::Query<ExecutionsQuery>,
 ) -> Result<ExecutionListResponse, FastApiError> {
-    executions(state, authorization, &query).await
+    executions(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/subscriptions/executions`.
 async fn executions(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: &crate::auth::SessionUser,
     query: &ExecutionsQuery,
 ) -> Result<ExecutionListResponse, FastApiError> {
     let params = ExecutionsQuery {
@@ -352,15 +351,6 @@ async fn executions(
     }
     .validated()?;
 
-    let current_user = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
     let user_id = current_user.id;
 
     // Load followed subscription ids when no subscription_id filter is

@@ -6,6 +6,7 @@ import DeviceDesktopPage from './DeviceDesktopPage'
 import {
   deviceDesktopRoute,
   isDeviceDesktopInternalPageUrl,
+  isolatedDeviceDesktopUrl,
 } from '@wecode/features/vnc/deviceDesktopRoute'
 
 const startDeviceVncMock = vi.hoisted(() => vi.fn())
@@ -85,6 +86,27 @@ describe('DeviceDesktopPage', () => {
   test('stores only the device id in the route', () => {
     expect(deviceDesktopRoute('device-1')).toBe('/device-desktop?deviceId=device-1')
     expect(isDeviceDesktopInternalPageUrl('/device-desktop?deviceId=device-1')).toBe(true)
+  })
+
+  test('keeps the configured app base path before deep-link restoration', () => {
+    const previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...previousRuntimeConfig,
+      appBasePath: '/wework/app',
+    }
+
+    try {
+      expect(
+        isolatedDeviceDesktopUrl(
+          'device-1',
+          'http://localhost:3000/?__wework_route=%2Fwework%2Fapp%2Fdevice-desktop'
+        )
+      ).toBe(
+        'http://localhost:3000/wework/app/device-desktop?deviceId=device-1&vncSurface=isolated'
+      )
+    } finally {
+      window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+    }
   })
 
   test('isolates production Electron rendering in a dedicated Chromium webview', () => {

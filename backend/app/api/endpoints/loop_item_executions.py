@@ -21,7 +21,7 @@ from app.core.security import get_current_user
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.project_chat import (
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
@@ -45,6 +45,7 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
 )
+from app.services.loop_items.access import related_item_filter
 from app.services.runtime_profiles import runtime_profile_service
 from app.services.workspaces.storage import workspace_id_for_project
 
@@ -228,9 +229,14 @@ def list_executions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionListResponse:
-    project = require_cloud_project_role(
-        db, project_id, current_user.id, BaseRole.Reporter
-    ).project
+    access = require_cloud_project_role(
+        db, project_id, current_user.id, BaseRole.RestrictedAnalyst
+    )
+    if not access.restricts_unrelated_issues and not has_permission(
+        access.role, BaseRole.Reporter
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+    project = access.project
     rows = loop_item_execution_service.list_queue(
         db,
         project_id=str(project_id),
@@ -254,12 +260,13 @@ def list_executions(
             row["task_priority"] = issue.get("priority") if issue else None
     else:
         item_ids = [row["loop_item_id"] for row in rows]
-        items = (
-            db.query(LoopItem).filter(LoopItem.id.in_(item_ids)).all()
-            if item_ids
-            else []
-        )
+        item_query = db.query(LoopItem).filter(LoopItem.id.in_(item_ids))
+        if access.restricts_unrelated_issues:
+            item_query = item_query.filter(related_item_filter(current_user.id))
+        items = item_query.all() if item_ids else []
         by_id = {item.id: item for item in items}
+        if access.restricts_unrelated_issues:
+            rows = [row for row in rows if str(row["loop_item_id"]) in by_id]
         for row in rows:
             item = by_id.get(str(row["loop_item_id"]))
             row["task_title"] = (item.title or item.name or "") if item else ""

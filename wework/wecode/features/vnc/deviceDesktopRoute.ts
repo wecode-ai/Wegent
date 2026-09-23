@@ -1,3 +1,5 @@
+import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
+
 export const DEVICE_DESKTOP_PATH = '/device-desktop'
 export const DEVICE_DESKTOP_SURFACE_PARAMETER = 'vncSurface'
 export const DEVICE_DESKTOP_SURFACE_VALUE = 'isolated'
@@ -21,8 +23,10 @@ export function isolatedDeviceDesktopUrl(
   deviceId: string,
   currentLocation = window.location.href
 ): string {
-  const url = new URL(currentLocation)
-  if (!url.pathname.endsWith(DEVICE_DESKTOP_PATH)) url.pathname = DEVICE_DESKTOP_PATH
+  const url = new URL(
+    joinAppPath(getRuntimeConfig().appBasePath, DEVICE_DESKTOP_PATH),
+    currentLocation
+  )
   url.search = ''
   url.searchParams.set('deviceId', deviceId)
   url.searchParams.set(DEVICE_DESKTOP_SURFACE_PARAMETER, DEVICE_DESKTOP_SURFACE_VALUE)

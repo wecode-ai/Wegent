@@ -68,6 +68,18 @@ space, and the creation UI identifies the actual storage location:
 
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
+### Set cloud board access
+
+Cloud project spaces using the built-in task source can set their access level during creation. An Owner or Maintainer can change it later under **Project settings → Project access**:
+
+- **Private**: only project members can enter.
+- **Related tasks only**: every signed-in user can discover and enter the project. Owners and Maintainers see every issue; other users see only issues related to them.
+- **Public**: every signed-in user can enter and view every issue.
+
+Related issues include issues the user created, issues assigned to the user, issues where the user is a collaborator, issues linked to one of the user's execution tasks, and issues assigned to a robot created by the user. Unrelated issues are omitted from the board, table, execution lists, and project conversations. Opening an unrelated issue directly also returns not found.
+
+The access level controls project and issue visibility only. It does not change project roles, assignees, or collaborators. External task sources such as GitHub, GitLab, and DingTalk AI Table do not offer **Related tasks only**.
+
 ### Import more projects into the local space
 
 Wework automatically adds local Task projects to the local space during initial

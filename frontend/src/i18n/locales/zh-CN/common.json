@@ -201,6 +201,9 @@
     "aria_label": "协作导航",
     "close_navigation": "关闭协作导航",
     "home": "协作首页",
+    "agents": "智能体",
+    "teams": "协作小组",
+    "devices": "设备",
     "my_work": "我的工作",
     "inbox": "收件箱",
     "run_center": "运行中心"

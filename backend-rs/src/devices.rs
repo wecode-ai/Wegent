@@ -13,7 +13,8 @@
 //!
 //! - cloud devices (the configured store):
 //!   one `kinds` query, then per device two Redis `GET`s of
-//!   `device:online:<uid>:<device_id>` (online info, then slot usage) and one
+//!   `device:online:<uid>:<device_id>` (online info, then slot usage), one
+//!   routed `tasks` read of the online payload's `running_task_ids`, and one
 //!   `GET executor:latest_version`;
 //! - local and app devices (`LocalDeviceProvider.list_devices`): one `kinds`
 //!   query, one batched Redis `MGET` of the online keys, then one
@@ -24,18 +25,24 @@
 //! All Redis failures degrade to "offline" devices (source `cache_manager`
 //! swallows Redis errors), and an empty provider group returns before the
 //! `executor:latest_version` lookup.
+//!
+//! Every `executor:latest_version` read goes through
+//! [`crate::executor_version`], which also owns the process-local refresh the
+//! source starts when that key is missing.
 #[cfg(test)]
 use crate::json_compat::raw_json;
 use crate::json_compat::{JsonProjection, OpaqueJson};
 use brz_redis::Redis;
-use serde::{de::DeserializeOwned, de::IgnoredAny};
+use serde::de::DeserializeOwned;
 #[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 use serde_json::value::RawValue;
 
-use crate::auth::{AuthFailure, UserRow, get_current_user};
+use crate::auth::{SessionUser, UserRow};
+use crate::device_running_tasks::{RunningTask, list_running_tasks};
+use crate::executor_version::latest_executor_version;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -103,8 +110,9 @@ const KINDS_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_u
      WHERE kinds.user_id = ? AND kinds.kind = 'Device' \
      AND kinds.namespace = 'default' AND kinds.is_active = true";
 
-/// Redis online-state key (`LocalDeviceProvider.generate_online_key`).
-fn online_key(user_id: i64, device_id: &str) -> String {
+/// Redis online-state key (`LocalDeviceProvider.generate_online_key`; the
+/// deployment's cloud device provider uses the same layout).
+pub fn online_key(user_id: i64, device_id: &str) -> String {
     format!("device:online:{user_id}:{device_id}")
 }
 
@@ -117,18 +125,6 @@ fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
         _ => row.name.clone(),
     }
 }
-
-/// Redis key holding the cached latest executor version
-/// (`ExecutorVersionService.EXECUTOR_VERSION_CACHE_KEY`).
-const EXECUTOR_VERSION_KEY: &str = "executor:latest_version";
-
-/// The value stored when a remote version fetch failed
-/// (`EXECUTOR_VERSION_UNAVAILABLE`); callers treat it as "no version".
-const EXECUTOR_VERSION_UNAVAILABLE: &str = "__unavailable__";
-
-/// Default when neither Redis nor the checker produced a version
-/// (`settings.EXECUTOR_LATEST_VERSION`).
-const EXECUTOR_LATEST_VERSION_DEFAULT: &str = "1.0.0";
 
 /// One device response item (`DeviceInfo` serialized by pydantic).
 ///
@@ -148,7 +144,7 @@ struct DeviceItem {
     capabilities: Option<Box<RawValue>>,
     slot_used: i64,
     slot_max: i64,
-    running_tasks: [(); 0],
+    running_tasks: Vec<RunningTask>,
     executor_version: Option<String>,
     latest_version: Option<String>,
     update_available: bool,
@@ -169,15 +165,51 @@ struct DeviceListResponse {
     total: usize,
 }
 
-#[derive(serde::Serialize)]
+/// One response `runtime_features` object (`DeviceInfo.runtime_features`
+/// serialized by pydantic).
+///
+/// The source model emits every known member, so `runtimeTaskCreate`,
+/// `interactiveSessions`, and `worktrees` are JSON null when the stored
+/// document omits them. `extensions` carries the members a distribution
+/// registers through `register_runtime_feature_normalizer` (the source
+/// extension schema registers `desktop`); any other stored member is
+/// dropped, exactly like the model's registered-extension filter.
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeFeatures {
-    schema_version: i64,
-    runtime_task_create: Option<Box<RawValue>>,
-    interactive_sessions: Option<Box<RawValue>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    worktrees: Option<Box<RawValue>>,
+pub struct RuntimeFeatures {
+    pub schema_version: i64,
+    pub runtime_task_create: Option<Box<RawValue>>,
+    pub interactive_sessions: Option<Box<RawValue>>,
+    pub worktrees: Option<Box<RawValue>>,
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
+
+/// The configured cloud device store's contribution to one listing entry:
+/// `CloudDeviceProvider.list_devices` adds this member to its device dict.
+///
+/// The cloud group of `GET /api/devices` models the application's store. The
+/// public default adds nothing, mirroring the store this endpoint was migrated
+/// from; a distribution whose store projects the cached Runtime feature
+/// document installs its own implementation before route construction.
+pub trait CloudRuntimeFeatures: Send + Sync {
+    /// `spec` is the device CRD `spec` object and `online` the decoded Redis
+    /// online-state document, absent while the device is offline. The result
+    /// is the response entry's `runtime_features` member.
+    fn project(
+        &self,
+        _spec: &DeviceSpecInput,
+        _online: Option<&OnlineStateInput>,
+    ) -> Option<RuntimeFeatures> {
+        None
+    }
+}
+
+/// The public default: the configured store contributes no
+/// `runtime_features` member, so the response renders null.
+pub struct NoCloudRuntimeFeatures;
+
+impl CloudRuntimeFeatures for NoCloudRuntimeFeatures {}
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
@@ -186,7 +218,7 @@ struct DeviceDocumentInput {
 }
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
-struct DeviceSpecInput {
+pub struct DeviceSpecInput {
     #[serde(rename = "deviceType")]
     device_type: Option<String>,
     #[serde(rename = "displayName")]
@@ -194,8 +226,10 @@ struct DeviceSpecInput {
     #[serde(rename = "isDefault")]
     is_default: Option<bool>,
     capabilities: Option<OpaqueJson>,
+    /// `spec.cloudConfig`. The cloud provider reads its `sandboxId` when it
+    /// decides whether a connected Runtime advertises the desktop capability.
     #[serde(rename = "cloudConfig")]
-    cloud_config: Option<OpaqueJson>,
+    pub cloud_config: Option<OpaqueJson>,
     #[serde(rename = "remoteConfig")]
     remote_config: Option<OpaqueJson>,
     #[serde(rename = "bindShell")]
@@ -215,12 +249,14 @@ struct DeviceSpecInput {
 }
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
-struct OnlineStateInput {
+pub struct OnlineStateInput {
     executor_version: Option<String>,
     status: Option<String>,
     last_heartbeat: Option<OpaqueJson>,
-    running_task_ids: Option<Vec<IgnoredAny>>,
-    runtime_features: Option<OpaqueJson>,
+    running_task_ids: Option<Vec<OpaqueJson>>,
+    /// The connected Runtime's feature document, as stored by registration
+    /// and heartbeat.
+    pub runtime_features: Option<OpaqueJson>,
     runtime_capacity: Option<RuntimeCapacityInput>,
 }
 #[derive(Default, serde::Deserialize)]
@@ -296,28 +332,12 @@ fn semver_parts(version: &str) -> Option<Vec<i64>> {
     Some(parts)
 }
 
-/// `executor_version_service.get_latest_version() or
-/// settings.EXECUTOR_LATEST_VERSION`: a cached value wins unless it is the
-/// explicit unavailable marker; any Redis failure falls back to the settings
-/// default (`EXECUTOR_LATEST_VERSION`, "1.0.0") exactly like the source's
-/// `... or settings.EXECUTOR_LATEST_VERSION` expression.
-async fn latest_executor_version(state: &AppState) -> Option<String> {
-    // The source stores orjson-encoded values (`"2.0.16"` as a JSON string),
-    // so decode the payload and keep only string results, exactly like
-    // `cache_manager.get` returning the parsed value.
-    let cached: Option<String> = cache_manager_get(state, EXECUTOR_VERSION_KEY).await;
-    match cached.as_deref() {
-        Some(value) if value == EXECUTOR_VERSION_UNAVAILABLE => {
-            Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string())
-        }
-        Some(value) => Some(value.to_string()),
-        None => Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string()),
-    }
-}
-
 /// Source `cache_manager.get`: read one key and decode its orjson payload;
 /// errors and missing keys degrade to `None`.
-async fn cache_manager_get<T: DeserializeOwned>(state: &AppState, key: &str) -> Option<T> {
+///
+/// Deployments whose provider modules read the same online-state or version
+/// keys share this helper instead of constructing their own client.
+pub async fn cache_manager_get<T: DeserializeOwned>(state: &AppState, key: &str) -> Option<T> {
     state
         .redis
         .as_ref()?
@@ -360,14 +380,15 @@ async fn get_online_info(
 /// Cloud listing (`application CloudDeviceProvider.list_devices`).
 ///
 /// Per device: `GET` online info, `GET` online info again inside
-/// `get_slot_usage`, then `GET executor:latest_version`. Slot usage is
-/// derived from the second online payload: `used` is the number of running
-/// task IDs and `max` is always 0 (`cloud device slot limit`).
+/// `get_slot_usage` followed by the routed running-task read, then
+/// `GET executor:latest_version`. Slot usage is derived from the second
+/// online payload: `used` is the number of running task IDs and `max` is
+/// always 0 (`cloud device slot limit`).
 async fn list_cloud_devices(
     state: &AppState,
     user_id: i64,
     kinds: &[DeviceKindRow],
-) -> Vec<DeviceItem> {
+) -> Result<Vec<DeviceItem>, FastApiError> {
     let cloud: Vec<&DeviceKindRow> = kinds
         .iter()
         .filter(|row| DeviceType::from_spec(&spec(row)) == DeviceType::Cloud)
@@ -378,9 +399,16 @@ async fn list_cloud_devices(
         let device_id = row.name.clone();
         let online = get_online_info(state, user_id, &device_id).await;
         let online_state = online.as_ref().and_then(|info| info.value.as_ref());
-        // get_slot_usage re-reads the online payload from Redis.
+        // get_slot_usage re-reads the online payload from Redis, then loads
+        // the reported running tasks from the routed task table.
         let slot_online = get_online_info(state, user_id, &device_id).await;
         let slot_used = slot_online.as_ref().map_or(0, online_running_count);
+        let running_tasks = match slot_online.as_ref() {
+            Some(info) => list_running_tasks(&state.mysql, user_id, online_running_task_ids(info))
+                .await
+                .map_err(running_tasks_error)?,
+            None => Vec::new(),
+        };
         let executor_version = online_state
             .as_ref()
             .and_then(|info| info.executor_version.clone());
@@ -406,7 +434,7 @@ async fn list_cloud_devices(
             capabilities: spec.capabilities.as_ref().map(OpaqueJson::to_raw_value),
             slot_used,
             slot_max: 0,
-            running_tasks: [],
+            running_tasks,
             executor_version,
             latest_version,
             update_available,
@@ -415,10 +443,9 @@ async fn list_cloud_devices(
             runtime_instance_id: None,
             app_device_id: None,
             socket_device_id: None,
-            // The deployed cloud provider (the configured store)
-            // result dict has no `runtime_features` key, so pydantic defaults
-            // it to null even when the Redis online payload carries one.
-            runtime_features: None,
+            // The store decides what a cloud device advertises. The public
+            // default adds no member (pydantic then renders null).
+            runtime_features: state.cloud_runtime_features.project(&spec, online_state),
             cloud_config: spec.cloud_config.as_ref().map(OpaqueJson::to_raw_value),
             remote_config: None,
             bind_shell: spec
@@ -427,7 +454,14 @@ async fn list_cloud_devices(
                 .unwrap_or_else(|| "claudecode".to_string()),
         });
     }
-    result
+    Ok(result)
+}
+
+/// A failed running-task read is a database failure of the device listing,
+/// which the source propagates out of `list_devices`.
+fn running_tasks_error(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "running task lookup failure");
+    internal_error()
 }
 
 /// The deployed cloud provider's slot `used` value: the length of the
@@ -438,6 +472,17 @@ fn online_running_count(info: &JsonProjection<OnlineStateInput>) -> i64 {
         .and_then(|info| info.running_task_ids.as_ref())
         .map(|ids| ids.len() as i64)
         .unwrap_or(0)
+}
+
+/// The running task ids of one online payload (`get_slot_usage` passes the
+/// reported list straight to `task_store.list_by_ids`); an entry that is not
+/// an integer cannot select a task and is dropped.
+fn online_running_task_ids(info: &JsonProjection<OnlineStateInput>) -> Vec<i64> {
+    info.value
+        .as_ref()
+        .and_then(|info| info.running_task_ids.as_ref())
+        .map(|ids| ids.iter().filter_map(OpaqueJson::project::<i64>).collect())
+        .unwrap_or_default()
 }
 
 fn online_status(online: Option<&JsonProjection<OnlineStateInput>>) -> String {
@@ -539,7 +584,10 @@ async fn list_mget_devices(
             capabilities: spec.capabilities.as_ref().map(OpaqueJson::to_raw_value),
             slot_used,
             slot_max,
-            running_tasks: [],
+            // `LocalDeviceProvider.list_devices` and
+            // `RemoteDeviceProvider.list_devices` report no running tasks;
+            // only the cloud provider resolves them from the task table.
+            running_tasks: Vec::new(),
             executor_version,
             latest_version: latest_version.clone(),
             update_available,
@@ -577,21 +625,20 @@ fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
 }
 
 /// Reproduce the source `DeviceInfo` projection of the Redis online-state
-/// `runtime_features` dict.
+/// `runtime_features` dict for a provider whose dict carries it verbatim.
 ///
 /// The stored dict is `RuntimeFeatures.model_dump(by_alias=True,
 /// exclude_none=True)`, so it may carry `schemaVersion`, `runtimeTaskCreate`,
 /// `interactiveSessions`, and `worktrees`. The endpoint's `DeviceInfo` model
-/// re-validates through `RuntimeFeatures` (extra="ignore") and FastAPI
-/// serializes the response with `by_alias=True` (the framework default):
+/// re-validates through `RuntimeFeatures` and FastAPI serializes the response
+/// with `by_alias=True` (the framework default):
 /// - `schemaVersion` is required (ge=1); an empty or invalid dict normalizes
 ///   to absent (None).
-/// - `runtimeTaskCreate` is always emitted: the stored value round-trips, or
-///   null when absent (the model's Optional default).
-/// - `interactiveSessions` is always emitted: the stored value round-trips, or
-///   null when absent (the model's Optional default).
-/// - `worktrees` is emitted only when present.
-/// - Any other stored key is dropped by `extra="ignore"`.
+/// - `runtimeTaskCreate`, `interactiveSessions`, and `worktrees` are always
+///   emitted: the stored value round-trips, or null when absent (the model's
+///   Optional defaults).
+/// - Any other stored key is dropped unless the distribution registers it as
+///   an extension feature.
 fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> {
     let features = info
         .runtime_features
@@ -609,6 +656,7 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .as_ref()
             .map(OpaqueJson::to_raw_value),
         worktrees: features.worktrees.as_ref().map(OpaqueJson::to_raw_value),
+        extensions: serde_json::Map::new(),
     })
 }
 
@@ -617,26 +665,13 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
 #[brz_http_server::get("/api/devices")]
 async fn get_all_devices(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: SessionUser,
 ) -> Result<DeviceListResponse, FastApiError> {
-    devices(state, authorization).await
+    devices(state, user.0).await
 }
 
 /// Handler for `GET /api/devices`.
-async fn devices(
-    state: &AppState,
-    authorization: Option<&str>,
-) -> Result<DeviceListResponse, FastApiError> {
-    let user: UserRow = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
-
+async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, FastApiError> {
     // Source queries `kinds` once per provider in registration order:
     // cloud, local, app, remote.
     let mut items: Vec<DeviceItem> = Vec::new();
@@ -657,7 +692,7 @@ async fn devices(
         };
         match device_type {
             DeviceType::Cloud => {
-                items.extend(list_cloud_devices(state, user.id.into(), &kinds).await)
+                items.extend(list_cloud_devices(state, user.id.into(), &kinds).await?)
             }
             other => items.extend(list_mget_devices(state, user.id.into(), &kinds, other).await),
         }
@@ -761,7 +796,7 @@ mod tests {
             capabilities: None,
             slot_used: 0,
             slot_max: 0,
-            running_tasks: [],
+            running_tasks: Vec::new(),
             executor_version: Some("1.8.5".to_string()),
             latest_version: Some("2.0.16".to_string()),
             update_available: true,
@@ -837,7 +872,45 @@ mod tests {
             projected["runtimeTaskCreate"]["schemaVersions"],
             json!([1, 2])
         );
-        // worktrees is absent when not stored
-        assert!(projected.get("worktrees").is_none());
+        // worktrees is emitted as null when not stored
+        assert_eq!(projected["worktrees"], Value::Null);
+    }
+
+    #[test]
+    fn runtime_features_extensions_follow_the_known_members() {
+        let features = RuntimeFeatures {
+            schema_version: 4,
+            runtime_task_create: None,
+            interactive_sessions: None,
+            worktrees: None,
+            extensions: std::iter::once((
+                "desktop".to_string(),
+                json!({
+                    "version": 1,
+                    "available": true,
+                    "protocol": "rfb",
+                    "transport": "websocket",
+                    "clipboard": "text",
+                }),
+            ))
+            .collect(),
+        };
+        let projected = crate::json_contract_tests::serialized(features).unwrap();
+        assert_eq!(
+            projected,
+            json!({
+                "schemaVersion": 4,
+                "runtimeTaskCreate": null,
+                "interactiveSessions": null,
+                "worktrees": null,
+                "desktop": {
+                    "version": 1,
+                    "available": true,
+                    "protocol": "rfb",
+                    "transport": "websocket",
+                    "clipboard": "text",
+                },
+            })
+        );
     }
 }

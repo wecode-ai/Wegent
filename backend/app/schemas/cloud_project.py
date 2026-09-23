@@ -27,7 +27,7 @@ from app.schemas.workspace import (
 )
 
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
-ProjectVisibility = Literal["private", "public"]
+ProjectVisibility = Literal["private", "public_restricted", "public"]
 
 
 def _normalize_repository(task_provider: str, repository: str) -> str:
@@ -97,6 +97,10 @@ class CloudProjectCreate(BaseModel):
         self.provider_config = normalize_provider_config(
             self.task_provider, self.provider_config
         )
+        if self.visibility == "public_restricted" and self.task_provider != "local":
+            raise ValueError(
+                "Related-task visibility is only available for built-in tasks"
+            )
         return self
 
 
@@ -288,7 +292,10 @@ class CloudProjectResponse(BaseModel):
                 "workflow_automation_id": metadata.get("workflow_automation_id"),
                 "execution_environment": metadata.get("execution_environment", {}),
                 "visibility": (
-                    "public" if metadata.get("visibility") == "public" else "private"
+                    metadata.get("visibility")
+                    if metadata.get("visibility")
+                    in {"private", "public_restricted", "public"}
+                    else "private"
                 ),
                 "tags": normalize_tags(metadata.get("tags")),
             }

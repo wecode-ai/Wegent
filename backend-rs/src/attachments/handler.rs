@@ -10,7 +10,7 @@ use std::sync::Arc;
 use brz_http_server::StatusCode;
 use brz_http_server::{Binary, HttpResponse};
 
-use super::auth::get_current_user_optional;
+use super::auth::UserRow;
 use super::context_store::{self, SubtaskContextRow};
 use super::minio_client::MinioConfig;
 use super::storage;
@@ -89,17 +89,10 @@ fn is_image_context(context: &SubtaskContextRow) -> bool {
 pub(super) async fn download_attachment(
     state: &Arc<AppState>,
     attachment_id: i64,
-    authorization: Option<&str>,
+    user: Option<&UserRow>,
 ) -> Result<HttpResponse<Binary>, crate::http_compat::FastApiError> {
     // `get_current_user_optional` then `_get_attachment_context` +
     // `_ensure_attachment_access` (404 on every failure mode).
-    let user = match get_current_user_optional(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(error) => {
-            tracing::error!(%error, "attachment download user lookup failed");
-            return Err(internal_error());
-        }
-    };
     let Some(user) = user else {
         // No authentication provided: the source falls back to share tokens
         // and browser redirects; without either, 401.
@@ -126,7 +119,7 @@ pub(super) async fn download_attachment(
         &state.mysql,
         state.task_policy,
         &context,
-        &user,
+        user,
     )
     .await
     {

@@ -366,7 +366,7 @@ export interface CloudProject {
   current_user_id?: number
   current_user_name?: string
   access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
-  visibility?: 'private' | 'public'
+  visibility?: 'private' | 'public_restricted' | 'public'
   status: string
   tags: string[]
   version: number
@@ -829,7 +829,7 @@ export function createDeliveryApi(client: HttpClient) {
       name: string
       description?: string
       task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
-      visibility?: 'private' | 'public'
+      visibility?: 'private' | 'public_restricted' | 'public'
       provider_config?: {
         repository?: string
         domain?: string
@@ -854,7 +854,7 @@ export function createDeliveryApi(client: HttpClient) {
         name?: string
         description?: string
         tags?: string[]
-        visibility?: 'private' | 'public'
+        visibility?: 'private' | 'public_restricted' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
         pull_request_automation?: CloudProject['pull_request_automation']
