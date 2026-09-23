@@ -41,8 +41,10 @@ async fn root() -> brz_http_server::Response {
         .content_type("application/json")
 }
 
-/// GET /api/startup.
-#[brz_http_server::get("/api/startup", access = public)]
+/// GET /api/startup. The readiness probe path (the migration image and the
+/// traffic harness poll it every second), so its requests stay out of the
+/// access log the same way `/` does.
+#[brz_http_server::get("/api/startup", api_log = false, access = public)]
 async fn startup() -> StartupStatus {
     StartupStatus { status: "started" }
 }
