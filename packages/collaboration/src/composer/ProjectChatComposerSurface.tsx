@@ -21,6 +21,7 @@ export function ProjectChatComposerSurface({
   collapseWhenIdle = false,
   isDraggingFiles = false,
   presentation = 'chat',
+  embeddedInForm = false,
 }: {
   workBar?: ReactNode
   children: ReactNode
@@ -30,8 +31,9 @@ export function ProjectChatComposerSurface({
   collapseWhenIdle?: boolean
   isDraggingFiles?: boolean
   presentation?: 'chat' | 'document'
+  embeddedInForm?: boolean
 }) {
-  const formRef = useRef<HTMLFormElement>(null)
+  const formRef = useRef<HTMLElement>(null)
   const [shortComposerExpanded, setShortComposerExpanded] = useState(false)
   useEffect(() => {
     if (!shortComposerExpanded) return
@@ -41,6 +43,36 @@ export function ProjectChatComposerSurface({
     window.addEventListener('click', outside, true)
     return () => window.removeEventListener('click', outside, true)
   }, [shortComposerExpanded])
+  const surfaceClassName = cn(
+    'relative z-10 flex w-full flex-col bg-background transition-colors',
+    presentation === 'document'
+      ? 'rounded-2xl px-5 pb-3 pt-1'
+      : 'min-h-[76px] rounded-[26px] border px-4 pb-1.5 pt-2',
+    presentation === 'chat' && styles.form,
+    presentation === 'chat' && collapseWhenIdle && styles.collapseWhenIdle,
+    isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
+  )
+  const surfaceContent = (
+    <>
+      <div data-testid="project-chat-composer-content" className="min-w-0 w-full">
+        {children}
+      </div>
+      {footer}
+    </>
+  )
+  const expandOnClick = (event: React.MouseEvent<HTMLElement>) => {
+    setShortComposerExpanded(true)
+    formProps.onClickCapture?.(event as never)
+  }
+  const expandOnFocus = (event: React.FocusEvent<HTMLElement>) => {
+    setShortComposerExpanded(true)
+    formProps.onFocusCapture?.(event as never)
+  }
+  const commonDataProps = {
+    'data-testid': 'project-chat-composer-form',
+    'data-short-collapse': presentation === 'chat' && canCollapseInShortPane ? 'true' : undefined,
+    'data-short-expanded': shortComposerExpanded ? 'true' : 'false',
+  }
   return (
     <div
       data-testid="project-chat-composer"
@@ -52,35 +84,36 @@ export function ProjectChatComposerSurface({
       }
     >
       {workBar}
-      <form
-        {...formProps}
-        onClickCapture={event => {
-          setShortComposerExpanded(true)
-          formProps.onClickCapture?.(event)
-        }}
-        onFocusCapture={event => {
-          setShortComposerExpanded(true)
-          formProps.onFocusCapture?.(event)
-        }}
-        ref={formRef}
-        data-testid="project-chat-composer-form"
-        data-short-collapse={presentation === 'chat' && canCollapseInShortPane ? 'true' : undefined}
-        data-short-expanded={shortComposerExpanded ? 'true' : 'false'}
-        className={cn(
-          'relative z-10 flex w-full flex-col bg-background transition-colors',
-          presentation === 'document'
-            ? 'rounded-2xl px-5 pb-3 pt-1'
-            : 'min-h-[76px] rounded-[26px] border px-4 pb-1.5 pt-2',
-          presentation === 'chat' && styles.form,
-          presentation === 'chat' && collapseWhenIdle && styles.collapseWhenIdle,
-          isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
-        )}
-      >
-        <div data-testid="project-chat-composer-content" className="min-w-0 w-full">
-          {children}
+      {embeddedInForm ? (
+        <div
+          onDragEnter={formProps.onDragEnter as never}
+          onDragOver={formProps.onDragOver as never}
+          onDragLeave={formProps.onDragLeave as never}
+          onDrop={formProps.onDrop as never}
+          onClickCapture={expandOnClick}
+          onFocusCapture={expandOnFocus}
+          ref={node => {
+            formRef.current = node
+          }}
+          {...commonDataProps}
+          className={surfaceClassName}
+        >
+          {surfaceContent}
         </div>
-        {footer}
-      </form>
+      ) : (
+        <form
+          {...formProps}
+          onClickCapture={expandOnClick}
+          onFocusCapture={expandOnFocus}
+          ref={node => {
+            formRef.current = node
+          }}
+          {...commonDataProps}
+          className={surfaceClassName}
+        >
+          {surfaceContent}
+        </form>
+      )}
     </div>
   )
 }

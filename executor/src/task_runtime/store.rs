@@ -135,11 +135,13 @@ impl LocalTaskStore {
             encrypt_provider_config(self.path(), input.task_provider, input.provider_config)?;
         let public_id = Uuid::new_v4().to_string();
         let id = public_id.clone();
-        let project_key = normalize_project_key(input.project_key, &input.name);
         let now = now();
         let metadata = local_project_metadata(input.task_provider, provider_config);
-        let connection = self.connection()?;
-        connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let project_key =
+            project_key_for_create(&transaction, input.project_key.as_deref(), &input.name)?;
+        transaction.execute(
             "INSERT INTO loop_items (
                 id, resource_type, project_space, public_id, project_key, name,
                 description, storage_prefix, next_item_number, status, sort_order,
@@ -157,6 +159,7 @@ impl LocalTaskStore {
                 now,
             ],
         )?;
+        transaction.commit()?;
         drop(connection);
         self.get_item(&id, "project")
     }
@@ -817,16 +820,29 @@ impl LocalTaskStore {
     ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let initialized = transaction.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM loop_items
-                WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
-                  AND deleted_at IS NULL
-             )",
-            [project_id],
-            |row| row.get::<_, bool>(0),
-        )?;
-        if initialized {
+        let existing = transaction
+            .query_row(
+                "SELECT id, status FROM loop_items
+                 WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
+                   AND name = ?2 AND deleted_at IS NULL
+                 ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END, created_at
+                 LIMIT 1",
+                params![project_id, &input.name],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if let Some((id, status)) = existing {
+            if status == "archived" {
+                transaction.execute(
+                    "UPDATE loop_items
+                     SET status = 'active', version = version + 1, updated_at = ?1
+                     WHERE id = ?2",
+                    params![now(), id],
+                )?;
+                transaction.commit()?;
+                drop(connection);
+                return self.get_chat_agent(project_id, &id).map(Some);
+            }
             transaction.commit()?;
             return Ok(None);
         }
@@ -3809,8 +3825,8 @@ fn require_parent(
     Ok(())
 }
 
-fn normalize_project_key(value: Option<String>, name: &str) -> String {
-    let normalized = value.unwrap_or_else(|| {
+fn normalize_project_key(value: Option<&str>, name: &str) -> String {
+    let normalized = value.map(ToOwned::to_owned).unwrap_or_else(|| {
         name.chars()
             .filter(|character| character.is_ascii_alphanumeric())
             .take(8)
@@ -3822,6 +3838,37 @@ fn normalize_project_key(value: Option<String>, name: &str) -> String {
     } else {
         format!("PRJ{}", &Uuid::new_v4().simple().to_string()[..6]).to_ascii_uppercase()
     }
+}
+
+fn project_key_for_create(
+    connection: &Connection,
+    requested: Option<&str>,
+    name: &str,
+) -> Result<String, rusqlite::Error> {
+    let base = normalize_project_key(requested, name);
+    if requested.is_some() || !project_key_exists(connection, &base)? {
+        return Ok(base);
+    }
+    for sequence in 2_u64.. {
+        let suffix = sequence.to_string();
+        let stem = base
+            .chars()
+            .take(16_usize.saturating_sub(suffix.len()))
+            .collect::<String>();
+        let candidate = format!("{stem}{suffix}");
+        if !project_key_exists(connection, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("the project key sequence is unbounded")
+}
+
+fn project_key_exists(connection: &Connection, project_key: &str) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM loop_items WHERE project_key = ?1)",
+        [project_key],
+        |row| row.get(0),
+    )
 }
 
 fn validate_name(value: &str, label: &str) -> Result<(), TaskRuntimeError> {
@@ -5005,7 +5052,7 @@ mod tests {
     }
 
     #[test]
-    fn default_chat_agent_is_created_once_and_stays_deleted() {
+    fn default_chat_agent_is_created_once_and_reactivates_after_archive() {
         let (_directory, store, project) = chat_agent_store();
         let input = default_chat_agent_input();
 
@@ -5022,10 +5069,31 @@ mod tests {
             .archive_chat_agent(&project.id, &created.id, created.version)
             .unwrap();
         assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
-        assert!(store
+        let reactivated = store
             .ensure_default_chat_agent(&project.id, input)
             .unwrap()
-            .is_none());
+            .expect("the archived default agent should be reactivated");
+        assert_eq!(reactivated.id, created.id);
+        assert_eq!(reactivated.status, "active");
+        assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn default_chat_agent_is_created_when_custom_agents_already_exist() {
+        let (_directory, store, project) = chat_agent_store();
+        let mut custom = default_chat_agent_input();
+        custom.name = "custom-agent".to_owned();
+        store.create_chat_agent(&project.id, custom).unwrap();
+        let default_input = default_chat_agent_input();
+        let default_name = default_input.name.clone();
+
+        let default_agent = store
+            .ensure_default_chat_agent(&project.id, default_input)
+            .unwrap()
+            .expect("a custom agent must not suppress the default agent");
+
+        assert_eq!(default_agent.name, default_name);
+        assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 2);
     }
 
     #[test]
@@ -7295,6 +7363,52 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn creates_same_named_projects_with_distinct_generated_keys() {
+        let (_directory, store) = store();
+        let create = || {
+            store
+                .create_project(ProjectCreate {
+                    name: "Shared project".to_owned(),
+                    project_key: None,
+                    description: String::new(),
+                    task_provider: TaskProviderKind::Local,
+                    provider_config: json!({}),
+                })
+                .unwrap()
+        };
+
+        let first = create();
+        let second = create();
+
+        assert_ne!(first.id, second.id);
+        assert_ne!(first.project_key, second.project_key);
+        assert_eq!(first.project_key.as_deref(), Some("SHAREDPR"));
+        assert_eq!(second.project_key.as_deref(), Some("SHAREDPR2"));
+    }
+
+    #[test]
+    fn rejects_duplicate_explicit_project_keys() {
+        let (_directory, store) = store();
+        let create = || {
+            store.create_project(ProjectCreate {
+                name: "Explicit project".to_owned(),
+                project_key: Some("EXPLICIT".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+        };
+
+        create().unwrap();
+        let error = create().unwrap_err();
+
+        assert!(matches!(
+            error,
+            TaskRuntimeError::Database(rusqlite::Error::SqliteFailure(_, _))
+        ));
     }
 
     #[test]

@@ -90,6 +90,8 @@ export function useProjectCreateController({
   const [aitableUrl, setAitableUrl] = useState("");
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
   const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
+  const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
+  const defaultAgentResourceIdsKey = defaultAgentResourceIds.join("\0");
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
     useState<number[]>(() =>
       defaultExecutionEnvironmentDeviceIds(
@@ -97,7 +99,9 @@ export function useProjectCreateController({
       ),
     );
   const executionEnvironmentSelectionChanged = useRef(false);
-  const [leaderId, setLeaderId] = useState("");
+  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft | null
+  >(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -125,6 +129,13 @@ export function useProjectCreateController({
       ),
     );
   }, [resourceSetup?.executionEnvironments]);
+
+  useEffect(() => {
+    if (!defaultAgentResourceIdsKey) return;
+    setAgentResourceIds((current) => [
+      ...new Set([...defaultAgentResourceIds, ...current]),
+    ]);
+  }, [defaultAgentResourceIdsKey]);
 
   useEffect(() => {
     if (taskProvider !== "local" && visibility === "public_restricted") {
@@ -160,13 +171,22 @@ export function useProjectCreateController({
         taskProvider,
         providerConfig,
         ...(location === "cloud" ? { visibility } : {}),
+        ...(location === "local" && resourceSetup
+          ? {
+              includeDefaultAgent:
+                defaultAgentResourceIds.length === 0 ||
+                defaultAgentResourceIds.some((id) =>
+                  agentResourceIds.includes(id),
+                ),
+            }
+          : {}),
       });
       if (resourceSetup) {
         await resourceSetup.configure(project, {
           memberUserIds,
           agentResourceIds,
           executionEnvironmentDeviceIds,
-          leaderId,
+          collaborationGroupDraft,
         });
       }
       host?.track?.("created");
@@ -198,7 +218,7 @@ export function useProjectCreateController({
       memberUserIds,
       agentResourceIds,
       executionEnvironmentDeviceIds,
-      leaderId,
+      collaborationGroupDraft,
     },
     commands: {
       setName,
@@ -215,7 +235,7 @@ export function useProjectCreateController({
         executionEnvironmentSelectionChanged.current = true;
         setExecutionEnvironmentDeviceIds(deviceIds);
       },
-      setLeaderId,
+      setCollaborationGroupDraft,
       clearError: () => setError(null),
       submit,
     },
