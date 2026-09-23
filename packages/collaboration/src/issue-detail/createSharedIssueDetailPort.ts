@@ -5,6 +5,7 @@
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAttachment,
+  CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
 } from "../types";
@@ -190,6 +191,9 @@ export interface SharedIssueDetailPort {
   };
   agents: {
     list(projectId: string): Promise<SharedIssueDetailAgent[]>;
+  };
+  collaborationGroups: {
+    list(projectId: string): Promise<CollaborationGroup[]>;
   };
   deliveries: {
     list(issueId: string): Promise<SharedIssueDetailDelivery[]>;
@@ -475,6 +479,14 @@ export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
 ): SharedIssueDetailPort {
+  const projects = (
+    api as SharedIssueDetailWorkspaceApi & {
+      projects?: Pick<
+        SharedWorkspaceApi["projects"],
+        "listCollaborationGroups"
+      >;
+    }
+  ).projects;
   const workflowOperation = (
     operation:
       | SharedWorkspaceApi["workflowPlans"]["approve"]
@@ -610,6 +622,10 @@ export function createSharedIssueDetailPort(
             status: typeof agent.status === "string" ? agent.status : undefined,
           })),
         ),
+    },
+    collaborationGroups: {
+      list: (projectId) =>
+        projects?.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
     },
     deliveries: {
       list: (issueId) =>

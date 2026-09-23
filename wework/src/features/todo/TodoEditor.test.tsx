@@ -1477,6 +1477,68 @@ describe('TodoEditor create parent resolution', () => {
     expect(assignLoopItem).not.toHaveBeenCalled()
   })
 
+  it('lists project collaboration groups and assigns the created task to the selected group', async () => {
+    const user = userEvent.setup()
+    const createLoopItem = vi.fn(async () => ({ ...baseItem, version: 1 }))
+    const updateLoopItem = vi.fn(async (_id, values) => ({
+      ...baseItem,
+      ...values,
+      assignee_group_name: '项目协作小组',
+      version: 2,
+    }))
+    const assignLoopItem = vi.fn()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem,
+      updateLoopItem,
+      assignLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={
+          {
+            ...project,
+            access_role: 'Owner',
+            collaboration_groups: [
+              {
+                id: 'group-1',
+                name: '项目协作小组',
+              },
+            ],
+          } as CloudProject
+        }
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const groupOption = await screen.findByTestId('cloud-todo-create-assignee-option-group:group-1')
+    expect(groupOption).toHaveTextContent('项目协作小组')
+    await user.click(groupOption)
+    await user.type(screen.getByTestId('cloud-todo-title'), '交给协作小组')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+        version: 1,
+        assignee_group_id: 'group-1',
+      })
+    })
+    expect(assignLoopItem).not.toHaveBeenCalled()
+  })
+
   it('restores the assignee and notification choice before atomic creation', async () => {
     const user = userEvent.setup()
     const attachment = new File(['draft context'], 'draft-context.txt', { type: 'text/plain' })
@@ -1566,7 +1628,6 @@ describe('TodoEditor create parent resolution', () => {
       expect(localStorage.getItem('wework-todo-draft:11:inbox')).toBeNull()
     })
   })
-
   it('keeps Wegent Teams available when the member directory fails', async () => {
     const createApi = {
       listCloudProjectMembers: vi.fn(async () => {

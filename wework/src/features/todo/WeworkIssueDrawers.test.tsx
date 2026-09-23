@@ -80,11 +80,12 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
       </button>
       {props.renderBoardIssueCard?.({
         issue,
-        taskBindings: [],
+        taskBindings,
         display: {} as never,
         focused: false,
-        onOpen: vi.fn(),
+        onOpen: () => props.host.navigate({ ...props.host.location, issueId: issue.id }),
         onMarkRead: vi.fn(),
+        previewDisabled: Boolean(props.host.location.issueId),
       })}
       {props.host.location.issueId &&
         props.renderIssueDetail?.({
@@ -103,14 +104,25 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
 }))
 
 vi.mock('./CloudTodoBoardCard', () => ({
-  CloudTodoBoardCard: (props: ComponentProps<typeof CloudTodoBoardCard>) => (
-    <>
-      <button disabled={props.previewDisabled} onClick={() => props.onPreviewPinnedChange?.(true)}>
-        Open progress
-      </button>
-      {props.previewPinned && !props.previewDisabled && <div>Board progress preview</div>}
-    </>
-  ),
+  CloudTodoBoardCard: (props: ComponentProps<typeof CloudTodoBoardCard>) => {
+    const [localPreviewPinned, setLocalPreviewPinned] = useState(false)
+    const previewPinned = props.previewPinned ?? localPreviewPinned
+    return (
+      <>
+        <button onClick={props.onClick}>Open project card</button>
+        <button
+          disabled={props.previewDisabled}
+          onClick={() => {
+            setLocalPreviewPinned(true)
+            props.onPreviewPinnedChange?.(true)
+          }}
+        >
+          Open progress
+        </button>
+        {previewPinned && !props.previewDisabled && <div>Board progress preview</div>}
+      </>
+    )
+  },
 }))
 
 vi.mock('./TodoEditor', () => ({
@@ -460,17 +472,65 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-task-status', 'running')
   })
 
+  it('opens the Issue drawer from a collaboration project card while a task is running', async () => {
+    taskBindings = [
+      {
+        id: 'binding-1',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'device',
+        taskId: 'run-1',
+        taskTitle: 'Running execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-22T00:00:00Z',
+      },
+    ]
+    const user = userEvent.setup()
+    render(<Project />)
+
+    await user.click(screen.getByText('Open project card'))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.getByText('Open progress')).toBeDisabled()
+    expect(screen.queryByText('Board progress preview')).not.toBeInTheDocument()
+  })
+
   it('dismisses board previews when entering details without resurrecting them on return', async () => {
     const user = userEvent.setup()
     render(<Project />)
-    await user.click(screen.getByText('Open progress'))
-    expect(screen.getByText('Board progress preview')).toBeInTheDocument()
-    await user.click(screen.getByText('Open Issue'))
-    expect(screen.queryByText('Board progress preview')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('Open project card'))
+
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.getByText('Open progress')).toBeDisabled()
-    await user.click(screen.getByTestId('cloud-todo-detail-close'))
-    expect(screen.getByText('Open progress')).toBeEnabled()
     expect(screen.queryByText('Board progress preview')).not.toBeInTheDocument()
+  })
+
+  it('keeps the progress preview available until an Issue drawer opens', async () => {
+    taskBindings = [
+      {
+        id: 'binding-1',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'device',
+        taskId: 'run-1',
+        taskTitle: 'Running execution',
+        backendTaskId: null,
+        linkedAt: '2026-09-22T00:00:00Z',
+      },
+    ]
+    const user = userEvent.setup()
+    render(<Project />)
+
+    expect(screen.getByText('Open progress')).toBeEnabled()
+    await user.click(screen.getByText('Open progress'))
+
+    expect(screen.getByText('Board progress preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   })
 
   it('retains the inert conversation until the shared track finishes returning', async () => {

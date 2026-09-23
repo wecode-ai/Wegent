@@ -4,9 +4,11 @@ import type { ProjectAgentConfigurationHost, ProjectAgentMode } from '@wegent/co
 
 import { Button } from '@/components/ui/button'
 import type { createAgentResourceApi } from '@/api/agentResources'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
+import { isSupportedModelFamily } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
 
@@ -148,7 +150,8 @@ export function createWeworkProjectAgentConfigurationHost(
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
   pluginApi?: WorkbenchServices['pluginApi'],
-  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>,
+  locale: 'zh-CN' | 'en' = 'zh-CN'
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
@@ -189,6 +192,48 @@ export function createWeworkProjectAgentConfigurationHost(
       : {}),
     ...(localAgentApi && localModelApi
       ? {
+          async createDefaultLocalAgent(projectId = DEFAULT_WORK_ITEM_PROJECT_ID) {
+            const existingAgents = await localAgentApi.list(projectId)
+            const existing = existingAgents.find(agent =>
+              ['current-device-agent', 'current-device-assistant'].includes(agent.name)
+            )
+            if (existing) return existing.id
+
+            const modelResponse = await localModelApi.listModels()
+            const model = modelResponse.data.find(isSupportedModelFamily)
+            if (!model) {
+              throw new Error(
+                locale === 'zh-CN' ? '请先配置一个可用模型' : 'Configure an available model first'
+              )
+            }
+            const input = {
+              name: 'current-device-agent',
+              displayName: locale === 'zh-CN' ? '当前设备智能体' : 'Current device Agent',
+              namespace: 'default',
+              runtime: 'codex' as const,
+              model: model.name,
+              modelType: model.type,
+              modelNamespace: model.namespace,
+              capabilityDescription:
+                locale === 'zh-CN'
+                  ? '使用当前设备的模型、技能和工具。'
+                  : 'Uses models, skills, and tools available on the current device.',
+              capabilityMode: 'follow_device' as const,
+              systemPrompt: '',
+              executionEnvironment: 'local' as const,
+              executionMode: 'auto' as const,
+              executionDeviceId: null,
+              workspacePolicy: 'project' as const,
+            }
+            const created = await localAgentApi.ensureDefault(projectId, input)
+            if (created) return created.id
+
+            const concurrent = (await localAgentApi.list(projectId)).find(
+              agent => agent.name === input.name
+            )
+            if (concurrent) return concurrent.id
+            return (await localAgentApi.create(projectId, input)).id
+          },
           renderLocalAgentCreator({ onClose, onCreated, projectId }) {
             return (
               <ProjectChatAgentEditor

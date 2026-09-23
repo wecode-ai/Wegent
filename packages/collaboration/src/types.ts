@@ -11,6 +11,8 @@ export type CollaborationProjectId = string
 
 export type CollaborationRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
 
+export type CollaborationProjectVisibility = 'private' | 'public_restricted' | 'public'
+
 export type CollaborationPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
 
 export type CollaborationStatusColor = 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
@@ -50,7 +52,7 @@ export interface CollaborationProject {
   current_user_id?: number
   current_user_name?: string
   access_role?: CollaborationRole | 'RestrictedAnalyst'
-  visibility?: 'private' | 'public'
+  visibility?: CollaborationProjectVisibility
   status: string
   tags: string[]
   version: number
@@ -235,6 +237,7 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_name: string
   status: 'available' | 'unavailable'
   execution_environment_ids: string[]
+  project_binding_input?: Record<string, unknown>
 }
 
 export interface CollaborationPlatformResources {

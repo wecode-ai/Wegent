@@ -541,7 +541,6 @@ function DeviceCard({
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
-  const [pendingIdeUrl, setPendingIdeUrl] = useState<string | null>(null)
   const [metricsState, setMetricsState] = useState<{
     deviceId: string
     value: CloudDeviceMetricsResponse | null
@@ -629,65 +628,35 @@ function DeviceCard({
     }
   }, [cloudConnection, device, isOnline, remoteTerminalClientFactory, t, terminalSessionEnabled])
 
-  const handleStartCloudSession = useCallback(
-    async (type: 'terminal' | 'code-server') => {
-      const sessionEnabled = type === 'terminal' ? terminalSessionEnabled : codeServerSessionEnabled
-      if (!isOnline || !sessionEnabled) return
-      setSessionLoading(type)
-      setSessionError(null)
-      try {
-        const deviceApi = createSettingsDeviceApi(cloudConnection)
-        const result =
-          type === 'terminal'
-            ? await deviceApi.startTerminal(device.device_id)
-            : await deviceApi.startCodeServer(device.device_id)
-        if (result.url) {
-          if (type === 'code-server') {
-            setPendingIdeUrl(result.url)
-            return
-          }
-          await openExternalUrl(result.url)
-        }
-      } catch (e) {
-        console.error(`Failed to start ${type}:`, e)
-        setSessionError(
-          e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
-        )
-      } finally {
-        setSessionLoading(null)
-      }
-    },
-    [
-      cloudConnection,
-      codeServerSessionEnabled,
-      device.device_id,
-      isOnline,
-      t,
-      terminalSessionEnabled,
-    ]
-  )
-
-  const handleOpenPendingIde = useCallback(async () => {
-    if (!pendingIdeUrl) return
+  const handleStartIde = useCallback(async () => {
+    if (!isOnline || !codeServerSessionEnabled) return
+    setSessionLoading('code-server')
     setSessionError(null)
     try {
-      await openExternalUrl(pendingIdeUrl)
-      setPendingIdeUrl(null)
+      const result = await createSettingsDeviceApi(cloudConnection).startCodeServer(
+        device.device_id
+      )
+      if (!result.url) {
+        throw new Error(t('workbench.connection_ide_url_missing'))
+      }
+      try {
+        const opened = await openExternalUrl(result.url, { target: 'system' })
+        if (!opened) {
+          throw new Error('Unsupported IDE URL')
+        }
+      } catch (error) {
+        console.error('Failed to open device IDE in the system browser:', error)
+        throw new Error(t('workbench.connection_ide_open_failed'), { cause: error })
+      }
     } catch (e) {
+      console.error('Failed to start IDE:', e)
       setSessionError(
         e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
       )
+    } finally {
+      setSessionLoading(null)
     }
-  }, [pendingIdeUrl, t])
-
-  let pendingIdeTarget = pendingIdeUrl
-  if (pendingIdeUrl) {
-    try {
-      pendingIdeTarget = new URL(pendingIdeUrl).origin
-    } catch {
-      // Keep the complete value visible if the Backend returned an invalid URL.
-    }
-  }
+  }, [cloudConnection, codeServerSessionEnabled, device.device_id, isOnline, t])
 
   const handleStartEdit = () => {
     setEditName(device.name)
@@ -861,7 +830,7 @@ function DeviceCard({
                   testId={`connection-code-server-button-${device.device_id}`}
                   icon={Code2}
                   label="IDE"
-                  onClick={() => handleStartCloudSession('code-server')}
+                  onClick={handleStartIde}
                   disabled={
                     lifecyclePending ||
                     !isOnline ||
@@ -964,34 +933,6 @@ function DeviceCard({
           >
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{sessionError}</span>
-          </div>
-        )}
-        {pendingIdeUrl && (
-          <div
-            data-testid={`connection-ide-target-${device.device_id}`}
-            className="mt-3 flex items-center justify-between gap-3 rounded-md bg-blue-500/10 px-3 py-2 text-xs text-text-secondary"
-          >
-            <span className="min-w-0">
-              {t('workbench.connection_ide_target')}: <strong>{pendingIdeTarget}</strong>
-            </span>
-            <div className="flex shrink-0 gap-2">
-              <button
-                type="button"
-                data-testid={`connection-ide-cancel-${device.device_id}`}
-                onClick={() => setPendingIdeUrl(null)}
-                className="rounded px-2 py-1 hover:bg-muted"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                data-testid={`connection-ide-confirm-${device.device_id}`}
-                onClick={() => void handleOpenPendingIde()}
-                className="rounded bg-text-primary px-2 py-1 text-background"
-              >
-                {t('workbench.connection_ide_open')}
-              </button>
-            </div>
           </div>
         )}
         {supportsDeviceMetrics(device) && (

@@ -91,6 +91,7 @@ import {
 
 const initialLocation: CollaborationPlatformLocation = {
   platformView: 'spaces',
+  collaborationDomain: 'local',
   workspaceId: null,
   workspaceView: 'home',
   projectId: null,
@@ -355,7 +356,8 @@ export function WeworkSharedProject({
         project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
         project.project_store === 'local' ? detailServices?.modelApi : undefined,
         services.pluginApi,
-        services.deviceApi
+        services.deviceApi,
+        locale
       ),
     }),
     [
@@ -374,6 +376,7 @@ export function WeworkSharedProject({
       services.localProjectChatAgentApi,
       services.pluginApi,
       setLocation,
+      locale,
       workspace.id,
     ]
   )
@@ -763,6 +766,7 @@ export function WeworkSharedProject({
             onOpen,
             onDelete,
             onMarkRead,
+            previewDisabled,
             taskBindings,
           }) => {
             const boardTaskBindings = taskBindings.map(
@@ -797,11 +801,7 @@ export function WeworkSharedProject({
                   onArchive={onDelete ?? (() => undefined)}
                   archiveLabel={t('todo.delete_issue', '删除任务')}
                   onMarkRead={onMarkRead}
-                  previewPinned={pinnedProgressIssueId === issue.id}
-                  previewDisabled={Boolean(location.issueId)}
-                  onPreviewPinnedChange={pinned =>
-                    setPinnedProgressIssueId(pinned ? issue.id : null)
-                  }
+                  previewDisabled={previewDisabled}
                   onOpenRuntimeTask={
                     runtimePort
                       ? address => {
@@ -837,8 +837,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   const collaborationUserName =
     props.user.user_name.trim().toLowerCase() === 'local'
       ? locale === 'zh-CN'
-        ? '本地用户'
-        : 'Local user'
+        ? '我'
+        : 'Me'
       : props.user.user_name
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
   const currentAgentDevice = useCurrentAgentDevice(
@@ -870,7 +870,8 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
         props.services.pluginApi,
-        props.services.deviceApi
+        props.services.deviceApi,
+        locale
       ),
     [
       props.services.agentResourceApi,
@@ -878,6 +879,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       props.services.projectSpaceDetailServices?.local?.modelApi,
       props.services.pluginApi,
       props.services.localProjectChatAgentApi,
+      locale,
     ]
   )
   useEffect(() => {
@@ -988,6 +990,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       if (cancelled || !project.workspace_id) return
       setLocation(current => ({
         ...current,
+        collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
         workspaceId: project.workspace_id ?? null,
         workspaceView: 'projects',
         projectId: String(project.id),
@@ -1053,6 +1056,10 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         locale={locale}
         onReady={handleReady}
         host={{
+          currentUser: {
+            id: Number(props.user.id),
+            name: collaborationUserName,
+          },
           cloudAccess: {
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
@@ -1108,6 +1115,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             }
             setLocation(current => ({
               ...current,
+              collaborationDomain: source ?? current.collaborationDomain,
               rootView: current.workspaceId ? current.rootView : 'agents',
               workspaceView: current.workspaceId ? 'agents' : 'home',
               projectId: null,
