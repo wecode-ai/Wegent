@@ -172,7 +172,9 @@ export function createDesktopScenario({
         ).includes('1'),
         'The completed default-assistant run was not linked back to the Issue'
       )
-      await control.command('click', scoped('[data-testid^="cloud-task-activity-accept-"]'))
+      const acceptButton = scoped('[data-testid^="cloud-task-activity-accept-"]')
+      await control.command('waitFor', acceptButton, { timeoutMs: uiTimeoutMs })
+      await control.command('click', acceptButton)
       await waitForValue(
         () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         value => value === 'completed',
