@@ -206,7 +206,7 @@ test.describe('Collaboration module', () => {
     await expect(commentCard.locator('.task-detail-comment-inline-composer')).toBeVisible()
     const reply = `Thread reply ${Date.now()}`
     await writeSharedComposer(
-      commentCard.locator('[data-testid^="cloud-task-activity-card-composer-"]'),
+      commentCard.locator('[data-testid^="collaboration-chat-reply-input-"]'),
       reply
     )
     await commentCard.locator('.task-detail-comment-send').click()
