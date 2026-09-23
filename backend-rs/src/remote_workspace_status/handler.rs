@@ -12,8 +12,8 @@ use serde_json::json;
 use tracing::warn;
 
 use super::app_state::AppState;
+use super::subtask_history;
 use super::task_detail;
-use super::users;
 
 const WORKSPACE_ROOT: &str = "/workspace";
 const SANDBOX_HOME_ROOT: &str = "/home/user";
@@ -26,19 +26,6 @@ pub struct RemoteWorkspaceStatusResponse {
     pub reason: Option<&'static str>,
 }
 
-/// Extracts the bearer credential like `extract_authorization_token`.
-fn extract_authorization_token(authorization: Option<&str>) -> Option<String> {
-    let value = authorization?;
-    let mut parts = value.splitn(2, ' ');
-    let scheme = parts.next().unwrap_or("");
-    let token = parts.next().unwrap_or("").trim();
-    if scheme.eq_ignore_ascii_case("bearer") {
-        Some(token.to_string())
-    } else {
-        Some(value.to_string())
-    }
-}
-
 /// GET /api/tasks/{task_id}/remote-workspace/status: the remote-workspace
 /// status free function, injecting the module's own dependency state.
 #[brz_http_server::get(
@@ -48,9 +35,9 @@ fn extract_authorization_token(authorization: Option<&str>) -> Option<String> {
 async fn get_remote_workspace_status(
     #[inject(rws)] state: &crate::startup::StatusState,
     task_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<(StatusCode, RemoteWorkspaceStatusResponse), StatusError> {
-    status(state, task_id, authorization).await
+    status(state, task_id, i64::from(current_user.id)).await
 }
 
 /// A mapped status-endpoint failure.
@@ -78,24 +65,8 @@ impl brz_http_server::IntoHttpError for StatusError {
 async fn status(
     state: &std::sync::Arc<AppState<impl Mysql, impl brz_redis::Redis>>,
     task_id: i64,
-    authorization: Option<&str>,
+    user_id: i64,
 ) -> Result<(StatusCode, RemoteWorkspaceStatusResponse), StatusError> {
-    // `security.get_current_user`.
-    let token = extract_authorization_token(authorization).ok_or_else(unauthorized)?;
-    let username = state
-        .jwt
-        .verify_session(&token)
-        .map_err(|_| unauthorized())?
-        .ok_or_else(unauthorized)?;
-    let user = users::get_by_name(state, &username)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(unauthorized)?;
-    if user.users_is_active == 0 {
-        return Err(unauthorized());
-    }
-    let user_id = i64::from(user.users_id);
-
     // `remote_workspace_service.get_status`:
     // `_get_task_detail` -> `_get_sandbox_payload` -> `_has_executor_binding`.
     let detail_load = task_detail::load_task_detail(state, task_id, user_id).await;
@@ -189,7 +160,7 @@ async fn get_sandbox_payload(
 async fn resolve_workspace_base_url(
     state: &AppState<impl Mysql, impl brz_redis::Redis>,
     task_id: i64,
-    subtasks: &[task_detail::SubtaskRow],
+    subtasks: &[subtask_history::SubtaskRow],
     sandbox_payload: &Option<ExecutorPayload>,
 ) -> anyhow::Result<Option<String>> {
     let sandbox_payload = match sandbox_payload {
@@ -269,13 +240,6 @@ async fn get_executor_payload(
     Ok(body.as_deref().and_then(ExecutorPayload::parse))
 }
 
-fn unauthorized() -> StatusError {
-    StatusError {
-        status: StatusCode::UNAUTHORIZED,
-        detail: "Could not validate credentials".to_string(),
-    }
-}
-
 fn sandbox_available(payload: &Option<ExecutorPayload>) -> bool {
     payload
         .as_ref()
@@ -285,7 +249,9 @@ fn sandbox_available(payload: &Option<ExecutorPayload>) -> bool {
 /// `RemoteWorkspaceService._has_executor_binding` via
 /// `_get_connected_executor_binding`: the newest subtask with a non-deleted
 /// executor binding, else the latest deleted binding.
-fn connected_executor_binding(subtasks: &[task_detail::SubtaskRow]) -> Option<(String, String)> {
+fn connected_executor_binding(
+    subtasks: &[subtask_history::SubtaskRow],
+) -> Option<(String, String)> {
     let mut latest_deleted: Option<(String, String)> = None;
     for subtask in subtasks.iter().rev() {
         let Some(executor_name) = subtask.executor_name.as_deref() else {
@@ -335,14 +301,6 @@ mod tests {
                 .as_ref()
                 .and_then(|value| ExecutorPayload::parse(&serde_json::to_vec(value).unwrap())),
         )
-    }
-
-    #[test]
-    fn extracts_bearer_token() {
-        assert_eq!(
-            extract_authorization_token(Some("Bearer abc")).as_deref(),
-            Some("abc")
-        );
     }
 
     #[test]

@@ -14,13 +14,47 @@ use crate::permissions::{EntityResolvers, ResolutionPurpose};
 use super::py_order::PySetOrder;
 use super::queries::{
     NamespaceActiveForm, direct_namespace_memberships, direct_namespace_resource_ids, group_member,
-    kinds_by_filter, namespace_by_name_exact, namespace_entity_kb_members,
+    kinds_by_filter_unordered, namespace_by_name_exact, namespace_entity_kb_members,
     namespace_entity_resource_ids, namespace_entity_roles, namespaces_by_ids, namespaces_by_names,
 };
 use super::{
     APPROVED_STATUSES, EntityIdRow, EntityMemberRow, IdRow, KB_RESOURCE_TYPES, KindRow,
-    MEMBER_COLUMNS, MemberRow, highest_role, quote_literal,
+    MEMBER_COLUMNS, MemberRow, RESOLVER_APPROVED_STATUS, RESOLVER_KB_RESOURCE_TYPE, has_permission,
+    highest_role, quote_literal,
 };
+
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC(all-grouped membership invocations) - temporary
+// ---------------------------------------------------------------------------
+// One observation per membership resolver site on this API's path, so a Replay
+// run can show which site the recording reaches and this target does not. The
+// `brz-logs` file sink is not collected for the Replay phase, so these lines go
+// to stderr, which the harness captures in `reports/target.stderr.log`. Remove
+// this block and its five call sites once the site is identified.
+
+/// Name a resolution purpose without requiring `Debug` on the enum.
+fn purpose_label(purpose: ResolutionPurpose) -> &'static str {
+    match purpose {
+        ResolutionPurpose::ResourceAccess => "resource_access",
+        ResolutionPurpose::SkillDownload => "skill_download",
+        ResolutionPurpose::CachedResourceAccess => "cached_resource_access",
+    }
+}
+
+/// Record one membership-invocation observation. `bindings_len == 0` marks a
+/// site whose empty-binding gate skipped the resolver call.
+fn record_membership_invocation(
+    site: &str,
+    entity_type: &str,
+    bindings_len: usize,
+    purpose: ResolutionPurpose,
+) {
+    eprintln!(
+        "ALLGROUPED_MEMBERSHIP site={site} entity_type={entity_type} \
+         bindings_len={bindings_len} purpose={}",
+        purpose_label(purpose)
+    );
+}
 
 #[derive(Debug, brz_mysql::FromMysqlRow)]
 struct ExternalBindingRow {
@@ -55,6 +89,20 @@ async fn external_namespace_bindings<M: Mysql>(
         .collect())
 }
 
+/// `dept_ids = [b.entity_id for b in all_dept_bindings if b.entity_id]`: the
+/// source drops falsy entity ids, so the empty string never reaches the
+/// membership check or the entity-match query (`NULL` is already excluded by
+/// the query's `IS NOT NULL`). The filter stays out of the SQL so the rendered
+/// statement keeps matching the recorded one.
+fn non_empty_entity_ids(entity_ids: Vec<String>) -> Vec<String> {
+    entity_ids
+        .into_iter()
+        .filter(|entity_id| !entity_id.is_empty())
+        .collect()
+}
+
+/// `ErpEntityResolver.get_resource_ids_by_entity` step 1
+/// (`all_dept_bindings`) plus the source's `dept_ids` comprehension.
 async fn distinct_external_entity_ids<M: Mysql>(
     mysql: &M,
     entity_type: &str,
@@ -71,10 +119,24 @@ async fn distinct_external_entity_ids<M: Mysql>(
             (),
         )
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| row.resource_members_entity_id)
-        .collect())
+    Ok(non_empty_entity_ids(
+        rows.into_iter()
+            .map(|row| row.resource_members_entity_id)
+            .collect(),
+    ))
+}
+
+/// `list_resources_by_entity_match` for Namespace resources: the `distinct()`
+/// namespace ids bound to the matched department ids
+/// (`ErpEntityResolver.get_resource_ids_by_entity(..., resource_type='Namespace')`).
+fn namespace_ids_for_external_ids_sql(entity_type: &str, ids: &str) -> String {
+    format!(
+        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \
+         FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
+         AND resource_members.entity_type = {} \
+         AND resource_members.entity_id IN ({ids}) AND resource_members.status = 'approved'",
+        quote_literal(entity_type),
+    )
 }
 
 async fn namespace_ids_for_external_ids<M: Mysql>(
@@ -91,16 +153,7 @@ async fn namespace_ids_for_external_ids<M: Mysql>(
         .collect::<Vec<_>>()
         .join(", ");
     let rows: Vec<IdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id \
-                 FROM resource_members WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.entity_type = {} \
-                 AND resource_members.entity_id IN ({ids}) AND resource_members.status = 'approved'",
-                quote_literal(entity_type),
-            ),
-            (),
-        )
+        .fetch_all(&namespace_ids_for_external_ids_sql(entity_type, &ids), ())
         .await?;
     Ok(rows
         .into_iter()
@@ -138,6 +191,22 @@ async fn external_members_for_namespaces<M: Mysql>(
 // ---------------------------------------------------------------------------
 // Membership resolution (entity resolvers)
 // ---------------------------------------------------------------------------
+
+/// The resolution purpose for the group-membership resolver calls of
+/// `iter_user_groups_with_roles` step 2 (through
+/// `NamespaceEntityResolver.get_resource_ids_by_entity`) and
+/// `ErpEntityResolver.get_resource_ids_by_entity`.
+///
+/// The source has exactly one membership path: `ErpEntityResolver`'s
+/// `_get_membership_with_cache`, which reads `erp:membership:{user_id}:{ssn}`
+/// and, on a cache miss or partial hit, calls
+/// `erp_client.batch_check_membership` and writes the rebuilt map back with
+/// `_cache_set`. The cache-only purpose (`CachedResourceAccess`, which the
+/// provider maps to `ErpProvider::cached_membership`) resolves no membership
+/// on a miss and performs no write, so it drops the groups those calls would
+/// have resolved and never issues the ERP membership requests the source
+/// performs.
+const GROUP_ENTITY_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAccess;
 
 /// Resolve the user's group memberships
 /// (`iter_user_groups_with_roles`): direct user memberships plus
@@ -202,13 +271,19 @@ where
             .collect();
         department_ids.sort();
         department_ids.dedup();
+        record_membership_invocation(
+            "user_group_role_map.step2a",
+            entity_type,
+            department_ids.len(),
+            GROUP_ENTITY_PURPOSE,
+        );
         let matched = resolvers
             .match_bindings(
                 redis,
                 user_id,
                 entity_type,
                 &department_ids,
-                ResolutionPurpose::CachedResourceAccess,
+                GROUP_ENTITY_PURPOSE,
             )
             .await?;
         if !matched.is_empty() {
@@ -231,16 +306,22 @@ where
     for entity_type in resolvers.external_types() {
         let bindings = distinct_external_entity_ids(mysql, entity_type).await?;
         if bindings.is_empty() {
+            record_membership_invocation(
+                "user_group_role_map.step2b",
+                entity_type,
+                0,
+                GROUP_ENTITY_PURPOSE,
+            );
             continue;
         }
+        record_membership_invocation(
+            "user_group_role_map.step2b",
+            entity_type,
+            bindings.len(),
+            GROUP_ENTITY_PURPOSE,
+        );
         let matched = resolvers
-            .match_bindings(
-                redis,
-                user_id,
-                entity_type,
-                &bindings,
-                ResolutionPurpose::CachedResourceAccess,
-            )
+            .match_bindings(redis, user_id, entity_type, &bindings, GROUP_ENTITY_PURPOSE)
             .await?;
         if !matched.is_empty() {
             let namespace_ids =
@@ -302,6 +383,24 @@ pub(super) fn effective_roles(
         }
     }
     effective
+}
+
+/// `get_user_groups`: `sorted(get_user_group_roles(db, user_id))`, i.e. the
+/// effective-role keys over *every* active namespace name. That is the group
+/// list `build_direct_access_permission_context` passes to
+/// `collect_entity_authorized_kbs` and `_get_accessible_namespace_ids`, and
+/// the list `get_effective_roles_in_groups` consumes for `context.group_roles`
+/// — so parent-group inheritance contributes the descendant groups the direct
+/// membership batch never reports.
+pub(super) fn user_groups(
+    role_map: &[(String, Vec<String>)],
+    active_names: &[String],
+) -> Vec<String> {
+    let mut names: Vec<String> = effective_roles(role_map, active_names)
+        .into_keys()
+        .collect();
+    names.sort();
+    names
 }
 
 /// `get_effective_role_in_group` (used by `get_view_role_in_group`):
@@ -406,6 +505,12 @@ where
             }
             _ => {
                 let ids: Vec<String> = entries.iter().map(|row| row.1.clone()).collect();
+                record_membership_invocation(
+                    "resolve_entity_roles.delegated",
+                    &entity_type,
+                    ids.len(),
+                    ResolutionPurpose::ResourceAccess,
+                );
                 resolvers
                     .match_bindings(
                         redis,
@@ -573,26 +678,45 @@ impl EntityKbMetadata {
     }
 }
 
+/// `ErpEntityResolver.get_resource_ids_by_entity` with its default
+/// `resource_type="KnowledgeBase"`: `distinct()` over the entity ids bound to
+/// KnowledgeBase resources. The resolver filters with scalar equality, so the
+/// rendered SQL uses `=`/`IS NOT NULL` rather than the `IN` value lists the
+/// ACL queries elsewhere in this module use.
+fn distinct_kb_external_entities_sql(entity_type: &str) -> String {
+    format!(
+        "SELECT DISTINCT resource_members.entity_id AS resource_members_entity_id \
+         FROM resource_members WHERE resource_members.resource_type = {RESOLVER_KB_RESOURCE_TYPE} \
+         AND resource_members.entity_type = {} AND resource_members.entity_id IS NOT NULL \
+         AND resource_members.status = {RESOLVER_APPROVED_STATUS}",
+        quote_literal(entity_type),
+    )
+}
+
 async fn distinct_kb_external_entities<M: Mysql>(
     mysql: &M,
     entity_type: &str,
 ) -> MysqlResult<Vec<String>> {
     let rows: Vec<EntityIdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT DISTINCT resource_members.entity_id AS resource_members_entity_id \
-                 FROM resource_members WHERE resource_members.resource_type IN {KB_RESOURCE_TYPES} \
-                 AND resource_members.entity_type = {} AND resource_members.entity_id IS NOT NULL \
-                 AND resource_members.status IN {APPROVED_STATUSES}",
-                quote_literal(entity_type),
-            ),
-            (),
-        )
+        .fetch_all(&distinct_kb_external_entities_sql(entity_type), ())
         .await?;
     Ok(rows
         .into_iter()
         .map(|row| row.resource_members_entity_id)
         .collect())
+}
+
+/// `list_resources_by_entity_match` for KnowledgeBase resources: the
+/// `distinct()` resource ids bound to the matched entity ids, with the same
+/// scalar `resource_type`/`status` equality the resolver uses.
+fn kb_ids_for_external_entities_sql(entity_type: &str, ids: &str) -> String {
+    format!(
+        "SELECT DISTINCT resource_members.resource_id AS resource_members_resource_id \
+         FROM resource_members WHERE resource_members.resource_type = {RESOLVER_KB_RESOURCE_TYPE} \
+         AND resource_members.entity_type = {} AND resource_members.entity_id IN ({ids}) \
+         AND resource_members.status = {RESOLVER_APPROVED_STATUS}",
+        quote_literal(entity_type),
+    )
 }
 
 async fn kb_ids_for_external_entities<M: Mysql>(
@@ -609,21 +733,56 @@ async fn kb_ids_for_external_entities<M: Mysql>(
         .collect::<Vec<_>>()
         .join(", ");
     let rows: Vec<IdRow> = mysql
-        .fetch_all(
-            &format!(
-                "SELECT resource_members.resource_id AS resource_members_resource_id \
-                 FROM resource_members WHERE resource_members.resource_type IN {KB_RESOURCE_TYPES} \
-                 AND resource_members.entity_type = {} AND resource_members.entity_id IN ({ids}) \
-                 AND resource_members.status IN {APPROVED_STATUSES}",
-                quote_literal(entity_type),
-            ),
-            (),
-        )
+        .fetch_all(&kb_ids_for_external_entities_sql(entity_type, &ids), ())
         .await?;
     Ok(rows
         .into_iter()
         .map(|row| row.resource_members_resource_id)
         .collect())
+}
+
+/// `collect_entity_authorized_kbs`'s second resolver pass over the collected
+/// member rows: `matched_ids = set(resolver.match_entity_bindings(db, user_id,
+/// entity_type, [member.entity_id for member in members if member.entity_id]))`
+/// plus the source's `if member.entity_id not in matched_ids: continue`.
+///
+/// The first pass (`get_resource_ids_by_entity`) resolves every department bound
+/// to a KnowledgeBase; this pass resolves the departments of the member rows
+/// those resource ids returned. Those are different lists, so the source issues
+/// a second membership resolution rather than reusing the first result.
+async fn matched_member_rows<'a, R: brz_redis::Redis>(
+    redis: Option<&R>,
+    resolvers: &EntityResolvers<R>,
+    user_id: i64,
+    entity_type: &str,
+    members: &'a [MemberRow],
+) -> MysqlResult<Vec<&'a MemberRow>> {
+    let matched = resolvers
+        .match_bindings(
+            redis,
+            user_id,
+            entity_type,
+            &member_entity_ids(members),
+            ResolutionPurpose::ResourceAccess,
+        )
+        .await?;
+    let matched: HashSet<&str> = matched.iter().map(String::as_str).collect();
+    Ok(members
+        .iter()
+        .filter(|member| matched.contains(member.resource_members_entity_id.as_str()))
+        .collect())
+}
+
+/// `[member.entity_id for member in members if member.entity_id]`: the source's
+/// second resolver input, which drops falsy entity ids. `match_bindings` reports
+/// no match for an empty list without issuing a membership request, exactly like
+/// `ErpEntityResolver`'s `if not dept_ids: return []`.
+fn member_entity_ids(members: &[MemberRow]) -> Vec<String> {
+    members
+        .iter()
+        .map(|member| member.resource_members_entity_id.clone())
+        .filter(|entity_id| !entity_id.is_empty())
+        .collect()
 }
 
 /// `collect_entity_authorized_kbs`.
@@ -675,8 +834,20 @@ where
     for entity_type in resolvers.external_types() {
         let departments = distinct_kb_external_entities(mysql, entity_type).await?;
         if departments.is_empty() {
+            record_membership_invocation(
+                "collect_entity_authorized_kbs.external",
+                entity_type,
+                0,
+                ResolutionPurpose::ResourceAccess,
+            );
             continue;
         }
+        record_membership_invocation(
+            "collect_entity_authorized_kbs.external",
+            entity_type,
+            departments.len(),
+            ResolutionPurpose::ResourceAccess,
+        );
         let matched = resolvers
             .match_bindings(
                 redis,
@@ -707,7 +878,9 @@ where
                         (),
                     )
                     .await?;
-                for member in &members {
+                let matched_members =
+                    matched_member_rows(redis, resolvers, user_id, entity_type, &members).await?;
+                for member in matched_members {
                     metadata.append(
                         member.resource_members_resource_id,
                         entity_type,
@@ -726,6 +899,7 @@ where
 }
 
 /// The `entity_kbs` batch: active KnowledgeBase kinds of the entity ids.
+/// `collect_entity_authorized_kbs` does not order this query.
 pub(super) async fn entity_kbs<M>(mysql: &M, kb_ids: &[i64]) -> MysqlResult<Vec<KindRow>>
 where
     M: Mysql,
@@ -745,7 +919,7 @@ where
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    kinds_by_filter(
+    kinds_by_filter_unordered(
         mysql,
         &format!(
             "kinds.kind = 'KnowledgeBase' AND kinds.is_active IS true AND kinds.id IN ({joined})"
@@ -753,3 +927,22 @@ where
     )
     .await
 }
+
+/// `apply_direct_access_filter`'s `external_editable_ids`: the
+/// entity-authorized KB ids whose collected member roles include one with
+/// Developer permission. The source builds a `set[int]` comprehension over
+/// `context.external_member_role_map`, so the `kinds.id IN` list renders the
+/// CPython `set[int]` iteration order.
+pub(super) fn external_editable_kb_ids(metadata: &EntityKbMetadata) -> Vec<i64> {
+    let mut set_order = PySetOrder::new();
+    for (kb_id, roles) in &metadata.role_map {
+        if roles.iter().any(|role| has_permission(role, "Developer")) {
+            set_order.add(*kb_id);
+        }
+    }
+    set_order.order()
+}
+
+#[cfg(test)]
+#[path = "membership_tests.rs"]
+mod tests;

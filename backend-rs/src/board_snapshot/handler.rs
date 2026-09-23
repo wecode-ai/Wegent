@@ -32,7 +32,7 @@ use super::external_provider::{self, PROVIDER_REQUEST_FAILED_PREFIX};
 use super::repository::{
     AgentRow, BindingRow, BoardSnapshotRepository, MemberRow, ProjectRow, has_permission,
 };
-use crate::auth::{AuthFailure, get_current_user};
+use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -292,9 +292,9 @@ fn member_response(member: &MemberRow) -> MemberResponse {
 async fn get_project_board_snapshot(
     #[inject(state)] state: &AppState,
     project_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
 ) -> Result<ProjectBoardSnapshotResponse, FastApiError> {
-    board_snapshot(state, project_id, authorization).await
+    board_snapshot(state, project_id, &current_user).await
 }
 
 /// The `ProjectBoardSnapshotResponse` payload returned by the source.
@@ -316,12 +316,8 @@ struct LoopItemView {}
 async fn board_snapshot(
     state: &AppState,
     project_id: &str,
-    authorization: Option<&str>,
+    current_user: &SessionUser,
 ) -> Result<ProjectBoardSnapshotResponse, FastApiError> {
-    let current_user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
-
     let repository = BoardSnapshotRepository::new(&state.mysql);
 
     // `cloud_project_service.get` -> `require_cloud_project_role`:
@@ -515,15 +511,6 @@ impl From<CreatorRow> for MemberRow {
             email: row.email,
             role: "Owner".to_string(),
         }
-    }
-}
-
-fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
     }
 }
 

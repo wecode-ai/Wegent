@@ -40,6 +40,13 @@ pub struct KindRow {
     pub updated_at: NaiveDateTime,
 }
 
+/// Only the CRD payload of a `kinds` row, mirroring the source's
+/// `db.query(Kind.json).first()` projection used by `find_shell_json`.
+#[derive(Debug, FromMysqlRow)]
+pub struct KindJsonRow {
+    pub json: brz_mysql::Json<serde_json::Value>,
+}
+
 /// One row of the `namespace` table.
 #[derive(Debug, FromMysqlRow)]
 #[allow(dead_code)]

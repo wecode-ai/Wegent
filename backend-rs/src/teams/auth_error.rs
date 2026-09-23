@@ -53,3 +53,38 @@ impl From<AuthError> for crate::http_compat::FastApiError {
         crate::http_compat::FastApiError::from(HttpError::from(error))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use brz_http_server::StatusCode;
+
+    use super::*;
+
+    #[test]
+    fn authentication_failures_convert_with_the_source_challenge() {
+        for (error, detail) in [
+            (
+                AuthError::CouldNotValidateCredentials,
+                "\"Could not validate credentials\"",
+            ),
+            (AuthError::UserNotActivated, "\"User not activated\""),
+            (AuthError::NotAuthenticated, "\"Not authenticated\""),
+        ] {
+            let converted = crate::http_compat::FastApiError::from(error);
+            assert_eq!(converted.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(converted.validation_detail(), detail);
+            assert!(
+                converted.carries_challenge(),
+                "the source 401 always carries WWW-Authenticate: Bearer"
+            );
+        }
+    }
+
+    #[test]
+    fn dependency_failure_stays_a_plain_500() {
+        let converted =
+            crate::http_compat::FastApiError::from(AuthError::Dependency("down".to_string()));
+        assert_eq!(converted.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!converted.carries_challenge());
+    }
+}

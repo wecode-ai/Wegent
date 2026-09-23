@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tracing::warn;
 
 use super::assembly::{TaskNotFound, build_task_detail};
-use crate::auth::{AuthFailure, get_current_user};
+use super::models::TaskDetailResponse;
 use crate::state::AppState;
 
 /// `ClientOriginQuery`: optional `client_origin` query parameter restricted
@@ -63,32 +63,22 @@ impl IntoHttpError for ApiError {
     }
 }
 
+/// Loads one task detail and maps the source's failures.
+///
+/// The success value is the typed `TaskDetail` document; the endpoint's JSON
+/// framing belongs to the route, which returns it through the SDK's JSON
+/// reply adaptor (`application/json`, like FastAPI's `JSONResponse`).
 pub(crate) async fn task_detail(
     state: &AppState,
     task_id: i64,
     client_origin: Option<&str>,
-    authorization: Option<&str>,
-) -> Result<(StatusCode, String), ApiError> {
+    user: &crate::auth::SessionUser,
+) -> Result<TaskDetailResponse, ApiError> {
     let query = TaskDetailQuery {
         client_origin: client_origin.map(str::to_owned),
     };
     let client_origin = query.validated_origin()?;
 
-    // `security.get_current_user` (`Depends` runs before the handler).
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(|failure| match failure {
-            AuthFailure::InvalidCredentials => ApiError {
-                status: StatusCode::UNAUTHORIZED,
-                detail: "Could not validate credentials".to_owned(),
-                www_authenticate: true,
-            },
-            AuthFailure::UserNotActivated => ApiError {
-                status: StatusCode::UNAUTHORIZED,
-                detail: "User not activated".to_owned(),
-                www_authenticate: true,
-            },
-        })?;
     let user_id = i64::from(user.id);
 
     // `task_kinds_service.get_task_detail`; a missing/inaccessible task
@@ -112,15 +102,7 @@ pub(crate) async fn task_detail(
         }
     };
 
-    let body = serde_json::to_string(&outcome.body).map_err(|error| {
-        warn!(%error, %task_id, "[task_detail] serialization failed");
-        ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: "Internal server error".to_owned(),
-            www_authenticate: false,
-        }
-    })?;
-    Ok((StatusCode::OK, body))
+    Ok(outcome.body)
 }
 
 #[cfg(test)]

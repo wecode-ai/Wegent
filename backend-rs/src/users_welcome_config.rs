@@ -10,7 +10,7 @@
 //! `DEFAULT_SLOGAN_TIPS_CONFIG` constants when the row or a list is absent).
 //! Admin users additionally read the `admin_setup_completed` config;
 //! everyone else serializes `admin_setup_completed: null`.
-use crate::auth::{AuthFailure, UserRow, get_current_user};
+use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
 use crate::json_compat::{JsonProjection, OpaqueJson};
 use crate::state::AppState;
@@ -263,27 +263,16 @@ where
 #[brz_http_server::get("/api/users/welcome-config")]
 async fn get_welcome_config(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
 ) -> Result<WelcomeConfigResponse, FastApiError> {
-    welcome_config(state, authorization).await
+    welcome_config(state, current_user.0).await
 }
 
 /// Handler body for `GET /api/users/welcome-config`.
 async fn welcome_config(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: UserRow,
 ) -> Result<WelcomeConfigResponse, FastApiError> {
-    let current_user: UserRow =
-        match get_current_user(&state.auth, &state.mysql, authorization).await {
-            Ok(user) => user,
-            Err(AuthFailure::InvalidCredentials) => {
-                return Err(FastApiError::unauthorized("Could not validate credentials"));
-            }
-            Err(AuthFailure::UserNotActivated) => {
-                return Err(FastApiError::unauthorized("User not activated"));
-            }
-        };
-
     let config = system_config(&state.mysql, CHAT_SLOGAN_TIPS_CONFIG_KEY)
         .await
         .map_err(|_| internal_error())?;

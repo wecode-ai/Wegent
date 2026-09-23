@@ -3,21 +3,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Route composition shared by the public and application applications.
-use crate::{models_unified, state::AppState};
+use crate::{auth::AppAuthenticator, models_unified, state::AppState};
 use anyhow::{Context as _, Result};
 use std::sync::Arc;
 
-pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router> {
+pub async fn build(app: Arc<AppState>) -> Result<brz_http_server::Router<AppAuthenticator>> {
     let status_state = super::remote_workspace_status::build(
+        app.mysql.clone(),
+        app.task_policy,
+        Arc::clone(&app.erp),
+        crate::remote_workspace_status::app_state::VideoRefresh {
+            client: app.attachment_http.clone(),
+            extension: Arc::clone(&app.video_result_urls),
+        },
+    )
+    .await
+    .context("failed to initialize remote-workspace status dependencies")?;
+    let tree_state = super::remote_workspace_tree::build(
         app.mysql.clone(),
         app.task_policy,
         Arc::clone(&app.erp),
     )
     .await
-    .context("failed to initialize remote-workspace status dependencies")?;
-    let tree_state = super::remote_workspace_tree::build(app.mysql.clone(), Arc::clone(&app.erp))
-        .await
-        .context("failed to build remote-workspace tree dependencies")?;
+    .context("failed to build remote-workspace tree dependencies")?;
     let runtime_check_state = super::runtime_check::build(
         app.mysql.clone(),
         Arc::clone(&app.user_reader),

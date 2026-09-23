@@ -17,6 +17,73 @@ use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use auth::get_current_user;
 
+/// Active session user using the compact user projection emitted by these
+/// user-directory endpoints.
+pub struct UsersSearchUser(pub auth::UserRow);
+
+impl std::ops::Deref for UsersSearchUser {
+    type Target = auth::UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const USERS_SEARCH_INACTIVE: &str = "Wegent-Users-Search-Inactive";
+
+impl brz_http_server::Authenticator<UsersSearchUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<UsersSearchUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        get_current_user(&self.state().auth, &self.state().mysql, authorization)
+            .await
+            .map(UsersSearchUser)
+            .map_err(|error| {
+                if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else if error.detail() == "User not activated" {
+                    brz_http_server::AuthFailure::invalid_credentials(USERS_SEARCH_INACTIVE)
+                } else {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+            })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a UsersSearchUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: USERS_SEARCH_INACTIVE,
+            } => crate::http_compat::FastApiError::unauthorized("User not activated"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error",
+                )
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 /// Validated query parameters (`q` min_length=1; `limit` 1..=100, default 20).
 #[derive(Debug, Deserialize)]
 pub struct SearchParams {
@@ -80,16 +147,16 @@ struct UserSearchResponse {
 #[brz_http_server::get("/api/users/search")]
 async fn search_users(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: UsersSearchUser,
     query: brz_http_server::Query<SearchParams>,
 ) -> Result<UserSearchResponse, FastApiError> {
-    search(state, authorization, &query).await
+    search(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/users/search`.
 async fn search(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: &UsersSearchUser,
     params: &SearchParams,
 ) -> Result<UserSearchResponse, FastApiError> {
     let (q, limit) = SearchParams {
@@ -97,11 +164,6 @@ async fn search(
         limit: params.limit,
     }
     .validated()?;
-
-    let current_user = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(error) => return Err(error.into()),
-    };
 
     // Source: `User.is_active == True`, `User.id != current_user.id`,
     // `(user_name ILIKE %q%) OR (email ILIKE %q%)`, `LIMIT limit`.

@@ -19,7 +19,6 @@ use serde::Deserialize;
 #[cfg(test)]
 use serde_json::{Value, json};
 
-use crate::auth::{AuthFailure, UserRow, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -271,28 +270,18 @@ fn transcript_response(row: &TranscriptRow, archives: &[ArchiveRow]) -> Transcri
 #[brz_http_server::get("/api/wework-transcripts")]
 async fn list_transcripts(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: crate::auth::SessionUser,
     query: brz_http_server::Query<TranscriptListQuery>,
 ) -> Result<TranscriptListResponse, FastApiError> {
-    transcripts_list(state, authorization, &query).await
+    transcripts_list(state, &user, &query).await
 }
 
 /// Handler body for `GET /api/wework-transcripts`.
 async fn transcripts_list(
     state: &AppState,
-    authorization: Option<&str>,
+    user: &crate::auth::SessionUser,
     query: &TranscriptListQuery,
 ) -> Result<TranscriptListResponse, FastApiError> {
-    let user: UserRow = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
-
     let sql = if query.include_archived {
         TRANSCRIPTS_QUERY
     } else {

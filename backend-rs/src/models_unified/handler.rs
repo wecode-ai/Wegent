@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::aggregation::list_available_models;
-use super::auth::{AuthError, authenticate};
+use super::auth::AuthError;
 use super::models::{UnifiedModelResponse, UnifiedQuery};
 use super::state::AppState;
 
@@ -44,27 +44,18 @@ pub struct UnifiedParams {
 )]
 async fn list_unified_models(
     #[inject(mu)] state: &crate::startup::ModelsState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: super::auth::AuthenticatedUser,
     query: brz_http_server::Query<UnifiedParams>,
 ) -> Result<UnifiedModelsResponse, AuthError> {
-    unified_models(state, authorization, &query).await
+    unified_models(state, &user, &query).await
 }
 
 /// Handler body for `GET /api/models/unified`.
 async fn unified_models(
     state: &std::sync::Arc<AppState<impl Mysql, impl brz_redis::Redis>>,
-    authorization: Option<&str>,
+    user: &super::auth::AuthenticatedUser,
     params: &UnifiedParams,
 ) -> Result<UnifiedModelsResponse, AuthError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let user = authenticate(
-        &headers.view(),
-        &state.mysql,
-        &state.jwt.decode_keys,
-        state.jwt.algorithm,
-    )
-    .await?;
-
     if let Some(client_origin) = &params.client_origin
         && !SUPPORTED_CLIENT_ORIGINS.contains(&client_origin.as_str())
     {

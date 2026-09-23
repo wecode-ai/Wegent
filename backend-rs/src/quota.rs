@@ -20,18 +20,21 @@ use crate::state::AppState;
 #[derive(Debug, Serialize)]
 struct EmptyQuota {}
 
+#[cfg(test)]
 #[derive(Debug)]
 enum QuotaError {
     Auth(FastApiError),
     Database,
 }
 
+#[cfg(test)]
 impl From<FastApiError> for QuotaError {
     fn from(error: FastApiError) -> Self {
         Self::Auth(error)
     }
 }
 
+#[cfg(test)]
 impl brz_http_server::IntoHttpError for QuotaError {
     fn into_http_error(
         self,
@@ -39,8 +42,6 @@ impl brz_http_server::IntoHttpError for QuotaError {
     ) -> brz_http_server::Response {
         match self {
             Self::Auth(error) => error.into_http_error(arena),
-            // An unhandled SQLAlchemy exception reaches Starlette's default
-            // server-error middleware as a plain-text 500 response.
             Self::Database => brz_http_server::Response::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 brz_http_server::ResponseBody::Static(b"Internal Server Error"),
@@ -52,8 +53,72 @@ impl brz_http_server::IntoHttpError for QuotaError {
 
 #[derive(Debug)]
 struct QuotaUser {
+    user_name: String,
     email: Option<String>,
     is_active: bool,
+}
+
+struct QuotaPrincipal(QuotaUser);
+
+const QUOTA_USER_INACTIVE: &str = "Wegent-Quota-User-Inactive";
+
+impl brz_http_server::Authenticator<QuotaPrincipal> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<QuotaPrincipal, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let token = bearer_token(authorization)
+            .map_err(|_| brz_http_server::AuthFailure::invalid_credentials("Bearer"))?;
+        let username = verify_session_token(token, &self.state().auth)
+            .map_err(|_| brz_http_server::AuthFailure::invalid_credentials("Bearer"))?;
+        let user = self
+            .state()
+            .mysql
+            .find_by_name(&username)
+            .await
+            .map_err(|_| brz_http_server::AuthFailure::Internal)?
+            .ok_or_else(|| brz_http_server::AuthFailure::invalid_credentials("Bearer"))?;
+        if !user.is_active {
+            return Err(brz_http_server::AuthFailure::invalid_credentials(
+                QUOTA_USER_INACTIVE,
+            ));
+        }
+        Ok(QuotaPrincipal(user))
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a QuotaPrincipal,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: QUOTA_USER_INACTIVE,
+            } => FastApiError::unauthorized("User not activated").into_http_error(arena),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                brz_http_server::Response::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    brz_http_server::ResponseBody::Static(b"Internal Server Error"),
+                )
+                .content_type("text/plain; charset=utf-8")
+            }
+            _ => {
+                FastApiError::unauthorized("Could not validate credentials").into_http_error(arena)
+            }
+        }
+    }
 }
 
 trait QuotaUsers: Send + Sync {
@@ -70,6 +135,7 @@ impl<M: Mysql> QuotaUsers for M {
     ) -> Result<Option<QuotaUser>, brz_mysql::MysqlError> {
         let user: Option<UserRow> = self.fetch_optional(USER_BY_NAME_QUERY, (username,)).await?;
         Ok(user.map(|user| QuotaUser {
+            user_name: user.user_name,
             email: user.email,
             is_active: user.is_active != 0,
         }))
@@ -78,21 +144,24 @@ impl<M: Mysql> QuotaUsers for M {
 
 #[brz_http_server::get("/api/quota/*path")]
 async fn quota(
-    #[inject(state)] state: &AppState,
+    #[inject(state)] _state: &AppState,
     path: &str,
-    #[header] authorization: Option<&str>,
-) -> Result<EmptyQuota, QuotaError> {
-    get_quota(&state.auth, &state.mysql, path, authorization).await
+    #[auth] user: QuotaPrincipal,
+) -> EmptyQuota {
+    tracing::info!(email = ?user.0.email, path, "get quota for user");
+    EmptyQuota {}
 }
 
 #[brz_http_server::get("/api/quota")]
 async fn quota_root(
-    #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
-) -> Result<EmptyQuota, QuotaError> {
-    get_quota(&state.auth, &state.mysql, "", authorization).await
+    #[inject(state)] _state: &AppState,
+    #[auth] user: QuotaPrincipal,
+) -> EmptyQuota {
+    tracing::info!(email = ?user.0.email, path = "", "get quota for user");
+    EmptyQuota {}
 }
 
+#[cfg(test)]
 async fn get_quota<U: QuotaUsers>(
     auth: &AuthConfig,
     users: &U,
@@ -219,10 +288,12 @@ mod tests {
             self.queried_names.lock().unwrap().push(username.to_owned());
             match self.state {
                 UserState::Active => Ok(Some(QuotaUser {
+                    user_name: username.to_owned(),
                     email: Some("person@example.org".to_owned()),
                     is_active: true,
                 })),
                 UserState::Inactive => Ok(Some(QuotaUser {
+                    user_name: username.to_owned(),
                     email: None,
                     is_active: false,
                 })),
