@@ -12,15 +12,26 @@ interface AnchorPopoverProps {
   testId: string
   onClose: () => void
   children: ReactNode
+  header?: ReactNode
+  wide?: boolean
 }
 
 // Shared shell for detail popovers anchored to a trigger button: positions
 // itself above/below the anchor, closes on outside click or Escape, and
 // renders the header plus a scrollable body in a portal.
-export function AnchorPopover({ anchor, title, testId, onClose, children }: AnchorPopoverProps) {
+export function AnchorPopover({
+  anchor,
+  title,
+  testId,
+  onClose,
+  children,
+  header,
+  wide = false,
+}: AnchorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{
     left: number
+    width: number
     top?: number
     bottom?: number
   } | null>(null)
@@ -29,15 +40,17 @@ export function AnchorPopover({ anchor, title, testId, onClose, children }: Anch
     if (!anchor) return
     const update = () => {
       const rect = anchor.getBoundingClientRect()
+      const width = Math.min(wide ? 374 : POPOVER_WIDTH, window.innerWidth - POPOVER_MARGIN * 2)
       const spaceAbove = rect.top
       const spaceBelow = window.innerHeight - rect.bottom
       const placeAbove = spaceAbove >= POPOVER_HEIGHT_ESTIMATE || spaceAbove >= spaceBelow
       setPosition({
+        width,
         left: Math.max(
           POPOVER_MARGIN,
           Math.min(
-            rect.left + rect.width / 2 - POPOVER_WIDTH / 2,
-            window.innerWidth - POPOVER_WIDTH - POPOVER_MARGIN
+            rect.left + rect.width / 2 - width / 2,
+            window.innerWidth - width - POPOVER_MARGIN
           )
         ),
         bottom: placeAbove ? window.innerHeight - rect.top + POPOVER_GAP : undefined,
@@ -51,7 +64,7 @@ export function AnchorPopover({ anchor, title, testId, onClose, children }: Anch
       window.removeEventListener('resize', update)
       document.removeEventListener('scroll', update, true)
     }
-  }, [anchor])
+  }, [anchor, wide])
 
   useEffect(() => {
     if (!anchor) return
@@ -91,11 +104,25 @@ export function AnchorPopover({ anchor, title, testId, onClose, children }: Anch
       role="dialog"
       tabIndex={-1}
       aria-label={title}
-      className="fixed z-system-popover w-[280px] rounded-xl border border-border/70 bg-popover p-1 text-text-primary shadow-lg"
-      style={{ left: position.left, bottom: position.bottom, top: position.top }}
+      className={`fixed z-system-popover rounded-xl border border-border/70 bg-popover text-text-primary shadow-lg ${header ? '' : 'p-1'}`}
+      style={{
+        left: position.left,
+        width: position.width,
+        bottom: position.bottom,
+        top: position.top,
+      }}
     >
-      <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
-      <div className="max-h-[264px] overflow-y-auto px-1 pb-1">{children}</div>
+      {header ?? <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>}
+      <div
+        className={
+          wide
+            ? `overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+            : `max-h-[264px] overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+        }
+        style={wide ? { maxHeight: 'min(400px, calc(100vh - 112px))' } : undefined}
+      >
+        {children}
+      </div>
     </div>,
     document.body
   )
