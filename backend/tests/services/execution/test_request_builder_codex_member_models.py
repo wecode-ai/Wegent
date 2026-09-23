@@ -101,6 +101,7 @@ def test_codex_coordinate_resolves_member_model_credentials_and_headers(
             "user": "alice",
             "task-id": "123",
             "wegent-agent-name": "review-team",
+            "wecode-session-id": "123",
         }
         assert result[2]["agent_config"] == {}
         decrypt.assert_called_once_with("encrypted-reviewer-key")

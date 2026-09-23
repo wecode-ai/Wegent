@@ -233,6 +233,44 @@ def build_default_headers_with_placeholders(
 # name *contains* this substring shares the empty-strip and encoding behaviors.
 WEGENT_IDENTITY_HEADER_MARKER = "wegent-agent-"
 
+# Header carrying the originating Wegent session (task) id on every model call.
+# Injected after placeholder resolution so it applies to every model regardless
+# of whether the model defines its own DEFAULT_HEADERS. Paths without a task
+# context (wizard, connection tests) resolve to task_id 0/"" and skip injection.
+SESSION_ID_HEADER = "wecode-session-id"
+
+# Task id values that mean "no session context" and must not be emitted.
+_EMPTY_TASK_ID_VALUES = (None, "", 0, "0")
+
+
+def inject_session_id_header(
+    model_config: Dict[str, Any], task_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Attach wecode-session-id to model_config default_headers when a task id exists.
+
+    Every session type (chat, group chat, automation, subscription, device
+    runtime) funnels its model configuration through the resolver with the
+    owning task id, so injecting here covers all direct model calls. The
+    backend LLM gateway additionally honors the X-Wegent-Upstream-Header-
+    prefixed variant emitted by the executor for cloud models.
+
+    Args:
+        model_config: Model configuration dict, mutated in place.
+        task_data: Effective task data (ExecutionRequest as dict).
+
+    Returns:
+        The same model_config dict for chaining.
+    """
+    task_id = task_data.get("task_id")
+    if task_id in _EMPTY_TASK_ID_VALUES:
+        return model_config
+    headers = model_config.get("default_headers")
+    if not isinstance(headers, dict):
+        headers = {}
+    headers[SESSION_ID_HEADER] = str(task_id)
+    model_config["default_headers"] = headers
+    return model_config
+
 
 def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
     """Drop headers whose name contains 'wegent-agent-' and whose value is empty.
@@ -392,6 +430,10 @@ def _process_model_config_placeholders(
         processed_headers = encode_wegent_header_values(processed_headers)
         model_config["default_headers"] = processed_headers
         logger.info(f"[model_resolver] Processed default_headers with placeholders")
+
+    # Attach the session (task) id to every model call so upstream providers
+    # and gateways can correlate usage back to the originating session.
+    model_config = inject_session_id_header(model_config, effective_task_data)
 
     return model_config
 

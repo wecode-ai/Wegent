@@ -615,6 +615,14 @@ fn apply_claude_header_environment(
             ("wecode-executor".to_owned(), "claudecode".to_owned()),
         ],
     );
+    // Attach the session (task) id so providers can correlate model usage.
+    let task_id = request.task_id.trim();
+    if !task_id.is_empty() {
+        default_headers = merge_missing_header_map(
+            default_headers,
+            vec![("wecode-session-id".to_owned(), task_id.to_owned())],
+        );
+    }
     if let Some(project_id) = project_id(request) {
         default_headers = merge_header_map(
             default_headers,

@@ -7,6 +7,40 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn inject_session_headers_adds_plain_header_for_direct_providers() {
+    let mut headers = vec![("user".to_owned(), "alice".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(!headers
+        .iter()
+        .any(|(key, _)| key == "X-Wegent-Upstream-Header-wecode-session-id"));
+}
+
+#[test]
+fn inject_session_headers_adds_upstream_variant_for_gateway() {
+    let mut headers = vec![("X-Wegent-Model-Type".to_owned(), "public".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "X-Wegent-Upstream-Header-wecode-session-id" && value == "123"));
+}
+
+#[test]
+fn inject_session_headers_skips_empty_task_id_and_keeps_explicit_value() {
+    let mut headers = vec![("wecode-session-id".to_owned(), "explicit".to_owned())];
+    inject_session_headers(&mut headers, "");
+    assert_eq!(headers.len(), 1);
+    inject_session_headers(&mut headers, "123");
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "explicit");
+}
+
+#[test]
 fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     assert_eq!(
         windows_codex_router_auth_script(),
