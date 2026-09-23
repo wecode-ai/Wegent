@@ -325,6 +325,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       if (submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
+        publishedDraftsRef.current.delete(scopeKey)
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         setComposerValue('', 0)
         publishDraft('')

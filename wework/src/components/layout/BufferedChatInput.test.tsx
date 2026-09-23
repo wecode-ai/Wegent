@@ -147,6 +147,42 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('restores a queued draft that was published before submission', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queued, setQueued] = useState('')
+      return (
+        <>
+          <button type="button" onClick={() => setValue(queued)}>
+            Edit queued message
+          </button>
+          <span data-testid="published-draft">{value}</span>
+          <BufferedChatInput
+            value={value}
+            onChange={setValue}
+            onSubmit={message => {
+              setQueued(message)
+              return true
+            }}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'queued follow-up')
+    await waitFor(() =>
+      expect(screen.getByTestId('published-draft')).toHaveTextContent('queued follow-up')
+    )
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(screen.getByTestId('published-draft')).toBeEmptyDOMElement())
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('queued follow-up')
+    )
+  }, 30_000)
+
   test('keeps the submitted draft when an async send is rejected', async () => {
     let resolveSubmission: (accepted: boolean) => void = () => undefined
     const onDraftEdit = vi.fn()
