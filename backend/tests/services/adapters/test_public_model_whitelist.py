@@ -336,6 +336,39 @@ def test_bot_lookup_treats_restricted_public_model_as_unselected(
     assert resolved_for_alice is not None
 
 
+def test_bot_lookup_separates_owner_and_viewer_identities(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    owner = _make_user(test_db, "owner")
+    owner_model = Kind(
+        user_id=owner.id,
+        kind="Model",
+        name="owner-private-model",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "owner-private-model", "namespace": "default"},
+            "spec": {"modelConfig": {"env": {"model": "openai"}}},
+        },
+    )
+    test_db.add(owner_model)
+    test_db.commit()
+
+    resolved = bot_kinds_service._get_model_by_name(
+        test_db,
+        "owner-private-model",
+        "default",
+        owner.id,
+        viewer_id=test_user.id,
+    )
+
+    assert resolved is not None
+    assert resolved.id == owner_model.id
+
+
 def test_public_model_detail_returns_404_for_restricted_user(
     test_db: Session,
     test_user: User,

@@ -308,8 +308,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         db: Session,
         model_name: str,
         namespace: str,
-        user_id: int,
+        owner_id: int,
         model_type: Optional[str] = None,
+        viewer_id: Optional[int] = None,
     ) -> Optional[Any]:
         """
         Get model by name and optional type from kinds table or public_models table.
@@ -318,9 +319,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db: Database session
             model_name: Model name
             namespace: Namespace
-            user_id: User ID
+            owner_id: Owner user ID used for private model lookup
             model_type: Optional model type ('public' or 'user').
                        If None, tries user models first, then public.
+            viewer_id: Requesting user ID used for public model whitelist
+                       enforcement. Defaults to owner_id.
 
         Returns:
             A Kind object (for both user and public models),
@@ -339,7 +342,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             model = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == user_id,
+                    Kind.user_id == owner_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == namespace,
@@ -371,7 +374,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
             if public_model:
                 if not is_public_model_allowed_for_user_id(
-                    db, public_model.json, user_id
+                    db,
+                    public_model.json,
+                    viewer_id if viewer_id is not None else owner_id,
                 ):
                     logger.info(
                         f"[DEBUG] _get_model_by_name_and_type: public model {model_name} "
@@ -389,7 +394,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             model = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == user_id,
+                    Kind.user_id == owner_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == namespace,
@@ -419,7 +424,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
             if public_model:
                 if not is_public_model_allowed_for_user_id(
-                    db, public_model.json, user_id
+                    db,
+                    public_model.json,
+                    viewer_id if viewer_id is not None else owner_id,
                 ):
                     logger.info(
                         f"[DEBUG] _get_model_by_name_and_type: public model {model_name} "
@@ -437,7 +444,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             return None
 
     def _get_model_by_name(
-        self, db: Session, model_name: str, namespace: str, user_id: int
+        self,
+        db: Session,
+        model_name: str,
+        namespace: str,
+        owner_id: int,
+        viewer_id: Optional[int] = None,
     ) -> Optional[Any]:
         """
         Get model by name from kinds table (user's private models or public models).
@@ -446,7 +458,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         This is a backward-compatible wrapper around _get_model_by_name_and_type.
         """
         return self._get_model_by_name_and_type(
-            db, model_name, namespace, user_id, model_type=None
+            db,
+            model_name,
+            namespace,
+            owner_id,
+            model_type=None,
+            viewer_id=viewer_id,
         )
 
     # Note: _get_shell_info_by_name has been moved to shell_utils.py
@@ -899,7 +916,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             required_role=BaseRole.Developer,
         )
 
-        ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        ghost, shell, model = self._get_bot_components(
+            db, bot, bot.user_id, viewer_id=user_id
+        )
         return self._convert_to_bot_dict(bot, ghost, shell, model)
 
     def get_bot_detail(
@@ -1583,13 +1602,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             .count()
         )
 
-    def _get_bot_components(self, db: Session, bot: Kind, user_id: int):
+    def _get_bot_components(
+        self, db: Session, bot: Kind, owner_id: int, viewer_id: Optional[int] = None
+    ):
         """
         Get Ghost, Shell, Model components for a bot.
         Model can be from kinds table (private) or public_models table.
 
         For group resources (namespace != 'default'), components are queried without
         user_id filter since they may be created by different users in the same group.
+        owner_id loads owner-owned components; viewer_id enforces the public-model
+        whitelist and defaults to owner_id.
         """
         import logging
 
@@ -1615,12 +1638,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             Kind.is_active == True,
         )
         if not is_group_resource:
-            ghost_query = ghost_query.filter(Kind.user_id == user_id)
+            ghost_query = ghost_query.filter(Kind.user_id == owner_id)
         ghost = ghost_query.first()
 
         # Get shell - try user's custom shells first, then public shells
         shell_ref_name = bot_crd.spec.shellRef.name
-        shell = get_shell_by_name(db, shell_ref_name, user_id)
+        shell = get_shell_by_name(db, shell_ref_name, owner_id)
 
         logger.info(
             f"[DEBUG] _get_bot_components: shellRef.name={shell_ref_name}, "
@@ -1632,7 +1655,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         model = None
         if bot_crd.spec.modelRef:
             model = self._get_model_by_name(
-                db, bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace, user_id
+                db,
+                bot_crd.spec.modelRef.name,
+                bot_crd.spec.modelRef.namespace,
+                owner_id,
+                viewer_id=viewer_id,
             )
 
         logger.info(
