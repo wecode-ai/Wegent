@@ -401,7 +401,7 @@ pids=()
 # leaves remote authentication to the token-gated device session gateway.
 if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
     mkdir -p "$HOME/.config/code-server"
-    printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
+    printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\ntrusted-origins: [\"*\"]\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
     code-server /home/wegent \
         --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
         --auth none \
