@@ -10,6 +10,7 @@ import type { ProjectCreateHostAdapter } from './project-create/types'
 export type CollaborationProjectId = string
 
 export type CollaborationRole = 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
+export type CollaborationWorkspaceRole = CollaborationRole | 'Reporter' | 'RestrictedAnalyst'
 
 export type CollaborationProjectVisibility = 'private' | 'public'
 
@@ -168,7 +169,7 @@ export interface CollaborationWorkspace {
   name: string
   description: string
   namespace: string
-  access_role: CollaborationRole | 'Member'
+  access_role: CollaborationWorkspaceRole | 'Member'
   member_count: number
   agent_count: number
   execution_environment_count: number
@@ -314,7 +315,7 @@ export interface CollaborationMember {
   user_id: number
   user_name: string
   email: string | null
-  role: CollaborationRole
+  role: CollaborationWorkspaceRole
   capability_description?: string
 }
 

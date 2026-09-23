@@ -981,7 +981,7 @@ describe('shared IssueDetail', () => {
     const onCreateTask = jest.fn()
 
     renderDetail(createApi(), {
-      project: { ...project, access_role: 'Reporter' },
+      project: { ...project, access_role: 'Developer' },
       issue: { ...issue, can_edit: false, can_view_detail: true },
       allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
       members: [member],
@@ -994,11 +994,11 @@ describe('shared IssueDetail', () => {
     expect(onCreateTask).toHaveBeenCalledWith()
   })
 
-  it('keeps comments and assignment closed for a restricted viewer without blocking work', () => {
+  it('keeps comments, assignment, and work closed for a viewer', () => {
     const onCreateTask = jest.fn()
 
     renderDetail(createApi(), {
-      project: { ...project, access_role: 'RestrictedAnalyst' },
+      project: { ...project, access_role: 'Viewer' },
       issue: { ...issue, can_edit: false, can_view_detail: true },
       allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
       onCreateTask,
@@ -1006,8 +1006,8 @@ describe('shared IssueDetail', () => {
 
     expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
   it('allows an explicitly editable Issue to submit a comment', async () => {

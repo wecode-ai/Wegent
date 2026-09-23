@@ -17,7 +17,7 @@ import type {
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationProject,
-  CollaborationRole,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -886,7 +886,7 @@ export function useCollaborationPlatformController({
       },
       async addMember(
         userId: number,
-        role: Exclude<CollaborationRole, "Owner">,
+        role: Exclude<CollaborationWorkspaceRole, "Owner">,
       ) {
         if (!api.workspaces || !location.workspaceId) {
           throw new Error("Workspace API is unavailable");
@@ -916,7 +916,7 @@ export function useCollaborationPlatformController({
       },
       async updateMember(
         userId: number,
-        role: Exclude<CollaborationRole, "Owner">,
+        role: Exclude<CollaborationWorkspaceRole, "Owner">,
       ) {
         if (!api.workspaces || !location.workspaceId) {
           throw new Error("Workspace API is unavailable");

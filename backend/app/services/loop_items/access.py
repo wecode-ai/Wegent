@@ -15,8 +15,8 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
-from app.services.cloud_projects.access import CloudProjectAccess
 from app.schemas.base_role import BaseRole, has_permission
+from app.services.cloud_projects.access import CloudProjectAccess
 
 
 def default_issue_security(project: object) -> str:

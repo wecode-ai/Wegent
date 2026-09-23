@@ -18,12 +18,12 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
-  CollaborationRole,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
 
-type MemberRole = Exclude<CollaborationRole, "Owner">;
+type MemberRole = Exclude<CollaborationWorkspaceRole, "Owner">;
 
 export function isCurrentDeviceCollaborationAgent(
   agent: CollaborationAgent,
@@ -240,7 +240,7 @@ const copy = {
 
 type ResourceCopy = (typeof copy)[keyof typeof copy];
 
-function roleLabel(role: CollaborationRole, messages: ResourceCopy) {
+function roleLabel(role: CollaborationWorkspaceRole, messages: ResourceCopy) {
   if (role === "Owner") return messages.owner;
   if (role === "Maintainer") return messages.maintainer;
   if (role === "Developer") return messages.developer;

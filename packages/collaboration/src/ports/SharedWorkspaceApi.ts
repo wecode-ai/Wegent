@@ -20,6 +20,7 @@ import type {
   CollaborationProject,
   CollaborationProjectVisibility,
   CollaborationRole,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -197,11 +198,11 @@ export interface WorkspaceUpdateInput {
 
 export interface WorkspaceMemberCreateInput {
   userId: number
-  role?: Exclude<CollaborationRole, 'Owner'>
+  role?: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceMemberUpdateInput {
-  role: Exclude<CollaborationRole, 'Owner'>
+  role: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceAgentCreateInput {

@@ -254,7 +254,7 @@ async function addProjectMember(
   page: Page,
   projectId: string,
   userId: number,
-  role: 'Developer' | 'Reporter' | 'RestrictedAnalyst'
+  role: 'Maintainer' | 'Developer' | 'Viewer'
 ): Promise<void> {
   await webApi(page, `/api/v1/cloud-projects/${encodeURIComponent(projectId)}/members`, {
     method: 'POST',
@@ -958,7 +958,7 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
-  test('manages members, visibility, tags, statuses and card fields, then blocks RestrictedAnalyst direct views', async ({
+  test('manages members, visibility, tags, statuses and card fields, then blocks Viewer direct views', async ({
     browser,
     page,
   }) => {
@@ -981,7 +981,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId('collaboration-participants-tab-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
-      await page.getByTestId('cloud-member-role').selectOption('Reporter')
+      await page.getByTestId('cloud-member-role').selectOption('Developer')
       await page.getByTestId(`cloud-member-result-${member.id}`).click()
       await expect(page.getByTestId(`cloud-project-member-${member.id}`)).toBeVisible()
       await expect
@@ -992,7 +992,7 @@ test.describe('Collaboration cloud capabilities', () => {
           )
           return response.find(candidate => candidate.user_id === member.id)?.role
         })
-        .toBe('Reporter')
+        .toBe('Developer')
 
       await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
@@ -1072,7 +1072,7 @@ test.describe('Collaboration cloud capabilities', () => {
         `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/members/${member.id}`,
         {
           method: 'PATCH',
-          body: { role: 'RestrictedAnalyst' },
+          body: { role: 'Viewer' },
         }
       )
 
@@ -1183,20 +1183,24 @@ test.describe('Collaboration cloud capabilities', () => {
       workspaceId = workspace.id
       const project = await createProjectByApi(page, workspace.id, `Related Tasks ${suffix}`)
       projectId = project.id
-      const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
-
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-project').click()
-      await page.getByTestId('cloud-project-manage-visibility-public-restricted').click()
+      await page.getByTestId('cloud-project-manage-visibility-public').click()
+      await page.getByTestId('cloud-project-public-access-role').selectOption('Developer')
+      await page.getByTestId('cloud-project-default-issue-security').selectOption('related')
       await expect
         .poll(async () => {
-          const updated = await webApi<CloudProject & { visibility: string }>(
-            page,
-            `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
-          )
-          return updated.visibility
+          const updated = await webApi<
+            CloudProject & {
+              visibility: string
+              public_access: { role: string } | null
+              default_issue_security: string
+            }
+          >(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)
+          return [updated.visibility, updated.public_access?.role, updated.default_issue_security]
         })
-        .toBe('public_restricted')
+        .toEqual(['public', 'Developer', 'related'])
+      const ownerIssue = await createIssueByApi(page, project.id, `Owner only ${suffix}`)
 
       const regular = await openRegularUserProject(browser, page, workspace.id, project.id)
       try {

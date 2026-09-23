@@ -45,10 +45,10 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
 )
+from app.services.loop_items.access import default_issue_security, is_related_item
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
-from app.services.loop_items.access import default_issue_security, is_related_item
 from app.services.project_automation_domain import runnable_wegent_team
 
 logger = logging.getLogger(__name__)
