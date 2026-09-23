@@ -83,19 +83,13 @@
   background: transparent;
 }
 
-.popout-window-collapsed [data-testid='chat-message-input'] {
-  /* Override the editor's inline desktop auto-resize limit inside the fixed collapsed surface. */
-  max-height: 64px !important;
+.popout-window-collapsed [data-composer-scroll-container] {
+  max-height: 64px;
 }
 
 .popout-window-collapsed .composer-prosemirror-editor,
 .popout-window-collapsed .composer-prosemirror-placeholder {
   padding-top: 12px;
-}
-
-.popout-window-collapsed [data-testid='composer-toolbar'] {
-  margin-top: 8px;
-  transform: translateY(-10px);
 }
 
 .popout-window-compact-context [data-testid='project-chat-composer'] > div:first-child {
