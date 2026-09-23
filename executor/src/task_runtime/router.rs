@@ -710,6 +710,47 @@ impl TaskRuntime {
             .list_project_automation_runs(project_id, rule_id)
     }
 
+    pub fn run_project_manager(
+        &self,
+        project_id: &str,
+        instruction: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .run_project_manager(project_id, instruction)
+    }
+
+    pub fn list_project_manager_runs(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_project_manager_runs(project_id)
+    }
+
+    pub fn record_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        kind: &str,
+        item_id: &str,
+        payload: Value,
+        pending: bool,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .record_project_manager_action(project_id, run_id, kind, item_id, payload, pending)
+    }
+
+    pub fn decide_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        action_id: &str,
+        approve: bool,
+        version: i64,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .decide_project_manager_action(project_id, run_id, action_id, approve, version)
+    }
+
     pub fn list_executions(
         &self,
         project_id: &str,

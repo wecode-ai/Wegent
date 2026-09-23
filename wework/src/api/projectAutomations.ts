@@ -5,6 +5,11 @@ type ProjectAutomationExecution = LocalLoopItemExecution & {
   automation_run_id: string
 }
 import type { ProjectWorkflowDefinition } from './deliveries'
+import type {
+  WorkspaceProjectManagerAction,
+  WorkspaceProjectManagerConfig,
+  WorkspaceProjectManagerRun,
+} from '@wegent/collaboration'
 
 export type ProjectAutomationRunStatus =
   | 'pending'
@@ -176,6 +181,48 @@ function cloudExecution(row: Record<string, unknown>): ProjectAutomationExecutio
 
 export function createProjectAutomationApi(client: HttpClient) {
   return {
+    getProjectManager(projectId: string) {
+      return client.get<WorkspaceProjectManagerConfig>(
+        `/v1/cloud-projects/${projectId}/project-manager`
+      )
+    },
+    saveProjectManager(
+      projectId: string,
+      config: Omit<WorkspaceProjectManagerConfig, 'projectId'>
+    ) {
+      return client.put<WorkspaceProjectManagerConfig>(
+        `/v1/cloud-projects/${projectId}/project-manager`,
+        config
+      )
+    },
+    runProjectManager(projectId: string, message: string) {
+      return client.post<WorkspaceProjectManagerRun>(
+        `/v1/cloud-projects/${projectId}/project-manager/runs`,
+        { message }
+      )
+    },
+    listProjectManagerRuns(projectId: string) {
+      return client.get<WorkspaceProjectManagerRun[]>(
+        `/v1/cloud-projects/${projectId}/project-manager/runs`
+      )
+    },
+    getProjectManagerRun(projectId: string, runId: string) {
+      return client.get<WorkspaceProjectManagerRun>(
+        `/v1/cloud-projects/${projectId}/project-manager/runs/${runId}`
+      )
+    },
+    decideProjectManagerAction(
+      projectId: string,
+      runId: string,
+      actionId: string,
+      approve: boolean,
+      version: number
+    ) {
+      return client.post<WorkspaceProjectManagerAction>(
+        `/v1/cloud-projects/${projectId}/project-manager/runs/${runId}/actions/${actionId}/decision`,
+        { approve, version }
+      )
+    },
     claimNext(claim: { execution_device_id: string; lease_seconds: number }) {
       return client
         .post<Record<string, unknown> | null>('/v1/loop-item-executions/claim-my-next', claim)

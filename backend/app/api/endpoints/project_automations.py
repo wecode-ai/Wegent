@@ -32,6 +32,15 @@ from app.schemas.project_automation import (
     ProjectAutomationWorkflowMigration,
     ProjectAutomationWorkflowMigrationView,
 )
+from app.schemas.project_manager import (
+    ProjectManagerConfig,
+    ProjectManagerConfigView,
+    ProjectManagerActionView,
+    ProjectManagerDecision,
+    ProjectManagerInstruction,
+    ProjectManagerRunDetail,
+    ProjectManagerRunView,
+)
 from app.schemas.workspace import (
     CollaborationGroupCreate,
     CollaborationGroupListResponse,
@@ -43,10 +52,89 @@ from app.services.project_automation_execution import project_automation_executi
 from app.services.project_automations import (
     project_automation_service,
 )
+from app.services.project_manager import project_manager_service
 from app.services.workspaces import workspace_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.get("/{project_id}/project-manager", response_model=ProjectManagerConfigView)
+def get_project_manager(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectManagerConfigView:
+    return project_manager_service.get(db, project_id, current_user.id)
+
+
+@router.put("/{project_id}/project-manager", response_model=ProjectManagerConfigView)
+def save_project_manager(
+    project_id: str,
+    values: ProjectManagerConfig,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectManagerConfigView:
+    return project_manager_service.save(db, project_id, current_user.id, values)
+
+
+@router.post("/{project_id}/project-manager/runs", response_model=ProjectManagerRunView)
+async def run_project_manager(
+    project_id: str,
+    values: ProjectManagerInstruction,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectManagerRunView:
+    return await project_manager_service.run_now(
+        db, project_id, current_user.id, values.message
+    )
+
+
+@router.get(
+    "/{project_id}/project-manager/runs", response_model=list[ProjectManagerRunView]
+)
+def list_project_manager_runs(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ProjectManagerRunView]:
+    return project_manager_service.list_runs(db, project_id, current_user.id)
+
+
+@router.get(
+    "/{project_id}/project-manager/runs/{run_id}",
+    response_model=ProjectManagerRunDetail,
+)
+def get_project_manager_run(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return project_manager_service.run_detail(db, project_id, run_id, current_user.id)
+
+
+@router.post(
+    "/{project_id}/project-manager/runs/{run_id}/actions/{action_id}/decision",
+    response_model=ProjectManagerActionView,
+)
+def decide_project_manager_action(
+    project_id: str,
+    run_id: str,
+    action_id: str,
+    values: ProjectManagerDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return project_manager_service.decide_change(
+        db,
+        project_id=project_id,
+        run_id=run_id,
+        action_id=action_id,
+        user_id=current_user.id,
+        approve=values.approve,
+        version=values.version,
+    )
 
 
 @router.get(

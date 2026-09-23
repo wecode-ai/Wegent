@@ -25,6 +25,8 @@ from app.models.delivery import (
     CloudProject,
     Delivery,
     LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     loop_datetime_is_unset,
 )
 from app.models.user import User
@@ -58,6 +60,10 @@ from app.services.loop_items.provider_router import (
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
+from app.services.project_manager import (
+    is_project_manager_rule,
+    project_manager_service,
+)
 from app.services.project_chat.service import project_chat_service
 from app.services.workflow_deliverables import (
     fulfilled_requirement_ids,
@@ -106,6 +112,31 @@ def _board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
         "project_automation_run_id": str(labels.get("projectAutomationRunId") or ""),
         "board_team_execution_id": str(labels.get("boardTeamExecutionId") or ""),
     }
+
+
+def _project_manager_run(
+    db: Session, token_info: MCPAuthInfo, project: CloudProject
+) -> ProjectAutomationRun | None:
+    context = _board_context(db, token_info)
+    run_id = context.get("project_automation_run_id")
+    if context.get("source") != "project_automation" or not run_id:
+        return None
+    run = db.get(ProjectAutomationRun, run_id)
+    rule = db.get(ProjectAutomationRule, run.parent_id) if run else None
+    if rule is None or not is_project_manager_rule(rule):
+        return None
+    return project_manager_service.require_run(
+        db, str(project.id), run_id, token_info.user_id
+    )
+
+
+def _forbid_project_manager_tool(db: Session, token_info: MCPAuthInfo) -> None:
+    context = _board_context(db, token_info)
+    if not context or not context.get("project_automation_run_id"):
+        return
+    project = _project(db, context["space_id"], token_info.user_id)
+    if _project_manager_run(db, token_info, project) is not None:
+        raise ValueError("Project AI manager cannot use this Issue execution tool")
 
 
 def _space_id(db: Session, token_info: MCPAuthInfo, requested: str = "") -> str:
@@ -275,6 +306,14 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
         if not context:
             raise ValueError("Authenticated Task is not a Wegent board execution")
         project = _project(db, context["space_id"], token_info.user_id)
+        manager_run = _project_manager_run(db, token_info, project)
+        if manager_run is not None:
+            return {
+                **context,
+                "space": _project_view(project),
+                "manager_run_id": str(manager_run.id),
+                "scope": "project",
+            }
         return {
             **context,
             "space": _project_view(project),
@@ -329,6 +368,7 @@ def update_space(
     """Update the current Backend project space."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         resolved = _space_id(db, token_info, space_id)
         updated = cloud_project_service.update(
             db,
@@ -407,6 +447,15 @@ async def create_board_item(
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        manager_run = _project_manager_run(db, token_info, project)
+        project_manager_service.require_write(manager_run)
+        if manager_run is not None and any(
+            key in item
+            for key in ("assignee_user_id", "assignee_agent_id", "assignee_team_id")
+        ):
+            raise ValueError(
+                "Create the Issue first, then assign it with assign_board_item"
+            )
         user = _user(db, token_info.user_id)
         created = loop_item_provider_router.create(
             db, project, user, LoopItemCreate.model_validate(item)
@@ -438,6 +487,11 @@ async def create_board_item(
                     payload={
                         **response.model_dump(mode="json"),
                         **(
+                            {"project_manager_run_id": str(manager_run.id)}
+                            if manager_run is not None
+                            else {}
+                        ),
+                        **(
                             {
                                 "workflow_run_id": planning_run.id,
                                 "workflow_plan_version": (
@@ -468,7 +522,17 @@ async def create_board_item(
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             await dispatch_board_team_assignment(db, item=internal, user=user)
-        return _read_item(db, project, str(created.values["id"]), token_info.user_id)
+        result = _read_item(db, project, str(created.values["id"]), token_info.user_id)
+        if manager_run is not None:
+            project_manager_service.record_action(
+                db,
+                manager_run,
+                kind="create",
+                item_id=str(created.values["id"]),
+                before=None,
+                after=result,
+            )
+        return result
 
 
 @mcp_tool(server="wework_space")
@@ -529,6 +593,7 @@ async def submit_workflow_plan(
 
     execution_ids: list[int] = []
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         try:
             project = _project(
                 db, _space_id(db, token_info, space_id), token_info.user_id
@@ -661,6 +726,7 @@ def send_notification(
     from app.services.wework_notifications import send_wework_notification
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         context = _board_context(db, token_info)
         resolved_space = (
             _space_id(db, token_info, space_id)
@@ -695,6 +761,69 @@ async def assign_board_item(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         current = _read_item(db, project, resolved_item_id, token_info.user_id)
+        manager_run = _project_manager_run(db, token_info, project)
+        project_manager_service.require_write(manager_run)
+        if manager_run is not None:
+            internal = (
+                db.get(LoopItem, resolved_item_id)
+                if project.task_provider == "local"
+                else None
+            )
+            if internal is not None and str(internal.cloud_project_id) != str(
+                project.id
+            ):
+                raise ValueError("Issue is outside this project")
+            if current.get("assignee_user_id") or current.get("assignee_agent_id"):
+                return project_manager_service.propose_change(
+                    db,
+                    manager_run,
+                    kind="assign",
+                    item_id=resolved_item_id,
+                    item_version=int(current["version"]),
+                    approver_user_id=None,
+                    payload={
+                        "assignee_type": assignee_type,
+                        "assignee_id": assignee_id,
+                    },
+                )
+            assignment = LoopItemAssign(
+                version=int(current["version"]),
+                assignee_type=assignee_type,
+                assignee_id=assignee_id,
+                notify_assignee=notify_assignee,
+                trigger="automation",
+            )
+            assigned = (
+                loop_item_service.assign(
+                    db,
+                    project_id=int(project.id),
+                    item_id=resolved_item_id,
+                    user_id=token_info.user_id,
+                    values=assignment,
+                )
+                if internal is not None
+                else external_loop_item_provider.assign(
+                    db, resolved_item_id, token_info.user_id, assignment
+                )
+            )
+            if assignee_type == "agent" and internal is not None:
+                from app.services.board_team_execution import (
+                    dispatch_board_team_assignment,
+                )
+
+                await dispatch_board_team_assignment(
+                    db, item=assigned, user=_user(db, token_info.user_id)
+                )
+            result = _read_item(db, project, resolved_item_id, token_info.user_id)
+            project_manager_service.record_action(
+                db,
+                manager_run,
+                kind="assign",
+                item_id=resolved_item_id,
+                before=current,
+                after=result,
+            )
+            return result
         values = LoopItemAssign(
             version=int(current["version"]),
             assignee_type=assignee_type,
@@ -754,8 +883,58 @@ async def update_board_item(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
+        current = _read_item(db, project, resolved_item_id, token_info.user_id)
         values = LoopItemUpdate.model_validate(item)
+        manager_run = _project_manager_run(db, token_info, project)
+        project_manager_service.require_write(manager_run)
+        if manager_run is not None:
+            allowed = {
+                "version",
+                "title",
+                "description",
+                "status",
+                "priority",
+                "tags",
+                "due_at",
+            }
+            if values.model_fields_set - allowed:
+                raise ValueError("Project manager may only edit ordinary Issue fields")
+            internal = (
+                db.get(LoopItem, resolved_item_id)
+                if project.task_provider == "local"
+                else None
+            )
+            if internal is not None and str(internal.cloud_project_id) != str(
+                project.id
+            ):
+                raise ValueError("Issue is outside this project")
+            if current.get("assignee_user_id") and "status" in values.model_fields_set:
+                raise ValueError(
+                    "The human assignee advances Issue status through their work actions"
+                )
+            protected = {"title", "description", "priority", "status", "due_at"}
+            if (
+                current.get("assignee_user_id") or current.get("assignee_agent_id")
+            ) and (
+                "status" in values.model_fields_set
+                or (
+                    current.get("status") in {"in_progress", "in_review", "completed"}
+                    and bool(values.model_fields_set & protected)
+                )
+            ):
+                return project_manager_service.propose_change(
+                    db,
+                    manager_run,
+                    kind="update",
+                    item_id=resolved_item_id,
+                    item_version=int(current["version"]),
+                    approver_user_id=(
+                        int(current["assignee_user_id"])
+                        if current.get("assignee_user_id")
+                        else None
+                    ),
+                    payload=values.model_dump(exclude={"version"}, exclude_unset=True),
+                )
         if project.task_provider in {"github", "gitlab"}:
             external_loop_item_provider.update(
                 db, resolved_item_id, token_info.user_id, values
@@ -771,7 +950,17 @@ async def update_board_item(
             await dispatch_board_team_assignment(
                 db, item=updated, user=_user(db, token_info.user_id)
             )
-        return _read_item(db, project, resolved_item_id, token_info.user_id)
+        result = _read_item(db, project, resolved_item_id, token_info.user_id)
+        if manager_run is not None:
+            project_manager_service.record_action(
+                db,
+                manager_run,
+                kind="update",
+                item_id=resolved_item_id,
+                before=current,
+                after=result,
+            )
+        return result
 
 
 @mcp_tool(server="wework_space")
@@ -787,11 +976,23 @@ def add_board_item_comment(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        return dict(
+        manager_run = _project_manager_run(db, token_info, project)
+        project_manager_service.require_write(manager_run)
+        result = dict(
             external_loop_item_provider.add_comment(
                 db, resolved_item_id, token_info.user_id, body
             )
         )
+        if manager_run is not None:
+            project_manager_service.record_action(
+                db,
+                manager_run,
+                kind="comment",
+                item_id=resolved_item_id,
+                before=None,
+                after=result,
+            )
+        return result
 
 
 @mcp_tool(server="wework_space")
@@ -862,6 +1063,7 @@ def upload_item_attachment(
 
     content = _decode_upload(content_text, content_base64)
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -912,6 +1114,7 @@ def delete_item_attachment(
     """Delete a board-item attachment."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -998,6 +1201,7 @@ def create_delivery(
     """Create a Delivery draft, optionally snapshotting selected Issue chat messages."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -1036,6 +1240,7 @@ def upload_delivery_asset(
     """Upload inline text/base64 content into the authenticated Task's draft."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -1155,6 +1360,7 @@ async def finalize_delivery(
 
     issue_status_changed = False
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         item = _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -1198,6 +1404,7 @@ def discard_delivery_draft(
     """Discard the authenticated Task's unfinished Delivery draft."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
@@ -1215,6 +1422,7 @@ def reorder_board_items(
     """Persist the order of board items in one board lane."""
 
     with SessionLocal() as db:
+        _forbid_project_manager_tool(db, token_info)
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         if project.task_provider in {"github", "gitlab"}:
             return _list_items(db, project, token_info.user_id)

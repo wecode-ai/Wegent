@@ -1,4 +1,4 @@
-import type { WorkspaceAutomationRun } from '@wegent/collaboration'
+import type { WorkspaceAutomationRun, WorkspaceProjectManagerRun } from '@wegent/collaboration'
 import type { LocalLoopItemExecution } from './localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
@@ -9,6 +9,35 @@ export function createLocalProjectAutomationApi(
   runtime: NonNullable<WorkbenchServices['runtimeWorkApi']>
 ) {
   return {
+    runManager(projectId: string, instruction: string) {
+      return request<WorkspaceProjectManagerRun>('projects.manager.run', {
+        project_id: projectId,
+        instruction,
+      })
+    },
+    listManagerRuns(projectId: string) {
+      return request<WorkspaceProjectManagerRun[]>('projects.manager.runs', {
+        project_id: projectId,
+      })
+    },
+    decideManagerAction(
+      projectId: string,
+      runId: string,
+      actionId: string,
+      approve: boolean,
+      version: number
+    ) {
+      return request<import('@wegent/collaboration').WorkspaceProjectManagerAction>(
+        'projects.manager.decide',
+        {
+          project_id: projectId,
+          run_id: runId,
+          action_id: actionId,
+          approve,
+          version,
+        }
+      )
+    },
     run(projectId: string, automationId: string, issueId?: string) {
       return request<WorkspaceAutomationRun[]>('projects.automation.run', {
         project_id: projectId,

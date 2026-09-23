@@ -48,6 +48,7 @@ export interface CollaborationProject {
   }
   collaboration_groups?: CollaborationGroup[]
   automatic_processing_rules?: import('./ports/SharedWorkspaceApi').WorkspaceAutomationRule[]
+  project_manager?: import('./ports/SharedWorkspaceApi').WorkspaceProjectManagerConfig
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
@@ -431,6 +432,7 @@ export type ProjectSettingsSectionId =
   | 'collaboration-participants'
   | 'environments'
   | 'automatic-processing'
+  | 'project-ai'
 
 export interface CollaborationLocation {
   projectId: string | null

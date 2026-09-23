@@ -534,11 +534,13 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
             return Some("The requested project space is outside this Agent session".to_owned());
         }
     }
-    if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
-        if grant.item_id.as_deref().is_some_and(|item_id| {
-            !requested_item_id.trim().is_empty() && requested_item_id != item_id
-        }) {
-            return Some("The requested board item is outside this Agent session".to_owned());
+    if !is_project_manager(Some(grant)) {
+        if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
+            if grant.item_id.as_deref().is_some_and(|item_id| {
+                !requested_item_id.trim().is_empty() && requested_item_id != item_id
+            }) {
+                return Some("The requested board item is outside this Agent session".to_owned());
+            }
         }
     }
     None
@@ -831,7 +833,16 @@ async fn call_tool_with_runtime_context(
     backend_url: Option<&str>,
     auth_token: Option<&str>,
 ) -> Value {
-    if is_automation_manager(grant.as_ref()) && !is_automation_manager_tool(name) {
+    if is_project_manager(grant.as_ref()) && !is_project_manager_tool(name) {
+        return text_result(
+            format!("Project AI manager cannot call wework_space tool: {name}"),
+            true,
+        );
+    }
+    if is_automation_manager(grant.as_ref())
+        && !is_project_manager(grant.as_ref())
+        && !is_automation_manager_tool(name)
+    {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
             true,
@@ -852,6 +863,7 @@ async fn call_tool_with_runtime_context(
     let default_item_id = grant
         .as_ref()
         .and_then(|grant| grant.item_id.clone())
+        .filter(|_| !is_project_manager(grant.as_ref()))
         .filter(|_| name != "send_notification" || default_project_id.is_some());
     if let Some(object) = arguments.as_object_mut() {
         if !object.contains_key("space_id") {
@@ -865,7 +877,9 @@ async fn call_tool_with_runtime_context(
             }
         }
     }
-    if name == "get_current_context" && (default_project_id.is_none() || default_item_id.is_none())
+    if name == "get_current_context"
+        && (default_project_id.is_none()
+            || (default_item_id.is_none() && !is_project_manager(grant.as_ref())))
     {
         return text_result(
             json!({
@@ -953,6 +967,12 @@ async fn call_tool_with_runtime_context(
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
         "get_current_context" => {
             let project_id = string_argument(&arguments, "space_id");
+            if is_project_manager(grant.as_ref()) {
+                return match project_id.and_then(|id| runtime.list_projects()?.into_iter().find(|project| project.id == id).ok_or(super::TaskRuntimeError::ProjectNotFound).and_then(|project| serde_json::to_value(project).map_err(invalid_json))) {
+                    Ok(project) => text_result(json!({"scope":"project","space":project,"manager_run_id":grant.as_ref().and_then(|value| value.automation_run_id.as_deref())}).to_string(), false),
+                    Err(error) => text_result(error.to_string(), true),
+                };
+            }
             let task_id = string_argument(&arguments, "item_id");
             match (project_id, task_id) {
                 (Ok(project_id), Ok(task_id)) => runtime
@@ -1023,20 +1043,37 @@ async fn call_tool_with_runtime_context(
         }
         "get_assignment_candidates" => {
             let project_id = string_argument(&arguments, "space_id");
-            let task_id = string_argument(&arguments, "item_id");
-            let run_id = grant
-                .as_ref()
-                .and_then(|value| value.automation_run_id.as_deref())
-                .ok_or_else(|| {
-                    super::TaskRuntimeError::Invalid(
-                        "assignment candidates require an active collaboration workflow".to_owned(),
-                    )
-                });
-            match (project_id, task_id, run_id) {
-                (Ok(project_id), Ok(task_id), Ok(run_id)) => {
-                    runtime.local_automation_assignment_candidates(project_id, task_id, run_id)
+            if is_project_manager(grant.as_ref()) {
+                match project_id {
+                    Ok(project_id) => runtime.list_chat_agents(project_id).map(|agents| {
+                        json!({
+                            "members": [],
+                            "robots": agents.into_iter().filter(|agent| agent.status == "active").map(|agent| json!({
+                                "id": agent.id,
+                                "name": agent.display_name,
+                                "capability": agent.capability_description,
+                            })).collect::<Vec<_>>(),
+                        })
+                    }),
+                    Err(error) => Err(error),
                 }
-                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            } else {
+                let task_id = string_argument(&arguments, "item_id");
+                let run_id = grant
+                    .as_ref()
+                    .and_then(|value| value.automation_run_id.as_deref())
+                    .ok_or_else(|| {
+                        super::TaskRuntimeError::Invalid(
+                            "assignment candidates require an active collaboration workflow"
+                                .to_owned(),
+                        )
+                    });
+                match (project_id, task_id, run_id) {
+                    (Ok(project_id), Ok(task_id), Ok(run_id)) => {
+                        runtime.local_automation_assignment_candidates(project_id, task_id, run_id)
+                    }
+                    (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+                }
             }
         }
         "submit_workflow_plan" => {
@@ -1063,35 +1100,200 @@ async fn call_tool_with_runtime_context(
                 | (_, _, _, Err(error)) => Err(error),
             }
         }
-        "report_workflow_outcome" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+        "report_workflow_outcome" => Err(super::TaskRuntimeError::Invalid(
             "This orchestration operation requires a backend project space".to_owned(),
         )),
+        "assign_board_item" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref());
+            match (project_id, task_id, run_id) {
+                (Ok(project_id), Ok(task_id), Some(run_id))
+                    if is_project_manager(grant.as_ref()) =>
+                {
+                    let current = runtime.get_task(project_id, task_id).await;
+                    match current {
+                        Ok(current) => {
+                            let kind = string_argument(&arguments, "assignee_type");
+                            let target = string_argument(&arguments, "assignee_id");
+                            match (kind, target) {
+                                (Ok(kind), Ok(target)) => {
+                                    let payload =
+                                        json!({"assignee_type":kind,"assignee_id":target});
+                                    if current.assignee_user_id.is_some()
+                                        || current.assignee_agent_id.is_some()
+                                    {
+                                        runtime.record_project_manager_action(
+                                            project_id, run_id, "assign", task_id, payload, true,
+                                        )
+                                    } else {
+                                        let update = match kind {
+                                            "agent" => Ok(super::TaskUpdate {
+                                                version: current.version,
+                                                assignee_agent_id: Some(Some(target.into())),
+                                                ..super::TaskUpdate::default()
+                                            }),
+                                            "user" => target
+                                                .parse::<i64>()
+                                                .map(|id| super::TaskUpdate {
+                                                    version: current.version,
+                                                    assignee_user_id: Some(Some(id)),
+                                                    ..super::TaskUpdate::default()
+                                                })
+                                                .map_err(|_| {
+                                                    super::TaskRuntimeError::Invalid(
+                                                        "invalid assignee".into(),
+                                                    )
+                                                }),
+                                            _ => Err(super::TaskRuntimeError::Invalid(
+                                                "unsupported assignee".into(),
+                                            )),
+                                        };
+                                        match update {
+                                            Ok(update) => match runtime
+                                                .update_task(project_id, task_id, update)
+                                                .await
+                                            {
+                                                Ok(item) => runtime
+                                                    .record_project_manager_action(
+                                                        project_id, run_id, "assign", task_id,
+                                                        payload, false,
+                                                    )
+                                                    .and_then(|_| {
+                                                        serde_json::to_value(item)
+                                                            .map_err(invalid_json)
+                                                    }),
+                                                Err(error) => Err(error),
+                                            },
+                                            Err(error) => Err(error),
+                                        }
+                                    }
+                                }
+                                (Err(error), _) | (_, Err(error)) => Err(error),
+                            }
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                _ => Err(super::TaskRuntimeError::Invalid(
+                    "Project AI assignment requires an active project manager run".into(),
+                )),
+            }
+        }
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
-            let input = parse(
-                arguments
-                    .get("item")
-                    .cloned()
-                    .unwrap_or_else(|| arguments.clone()),
-            );
+            let raw = arguments
+                .get("item")
+                .cloned()
+                .unwrap_or_else(|| arguments.clone());
+            let input = if is_project_manager(grant.as_ref())
+                && raw
+                    .get("assignee_user_id")
+                    .is_some_and(|value| !value.is_null())
+            {
+                Err(super::TaskRuntimeError::Invalid(
+                    "Create the Issue first, then assign it".into(),
+                ))
+            } else {
+                parse(raw)
+            };
             match (project_id, input) {
-                (Ok(project_id), Ok(input)) => runtime
-                    .create_task(project_id, input)
-                    .await
-                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Ok(project_id), Ok(input)) => {
+                    let created = runtime.create_task(project_id, input).await;
+                    match created {
+                        Ok(item) if is_project_manager(grant.as_ref()) => grant
+                            .as_ref()
+                            .and_then(|value| value.automation_run_id.as_deref())
+                            .ok_or_else(|| {
+                                super::TaskRuntimeError::Invalid("manager run is missing".into())
+                            })
+                            .and_then(|run_id| {
+                                runtime.record_project_manager_action(
+                                    project_id,
+                                    run_id,
+                                    "create",
+                                    &item.id,
+                                    Value::Null,
+                                    false,
+                                )
+                            })
+                            .and_then(|_| serde_json::to_value(item).map_err(invalid_json)),
+                        Ok(item) => serde_json::to_value(item).map_err(invalid_json),
+                        Err(error) => Err(error),
+                    }
+                }
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
         "update_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
             let task_id = string_argument(&arguments, "item_id");
-            let input = parse(
-                arguments
-                    .get("item")
-                    .cloned()
-                    .unwrap_or_else(|| arguments.clone()),
-            );
+            let raw = arguments
+                .get("item")
+                .cloned()
+                .unwrap_or_else(|| arguments.clone());
+            let input = parse(raw.clone());
             match (project_id, task_id, input) {
+                (Ok(project_id), Ok(task_id), Ok(input)) if is_project_manager(grant.as_ref()) => {
+                    let run_id = grant
+                        .as_ref()
+                        .and_then(|value| value.automation_run_id.as_deref())
+                        .ok_or_else(|| {
+                            super::TaskRuntimeError::Invalid("manager run is missing".into())
+                        });
+                    match (run_id, runtime.get_task(project_id, task_id).await) {
+                        (Ok(run_id), Ok(current)) => {
+                            let allowed = [
+                                "version",
+                                "title",
+                                "description",
+                                "status",
+                                "priority",
+                                "tags",
+                            ];
+                            if raw.as_object().is_some_and(|fields| {
+                                fields.keys().any(|key| !allowed.contains(&key.as_str()))
+                            }) {
+                                Err(super::TaskRuntimeError::Invalid(
+                                    "Project AI may only edit ordinary Issue fields".into(),
+                                ))
+                            } else {
+                                let assigned = current.assignee_user_id.is_some()
+                                    || current.assignee_agent_id.is_some();
+                                let active = matches!(
+                                    current.status.as_deref(),
+                                    Some("in_progress" | "in_review" | "completed")
+                                );
+                                let protected = ["title", "description", "priority", "tags"];
+                                let approval = assigned
+                                    && (raw.get("status").is_some()
+                                        || (active
+                                            && protected
+                                                .iter()
+                                                .any(|field| raw.get(*field).is_some())));
+                                if approval {
+                                    runtime.record_project_manager_action(
+                                        project_id, run_id, "update", task_id, raw, true,
+                                    )
+                                } else {
+                                    match runtime.update_task(project_id, task_id, input).await {
+                                        Ok(item) => runtime
+                                            .record_project_manager_action(
+                                                project_id, run_id, "update", task_id, raw, false,
+                                            )
+                                            .and_then(|_| {
+                                                serde_json::to_value(item).map_err(invalid_json)
+                                            }),
+                                        Err(error) => Err(error),
+                                    }
+                                }
+                            }
+                        }
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                    }
+                }
                 (Ok(project_id), Ok(task_id), Ok(input)) => runtime
                     .update_task(project_id, task_id, input)
                     .await
@@ -1104,10 +1306,30 @@ async fn call_tool_with_runtime_context(
             let task_id = string_argument(&arguments, "item_id");
             let body = string_argument(&arguments, "body");
             match (project_id, task_id, body) {
-                (Ok(project_id), Ok(task_id), Ok(body)) => runtime
-                    .add_comment(project_id, task_id, body)
-                    .await
-                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Ok(project_id), Ok(task_id), Ok(body)) => {
+                    let result = runtime.add_comment(project_id, task_id, body).await;
+                    match result {
+                        Ok(comment) if is_project_manager(grant.as_ref()) => grant
+                            .as_ref()
+                            .and_then(|value| value.automation_run_id.as_deref())
+                            .ok_or_else(|| {
+                                super::TaskRuntimeError::Invalid("manager run is missing".into())
+                            })
+                            .and_then(|run_id| {
+                                runtime.record_project_manager_action(
+                                    project_id,
+                                    run_id,
+                                    "comment",
+                                    task_id,
+                                    Value::Null,
+                                    false,
+                                )
+                            })
+                            .and_then(|_| serde_json::to_value(comment).map_err(invalid_json)),
+                        Ok(comment) => serde_json::to_value(comment).map_err(invalid_json),
+                        Err(error) => Err(error),
+                    }
+                }
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
@@ -2991,6 +3213,12 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
             .filter(|tool| tool["name"] == "send_notification")
             .collect();
     }
+    if is_project_manager(context.grant()) {
+        return tools()
+            .into_iter()
+            .filter(|tool| tool["name"].as_str().is_some_and(is_project_manager_tool))
+            .collect();
+    }
     if is_automation_manager(context.grant()) {
         return tools()
             .into_iter()
@@ -3009,6 +3237,27 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
 
 fn is_automation_manager(grant: Option<&SpaceContextGrant>) -> bool {
     grant.is_some_and(|grant| grant.automation_manager)
+}
+
+fn is_project_manager(grant: Option<&SpaceContextGrant>) -> bool {
+    grant.is_some_and(|grant| grant.automation_manager && grant.item_id == grant.space_id)
+}
+
+fn is_project_manager_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_current_context"
+            | "list_board_items"
+            | "search_board_items"
+            | "get_board_item"
+            | "get_assignment_candidates"
+            | "list_item_attachments"
+            | "read_item_attachment"
+            | "create_board_item"
+            | "update_board_item"
+            | "assign_board_item"
+            | "add_board_item_comment"
+    )
 }
 
 fn is_automation_manager_tool(name: &str) -> bool {

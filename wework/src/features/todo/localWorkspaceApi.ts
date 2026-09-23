@@ -316,6 +316,57 @@ export function createLocalWorkspaceApi(
       loadPlugins: async () => [],
     },
     automations: localAutomations,
+    projectManager: {
+      async get(projectId) {
+        const project = await delivery.projects.get(projectId)
+        return project.project_manager
+          ? {
+              ...project.project_manager,
+              projectId,
+              version: project.version,
+            }
+          : {
+              projectId,
+              version: project.version,
+              enabled: false,
+              agentId: '',
+              prompt: '',
+              triggers: [],
+            }
+      },
+      async save(projectId, config) {
+        const project = await delivery.projects.update(projectId, {
+          version: config.version,
+          projectManager: { ...config, projectId },
+        })
+        return { ...config, projectId, version: project.version }
+      },
+      async run(projectId, message) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.runManager(projectId, message)
+      },
+      async listRuns(projectId) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.listManagerRuns(projectId)
+      },
+      async getRun(projectId, runId) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        const runs = await detailServices.localProjectAutomationApi.listManagerRuns(projectId)
+        const run = runs.find(item => item.id === runId)
+        if (!run) throw new Error('Project AI run was not found')
+        return run
+      },
+      async decide(projectId, runId, actionId, approve, version) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.decideManagerAction(
+          projectId,
+          runId,
+          actionId,
+          approve,
+          version
+        )
+      },
+    },
     ...(automation.incomingHooks
       ? {
           incomingHooks: {

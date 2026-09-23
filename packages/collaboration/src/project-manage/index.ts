@@ -10,6 +10,7 @@ export * from "./ProjectBoardSettingsDialog";
 export * from "./ProjectExecutionEnvironments";
 export * from "./ProjectCollaborationGroups";
 export * from "./ProjectAutomaticProcessing";
+export * from "./ProjectAiManager";
 export * from "./memberSearch";
 export * from "./projectMutationQueue";
 export * from "./BoardLayoutEditor";

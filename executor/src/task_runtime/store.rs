@@ -337,10 +337,36 @@ impl LocalTaskStore {
             local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
+        if let Some(project_manager) = input.project_manager {
+            local_automation::validate_manager(
+                &project_manager,
+                &metadata["automatic_processing_rules"],
+            )?;
+            metadata["project_manager"] = project_manager;
+        }
+        local_automation::validate_manager(
+            &metadata["project_manager"],
+            &metadata["automatic_processing_rules"],
+        )?;
         if let Some(execution_environment) = input.execution_environment {
             metadata["execution_environment"] = execution_environment;
         }
         let connection = self.connection()?;
+        if metadata["project_manager"]["enabled"] == true {
+            let agent_id = metadata["project_manager"]["agentId"]
+                .as_str()
+                .unwrap_or_default();
+            let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("project manager Agent was not found".into())
+            })?;
+            if agent.cloud_project_id.as_deref() != Some(project_id)
+                || agent.status.as_deref() != Some("active")
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "project manager Agent is unavailable".into(),
+                ));
+            }
+        }
         let updated = connection.execute(
             "UPDATE loop_items
              SET name = COALESCE(?1, name),
@@ -1190,7 +1216,7 @@ impl LocalTaskStore {
                     e.execution_scope, e.observed_state, e.sync_state,
                     e.claimed_at, e.start_requested_at, e.observed_at,
                     e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                    t.title, t.status, t.priority,
+                    COALESCE(t.title, t.name), t.status, t.priority,
                     a.name, a.title, a.metadata, e.runtime_instance_id
              FROM loop_item_executions e
              LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -4375,7 +4401,7 @@ fn execution_row(
                 e.execution_scope, e.observed_state, e.sync_state,
                 e.claimed_at, e.start_requested_at, e.observed_at,
                 e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                t.title, t.status, t.priority,
+                COALESCE(t.title, t.name), t.status, t.priority,
                 a.name, a.title, a.metadata, e.runtime_instance_id
          FROM loop_item_executions e
          LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -4931,6 +4957,38 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+
+    #[test]
+    fn project_manager_run_uses_project_name_as_execution_title() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let run = store
+            .run_project_manager(&project.id, "Summarize open Issues")
+            .unwrap();
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+
+        assert_eq!(run["taskTitle"], project.name.as_deref().unwrap());
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].task_title, project.name.as_deref().unwrap());
     }
 
     fn default_chat_agent_input() -> ChatAgentCreate {

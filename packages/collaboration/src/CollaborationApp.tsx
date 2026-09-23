@@ -50,6 +50,7 @@ import {
   ProjectCollaborationParticipants,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
+  ProjectAiManager,
   ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
@@ -807,6 +808,23 @@ export function CollaborationApp({
                                   agents={agents}
                                   locale={locale}
                                   translate={translate}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
+                      ...(api.projectManager
+                        ? [
+                            {
+                              id: "project-ai",
+                              label: messages.projectManager,
+                              testId: "collaboration-project-settings-project-ai",
+                              content: (
+                                <ProjectAiManager
+                                  api={api}
+                                  project={project}
+                                  agents={agents}
+                                  locale={locale}
                                 />
                               ),
                             },

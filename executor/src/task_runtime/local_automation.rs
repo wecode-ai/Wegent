@@ -13,6 +13,105 @@ fn rules(project: &LoopItem) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn manager(project: &LoopItem) -> &Value {
+    &project.metadata["project_manager"]
+}
+
+fn event_overlap(left: &Value, right: &Value) -> bool {
+    if text(left, "eventType") != text(right, "eventType") {
+        return false;
+    }
+    let left_tags = left["tags"].as_array().cloned().unwrap_or_default();
+    let right_tags = right["eventConfig"]["tags"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    left_tags.is_empty()
+        || right_tags.is_empty()
+        || left_tags.iter().any(|tag| right_tags.contains(tag))
+}
+
+pub(super) fn validate_manager(
+    value: &Value,
+    processing_rules: &Value,
+) -> Result<(), TaskRuntimeError> {
+    if value.is_null() || value["enabled"] != true {
+        return Ok(());
+    }
+    if text(value, "agentId").is_empty() || text(value, "prompt").trim().is_empty() {
+        return Err(TaskRuntimeError::Invalid(
+            "project manager requires an Agent and instructions".into(),
+        ));
+    }
+    let triggers = value["triggers"].as_array().ok_or_else(|| {
+        TaskRuntimeError::Invalid("project manager triggers must be an array".into())
+    })?;
+    let mut ids = HashSet::new();
+    for trigger in triggers {
+        if text(trigger, "id").is_empty() || !ids.insert(text(trigger, "id")) {
+            return Err(TaskRuntimeError::Invalid(
+                "project manager trigger IDs must be unique".into(),
+            ));
+        }
+        match text(trigger, "kind") {
+            "event"
+                if matches!(
+                    text(trigger, "eventType"),
+                    "task.created" | "task.tag_added" | "task.status_changed"
+                ) => {}
+            "schedule" => {
+                next_schedule(trigger, Utc::now())?;
+            }
+            _ => {
+                return Err(TaskRuntimeError::Invalid(
+                    "unsupported project manager trigger".into(),
+                ))
+            }
+        }
+        if trigger["enabled"] == false || text(trigger, "kind") != "event" {
+            continue;
+        }
+        if triggers
+            .iter()
+            .filter(|other| {
+                other["enabled"] != false
+                    && text(other, "kind") == "event"
+                    && text(other, "eventType") == text(trigger, "eventType")
+                    && (other["tags"].as_array().is_none_or(Vec::is_empty)
+                        || trigger["tags"].as_array().is_none_or(Vec::is_empty)
+                        || other["tags"].as_array().is_some_and(|tags| {
+                            tags.iter().any(|tag| {
+                                trigger["tags"]
+                                    .as_array()
+                                    .is_some_and(|current| current.contains(tag))
+                            })
+                        }))
+            })
+            .count()
+            > 1
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "project manager triggers overlap".into(),
+            ));
+        }
+        if processing_rules
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|rule| {
+                rule["enabled"] != false
+                    && text(rule, "triggerType") == "event"
+                    && event_overlap(trigger, rule)
+            })
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "project manager overlaps automatic processing".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_rules(value: &Value) -> Result<(), TaskRuntimeError> {
     let rules = value
         .as_array()
@@ -71,14 +170,37 @@ pub(super) fn on_event(
     event: &str,
     added_tags: &[String],
 ) -> Result<(), TaskRuntimeError> {
+    let project = get_item_from(connection, project_id, "project")?
+        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let manager_config = manager(&project);
+    if manager_config["enabled"] == true {
+        for trigger in manager_config["triggers"].as_array().into_iter().flatten() {
+            if trigger["enabled"] == false
+                || text(trigger, "kind") != "event"
+                || text(trigger, "eventType") != event
+            {
+                continue;
+            }
+            let tags = trigger["tags"].as_array().cloned().unwrap_or_default();
+            if event == "task.tag_added"
+                && !tags.is_empty()
+                && !tags
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|tag| added_tags.iter().any(|added| added == tag))
+            {
+                continue;
+            }
+            run_for_manager(connection, &project, "event", Some(task_id), None)?;
+            return Ok(());
+        }
+    }
     if event == "task.created"
         && get_item_from(connection, task_id, "task")?
             .is_some_and(|task| task.assignee_user_id.is_some())
     {
         return Ok(());
     }
-    let project = get_item_from(connection, project_id, "project")?
-        .ok_or(TaskRuntimeError::ProjectNotFound)?;
     for rule in rules(&project) {
         if rule["enabled"] == false
             || text(&rule, "triggerType") != "event"
@@ -99,6 +221,49 @@ pub(super) fn on_event(
         run_for_issue(connection, &project, task_id, &rule, "event")?;
     }
     Ok(())
+}
+
+fn run_for_manager(
+    connection: &Connection,
+    project: &LoopItem,
+    trigger: &str,
+    issue_id: Option<&str>,
+    instruction: Option<&str>,
+) -> Result<Value, TaskRuntimeError> {
+    let config = manager(project);
+    if config["enabled"] != true {
+        return Err(TaskRuntimeError::Invalid(
+            "project manager is disabled".into(),
+        ));
+    }
+    let agent_id = text(config, "agentId");
+    let agent = get_item_from(connection, agent_id, "chat_agent")?
+        .ok_or_else(|| TaskRuntimeError::Invalid("project manager Agent was not found".into()))?;
+    if agent.cloud_project_id.as_deref() != Some(&project.id)
+        || agent.status.as_deref() != Some("active")
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "project manager Agent is unavailable".into(),
+        ));
+    }
+    let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE loop_item_id=?1 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))", [&project.id], |row| row.get(0))?;
+    let run_id = format!("local-manager-run-{}", Uuid::new_v4());
+    let stamp = now();
+    let run = json!({"id":run_id,"automationId":"project-manager","projectId":project.id,"projectManager":true,"trigger":trigger,"issueId":issue_id,"taskId":project.id,"taskTitle":project.name,"status":if active {"skipped"} else {"queued"},"createdAt":stamp,"updatedAt":stamp,"completedAt":if active {Some(stamp.clone())} else {None},"actions":[]});
+    if !active {
+        let prompt = format!("You are the project-level AI manager. Coordinate Issues, never claim their delivery. Use wework_space tools to inspect this project. Project ID: {}. Run ID: {}. Event Issue: {}. For assigned Issues, coordinate in comments; changing the assignee or active Issue status/scope requires human approval.\n\nProject instructions: {}\n\nCurrent request: {}", project.id, run_id, issue_id.unwrap_or(""), text(config, "prompt"), instruction.unwrap_or(""));
+        create_local_execution(
+            connection,
+            &project.id,
+            &project.id,
+            agent_id,
+            &agent,
+            "none",
+            json!({"message":prompt,"automation_run_id":run_id,"automation_role":"manager"}),
+        )?;
+    }
+    connection.execute("INSERT INTO loop_items (id, resource_type, cloud_project_id, metadata, created_at, updated_at) VALUES (?1, 'automation_run', ?2, ?3, ?4, ?4)", params![run_id, project.id, run.to_string(), stamp])?;
+    Ok(run)
 }
 
 fn run_for_issue(
@@ -609,6 +774,14 @@ impl LocalTaskStore {
             if !rules(&project)
                 .iter()
                 .any(|rule| rule["enabled"] != false && text(rule, "triggerType") == "schedule")
+                && !(manager(&project)["enabled"] == true
+                    && manager(&project)["triggers"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|trigger| {
+                            trigger["enabled"] != false && text(trigger, "kind") == "schedule"
+                        }))
             {
                 continue;
             }
@@ -646,6 +819,39 @@ impl LocalTaskStore {
                     json!(next_schedule(&rule, current_time)?.to_rfc3339());
                 changed = true;
             }
+            if manager(&project)["enabled"] == true {
+                let manager_triggers = manager(&project)["triggers"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                for trigger in &manager_triggers {
+                    if trigger["enabled"] == false || text(trigger, "kind") != "schedule" {
+                        continue;
+                    }
+                    let key = format!(
+                        "manager:{}:{}:{}",
+                        text(trigger, "id"),
+                        text(trigger, "cronExpression"),
+                        text(trigger, "timezone")
+                    );
+                    let current_time = Utc::now();
+                    let previous = project.metadata["automation_schedule"][&key]
+                        .as_str()
+                        .map(chrono::DateTime::parse_from_rfc3339)
+                        .transpose()
+                        .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
+                        .map(|stamp| stamp.with_timezone(&Utc));
+                    if previous.is_some_and(|due| due <= current_time) {
+                        run_for_manager(&transaction, &project, "scheduled", None, None)?;
+                    }
+                    if !project.metadata["automation_schedule"].is_object() {
+                        project.metadata["automation_schedule"] = json!({});
+                    }
+                    project.metadata["automation_schedule"][&key] =
+                        json!(next_schedule(trigger, current_time)?.to_rfc3339());
+                    changed = true;
+                }
+            }
             if changed {
                 transaction.execute(
                     "UPDATE loop_items SET metadata=?1 WHERE id=?2",
@@ -682,6 +888,187 @@ impl LocalTaskStore {
         }
         transaction.commit()?;
         Ok(json!(runs))
+    }
+
+    pub fn run_project_manager(
+        &self,
+        project_id: &str,
+        instruction: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        if instruction.trim().is_empty() {
+            return Err(TaskRuntimeError::Invalid(
+                "project manager instruction is required".into(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let project = get_item_from(&transaction, project_id, "project")?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let run = run_for_manager(&transaction, &project, "manual", None, Some(instruction))?;
+        transaction.commit()?;
+        Ok(run)
+    }
+
+    pub fn list_project_manager_runs(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='automation_run' AND cloud_project_id=?1 AND json_extract(metadata,'$.projectManager')=1 ORDER BY created_at DESC LIMIT 100")?;
+        let records = statement
+            .query_map([project_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        records.into_iter().map(|record| {
+            let mut run: Value = serde_json::from_str(&record)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            let state: Option<(String, Option<String>)> = connection.query_row(
+                "SELECT status, completed_at FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
+                [text(&run, "id")],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            if let Some((status, completed_at)) = state {
+                run["status"] = json!(match status.as_str() {
+                    "completed" | "succeeded" => "succeeded",
+                    "failed" => "failed",
+                    "cancelled" => "cancelled",
+                    "running" => "running",
+                    _ => "queued",
+                });
+                if let Some(completed_at) = completed_at { run["completedAt"] = json!(completed_at); }
+            }
+            Ok(run)
+        }).collect()
+    }
+
+    pub fn record_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        kind: &str,
+        item_id: &str,
+        payload: Value,
+        pending: bool,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut run = get_item_from(&transaction, run_id, "automation_run")?
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager run was not found".into()))?;
+        if run.cloud_project_id.as_deref() != Some(project_id)
+            || run.metadata["projectManager"] != true
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "manager run does not belong to this project".into(),
+            ));
+        }
+        let item = get_item_from(&transaction, item_id, "task")?;
+        if item
+            .as_ref()
+            .is_some_and(|item| item.cloud_project_id.as_deref() != Some(project_id))
+        {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        let action = json!({"id":Uuid::new_v4().to_string(),"kind":kind,"itemId":item_id,"itemVersion":item.as_ref().map(|item| item.version),"status":if pending {"pending_confirmation"} else {"executed"},"payload":payload,"createdAt":now()});
+        if !run.metadata["actions"].is_array() {
+            run.metadata["actions"] = json!([]);
+        }
+        run.metadata["actions"]
+            .as_array_mut()
+            .unwrap()
+            .push(action.clone());
+        transaction.execute(
+            "UPDATE loop_items SET metadata=?1, updated_at=?2 WHERE id=?3",
+            params![run.metadata.to_string(), now(), run_id],
+        )?;
+        transaction.commit()?;
+        Ok(action)
+    }
+
+    pub fn decide_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        action_id: &str,
+        approve: bool,
+        version: i64,
+    ) -> Result<Value, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let run = get_item_from(&connection, run_id, "automation_run")?
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager run was not found".into()))?;
+        if run.cloud_project_id.as_deref() != Some(project_id)
+            || run.metadata["projectManager"] != true
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "manager run does not belong to this project".into(),
+            ));
+        }
+        let action = run.metadata["actions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|action| {
+                text(action, "id") == action_id && text(action, "status") == "pending_confirmation"
+            })
+            .cloned()
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager action is not pending".into()))?;
+        let item_id = text(&action, "itemId");
+        let item =
+            get_item_from(&connection, item_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if item.cloud_project_id.as_deref() != Some(project_id)
+            || item.version != version
+            || action["itemVersion"] != version
+        {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        drop(connection);
+        if approve {
+            let payload = &action["payload"];
+            let update = if text(&action, "kind") == "assign" {
+                let assignee_type = text(payload, "assignee_type");
+                let assignee_id = text(payload, "assignee_id");
+                match assignee_type {
+                    "agent" => TaskUpdate {
+                        version,
+                        assignee_agent_id: Some(Some(assignee_id.into())),
+                        assignee_user_id: Some(None),
+                        ..TaskUpdate::default()
+                    },
+                    "user" => {
+                        TaskUpdate {
+                            version,
+                            assignee_user_id: Some(Some(assignee_id.parse().map_err(|_| {
+                                TaskRuntimeError::Invalid("invalid assignee".into())
+                            })?)),
+                            assignee_agent_id: Some(None),
+                            ..TaskUpdate::default()
+                        }
+                    }
+                    _ => return Err(TaskRuntimeError::Invalid("unsupported assignee".into())),
+                }
+            } else {
+                serde_json::from_value::<TaskUpdate>(json!({"version":version,"title":payload.get("title"),"description":payload.get("description"),"status":payload.get("status"),"priority":payload.get("priority"),"tags":payload.get("tags")})).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
+            };
+            self.update_task(project_id, item_id, update)?;
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut current = get_item_from(&transaction, run_id, "automation_run")?
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager run was not found".into()))?;
+        let actions = current.metadata["actions"]
+            .as_array_mut()
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager actions are unavailable".into()))?;
+        let selected = actions
+            .iter_mut()
+            .find(|candidate| text(candidate, "id") == action_id)
+            .ok_or_else(|| TaskRuntimeError::Invalid("manager action was not found".into()))?;
+        selected["status"] = json!(if approve { "executed" } else { "rejected" });
+        selected["decidedAt"] = json!(now());
+        let result = selected.clone();
+        transaction.execute(
+            "UPDATE loop_items SET metadata=?1, updated_at=?2 WHERE id=?3",
+            params![current.metadata.to_string(), now(), run_id],
+        )?;
+        transaction.commit()?;
+        Ok(result)
     }
 
     pub fn list_project_automation_runs(
@@ -846,4 +1233,31 @@ fn local_open_issue_ids(
         .query_map([project_id], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(items)
+}
+
+#[cfg(test)]
+mod project_manager_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_event_that_would_start_two_automation_systems() {
+        let manager = json!({"enabled":true,"agentId":"agent-1","prompt":"Coordinate","triggers":[{
+            "id":"created","kind":"event","eventType":"task.created","enabled":true,"tags":[]
+        }]});
+        let rules = json!([{"id":"old","enabled":true,"triggerType":"event","eventType":"task.created","eventConfig":{"tags":[]}}]);
+
+        let error = validate_manager(&manager, &rules).unwrap_err();
+
+        assert!(error.to_string().contains("overlaps automatic processing"));
+    }
+
+    #[test]
+    fn allows_distinct_tag_event_scopes() {
+        let manager = json!({"enabled":true,"agentId":"agent-1","prompt":"Coordinate","triggers":[{
+            "id":"backend","kind":"event","eventType":"task.tag_added","enabled":true,"tags":["backend"]
+        }]});
+        let rules = json!([{"id":"frontend","enabled":true,"triggerType":"event","eventType":"task.tag_added","eventConfig":{"tags":["frontend"]}}]);
+
+        validate_manager(&manager, &rules).unwrap();
+    }
 }

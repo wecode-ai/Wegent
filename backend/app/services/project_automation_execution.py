@@ -386,6 +386,11 @@ class ProjectAutomationExecution:
         rule: ProjectAutomationRule,
         run: ProjectAutomationRun,
     ) -> None:
+        if metadata(rule).get("project_manager") is True:
+            run.task_id = str(project.id)
+            run.task_title = project.title or project.name or ""
+            db.commit()
+            return
         if run.task_id:
             task = loop_item_execution_service.resolve_task_context(
                 db,
@@ -1127,6 +1132,26 @@ class ProjectAutomationExecution:
         context: dict,
     ) -> str:
         del db, owner, context
+        if metadata(rule).get("project_manager") is True:
+            event = metadata(run).get("event") or {}
+            instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
+            read_only = bool(metadata(run).get("read_only"))
+            mode_instruction = (
+                "This conversation is read-only; do not change any Issue. "
+                if read_only
+                else ""
+            )
+            return (
+                "You are the project-level AI manager. Coordinate the project Issues; "
+                "do not execute an Issue or claim its delivery. Use wework_space tools "
+                "to inspect the board before acting. Unassigned Issues may be created, "
+                "edited, and assigned. For assigned Issues, coordinate through comments; "
+                "changes to an active Issue or its owner require human confirmation. "
+                f"{mode_instruction}"
+                f"Project ID: {project.id}. Run ID: {run.id}. Event: {event}.\n\n"
+                f"Project instructions: {rule.description or ''}\n\n"
+                f"Current request: {instruction}"
+            )
         task_id = run.task_id or ""
         sections = [
             (
@@ -1480,6 +1505,14 @@ class ProjectAutomationExecution:
         owner = db.get(User, run.created_by_user_id)
         if rule is None or owner is None:
             return False
+        if metadata(rule).get("project_manager") is True:
+            return self._finalize_project_manager_result(
+                db,
+                run=run,
+                content=content,
+                backend_task_id=backend_task_id,
+                push_activity=push_activity,
+            )
         task = self._task_values(
             db,
             project_id=str(rule.cloud_project_id),
@@ -1597,6 +1630,36 @@ class ProjectAutomationExecution:
                     if backend_task_id is not None
                     else {}
                 ),
+            }
+        self._commit_and_push_activity(db, run, push_activity=push_activity)
+        return True
+
+    def _finalize_project_manager_result(
+        self,
+        db: Session,
+        *,
+        run: ProjectAutomationRun,
+        content: str | None,
+        backend_task_id: int | None,
+        push_activity: bool,
+    ) -> bool:
+        activity = self._activity(db, run)
+        if run.status in TERMINAL_RUN_STATUSES and (
+            activity is None or activity.status == "completed"
+        ):
+            return False
+        run.status = "succeeded"
+        run.completed_at = utcnow()
+        run.version += 1
+        if backend_task_id is not None:
+            run.backend_task_id = backend_task_id
+        if activity is not None:
+            activity.status = "completed"
+            activity.message_type = "text"
+            activity.content = (content or "").strip() or "项目 AI 已完成本次协调。"
+            activity.metadata_json = {
+                **(activity.metadata_json or {}),
+                "run_status": "completed",
             }
         self._commit_and_push_activity(db, run, push_activity=push_activity)
         return True
@@ -1939,14 +2002,7 @@ class ProjectAutomationProcessor:
 
         if not supported_event_type(event.event_type):
             return []
-        if isinstance(event.payload.get("human_work"), dict):
-            logger.info(
-                "[ProjectAutomation] Ignoring event for human-assigned Issue "
-                "project=%s subject=%s event=%s",
-                event.project_id,
-                event.subject_id,
-                event.event_type,
-            )
+        if event.payload.get("project_manager_run_id"):
             return []
         query = db.query(ProjectAutomationRule).filter(
             ProjectAutomationRule.cloud_project_id == event.project_id,
@@ -1989,6 +2045,11 @@ class ProjectAutomationProcessor:
         )
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
+            if (
+                isinstance(event.payload.get("human_work"), dict)
+                and metadata(rule).get("project_manager") is not True
+            ):
+                continue
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
                 continue
             rule_metadata = metadata(rule)
@@ -2189,6 +2250,14 @@ class ProjectAutomationProcessor:
             await consume_queues_background()
             return []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
+        if automation_id is None:
+            manager_rules = [
+                rule
+                for rule in matching_rules
+                if metadata(rule).get("project_manager") is True
+            ]
+            if manager_rules:
+                matching_rules = manager_rules[:1]
         logger.info(
             "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
             "requested_rule=%s matching_rule_ids=%s",
@@ -2374,6 +2443,8 @@ class ProjectAutomationProcessor:
         rule: ProjectAutomationRule,
         event: ProjectAutomationEvent,
     ) -> dict[str, Any]:
+        if metadata(rule).get("project_manager") is True:
+            return {"kind": "project", "task_id": str(rule.cloud_project_id)}
         rule_metadata = metadata(rule)
         event_config = rule_metadata.get("event_config")
         event_config = event_config if isinstance(event_config, dict) else {}
@@ -2622,7 +2693,8 @@ class ProjectAutomationProcessor:
         ):
             return False
         if event.event_type == "task.status_changed":
-            if config.get("transition") != "entered_processing":
+            transition = config.get("transition")
+            if transition not in {"entered_processing", "any"}:
                 return False
             previous_status = event.payload.get("previous_status")
             current_status = event.payload.get("status")
@@ -2630,11 +2702,16 @@ class ProjectAutomationProcessor:
                 current_status, str
             ):
                 return False
-            if not project_status_transition(
-                project,
-                previous_status=previous_status,
-                current_status=current_status,
-            ).entered_processing:
+            if previous_status == current_status:
+                return False
+            if (
+                transition == "entered_processing"
+                and not project_status_transition(
+                    project,
+                    previous_status=previous_status,
+                    current_status=current_status,
+                ).entered_processing
+            ):
                 return False
         expected_priorities = config.get("priorities")
         if (
