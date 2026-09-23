@@ -18,6 +18,9 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from app.services.model_embedding_dimension import (
+    validate_embedding_dimension_declaration,
+)
 from app.stores.tasks import subtask_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
@@ -94,8 +97,26 @@ class ModelKindService(KindBaseService):
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
-        """No references to validate for Model"""
-        pass
+        """Guard the Model write contract.
+
+        Model resources have no references to validate; the hook carries the
+        embedding dimension declaration rules that every write must satisfy.
+        """
+        metadata = resource.get("metadata") or {}
+        name = metadata.get("name")
+        if not name:
+            return
+
+        stored = self.get_resource(
+            user_id,
+            metadata.get("namespace", "default"),
+            name,
+        )
+        validate_embedding_dimension_declaration(
+            spec=resource.get("spec") or {},
+            stored_spec=(stored.json or {}).get("spec") if stored else None,
+            name=name,
+        )
 
     def _extract_resource_data(self, resource: Dict[str, Any]) -> Dict[str, Any]:
         """Extract and encrypt API key in Model resource data"""

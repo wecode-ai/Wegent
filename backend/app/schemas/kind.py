@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 from pydantic import (
     AliasChoices,
@@ -59,6 +59,25 @@ class ModelCategoryType(str, Enum):
     RERANK = "rerank"
     VIDEO = "video"
     IMAGE = "image"
+
+
+def resolve_model_category(spec: Optional[Mapping[str, Any]]) -> str:
+    """Return the normalized category of a Model spec.
+
+    The CRD keeps the category at ``spec.modelType``; older payloads nest it in
+    ``spec.modelConfig.modelType``. Enum members are unwrapped and unknown
+    categories are returned lower-cased so callers can still report them.
+    """
+    model_type: Any = None
+    if isinstance(spec, Mapping):
+        model_type = spec.get("modelType")
+        if model_type is None:
+            model_config = spec.get("modelConfig") or {}
+            if isinstance(model_config, Mapping):
+                model_type = model_config.get("modelType")
+
+    model_type = getattr(model_type, "value", model_type)
+    return str(model_type or ModelCategoryType.LLM.value).strip().lower()
 
 
 # Type-specific configurations
@@ -320,6 +339,25 @@ class ModelSpec(BaseModel):
         description="Legacy maximum output tokens per response.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _adopt_legacy_model_type(cls, data: Any) -> Any:
+        """Adopt a nested ``modelConfig.modelType`` when the field is absent.
+
+        Legacy payloads put the category inside ``modelConfig``. Without this,
+        the ``llm`` default hides the nested category from every consumer that
+        reads the parsed resource.
+        """
+        if not isinstance(data, Mapping) or data.get("modelType") is not None:
+            return data
+        model_config = data.get("modelConfig") or {}
+        if (
+            isinstance(model_config, Mapping)
+            and model_config.get("modelType") is not None
+        ):
+            return {**data, "modelType": model_config["modelType"]}
+        return data
+
     @staticmethod
     def _model_config_token_limit(value: Any) -> Optional[int]:
         """Return a numeric token limit from the runtime model config."""
@@ -354,7 +392,9 @@ class ModelSpec(BaseModel):
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
         ModelCategoryType.LLM,
-        description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
+        description="Model category type (llm, tts, stt, embedding, rerank). "
+        "Defaults to 'llm' for backward compatibility, unless the payload nests "
+        "the category in modelConfig.modelType.",
     )
     modelGroup: Optional[str] = Field(
         None,
