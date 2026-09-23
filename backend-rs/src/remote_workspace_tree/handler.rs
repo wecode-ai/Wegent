@@ -29,7 +29,6 @@ use brz_redis::Redis;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::auth;
 use super::config::Config;
 use super::error::ApiError;
 use super::executor_binding;
@@ -44,6 +43,9 @@ pub struct Deps<M: Mysql, R: Redis> {
     pub(crate) config: Config,
     pub(crate) http: HttpClient,
     pub(crate) mysql: M,
+    /// The deployment's task-shard policy: selects the physical task and
+    /// subtask tables and enables the migrated-legacy probes.
+    pub(crate) task_policy: crate::task_routing::TaskPolicy,
     /// Employee-directory provider for the team redaction check's
     /// entity-derived membership pass.
     pub(crate) erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
@@ -59,6 +61,7 @@ pub struct Deps<M: Mysql, R: Redis> {
 pub fn build_deps<M: Mysql, R: Redis>(
     config: Config,
     mysql: M,
+    task_policy: crate::task_routing::TaskPolicy,
     http: HttpClient,
     redis: Option<R>,
     kinds_redis: Option<R>,
@@ -68,6 +71,7 @@ pub fn build_deps<M: Mysql, R: Redis>(
         config,
         http,
         mysql,
+        task_policy,
         erp,
         redis,
         kinds_redis,
@@ -84,10 +88,10 @@ pub fn build_deps<M: Mysql, R: Redis>(
 async fn get_remote_workspace_tree(
     #[inject(rwt)] state: &crate::startup::TreeState,
     task_id: u64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
     path: Option<String>,
 ) -> Result<TreeResponse, ApiError> {
-    tree(state, task_id, authorization, path.as_deref()).await
+    tree(state, task_id, i64::from(current_user.id), path.as_deref()).await
 }
 
 #[derive(Serialize)]
@@ -199,17 +203,9 @@ impl DirectoryEntryInput for ManagerEntry {
 async fn tree(
     deps: &Arc<Deps<impl Mysql, impl Redis>>,
     task_id: u64,
-    authorization: Option<&str>,
+    user_id: i64,
     path: Option<&str>,
 ) -> Result<TreeResponse, ApiError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let auth = auth::authenticate(
-        &deps.mysql,
-        &deps.config.jwt_decode_keys,
-        &deps.config.jwt_algorithm,
-        &headers.view(),
-    )
-    .await?;
     let kinds = KindStore {
         mysql: &deps.mysql,
         redis: deps.kinds_redis.as_ref(),
@@ -231,10 +227,11 @@ async fn tree(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
+        deps.task_policy,
         &erp,
         &kinds,
         task_id,
-        auth.user_id,
+        user_id,
     )
     .await?;
 
@@ -257,10 +254,11 @@ async fn tree(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
+            deps.task_policy,
             &erp,
             &kinds,
             task_id,
-            auth.user_id,
+            user_id,
         )
         .await?;
         let binding = {

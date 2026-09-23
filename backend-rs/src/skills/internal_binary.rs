@@ -19,7 +19,6 @@ use crate::state::AppState;
 /// Failure shapes: the bearer-token 401 with its `WWW-Authenticate`
 /// challenge, or a plain FastAPI-style error body.
 enum InternalSkillBinaryError {
-    Unauthorized(crate::internal_auth::http_error::HttpError),
     Error(crate::http_compat::FastApiError),
 }
 
@@ -42,7 +41,6 @@ impl From<crate::http_compat::FastApiError> for InternalSkillBinaryError {
 impl IntoHttpError for InternalSkillBinaryError {
     fn into_http_error(self, arena: &brz_http_server::EphemeralBytesArena) -> Response {
         match self {
-            Self::Unauthorized(error) => error.into_http_error(arena),
             Self::Error(error) => error.into_http_error(arena),
         }
     }
@@ -64,25 +62,16 @@ fn header_error(error: brz_http_server::HeaderBlockError) -> crate::http_compat:
 async fn get_skill_binary(
     #[inject(state)] state: &AppState,
     skill_id: i32,
-    #[header] authorization: Option<&str>,
+    #[auth] _service: crate::internal_auth::InternalService,
 ) -> Result<HttpResponse<Binary>, InternalSkillBinaryError> {
-    serve_skill_binary(state, skill_id, authorization).await
+    serve_skill_binary(state, skill_id).await
 }
 
 /// Handler body for `GET /api/internal/skills/{skill_id}/binary`.
 async fn serve_skill_binary(
     state: &AppState,
     skill_id: i32,
-    authorization: Option<&str>,
 ) -> Result<HttpResponse<Binary>, InternalSkillBinaryError> {
-    // `Depends(verify_internal_service_token)` runs before the handler and
-    // performs no database access.
-    crate::internal_auth::verify_internal_service_token(
-        &state.internal_chat.internal_service_token,
-        authorization,
-    )
-    .map_err(InternalSkillBinaryError::Unauthorized)?;
-
     let mysql = &state.mysql;
     let skill = public_skill(mysql, skill_id).await?;
     let Some(skill) = skill else {

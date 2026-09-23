@@ -48,6 +48,85 @@ pub struct UserRow {
     pub is_active: i8,
 }
 
+/// Authenticated principal for the shared JWT / API-key / task-token
+/// dependency used by task and cloud-project endpoints.
+pub struct FlexibleUser(pub UserRow);
+
+impl std::ops::Deref for FlexibleUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const FLEX_MISSING: &str = "Wegent-Flexible-Missing";
+const FLEX_INVALID_API_KEY: &str = "Wegent-Flexible-Invalid-Api-Key";
+
+impl brz_http_server::Authenticator<FlexibleUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<FlexibleUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        let x_api_key = request
+            .header("x-api-key")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", authorization),
+            ("x-api-key", x_api_key),
+        ]);
+        get_current_user(&self.state().auth, &self.state().mysql, &headers.view())
+            .await
+            .map(FlexibleUser)
+            .map_err(|error| {
+                if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else if error.detail() == "Missing authentication credentials" {
+                    brz_http_server::AuthFailure::missing_credentials(FLEX_MISSING)
+                } else if error.detail() == "Invalid or expired API key" {
+                    brz_http_server::AuthFailure::invalid_credentials(FLEX_INVALID_API_KEY)
+                } else {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+            })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a FlexibleUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: FLEX_MISSING,
+            } => {
+                crate::http_compat::FastApiError::unauthorized("Missing authentication credentials")
+            }
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: FLEX_INVALID_API_KEY,
+            } => crate::http_compat::FastApiError::unauthorized("Invalid or expired API key"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error",
+                )
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 /// `api_keys` row (`app.models.api_key.APIKey`).
 #[derive(Debug, brz_mysql::FromMysqlRow)]
 struct ApiKeyRow {

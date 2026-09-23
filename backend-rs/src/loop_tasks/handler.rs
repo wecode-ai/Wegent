@@ -13,7 +13,6 @@ use chrono::NaiveDateTime;
 #[cfg(test)]
 use serde_json::{Value, json};
 
-use super::auth::get_current_user;
 use super::http_error::HttpError;
 use super::loop_repository::{BindingRow, LoopItemRepository, datetime_is_unset, has_permission};
 use crate::state::AppState;
@@ -24,20 +23,17 @@ use crate::state::AppState;
 async fn list_loop_item_tasks(
     #[inject(state)] state: &AppState,
     item_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: super::auth::FlexibleUser,
 ) -> Result<Vec<BindingResponse>, HttpError> {
-    loop_item_tasks(state, item_id, authorization).await
+    loop_item_tasks(state, item_id, &current_user).await
 }
 
 /// Handler body for `GET /api/v1/loop-items/{item_id}/tasks`.
 async fn loop_item_tasks(
     state: &AppState,
     item_id: &str,
-    authorization: Option<&str>,
+    current_user: &super::auth::FlexibleUser,
 ) -> Result<Vec<BindingResponse>, HttpError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
-
     let bindings = list_bindings(&state.mysql, item_id, current_user.id).await?;
     Ok(bindings.iter().map(binding_response).collect())
 }

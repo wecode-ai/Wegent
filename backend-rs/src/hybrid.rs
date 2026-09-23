@@ -11,6 +11,7 @@ use std::time::Duration;
 use http::{Method, Uri};
 use tracing::info;
 
+use crate::filters::{RequestIdFilter, server_config};
 use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, bind, serve};
 
 mod routes;
@@ -107,7 +108,11 @@ where
 {
     // The gateway selects the Rust origin once. Requests not in the table are
     // forwarded to Python and are the only ones written to fallback.log.
-    let gateway = Gateway::new(config.routes.clone(), api, &config.python_upstream)?;
+    let gateway = Gateway::new(
+        config.routes.clone(),
+        RequestIdFilter::new(api),
+        &config.python_upstream,
+    )?;
     let listener = bind(config.listen_address).await?;
 
     info!(
@@ -139,13 +144,13 @@ pub async fn serve_hybrid_application<F>(
 where
     F: Future<Output = ()>,
 {
-    let Application {
-        state: _state,
-        routes,
-    } = application;
-    let api_server = brz_http_server::Server::bind(
+    let Application { state, routes } = application;
+    let authenticator = crate::auth::AppAuthenticator::new(state);
+    let api_server = brz_http_server::Server::bind_with_authenticator_and_config(
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         crate::http_fallback::FastApiFallback::new(routes),
+        authenticator,
+        server_config(),
     )
     .await?;
     let api_address = api_server.local_addr()?;

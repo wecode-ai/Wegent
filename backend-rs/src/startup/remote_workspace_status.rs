@@ -5,7 +5,8 @@
 //! Status dependency composition. The cache handles remain optional inputs
 //! for compatibility with the shared state; public readers use direct SQL.
 use crate::remote_workspace_status::{
-    AppState, config::AppConfig, http_deps::HttpDependencies, redis_cache::CacheClients,
+    AppState, app_state::VideoRefresh, config::AppConfig, http_deps::HttpDependencies,
+    redis_cache::CacheClients,
 };
 use anyhow::{Context as _, Result};
 use brz_mysql::Mysql;
@@ -18,6 +19,7 @@ pub async fn build<M: Mysql>(
     erp: std::sync::Arc<
         dyn crate::erp_provider::ErpProvider<brz_redis::RedisService> + Send + Sync,
     >,
+    video_refresh: VideoRefresh,
 ) -> Result<Arc<AppState<M, brz_redis::RedisService>>> {
     let config = AppConfig::from_env().context("failed to load application configuration")?;
     let cache = match build_cache(&config).await {
@@ -33,7 +35,7 @@ pub async fn build<M: Mysql>(
         .build()
         .context("failed to build the executor-manager HTTP client")?;
     let http = HttpDependencies::new(http, &config.executor_manager_url);
-    let mut state = AppState::new(config, mysql, http, cache, erp);
+    let mut state = AppState::new(config, mysql, http, cache, erp, video_refresh);
     state.task_policy = task_policy;
     Ok(Arc::new(state))
 }

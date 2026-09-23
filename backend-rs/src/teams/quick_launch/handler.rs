@@ -22,7 +22,7 @@ use crate::json_compat::{JsonProjection, OpaqueJson};
 #[cfg(test)]
 use serde_json::Value;
 
-use super::super::auth::get_current_user;
+use super::super::auth::TeamsUser;
 use super::super::http_error::HttpError;
 use super::repository as repo;
 use crate::state::AppState;
@@ -514,19 +514,17 @@ fn favorite_agent_response(team: &repo::TeamKindRow) -> FavoriteAgentResponse {
 #[brz_http_server::get("/api/users/quick-launch")]
 async fn get_user_quick_launch(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: TeamsUser,
 ) -> Result<QuickLaunchResponse, HttpError> {
-    quick_launch(state, authorization).await
+    quick_launch(state, current_user).await
 }
 
 /// Handler body for `GET /api/users/quick-launch`.
 async fn quick_launch(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: TeamsUser,
 ) -> Result<QuickLaunchResponse, HttpError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
-    quick_launch_response(state, current_user.users_preferences.as_str()).await
+    quick_launch_response(state, current_user.0.users_preferences.as_str()).await
 }
 
 /// Build the `QuickLaunchResponse` body.

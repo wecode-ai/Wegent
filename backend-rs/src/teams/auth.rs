@@ -13,7 +13,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 
 use super::auth_error::AuthError;
-use crate::auth::SessionClaims;
+use crate::auth::{AppAuthenticator, SessionClaims};
 use crate::config::AuthConfig;
 
 /// `users` row used by authentication and team serialization. The full
@@ -46,6 +46,75 @@ pub struct UserRow {
     pub users_created_at: Option<chrono::NaiveDateTime>,
     #[allow(dead_code)]
     pub users_updated_at: Option<chrono::NaiveDateTime>,
+}
+
+/// User principal for endpoints whose source uses the teams/OAuth2-flavoured
+/// `get_current_user` dependency and its endpoint-specific SQL projection.
+pub struct TeamsUser(pub UserRow);
+
+impl std::ops::Deref for TeamsUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const NOT_AUTHENTICATED: &str = "Wegent-Teams-Not-Authenticated";
+const USER_NOT_ACTIVATED: &str = "Wegent-Teams-User-Not-Activated";
+
+impl brz_http_server::Authenticator<TeamsUser> for AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<TeamsUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
+        get_current_user(&self.state().auth, &self.state().mysql, &headers.view())
+            .await
+            .map(TeamsUser)
+            .map_err(|error| match error {
+                AuthError::NotAuthenticated => {
+                    brz_http_server::AuthFailure::missing_credentials(NOT_AUTHENTICATED)
+                }
+                AuthError::CouldNotValidateCredentials => {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+                AuthError::UserNotActivated => {
+                    brz_http_server::AuthFailure::invalid_credentials(USER_NOT_ACTIVATED)
+                }
+                AuthError::Dependency(_) => brz_http_server::AuthFailure::Internal,
+            })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a TeamsUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.users_user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        let error = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: NOT_AUTHENTICATED,
+            } => AuthError::NotAuthenticated,
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: USER_NOT_ACTIVATED,
+            } => AuthError::UserNotActivated,
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                AuthError::Dependency("authentication dependency failed".to_string())
+            }
+            _ => AuthError::CouldNotValidateCredentials,
+        };
+        crate::http_compat::FastApiError::from(error).into_http_error(arena)
+    }
 }
 
 /// Decode keys derived from the active key and legacy decode-only keys.

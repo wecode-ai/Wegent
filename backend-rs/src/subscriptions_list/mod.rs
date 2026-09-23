@@ -53,7 +53,6 @@ use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -210,16 +209,16 @@ impl KindRow {
 #[brz_http_server::get("/api/subscriptions")]
 async fn list_subscriptions(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
     query: brz_http_server::Query<ListQuery>,
 ) -> Result<SubscriptionListResponse, FastApiError> {
-    subscriptions_list(state, authorization, &query).await
+    subscriptions_list(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/subscriptions`.
 async fn subscriptions_list(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: &crate::auth::SessionUser,
     query: &ListQuery,
 ) -> Result<SubscriptionListResponse, FastApiError> {
     let params = ListQuery {
@@ -230,15 +229,6 @@ async fn subscriptions_list(
     }
     .validated()?;
 
-    let current_user = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
     let user_id = current_user.id;
 
     let all_subscriptions = fetch_subscriptions(&state.mysql, user_id)

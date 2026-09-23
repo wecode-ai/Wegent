@@ -2,14 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Team resolution for `GET /api/tasks/{task_id}/skills`.
-//!
-//! The implementation follows the open-source reader contract and performs
-//! direct SQL reads.
+//! Team resolution for the task-scoped APIs that consume
+//! `kindReader.get_by_name_and_namespace`'s Team branch
+//! (`GET /api/tasks/{task_id}/skills`, `GET /api/tasks/{task_id}` and
+//! `GET /api/tasks/{task_id}/pipeline-stage-info`).
+use crate::json_compat::python_json_value;
+use crate::remote_workspace_tree::error::{ApiError, database_query_failed};
+use crate::remote_workspace_tree::kinds::KindStore;
+use serde_json::Value;
+
 use super::repository as repo;
 use super::repository::KindRow;
 use brz_mysql::Mysql;
 use brz_redis::Redis;
+
+/// Cache TTL of the deployment's cached-reader contract.
+const CACHE_TTL_SECONDS: u64 = 300;
+
+/// `CachedSharedTeamReader._key_idx_user_teams`: the shared-team list key.
+fn shared_team_list_key(user_id: i64) -> String {
+    format!("shared_team:v2:idx:user_teams:{user_id}")
+}
 
 /// The provider a store without ERP context resolves entity bindings with
 /// (no memberships), matching an unavailable employee directory.
@@ -121,6 +134,127 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
 
         // 4. Public team (user_id = 0).
         repo::team_public(self.mysql, namespace, name).await
+    }
+
+    /// `kindReader.get_by_name_and_namespace`'s Team branch for the
+    /// configured reader (`IKindReader._get_team`,
+    /// `app/services/readers/kinds.py`): personal -> shared teams ->
+    /// share-permission candidates -> public. Returns the resolved Team's id,
+    /// the value `resolve_task_ref_team`'s callers consume.
+    ///
+    /// A deployment whose `SERVICE_EXTENSION` configures a Redis client
+    /// replaces `kindReader` with `CachedKindReader` (`wrap()`), so the
+    /// personal and public steps and the shared-team list resolve through the
+    /// `kind:v2` / `shared_team:v2` documents; the id and candidate queries
+    /// stay on SQL.
+    pub(crate) async fn get_team_id_by_name_and_namespace(
+        &self,
+        user_id: i64,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<i64>, ApiError> {
+        if namespace != "default" {
+            return Ok(self
+                .group_team(user_id, namespace, name)
+                .await
+                .map_err(database_query_failed)?
+                .map(|row| row.kinds_id));
+        }
+
+        let kinds = self.cached_kinds();
+
+        // 1. The user's own Team.
+        if user_id != 0 {
+            if let Some(team) = kinds.get_personal(user_id, "Team", namespace, name).await? {
+                return Ok(Some(team.id));
+            }
+
+            // 2. Teams shared directly to the user.
+            let shared_ids = self.shared_team_list(user_id).await?;
+            if !shared_ids.is_empty()
+                && let Some(team) =
+                    repo::team_by_shared_ids(self.mysql, &shared_ids, namespace, name)
+                        .await
+                        .map_err(database_query_failed)?
+            {
+                return Ok(Some(team.kinds_id));
+            }
+
+            // 3. Entity-derived sharing (see `team_share_permission`).
+            let candidates = repo::shared_team_candidates(self.mysql, user_id, namespace, name)
+                .await
+                .map_err(database_query_failed)?;
+            for candidate in &candidates {
+                if self
+                    .check_team_permission(candidate.kinds_id, user_id)
+                    .await?
+                {
+                    return Ok(Some(candidate.kinds_id));
+                }
+            }
+        }
+
+        // 4. Public team (user_id = 0).
+        Ok(kinds
+            .get_public("Team", namespace, name)
+            .await?
+            .map(|team| team.id))
+    }
+
+    /// The cached kind reader over the same clients: `None` keeps every read
+    /// on the direct SQL path, exactly like the extension's `wrap`.
+    fn cached_kinds(&self) -> KindStore<'_, M, R> {
+        KindStore {
+            mysql: self.mysql,
+            redis: self.redis,
+        }
+    }
+
+    /// `sharedTeamReader.get_shared_team_ids`: the cached user-team list
+    /// (`__NULL__` caches an empty list), falling back to the SQL reader and
+    /// writing the list back with `SETEX` like `CachedSharedTeamReader`.
+    async fn shared_team_list(&self, user_id: i64) -> Result<Vec<i64>, ApiError> {
+        let key = shared_team_list_key(user_id);
+        if let Some(redis) = self.redis {
+            let cached: brz_redis::RedisResult<Option<brz_redis::RedisBytes>> =
+                redis.get(key.as_str()).await;
+            match cached {
+                Ok(Some(bytes)) => {
+                    if bytes.as_ref() == b"__NULL__" {
+                        return Ok(Vec::new());
+                    }
+                    if let Ok(text) = std::str::from_utf8(bytes.as_ref())
+                        && let Ok(ids) = serde_json::from_str::<Vec<i64>>(text)
+                    {
+                        return Ok(ids);
+                    }
+                }
+                // The source's `except` clause treats a cache failure as a
+                // miss that falls through to the SQL reader.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, key = %key, "[team_resolution] shared team list read failed");
+                }
+            }
+        }
+        let ids = repo::shared_team_ids(self.mysql, user_id)
+            .await
+            .map_err(database_query_failed)?;
+        if let Some(redis) = self.redis {
+            let payload = shared_team_list_payload(&ids);
+            if let Err(error) = redis.set_ex(key.as_str(), CACHE_TTL_SECONDS, payload).await {
+                tracing::warn!(%error, key = %key, "[team_resolution] shared team list write failed");
+            }
+        }
+        Ok(ids)
+    }
+
+    /// `TeamShareService.check_permission(team_id, user_id, Reporter)` for one
+    /// `_get_team_by_share_permission` candidate.
+    async fn check_team_permission(&self, team_id: i64, user_id: i64) -> Result<bool, ApiError> {
+        self.team_share_permission(team_id, user_id)
+            .await
+            .map_err(database_query_failed)
     }
 
     /// `TeamShareService.check_permission`: the direct member row's
@@ -374,6 +508,19 @@ fn reporter_or_above(role: &str) -> bool {
     rank(role).is_some_and(|level| level <= 3)
 }
 
+/// `CachedSharedTeamReader._set_list`: `__NULL__` caches an empty list,
+/// otherwise `json.dumps(ids)` with Python's default separators.
+fn shared_team_list_payload(ids: &[i64]) -> String {
+    if ids.is_empty() {
+        return "__NULL__".to_owned();
+    }
+    python_json_value(&Value::Array(
+        ids.iter()
+            .map(|id| Value::Number(serde_json::Number::from(*id)))
+            .collect(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,5 +531,91 @@ mod tests {
             assert!(reporter_or_above(role));
         }
         assert!(!reporter_or_above("RestrictedAnalyst"));
+    }
+
+    /// `CachedSharedTeamReader._key_idx_user_teams` with
+    /// `CACHE_VERSION = "v2"`.
+    #[test]
+    fn shared_team_list_key_matches_the_source_extension() {
+        assert_eq!(
+            shared_team_list_key(2630),
+            "shared_team:v2:idx:user_teams:2630"
+        );
+    }
+
+    /// The recorded `shared_team:v2:idx:user_teams:2630` payload:
+    /// `json.dumps([233420, ...])` keeps Python's `", "` separators, and an
+    /// empty list is the `__NULL__` negative marker.
+    #[test]
+    fn shared_team_list_payload_matches_the_recorded_document() {
+        assert_eq!(
+            shared_team_list_payload(&[
+                233420, 233480, 233502, 233506, 233510, 233514, 233521, 233488, 233561, 268349
+            ]),
+            "[233420, 233480, 233502, 233506, 233510, 233514, 233521, 233488, 233561, 268349]"
+        );
+        assert_eq!(shared_team_list_payload(&[]), "__NULL__");
+    }
+
+    /// `_get_team`'s `default`-namespace step order for a viewer without a
+    /// personal Team: the personal index probe, the shared-team list, the
+    /// shared-id hit, the share-permission candidates, and the public Team —
+    /// here with the cache client absent, so every step reads SQL.
+    #[tokio::test]
+    async fn null_team_ref_runs_the_source_step_order() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let store: KindCacheStore<'_, _> = KindCacheStore {
+            mysql: &mysql,
+            redis: None,
+            erp: None,
+            resolvers: None,
+        };
+        let team_id = store
+            .get_team_id_by_name_and_namespace(2630, "default", "wegent-chat")
+            .await
+            .expect("resolution succeeds");
+        assert_eq!(team_id, None);
+        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
+        assert_eq!(queries.len(), 4, "{queries:?}");
+        assert!(
+            queries[0].contains("kinds.user_id = ? AND kinds.kind = ? AND kinds.namespace = ?"),
+            "{queries:?}"
+        );
+        assert!(queries[1].contains("FROM resource_members"), "{queries:?}");
+        assert!(
+            queries[2].contains("kinds.user_id NOT IN (0, ?)") && queries[2].contains("'Team'"),
+            "{queries:?}"
+        );
+        assert!(
+            queries[3].contains("kinds.user_id = 0 AND kinds.kind = ?"),
+            "{queries:?}"
+        );
+    }
+
+    /// A viewer that is not the task owner (`user_id == 0`) skips the
+    /// personal/shared/candidate steps and resolves only the public Team.
+    #[tokio::test]
+    async fn anonymous_viewer_resolves_only_the_public_team() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let store: KindCacheStore<'_, _> = KindCacheStore {
+            mysql: &mysql,
+            redis: None,
+            erp: None,
+            resolvers: None,
+        };
+        let team_id = store
+            .get_team_id_by_name_and_namespace(0, "default", "wegent-chat")
+            .await
+            .expect("resolution succeeds");
+        assert_eq!(team_id, None);
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1, "{:?}", queries[0].sql);
+        assert!(
+            queries[0]
+                .sql
+                .contains("kinds.user_id = 0 AND kinds.kind = ?"),
+            "{}",
+            queries[0].sql
+        );
     }
 }

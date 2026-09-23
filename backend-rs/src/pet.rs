@@ -19,7 +19,7 @@ use serde_json::value::RawValue;
 #[cfg(test)]
 use serde_json::{Value, json};
 
-use crate::auth::{AuthFailure, UserRow, get_current_user};
+use crate::auth::{SessionUser, UserRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -191,23 +191,13 @@ fn pet_response(row: &PetKindRow) -> PetResponse {
 #[brz_http_server::get("/api/users/me/pet")]
 async fn get_current_user_pet(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: SessionUser,
 ) -> Result<PetResponse, FastApiError> {
-    pet(state, authorization).await
+    pet(state, user.0).await
 }
 
 /// Handler for `GET /api/users/me/pet`.
-async fn pet(state: &AppState, authorization: Option<&str>) -> Result<PetResponse, FastApiError> {
-    let user: UserRow = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(AuthFailure::InvalidCredentials) => {
-            return Err(FastApiError::unauthorized("Could not validate credentials"));
-        }
-        Err(AuthFailure::UserNotActivated) => {
-            return Err(FastApiError::unauthorized("User not activated"));
-        }
-    };
-
+async fn pet(state: &AppState, user: UserRow) -> Result<PetResponse, FastApiError> {
     // `pet_service.get_or_create_pet`: read the active pet Kind row.
     let pet: Option<PetKindRow> = state
         .mysql

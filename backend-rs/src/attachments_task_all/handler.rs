@@ -32,16 +32,8 @@ use crate::state::AppState;
 async fn get_all_task_attachments(
     #[inject(state)] state: &AppState,
     task_id: i64,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
+    #[auth] user: auth::AuthenticatedUser,
 ) -> Result<Vec<AttachmentDetailResponse>, HttpError> {
-    // `security.get_current_user_jwt_apikey_tasktoken` (`Depends` runs
-    // before the handler).
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-    ]);
-    let user = auth::get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
     run(state, task_id, user.id).await
 }
 
