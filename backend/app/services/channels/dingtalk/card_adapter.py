@@ -3,17 +3,17 @@
 
 """Card presentation adapters; execution events remain template-independent."""
 
-import asyncio
 import logging
 from typing import Any, Protocol
 from uuid import uuid4
 
-import httpx
-
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
 from app.services.channels.dingtalk.card_binding import mark_card_ready
+from app.services.channels.dingtalk.card_transport import (
+    DingTalkCardTransport,
+    card_delivery_data,
+)
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
-from shared.telemetry.decorators import trace_async
 
 
 class ChatCardAdapter(Protocol):
@@ -49,19 +49,19 @@ class BuiltinChatCardAdapter:
         return self.card_instance_id
 
     async def start(self) -> None:
-        await asyncio.to_thread(self._instance.ai_start)
+        await self._instance.ai_start()
 
     async def update(self, content: str) -> None:
-        await asyncio.to_thread(self._instance.ai_streaming, content, append=False)
+        await self._instance.ai_streaming(content, append=False)
 
     async def finish(self, content: str) -> None:
-        await asyncio.to_thread(self._instance.ai_finish, content)
+        await self._instance.ai_finish(content)
 
     async def fail(self, error: str) -> None:
-        await asyncio.to_thread(self._instance.ai_fail)
+        await self._instance.ai_fail()
 
     async def close(self) -> None:
-        """The SDK owns its HTTP transport; this adapter has no client to close."""
+        await self._instance.close()
 
 
 class TemplateChatCardAdapter:
@@ -82,77 +82,17 @@ class TemplateChatCardAdapter:
         self.card_instance_id = card_id
         self._out_track_id = card_id or f"wegent-chat-{uuid4().hex}"
         self._created = bool(card_id)
-        self._http_client = httpx.AsyncClient(timeout=15.0)
+        self._transport = DingTalkCardTransport(client, channel_id)
 
     @property
     def out_track_id(self) -> str:
         return self._out_track_id
 
-    @trace_async(
-        span_name="dingtalk.card.request", tracer_name="backend.channels.dingtalk"
-    )
     async def _request(self, method: str, path: str, body: dict) -> dict:
-        token = await asyncio.to_thread(self._client.get_access_token)
-        if not token:
-            raise RuntimeError("DingTalk access token unavailable")
-        for attempt in range(3):
-            try:
-                response = await self._http_client.request(
-                    method,
-                    f"https://api.dingtalk.com/v1.0/card/{path}",
-                    headers={"x-acs-dingtalk-access-token": token},
-                    json=body,
-                )
-            except httpx.TransportError:
-                if method != "PUT" or attempt == 2:
-                    raise RuntimeError(
-                        f"DingTalk card {path}: transport failure"
-                    ) from None
-            else:
-                if (
-                    method != "PUT"
-                    or attempt == 2
-                    or (response.status_code != 429 and response.status_code < 500)
-                ):
-                    break
-            # Full replacement writes reuse the same body/guid on retry.
-            await asyncio.sleep(0.5 * (2**attempt))
-        # Never include response bodies, credentials or user text in exceptions.
-        if response.is_error:
-            self._log_request_failure(path, response)
-            raise RuntimeError(f"DingTalk card {path}: HTTP {response.status_code}")
-        data = response.json()
-        if not isinstance(data, dict) or data.get("success") is not True:
-            raise RuntimeError(f"DingTalk card {path}: request was not accepted")
-        return data
+        return await self._transport.request(method, path, body)
 
     async def close(self) -> None:
-        """Release the HTTP connection pool after all card writes have finished."""
-        await self._http_client.aclose()
-
-    def _log_request_failure(self, path: str, response: httpx.Response) -> None:
-        """Keep error identifiers for support without logging response content."""
-        try:
-            data = response.json()
-        except ValueError:
-            data = {}
-        identifiers = {}
-        if isinstance(data, dict):
-            for key in ("code", "requestid", "requestId"):
-                value = data.get(key)
-                if isinstance(value, (str, int)):
-                    identifiers[key] = str(value)[:256]
-        log_dingtalk_message(
-            logging.getLogger(__name__),
-            "card_request_failed",
-            {
-                "channel_id": self.channel_id,
-                "outTrackId": self._out_track_id,
-                "path": path,
-                "status_code": response.status_code,
-                **identifiers,
-            },
-        )
+        await self._transport.close()
 
     async def start(self) -> None:
         if self.card_instance_id:
@@ -242,20 +182,7 @@ class TemplateChatCardAdapter:
         )
 
     def _delivery_data(self) -> dict:
-        data = {"outTrackId": self._out_track_id, "userIdType": 1}
-        if self._message.conversation_type == "2":
-            space_id = self._message.conversation_id
-            data["openSpaceId"] = f"dtv1.card//IM_GROUP.{space_id}"
-            data["imGroupOpenDeliverModel"] = {
-                "robotCode": self._client.credential.client_id,
-            }
-        else:
-            space_id = self._message.sender_staff_id
-            data["openSpaceId"] = f"dtv1.card//IM_ROBOT.{space_id}"
-            data["imRobotOpenDeliverModel"] = {"spaceType": "IM_ROBOT"}
-        if not space_id:
-            raise ValueError("Missing DingTalk card recipient")
-        return data
+        return card_delivery_data(self._client, self._message, self._out_track_id)
 
     async def _stream(self, content: str, *, final: bool, error: bool = False) -> None:
         await self._request(

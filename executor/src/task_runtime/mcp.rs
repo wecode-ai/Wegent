@@ -233,6 +233,12 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         })
         .and_then(id_value)
         .filter(|value| !value.is_empty());
+    let execution_device_id = request
+        .extra
+        .get("executionDeviceId")
+        .or_else(|| request.extra.get("execution_device_id"))
+        .and_then(id_value)
+        .filter(|value| !value.is_empty());
     let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
     log_executor_event(
         "space capability context decision",
@@ -263,7 +269,8 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         task_id: request.task_id.clone(),
         space_id,
         item_id,
-        device_id: request.device_id.clone().filter(|value| !value.is_empty()),
+        device_id: execution_device_id
+            .or_else(|| request.device_id.clone().filter(|value| !value.is_empty())),
         automation_run_id: automation_origin
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
@@ -1014,11 +1021,50 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates"
-        | "submit_workflow_plan"
-        | "report_workflow_outcome"
-        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed orchestration requires a backend project space".to_owned(),
+        "get_assignment_candidates" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref())
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "assignment candidates require an active collaboration workflow".to_owned(),
+                    )
+                });
+            match (project_id, task_id, run_id) {
+                (Ok(project_id), Ok(task_id), Ok(run_id)) => {
+                    runtime.local_automation_assignment_candidates(project_id, task_id, run_id)
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "submit_workflow_plan" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            let run_id = grant
+                .as_ref()
+                .and_then(|value| value.automation_run_id.as_deref())
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "workflow planning requires an active collaboration workflow".to_owned(),
+                    )
+                });
+            let plan = arguments.get("plan").ok_or_else(|| {
+                super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
+            });
+            match (project_id, task_id, run_id, plan) {
+                (Ok(project_id), Ok(task_id), Ok(run_id), Ok(plan)) => {
+                    runtime.submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
+                }
+                (Err(error), _, _, _)
+                | (_, Err(error), _, _)
+                | (_, _, Err(error), _)
+                | (_, _, _, Err(error)) => Err(error),
+            }
+        }
+        "report_workflow_outcome" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+            "This orchestration operation requires a backend project space".to_owned(),
         )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -3186,6 +3232,25 @@ mod tests {
     }
 
     #[test]
+    fn binds_issue_context_to_the_logical_execution_device() {
+        let mut request = ExecutionRequest {
+            task_id: "runtime-7".to_owned(),
+            device_id: Some("physical-device".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        request
+            .extra
+            .insert("execution_device_id".to_owned(), json!("logical-device"));
+
+        let grant = decode_grant(&request);
+
+        assert_eq!(grant.device_id.as_deref(), Some("logical-device"));
+    }
+
+    #[test]
     fn binds_automation_manager_scope() {
         let mut request = ExecutionRequest::default();
         request
@@ -3772,6 +3837,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec!["bug".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3786,6 +3852,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec!["docs".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3846,6 +3913,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec!["feedback".to_owned()],
+                        assignee_user_id: None,
                         workflow: None,
                     },
                 )
@@ -3889,6 +3957,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -3982,6 +4051,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    assignee_user_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{

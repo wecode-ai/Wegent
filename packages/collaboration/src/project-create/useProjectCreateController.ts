@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import type { CollaborationExecutionEnvironment } from "../types";
 
 import {
   RepositoryProviderError,
@@ -16,6 +18,32 @@ import type {
   ProjectCreateHostAdapter,
   ProjectCreateLabels,
 } from "./types";
+
+type ProjectVisibility = NonNullable<
+  import("../ports/SharedWorkspaceApi").WorkspaceProjectCreateInput["visibility"]
+>;
+
+export function defaultExecutionEnvironmentDeviceIds(
+  environments: CollaborationExecutionEnvironment[],
+): number[] {
+  const deviceIds = new Map<string, number>();
+  for (const environment of environments) {
+    const deviceId = environment.device_id;
+    if (
+      !environment.is_current_device ||
+      environment.kind !== "local_device" ||
+      environment.status !== "online" ||
+      deviceId == null ||
+      !Number.isSafeInteger(deviceId) ||
+      deviceId <= 0
+    ) {
+      continue;
+    }
+    const identity = environment.device_key?.trim() || String(deviceId);
+    if (!deviceIds.has(identity)) deviceIds.set(identity, deviceId);
+  }
+  return [...deviceIds.values()];
+}
 
 export function projectCreateErrorMessage(
   cause: unknown,
@@ -56,14 +84,20 @@ export function useProjectCreateController({
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [visibility, setVisibility] = useState<ProjectVisibility>("private");
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
-  const [agentTeamIds, setAgentTeamIds] = useState<number[]>([]);
+  const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
-    useState<number[]>([]);
+    useState<number[]>(() =>
+      defaultExecutionEnvironmentDeviceIds(
+        resourceSetup?.executionEnvironments ?? [],
+      ),
+    );
+  const executionEnvironmentSelectionChanged = useRef(false);
+  const [leaderId, setLeaderId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -82,6 +116,21 @@ export function useProjectCreateController({
     (!isAITableProvider || aitableLink) &&
     !saving,
   );
+
+  useEffect(() => {
+    if (executionEnvironmentSelectionChanged.current) return;
+    setExecutionEnvironmentDeviceIds(
+      defaultExecutionEnvironmentDeviceIds(
+        resourceSetup?.executionEnvironments ?? [],
+      ),
+    );
+  }, [resourceSetup?.executionEnvironments]);
+
+  useEffect(() => {
+    if (taskProvider !== "local" && visibility === "public_restricted") {
+      setVisibility("private");
+    }
+  }, [taskProvider, visibility]);
 
   async function submit() {
     if (!canSubmit) return;
@@ -115,8 +164,9 @@ export function useProjectCreateController({
       if (resourceSetup) {
         await resourceSetup.configure(project, {
           memberUserIds,
-          agentTeamIds,
+          agentResourceIds,
           executionEnvironmentDeviceIds,
+          leaderId,
         });
       }
       host?.track?.("created");
@@ -146,8 +196,9 @@ export function useProjectCreateController({
       error,
       canSubmit,
       memberUserIds,
-      agentTeamIds,
+      agentResourceIds,
       executionEnvironmentDeviceIds,
+      leaderId,
     },
     commands: {
       setName,
@@ -159,8 +210,12 @@ export function useProjectCreateController({
       setToken,
       setAitableUrl,
       setMemberUserIds,
-      setAgentTeamIds,
-      setExecutionEnvironmentDeviceIds,
+      setAgentResourceIds,
+      setExecutionEnvironmentDeviceIds: (deviceIds: number[]) => {
+        executionEnvironmentSelectionChanged.current = true;
+        setExecutionEnvironmentDeviceIds(deviceIds);
+      },
+      setLeaderId,
       clearError: () => setError(null),
       submit,
     },

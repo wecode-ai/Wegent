@@ -434,10 +434,19 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
+    if !registry.routes.contains_key(token) {
+        return Err("local model proxy task route is not registered".to_owned());
+    }
+    let mut reassigned_routes = 0;
+    for (registered_token, registered) in &mut registry.routes {
+        if registered_token != token && registered.thread_ids.remove(thread_id) {
+            reassigned_routes += 1;
+        }
+    }
     let registered = registry
         .routes
         .get_mut(token)
-        .ok_or_else(|| "local model proxy task route is not registered".to_owned())?;
+        .expect("validated local model proxy task route should exist");
     registered.thread_ids.insert(thread_id.to_owned());
     registered.last_used = Instant::now();
     log_executor_event(
@@ -445,80 +454,23 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
         &[
             ("thread_id", thread_id.to_owned()),
             ("bound_threads", registered.thread_ids.len().to_string()),
+            ("reassigned_routes", reassigned_routes.to_string()),
         ],
     );
     Ok(())
 }
 
-pub(crate) fn retain_for_thread(
-    thread_id: &str,
-    expected_routing_model_id: Option<&str>,
-) -> Result<String, String> {
+pub(crate) fn bind_fork_thread(token: &str, thread_id: &str) -> Result<(), String> {
+    bind_thread(token, thread_id)?;
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
-    prune_registry(&mut registry);
-    let mut matching_tokens = registry
-        .routes
-        .iter()
-        .filter(|(_, registered)| registered.thread_ids.contains(thread_id))
-        .map(|(token, _)| token.clone())
-        .collect::<Vec<_>>();
-    matching_tokens.sort();
-    let token = match matching_tokens.as_slice() {
-        [token] => token.clone(),
-        [] => {
-            return Err(format!(
-                "local model proxy route for Codex thread {thread_id} is not registered"
-            ));
-        }
-        _ => {
-            return Err(format!(
-                "multiple local model proxy routes are bound to Codex thread {thread_id}"
-            ));
-        }
-    };
-    let registered = registry
-        .routes
-        .get_mut(&token)
-        .expect("matched local model proxy route should exist");
-    if let (Some(expected), Some(actual)) = (
-        expected_routing_model_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        registered.upstream.routing_model_id.as_deref(),
-    ) {
-        if expected != actual {
-            return Err(format!(
-                "local model proxy route for Codex thread {thread_id} uses model {actual}, expected {expected}"
-            ));
-        }
-    }
-    registered.active_references += 1;
-    registered.last_used = Instant::now();
-    log_executor_event(
-        "local model proxy retained for task thread",
-        &[
-            ("thread_id", thread_id.to_owned()),
-            (
-                "routing_model_id",
-                registered
-                    .upstream
-                    .routing_model_id
-                    .clone()
-                    .unwrap_or_default(),
-            ),
-            (
-                "auth_present",
-                (!registered.upstream.api_key.is_empty()).to_string(),
-            ),
-            (
-                "active_references",
-                registered.active_references.to_string(),
-            ),
-        ],
-    );
-    Ok(token)
+    // Subsequent sends use the new thread ID as task ID and must reuse this route.
+    registry.tokens_by_scope.retain(|_, value| value != token);
+    registry
+        .tokens_by_scope
+        .insert(thread_id.to_owned(), token.to_owned());
+    Ok(())
 }
 
 pub(crate) fn unregister(token: &str) {
@@ -617,6 +569,7 @@ pub(super) async fn handle_token_route(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let token = token_route_token(token, &body)?;
     handle_for_token(token, headers, body).await
 }
 
@@ -756,9 +709,17 @@ fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
         status: StatusCode::CONFLICT,
         detail: "Codex Responses request is missing task thread metadata".to_owned(),
     })?;
-    let registry = registry()
+    let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    bound_thread_token_in_registry(&registry, &identity)
+}
+
+fn bound_thread_token_in_registry(
+    registry: &LocalModelProxyRegistry,
+    identity: &RequestThreadIdentity,
+) -> Result<String, HttpError> {
     let mut tokens = registry.routes.iter().filter_map(|(token, registered)| {
         let matches_thread = registered.thread_ids.contains(&identity.thread_id);
         let matches_parent = identity
@@ -778,6 +739,29 @@ fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
         });
     }
     Ok(token)
+}
+
+fn token_route_token(token: String, body: &[u8]) -> Result<String, HttpError> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    if registry.routes.contains_key(&token) {
+        return Ok(token);
+    }
+    let identity = request_thread_identity(body).ok_or_else(|| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "unknown or expired local model proxy token".to_owned(),
+    })?;
+    let recovered = bound_thread_token_in_registry(&registry, &identity)?;
+    log_executor_event(
+        "local model proxy stale token recovered",
+        &[
+            ("thread_id", identity.thread_id),
+            ("active_registrations", registry.routes.len().to_string()),
+        ],
+    );
+    Ok(recovered)
 }
 
 async fn handle_for_token(
@@ -3636,22 +3620,25 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "thread-root").expect("root thread should bind");
+        bind_thread(&token, "thread-bound-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
         let route = entries.routes.get_mut(&token).expect("task route");
 
-        authorize_task_thread(route, br#"{"client_metadata":{"thread_id":"thread-root"}}"#)
-            .expect("bound root should be accepted");
         authorize_task_thread(
             route,
-            br#"{"client_metadata":{"thread_id":"thread-child","x-codex-turn-metadata":"{\"parent_thread_id\":\"thread-root\"}"}}"#,
+            br#"{"client_metadata":{"thread_id":"thread-bound-root"}}"#,
+        )
+        .expect("bound root should be accepted");
+        authorize_task_thread(
+            route,
+            br#"{"client_metadata":{"thread_id":"thread-bound-child","x-codex-turn-metadata":"{\"parent_thread_id\":\"thread-bound-root\"}"}}"#,
         )
         .expect("child of a bound root should be accepted");
-        assert!(route.thread_ids.contains("thread-child"));
+        assert!(route.thread_ids.contains("thread-bound-child"));
 
         let error = authorize_task_thread(
             route,
-            br#"{"client_metadata":{"thread_id":"thread-unrelated"}}"#,
+            br#"{"client_metadata":{"thread_id":"thread-bound-unrelated"}}"#,
         )
         .expect_err("unrelated thread must not use the task route");
         assert_eq!(error.status, StatusCode::CONFLICT);
@@ -3661,9 +3648,9 @@ mod tests {
     }
 
     #[test]
-    fn retaining_a_bound_thread_preserves_its_authenticated_upstream() {
+    fn fork_thread_route_is_reused_by_subsequent_sends() {
         let token = register(
-            "retained-thread-task-route",
+            "temporary-fork-task-route",
             LocalModelProxyUpstream {
                 base_url: "https://example.com".to_owned(),
                 request_url: None,
@@ -3679,20 +3666,25 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "retained-thread").expect("source thread should bind");
-
-        let retained = retain_for_thread("retained-thread", Some("routing-model"))
-            .expect("bound route should be retained");
-
-        assert_eq!(retained, token);
+        bind_fork_thread(&token, "forked-thread").expect("forked thread should bind");
         let entries = registry().lock().expect("registry lock");
-        let route = entries.routes.get(&token).expect("retained route");
+        assert!(!entries
+            .tokens_by_scope
+            .contains_key("temporary-fork-task-route"));
+        let route = entries.routes.get(&token).expect("forked route");
         assert_eq!(route.upstream.api_key, "secret");
-        assert_eq!(route.active_references, 2);
+        let upstream = route.upstream.clone();
         drop(entries);
 
-        unregister(&retained);
         unregister(&token);
+        let resumed = register("forked-thread", upstream);
+        assert_eq!(resumed, token);
+        assert_eq!(
+            bound_thread_token(br#"{"client_metadata":{"thread_id":"forked-thread"}}"#)
+                .expect("forked thread should have exactly one route"),
+            token
+        );
+        unregister(&resumed);
     }
 
     #[test]
@@ -3733,7 +3725,52 @@ mod tests {
     }
 
     #[test]
-    fn generic_route_rejects_unbound_and_ambiguous_codex_threads() {
+    fn token_route_recovers_a_stale_persisted_token_from_the_bound_thread() {
+        let token = register(
+            "stale-token-recovery-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        bind_thread(&token, "stale-token-thread").expect("root thread should bind");
+
+        assert_eq!(
+            token_route_token(
+                "task-expired-from-previous-executor".to_owned(),
+                br#"{"client_metadata":{"thread_id":"stale-token-thread"}}"#,
+            )
+            .expect("stale token should recover through the bound thread"),
+            token
+        );
+
+        unregister(&token);
+    }
+
+    #[test]
+    fn token_route_keeps_unknown_token_semantics_without_thread_metadata() {
+        let error = token_route_token(
+            "task-unknown".to_owned(),
+            br#"{"input":"request without task thread metadata"}"#,
+        )
+        .expect_err("unknown token without thread metadata must remain not found");
+
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.detail, "unknown or expired local model proxy token");
+    }
+
+    #[test]
+    fn generic_route_rejects_unbound_threads_and_uses_the_latest_binding() {
         let unbound_error =
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-unbound-thread"}}"#)
                 .expect_err("unbound thread must not resolve");
@@ -3758,10 +3795,19 @@ mod tests {
         bind_thread(&first, "generic-ambiguous-thread").expect("first route should bind");
         bind_thread(&second, "generic-ambiguous-thread").expect("second route should bind");
 
-        let ambiguous_error =
+        assert_eq!(
             bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-ambiguous-thread"}}"#)
-                .expect_err("ambiguous thread must not resolve");
-        assert_eq!(ambiguous_error.status, StatusCode::CONFLICT);
+                .expect("the latest route binding should replace the stale binding"),
+            second
+        );
+        let entries = registry().lock().expect("registry lock");
+        assert!(!entries
+            .routes
+            .get(&first)
+            .expect("first route")
+            .thread_ids
+            .contains("generic-ambiguous-thread"));
+        drop(entries);
 
         unregister(&first);
         unregister(&second);
@@ -3786,7 +3832,7 @@ mod tests {
                 max_output_tokens: None,
             },
         );
-        bind_thread(&token, "thread-root").expect("root thread should bind");
+        bind_thread(&token, "missing-metadata-thread-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
         let route = entries.routes.get_mut(&token).expect("task route");
 
@@ -3871,6 +3917,131 @@ mod tests {
         assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
 
         unregister(&token);
+        server.abort();
+    }
+
+    /// Mirrors the upstream Responses pairing rule: a `function_call` must be
+    /// followed by its `function_call_output` before any other item, otherwise
+    /// the upstream rejects the turn with `No tool output found for tool call ...`.
+    fn upstream_rejects_interleaved_tool_items(body: &Value) -> Option<String> {
+        let mut pending = Vec::new();
+        for item in body.get("input")?.as_array()? {
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            match item_type {
+                "function_call" => pending.push(
+                    item.get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                "function_call_output" => {
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    match pending.iter().position(|pending| pending == call_id) {
+                        Some(position) => {
+                            pending.remove(position);
+                        }
+                        None => return Some(format!("unsolicited tool output for {call_id}")),
+                    }
+                }
+                _ => {
+                    if let Some(call_id) = pending.first() {
+                        return Some(format!("No tool output found for tool call {call_id}."));
+                    }
+                }
+            }
+        }
+        pending
+            .first()
+            .map(|call_id| format!("No tool output found for tool call {call_id}."))
+    }
+
+    #[tokio::test]
+    async fn harness_route_keeps_tool_calls_adjacent_to_their_outputs() {
+        let (body_tx, mut body_rx) = mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(move |Json(body): Json<Value>| {
+                        let body_tx = body_tx.clone();
+                        async move {
+                            let rejection = upstream_rejects_interleaved_tool_items(&body);
+                            let _ = body_tx.send(rejection).await;
+                            Json(json!({
+                                "output": [{
+                                    "type": "message",
+                                    "content": [{"type": "output_text", "text": "ok"}]
+                                }]
+                            }))
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register_harness(
+            "harness-tool-order-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "upstream-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("deepseek-v4-flash".to_owned()),
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+        let request = json!({
+            "model": "wework-selected",
+            "max_tokens": 64,
+            "system": "You are a builder.",
+            "messages": [
+                {"role": "user", "content": "build the dashboard"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "I will start by inspecting the dataset."},
+                    {"type": "tool_use", "id": "call_00_stub00000000000000000001", "name": "read_dataset", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_00_stub00000000000000000001", "content": "ok"}
+                ]}
+            ],
+            "tools": [{
+                "name": "read_dataset",
+                "description": "Read.",
+                "input_schema": {"type": "object"}
+            }]
+        });
+
+        let response = handle_harness_messages(
+            Path(token.clone()),
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&request).expect("request body")),
+        )
+        .await
+        .expect("harness response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_rx.recv().await.expect("captured upstream body"),
+            None,
+            "the upstream must accept the encoded tool call/output group"
+        );
+
+        unregister_harness(&token);
         server.abort();
     }
 

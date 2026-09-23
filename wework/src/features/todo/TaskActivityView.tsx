@@ -7,6 +7,7 @@ import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIs
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import {
   dispatchTaskCardReply,
+  commentAgentMentions,
   cardSessionAddress,
   cardSessionActive as sharedCardSessionActive,
   isCustomAutomationManager,
@@ -41,6 +42,7 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import {
   ChatInput,
   type ProjectChatControls,
@@ -86,6 +88,7 @@ interface TaskActivityViewProps {
   rail?: boolean
   linear?: boolean
   workflowManagerRunId?: string | null
+  deviceNamesById?: Readonly<Record<string, string>>
   onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
   onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
@@ -107,6 +110,7 @@ export function TaskActivityView({
   rail = false,
   linear = false,
   workflowManagerRunId = null,
+  deviceNamesById,
   onWorkflowManagerExecutionChange,
   onWorkflowManagerFinished,
   taskBindings = [],
@@ -289,15 +293,14 @@ export function TaskActivityView({
     [messages, task]
   )
 
-  const { listRef, followCard, scrollTaskCommentsToTop, revealCardBottom } = useIssueActivityScroll(
-    {
+  const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
+    useIssueActivityScroll({
       messages: threadMessages,
       loading,
       linear,
       compact,
       cardTestIdPrefix: 'cloud-task-activity-card-',
-    }
-  )
+    })
 
   useWorkflowManagerActivity({
     task,
@@ -464,6 +467,14 @@ export function TaskActivityView({
     )
   }
 
+  function deviceNameForMessage(message: ProjectChatMessage): string | null {
+    const deviceId = message.runtimeAddress?.deviceId
+    if (!deviceId) return null
+    const mappedName = deviceNamesById?.[deviceId]?.trim()
+    if (mappedName) return mappedName
+    return findWorkbenchDevice(state.devices, deviceId)?.name.trim() || null
+  }
+
   async function acceptTask() {
     if (!projectDeliveryApi) return
     setError(null)
@@ -603,6 +614,7 @@ export function TaskActivityView({
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
     if (
+      !client.executeTaskComment &&
       isCustomAutomationManager(card.root) &&
       (!client.continueAutomationManager || !cardSessionAddress(card))
     )
@@ -622,9 +634,13 @@ export function TaskActivityView({
     setError(null)
     try {
       const executionProject = effectiveCommentProject
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const explicitMentions = commentAgentMentions(text, agents)
+      const activeMentions =
+        explicitMentions.length || projectLocation !== 'local'
+          ? explicitMentions
+          : assignedAgent
+            ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+            : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
@@ -632,7 +648,10 @@ export function TaskActivityView({
         text,
         mentions: activeMentions,
         replyToMessageId: null,
-        model: selectedModel?.name ?? null,
+        model:
+          projectLocation !== 'local' && client.executeTaskComment
+            ? null
+            : (selectedModel?.name ?? null),
         ...(projectLocation === 'local' && executionProject
           ? { localProjectId: executionProject.id }
           : {}),
@@ -641,9 +660,17 @@ export function TaskActivityView({
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
-      scrollTaskCommentsToTop()
+      scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
-      if (assignedAgent && !selfManagedExecution) {
+      if (projectLocation !== 'local' && client.executeTaskComment) {
+        const incoming = await client.executeTaskComment({
+          projectId: project.id,
+          taskId: task.id,
+          triggerMessageId: message.messageId,
+          attachmentIds: attachments.map(file => Number(file.id)),
+        })
+        setMessages(current => mergeProjectChatMessages(current, incoming))
+      } else if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
           services: taskAiServices,
@@ -690,6 +717,7 @@ export function TaskActivityView({
         plain
         eventOnly={eventOnly}
         taskAiState={task.ai_state}
+        executionDeviceName={deviceNameForMessage(message)}
         taskSummary={taskSummaryForMessage(message)}
         onOpenExecution={
           address
@@ -746,7 +774,7 @@ export function TaskActivityView({
         }
         composer={
           <>
-            {linear ? (
+            {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
               <TaskCommentComposer
                 key={task.id}
                 value={newCommentDraft}
@@ -757,6 +785,8 @@ export function TaskActivityView({
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
+                serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                agents={agents}
               />
             ) : (
               <div className="task-detail-comment-chat-input">
@@ -860,6 +890,7 @@ export function TaskActivityView({
                   }
                   compact={compact}
                   taskAiState={task.ai_state}
+                  executionDeviceName={deviceNameForMessage(message)}
                   taskSummary={taskSummaryForMessage(message)}
                   onOpenExecution={
                     runtimeAddress
@@ -895,7 +926,14 @@ export function TaskActivityView({
             executionDetail.address.taskId,
             executionDetail.messageId,
           ])}
-          address={executionDetail.address}
+          address={
+            projectLocation === 'local' || project.project_store === 'local'
+              ? executionDetail.address
+              : {
+                  ...executionDetail.address,
+                  projectSession: { projectId: String(project.id), issueId: task.id },
+                }
+          }
           {...executionBinding.overlay}
           senderName={executionDetail.senderName}
           runId={executionDetail.runId}

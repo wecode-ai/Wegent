@@ -13,35 +13,28 @@ use crate::state::AppState;
 
 /// GET /api/plugins/marketplace: the marketplace free function, injecting the
 /// process-lifetime application state.
-#[brz_http_server::get("/api/plugins/marketplace")]
+#[brz_http_server::get("/api/plugins/marketplace", access = optional)]
 async fn get_marketplace_plugins(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: Option<auth::MarketplaceUser>,
     #[header("x-request-id")] request_id: Option<&str>,
     query: brz_http_server::Query<MarketplaceQuery>,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    marketplace(state, authorization, request_id, &query).await
+    marketplace(state, user.as_ref(), request_id, &query).await
 }
 
 /// Handler body for `GET /api/plugins/marketplace`.
 async fn marketplace(
     state: &AppState,
-    authorization: Option<&str>,
+    user: Option<&auth::MarketplaceUser>,
     request_id: Option<&str>,
     query: &MarketplaceQuery,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    let user = auth::current_user_optional(
-        &state.mysql,
-        &state.jwt_secret_keys,
-        &state.jwt_algorithm,
-        authorization,
-    )
-    .await;
     match list_plugins(
         &state.mysql,
         state.redis.as_ref(),
         &state.entity_resolvers,
-        user.as_ref(),
+        user.map(|user| &user.0),
         query,
     )
     .await

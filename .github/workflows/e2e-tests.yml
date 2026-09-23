@@ -177,6 +177,67 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
 
+  build-backend-rs-e2e-runtime:
+    name: Build Backend Rust E2E Runtime
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore Backend Rust Cargo sources
+        id: backend-rs-cargo-sources-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-backend-rs-cargo-sources-v1-${{ hashFiles('backend-rs/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-backend-rs-cargo-sources-v1-
+
+      - name: Build Backend Rust E2E runtime
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: "false"
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
+        run: |
+          cargo build \
+            --release \
+            --manifest-path backend-rs/Cargo.toml \
+            --bin wegent-backend-rs
+          mkdir -p .ci-artifacts
+          cp "$CARGO_TARGET_DIR/release/wegent-backend-rs" \
+            .ci-artifacts/wegent-backend-rs
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
+      - name: Save Backend Rust Cargo sources
+        if: github.ref == 'refs/heads/main' && steps.backend-rs-cargo-sources-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.backend-rs-cargo-sources-cache.outputs.cache-primary-key }}
+
+      - name: Upload Backend Rust E2E runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-rs-e2e-runtime
+          path: .ci-artifacts/wegent-backend-rs
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   build-executor-e2e-runtime:
     name: Prepare Executor E2E Runtime
     needs: changes
@@ -283,7 +344,12 @@ jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    needs: [build-frontend-e2e, prepare-platform-e2e-image]
+    needs:
+      [
+        build-frontend-e2e,
+        build-backend-rs-e2e-runtime,
+        prepare-platform-e2e-image,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -398,6 +464,15 @@ jobs:
             frontend-next-build \
             .ci-artifacts
 
+      - name: Download Backend Rust E2E runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
 
@@ -421,7 +496,6 @@ jobs:
         run: uv run --no-sync python tests/integration/dingtalk_sync_mysql.py
 
       - name: Start backend server
-        working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           REDIS_URL: redis://redis:6379/0
@@ -431,6 +505,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CHUNK_STORAGE_ENABLED: "true"
@@ -439,10 +514,12 @@ jobs:
           ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
           ATTACHMENT_S3_USE_SSL: "false"
           DELIVERY_S3_BUCKET: wegent-deliveries
+          WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
         run: |
-          source .venv/bin/activate
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
-          echo $! > backend.pid
+          nohup backend-rs/scripts/start-hybrid-backend.sh \
+            > backend/backend.log 2>&1 &
+          echo $! > backend/backend.pid
 
       - name: Start Knowledge Runtime
         env:
@@ -624,6 +701,7 @@ jobs:
     needs:
       [
         build-frontend-e2e,
+        build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
@@ -653,6 +731,20 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=3
+
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=6
 
     steps:
       - name: Generate internal service token
@@ -717,6 +809,17 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Restore bundled Codex cache
+        id: bundled-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+      - name: Prepare bundled Codex for local Executor
+        working-directory: ./wework
+        run: node scripts/prepare-codex-binary.mjs --materialize
+
       - name: Add local harness CLIs to PATH
         run: echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
@@ -775,6 +878,15 @@ jobs:
             frontend-next-build \
             .ci-artifacts
 
+      - name: Download Backend Rust E2E runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
@@ -825,7 +937,6 @@ jobs:
           echo "Docker bridge host: $DOCKER_BRIDGE_HOST"
 
       - name: Start backend server
-        working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           REDIS_URL: redis://localhost:6379/0
@@ -835,10 +946,17 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: localhost:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
         run: |
-          source .venv/bin/activate
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
-          echo $! > backend.pid
+          nohup backend-rs/scripts/start-hybrid-backend.sh \
+            > backend/backend.log 2>&1 &
+          echo $! > backend/backend.pid
 
       - name: Start Chat Shell server
         working-directory: ./backend
@@ -867,7 +985,7 @@ jobs:
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
-      - name: Start Local ClaudeCode Executor
+      - name: Start Local Executor
         env:
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
@@ -880,6 +998,9 @@ jobs:
           WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
+          WEGENT_CODEX_HOME: ${{ runner.temp }}/wegent-executor/codex
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
@@ -940,6 +1061,7 @@ jobs:
           PY
           )
           test -x executor/target/release/wegent-executor
+          test -x "$CODEX_BINARY_PATH"
           nohup env \
             -u GIT_TOKEN_AES_KEY \
             -u GIT_TOKEN_AES_IV \

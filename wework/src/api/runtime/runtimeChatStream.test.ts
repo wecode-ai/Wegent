@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { createRuntimeChatStream, setRuntimeChatStreamDebugEnabled } from './runtimeChatStream'
 
+const pluginTelemetryMocks = vi.hoisted(() => ({
+  observeRuntimePluginInvocation: vi.fn(),
+}))
+
+vi.mock('@/features/plugins/pluginInvocationTelemetry', () => pluginTelemetryMocks)
+
 describe('createRuntimeChatStream', () => {
   const subscribe = vi.fn()
   const request = vi.fn()
@@ -10,7 +16,39 @@ describe('createRuntimeChatStream', () => {
     subscribe.mockReset()
     subscribe.mockResolvedValue(vi.fn())
     request.mockReset()
+    pluginTelemetryMocks.observeRuntimePluginInvocation.mockReset()
     localStorage.clear()
+  })
+
+  test('delivers chat events when plugin telemetry observation throws', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    pluginTelemetryMocks.observeRuntimePluginInvocation.mockImplementationOnce(() => {
+      throw new Error('telemetry failure')
+    })
+    const onChatChunk = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onChatChunk })
+    await Promise.resolve()
+    expect(() =>
+      listener({
+        event: 'response.output_text.delta',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: { delta: 'hello', offset: 0 },
+        },
+      })
+    ).not.toThrow()
+
+    expect(onChatChunk).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'hello', offset: 0 })
+    )
   })
 
   test('maps executor text delta events to chat chunks', async () => {

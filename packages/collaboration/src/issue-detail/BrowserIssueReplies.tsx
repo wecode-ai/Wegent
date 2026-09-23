@@ -53,6 +53,7 @@ export function BrowserIssueReplies({
 }) {
   const store = useBrowserReplyQueueStore()
   const execution = useBrowserIssueExecution()
+  const serverExecution = project.project_store === 'backend' && Boolean(client.executeTaskComment)
   const cards = useMemo(() => groupIssueActivityThreads(messages), [messages])
   const [activity, setActivity] = useState<Record<string, boolean>>({})
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null)
@@ -72,6 +73,7 @@ export function BrowserIssueReplies({
     ).values(),
   ])
   useEffect(() => {
+    if (serverExecution) return
     let active = true
     const cleanups: (() => void)[] = []
     const addresses: RuntimeTaskAddress[] = JSON.parse(addressKeys)
@@ -115,7 +117,7 @@ export function BrowserIssueReplies({
       active = false
       cleanups.forEach(cleanup => cleanup())
     }
-  }, [runtime, addressKeys, subscriptionRevision, refreshExecution])
+  }, [runtime, addressKeys, subscriptionRevision, refreshExecution, serverExecution])
   const agent = agents.find(
     agent => agent.id === issue.assignee_agent_id && agent.status === 'active'
   )
@@ -125,14 +127,16 @@ export function BrowserIssueReplies({
     cards,
     enabled:
       canComment &&
-      execution.catalogCurrent &&
-      subscribed?.runtime === runtime &&
-      subscribed.addressKeys === addressKeys &&
-      subscribed.revision === subscriptionRevision &&
-      !execution.catalogError &&
-      !subscriptionError,
+      (serverExecution ||
+        (execution.catalogCurrent &&
+          subscribed?.runtime === runtime &&
+          subscribed.addressKeys === addressKeys &&
+          subscribed.revision === subscriptionRevision &&
+          !execution.catalogError &&
+          !subscriptionError)),
     busy: card =>
       cardSessionActive(card, address => {
+        if (serverExecution) return undefined
         const key = `${address.deviceId}:${address.taskId}`
         return activity[key] ?? findRuntimeTask(execution.work, address)?.running ?? undefined
       }),
@@ -185,7 +189,7 @@ export function BrowserIssueReplies({
     <BrowserIssueRepliesContext.Provider
       value={{
         queue,
-        error: subscriptionError ?? execution.catalogError,
+        error: serverExecution ? null : (subscriptionError ?? execution.catalogError),
         retry: () => {
           execution.retry()
           setSubscriptionRevision(value => value + 1)

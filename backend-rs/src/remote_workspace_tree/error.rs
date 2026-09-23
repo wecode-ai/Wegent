@@ -16,6 +16,14 @@ pub(crate) struct ApiError {
 }
 
 impl ApiError {
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub(crate) fn detail(&self) -> &str {
+        &self.detail
+    }
+
     pub(crate) fn new(status: StatusCode, detail: impl Into<String>) -> Self {
         Self {
             status,
@@ -50,6 +58,13 @@ impl ApiError {
     pub(crate) fn internal(detail: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, detail)
     }
+}
+
+/// The chain's MySQL failure mapping: the driver error is logged and the
+/// response is the source's `HTTPException(500, "database query failed")`.
+pub(crate) fn database_query_failed(error: brz_mysql::MysqlError) -> ApiError {
+    tracing::warn!(%error, "[remote_workspace] mysql query failed");
+    ApiError::internal("database query failed")
 }
 
 impl IntoHttpError for ApiError {

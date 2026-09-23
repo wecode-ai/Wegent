@@ -12,11 +12,13 @@ This module contains configuration schemas for:
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AspectRatioOption(BaseModel):
     """Aspect ratio option for video generation capabilities"""
+
+    model_config = ConfigDict(extra="allow")
 
     label: str = Field(..., description="Display label (e.g., '16:9 (横屏)')")
     value: str = Field(..., description="Value (e.g., '16:9')")
@@ -24,6 +26,8 @@ class AspectRatioOption(BaseModel):
 
 class ResolutionOption(BaseModel):
     """Resolution option for video generation capabilities"""
+
+    model_config = ConfigDict(extra="allow")
 
     width: Optional[int] = Field(None, description="Width in pixels")
     height: Optional[int] = Field(None, description="Height in pixels")
@@ -38,6 +42,8 @@ class ResolutionOption(BaseModel):
 
 class VideoGenerationMode(BaseModel):
     """Named video generation mode with material-specific constraints."""
+
+    model_config = ConfigDict(extra="allow")
 
     id: str = Field(..., min_length=1, description="Mode identifier")
     label: str = Field(..., min_length=1, description="Display label")
@@ -54,6 +60,8 @@ class VideoGenerationMode(BaseModel):
 
 class VideoCapabilities(BaseModel):
     """Declares what a video model supports"""
+
+    model_config = ConfigDict(extra="allow")
 
     aspect_ratios: Optional[List[AspectRatioOption]] = Field(
         None, description="Supported aspect ratios"
@@ -103,6 +111,8 @@ class VideoCapabilities(BaseModel):
 class VideoGenerationConfig(BaseModel):
     """Video generation specific configuration"""
 
+    model_config = ConfigDict(extra="allow")
+
     resolution: Optional[str] = Field("1080p", description="Default video resolution")
     fps: Optional[int] = Field(24, description="Frames per second")
     max_duration: Optional[int] = Field(None, description="Maximum duration in seconds")
@@ -129,6 +139,8 @@ class VideoGenerationConfig(BaseModel):
 class ImageCapabilities(BaseModel):
     """Declares reference-image constraints for an image model."""
 
+    model_config = ConfigDict(extra="allow")
+
     supports_image_input: Optional[bool] = None
     max_reference_images: Optional[int] = Field(None, ge=0)
     image_formats: Optional[List[str]] = None
@@ -141,6 +153,8 @@ class ImageCapabilities(BaseModel):
 
 class ImageGenerationConfig(BaseModel):
     """Image generation specific configuration"""
+
+    model_config = ConfigDict(extra="allow")
 
     # Size configuration
     size: Optional[str] = Field(

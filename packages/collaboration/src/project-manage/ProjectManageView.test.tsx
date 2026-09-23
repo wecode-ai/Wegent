@@ -125,7 +125,7 @@ function deferred<T>() {
 
 function project(
   id: string,
-  visibility: "private" | "public",
+  visibility: "private" | "public_restricted" | "public",
   version = 1,
 ): ProjectManageProject {
   return {
@@ -169,7 +169,13 @@ function createHost(): ProjectManageHost {
       Trash2: Icon,
       X: Icon,
     },
-    translate: (_key, fallback) => fallback,
+    translate: (_key, fallback, options) => {
+      let value = fallback;
+      for (const [name, replacement] of Object.entries(options ?? {})) {
+        value = value.split(`{{${name}}}`).join(String(replacement));
+      }
+      return value;
+    },
     confirm: () => true,
     trackCompleted: vi.fn(),
     trackFailed: vi.fn(),
@@ -183,6 +189,10 @@ function renderView(
   host: ProjectManageHost,
   currentProject: ProjectManageProject,
   onProjectUpdated: (project: ProjectManageProject) => void,
+  quickAdd?: {
+    requestId: number;
+    onConsumed(requestId: number): void;
+  },
 ) {
   hookRuntime.beginRender();
   const tree = ProjectManageView({
@@ -190,6 +200,8 @@ function renderView(
     host,
     project: currentProject,
     onProjectUpdated,
+    openMembersRequestId: quickAdd?.requestId,
+    onOpenMembersRequestConsumed: quickAdd?.onConsumed,
   });
   hookRuntime.flushEffects();
   return tree;
@@ -224,6 +236,127 @@ async function flushPromises() {
 describe("ProjectManageView project scope", () => {
   beforeEach(() => {
     hookRuntime.reset();
+  });
+
+  it("opens and consumes a host-requested member action", () => {
+    const api = createApi();
+    const host = createHost();
+    const onConsumed = vi.fn();
+    const currentProject = project("project-a", "private");
+    const quickAdd = { requestId: 23, onConsumed };
+
+    renderView(api, host, currentProject, vi.fn(), quickAdd);
+    const tree = renderView(api, host, currentProject, vi.fn(), quickAdd);
+
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+    expect(onConsumed).toHaveBeenCalledWith(23);
+    expect(findByTestId(tree, "cloud-member-search")).toBeTruthy();
+  });
+
+  it("reloads the authoritative member list after adding a member", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const api = createApi();
+    const host = createHost();
+    const owner = {
+      id: 1,
+      user_id: 1,
+      user_name: "owner",
+      email: null,
+      role: "Owner" as const,
+      capability_description: "",
+    };
+    const addedMember = {
+      id: 2,
+      user_id: 2,
+      user_name: "member",
+      email: null,
+      role: "Reporter" as const,
+      capability_description: "",
+    };
+    const user = {
+      id: 2,
+      user_name: "member",
+      email: null,
+    };
+    vi.mocked(api.listMembers)
+      .mockResolvedValueOnce([owner])
+      .mockResolvedValueOnce([owner, addedMember]);
+    vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] });
+    vi.mocked(api.addMember).mockResolvedValue(addedMember);
+    const currentProject = project("project-a", "private");
+
+    try {
+      let tree = renderView(api, host, currentProject, vi.fn());
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      findByTestId(tree, "cloud-project-members-toggle").props.onClick();
+      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, "cloud-member-search").props.onChange({
+        target: { value: "member" },
+      });
+      renderView(api, host, currentProject, vi.fn());
+      await vi.advanceTimersByTimeAsync(250);
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      findByTestId(tree, "cloud-member-role").props.onChange({
+        target: { value: "Reporter" },
+      });
+      tree = renderView(api, host, currentProject, vi.fn());
+      findByTestId(tree, "cloud-member-result-2").props.onClick();
+      await flushPromises();
+      tree = renderView(api, host, currentProject, vi.fn());
+
+      expect(api.addMember).toHaveBeenCalledWith("project-a", 2, "Reporter");
+      expect(api.listMembers).toHaveBeenCalledTimes(2);
+      expect(findByTestId(tree, "cloud-project-member-2")).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains and saves project member capabilities", async () => {
+    const api = createApi();
+    const host = createHost();
+    const member = {
+      id: 2,
+      user_id: 2,
+      user_name: "member",
+      email: "member@example.com",
+      role: "Developer" as const,
+      capability_description: "",
+    };
+    vi.mocked(api.listMembers).mockResolvedValue([member]);
+    vi.mocked(api.updateMember).mockResolvedValue({
+      ...member,
+      capability_description: "前端实现与交互验收",
+    });
+    const currentProject = project("project-a", "private");
+
+    let tree = renderView(api, host, currentProject, vi.fn());
+    await flushPromises();
+    tree = renderView(api, host, currentProject, vi.fn());
+    findByTestId(tree, "cloud-project-members-toggle").props.onClick();
+    tree = renderView(api, host, currentProject, vi.fn());
+
+    const capability = findByTestId(tree, "cloud-project-member-capability-2");
+    expect(capability.props.placeholder).toBe("例如：前端开发、产品验收");
+    expect(capability.props["aria-label"]).toBe("member 的职责与能力");
+    expect(
+      findByTestId(tree, "cloud-project-member-capability-heading"),
+    ).toBeTruthy();
+
+    capability.props.onBlur({
+      target: { value: "  前端实现与交互验收  " },
+    });
+    await flushPromises();
+
+    expect(api.updateMember).toHaveBeenCalledWith("project-a", 2, {
+      capability_description: "前端实现与交互验收",
+    });
   });
 
   it("does not write an old project mutation response into the new project", async () => {
@@ -266,5 +399,50 @@ describe("ProjectManageView project scope", () => {
       findByTestId(tree, "cloud-project-manage-visibility-public").props
         .className,
     ).not.toContain("bg-background");
+  });
+
+  it("offers related-task visibility for built-in projects", async () => {
+    const api = createApi();
+    const host = createHost();
+    vi.mocked(api.updateProject).mockResolvedValue(
+      project("project-a", "public_restricted", 2),
+    );
+
+    let tree = renderView(api, host, project("project-a", "private"), vi.fn());
+    findByTestId(
+      tree,
+      "cloud-project-manage-visibility-public-restricted",
+    ).props.onClick();
+    await flushPromises();
+    tree = renderView(
+      api,
+      host,
+      project("project-a", "public_restricted", 2),
+      vi.fn(),
+    );
+
+    expect(api.updateProject).toHaveBeenCalledWith("project-a", {
+      version: 1,
+      visibility: "public_restricted",
+    });
+    expect(
+      findByTestId(tree, "cloud-project-manage-visibility-public-restricted")
+        .props.className,
+    ).toContain("bg-background");
+  });
+
+  it("does not offer related-task visibility for external projects", () => {
+    const api = createApi();
+    const host = createHost();
+    const externalProject = {
+      ...project("project-a", "private"),
+      task_provider: "github",
+    };
+
+    const tree = renderView(api, host, externalProject, vi.fn());
+
+    expect(
+      findByTestId(tree, "cloud-project-manage-visibility-public-restricted"),
+    ).toBeNull();
   });
 });

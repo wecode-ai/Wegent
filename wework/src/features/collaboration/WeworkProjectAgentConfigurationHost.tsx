@@ -4,9 +4,11 @@ import type { ProjectAgentConfigurationHost, ProjectAgentMode } from '@wegent/co
 
 import { Button } from '@/components/ui/button'
 import type { createAgentResourceApi } from '@/api/agentResources'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
+import { isSupportedModelFamily } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
 
@@ -140,30 +142,33 @@ export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost 
 }
 
 /**
- * Wework manages Agents only through the resource library, so `添加智能体`
- * opens the resource-library form directly and configured rows can edit the
- * Agent resource they point at.
+ * Wework manages Agents through the resource library. Project additions open
+ * the resource form directly, while existing project Agents remain editable.
  */
 export function createWeworkProjectAgentConfigurationHost(
   agentResourceApi: ReturnType<typeof createAgentResourceApi> | undefined,
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
-  localPluginApi?: {
-    listPlugins(deviceId: string): Promise<import('@/types/api').RuntimeProjectPluginRef[]>
-  }
+  pluginApi?: WorkbenchServices['pluginApi'],
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>,
+  locale: 'zh-CN' | 'en' = 'zh-CN'
 ): ProjectAgentConfigurationHost {
   return {
     ...weworkProjectAgentConfigurationHost,
     ...(agentResourceApi
       ? {
           supportsExistingAgentSelection: false,
-          renderAgentCreator({ namespace, onClose, onCreated, workspaceName }) {
+          supportsCrossLocationAgentSelection: true,
+          renderAgentCreator({ namespace, onClose, onCreated, ownerOptions, workspaceName }) {
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onCreated}
+                ownerOptions={ownerOptions}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -172,11 +177,13 @@ export function createWeworkProjectAgentConfigurationHost(
             return (
               <WeworkAgentResourceForm
                 api={agentResourceApi}
+                deviceApi={deviceApi}
                 editingTeamId={agent.teamId}
                 key={agent.teamId}
                 namespace={namespace}
                 onClose={onClose}
                 onSaved={onSaved}
+                pluginApi={pluginApi}
                 workspaceName={workspaceName}
               />
             )
@@ -185,25 +192,73 @@ export function createWeworkProjectAgentConfigurationHost(
       : {}),
     ...(localAgentApi && localModelApi
       ? {
-          renderLocalAgentCreator({ onClose, onCreated }) {
+          async createDefaultLocalAgent(projectId = DEFAULT_WORK_ITEM_PROJECT_ID) {
+            const existingAgents = await localAgentApi.list(projectId)
+            const existing = existingAgents.find(agent =>
+              ['current-device-agent', 'current-device-assistant'].includes(agent.name)
+            )
+            if (existing) return existing.id
+
+            const modelResponse = await localModelApi.listModels()
+            const model = modelResponse.data.find(isSupportedModelFamily)
+            if (!model) {
+              throw new Error(
+                locale === 'zh-CN' ? '请先配置一个可用模型' : 'Configure an available model first'
+              )
+            }
+            const input = {
+              name: 'current-device-agent',
+              displayName: locale === 'zh-CN' ? '当前设备智能体' : 'Current device Agent',
+              namespace: 'default',
+              runtime: 'codex' as const,
+              model: model.name,
+              modelType: model.type,
+              modelNamespace: model.namespace,
+              capabilityDescription:
+                locale === 'zh-CN'
+                  ? '使用当前设备的模型、技能和工具。'
+                  : 'Uses models, skills, and tools available on the current device.',
+              capabilityMode: 'follow_device' as const,
+              systemPrompt: '',
+              executionEnvironment: 'local' as const,
+              executionMode: 'auto' as const,
+              executionDeviceId: null,
+              workspacePolicy: 'project' as const,
+            }
+            const created = await localAgentApi.ensureDefault(projectId, input)
+            if (created) return created.id
+
+            const concurrent = (await localAgentApi.list(projectId)).find(
+              agent => agent.name === input.name
+            )
+            if (concurrent) return concurrent.id
+            return (await localAgentApi.create(projectId, input)).id
+          },
+          renderLocalAgentCreator({ onClose, onCreated, projectId }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onCreated}
               />
             )
           },
-          renderLocalAgentEditor({ resourceId, onClose, onSaved }) {
+          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
                 api={localAgentApi}
+                deviceApi={deviceApi}
                 editingAgentId={resourceId}
                 key={resourceId}
                 modelApi={localModelApi}
-                pluginApi={localPluginApi}
+                pluginApi={pluginApi}
+                projectId={projectId}
+                skillApi={agentResourceApi}
                 onClose={onClose}
                 onSaved={onSaved}
               />

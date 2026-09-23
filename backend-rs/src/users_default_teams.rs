@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::config::DefaultTeamsConfig;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
-use crate::users_search::auth::get_current_user;
+use crate::users_search::UsersSearchUser;
 
 /// `parse_default_team_config` — parse `name#namespace` into a JSON value.
 fn parse_default_team_config(value: &str) -> Option<DefaultTeam> {
@@ -39,20 +39,13 @@ fn parse_default_team_config(value: &str) -> Option<DefaultTeam> {
 #[brz_http_server::get("/api/users/default-teams")]
 async fn get_default_teams(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] _current_user: UsersSearchUser,
 ) -> Result<DefaultTeamsResponse, FastApiError> {
-    default_teams(state, authorization).await
+    default_teams(state).await
 }
 
 /// Handler body for `GET /api/users/default-teams`.
-async fn default_teams(
-    state: &AppState,
-    authorization: Option<&str>,
-) -> Result<DefaultTeamsResponse, FastApiError> {
-    get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(FastApiError::from)?;
-
+async fn default_teams(_state: &AppState) -> Result<DefaultTeamsResponse, FastApiError> {
     let config = DefaultTeamsConfig::from_env();
     Ok(default_teams_response(&config))
 }

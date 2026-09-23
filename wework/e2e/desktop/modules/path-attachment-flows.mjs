@@ -31,7 +31,7 @@ import {
   writeFile,
 } from './shared.mjs'
 
-import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const TERMINAL_DRAG_TEXT = 'WEWORK_TERMINAL_DRAG_E2E'
 const SELECTED_TEXT_FILE_NAME = 'selected-text-drag.ts'
@@ -439,7 +439,28 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   )
 }
 
-async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
+async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
+  const taskPrompt = 'WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'
+  control.setScenario('workspace_selection_streaming')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('fill', composerSelector, {
+    value: taskPrompt,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('workspace_selection_streaming', 1)
+  const taskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.activeTask?.title === taskPrompt &&
+      snapshot.workbench?.currentRuntimeTask?.taskId === snapshot.workbench?.activeTask?.taskId &&
+      Boolean(snapshot.workbench?.currentRuntimeTask?.workspacePath),
+    'The workspace selection task did not expose its workspace path'
+  )
+  const workspacePath = taskSnapshot.workbench.currentRuntimeTask.workspacePath
   const folderPath = join(workspacePath, DROPPED_PATH_FOLDER_NAME)
   const filePath = join(workspacePath, DROPPED_PATH_FILE_NAME)
   await mkdir(folderPath, { recursive: true })
@@ -447,19 +468,12 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await writeFile(filePath, '# Dropped path context\n')
   await writeFile(join(workspacePath, SELECTED_TEXT_FILE_NAME), SELECTED_TEXT_FILE_CONTENT)
 
-  control.setScenario('workspace_selection_streaming')
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('fill', composerSelector, {
-    value: 'WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING',
-  })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.awaitScenarioRequestCount('workspace_selection_streaming', 1)
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
   await control.command('click', '[data-testid="right-workspace-file-option"]')
+  await control.command('waitFor', '[data-testid="workspace-file-path"]', {
+    text: workspacePath,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -685,16 +699,30 @@ async function verifySideChatAttachmentIsolation({
   )
   control.setScenario('side_chat_attachment')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  await control.command('waitFor', '[data-testid="right-workspace-chat-option"]', {
+    stableMs: 300,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const [launcherMetrics] = JSON.parse(
+    await control.command('getElementMetrics', rightPanelShellSelector)
+  )
   await control.command('click', '[data-testid="right-workspace-chat-option"]')
   await control.command('waitFor', sideComposerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
 
   await waitForElementWidth(
     control,
     rightPanelShellSelector,
-    width => width >= 400 && width <= 440,
-    'The temporary-chat-only right panel'
+    width => Math.abs(width - launcherMetrics.width) <= 1,
+    'The side chat retaining the launcher panel width'
   )
-  await captureVerificationScreenshot(control, '01-side-chat-compact-width.png')
+  await captureVerificationScreenshot(control, '01-side-chat-panel-width.png')
+  const [chatMetrics] = JSON.parse(
+    await control.command('getElementMetrics', rightPanelShellSelector)
+  )
+  assert.ok(
+    Math.abs(chatMetrics.width - launcherMetrics.width) <= 1,
+    'Opening a side chat changed the launcher panel width'
+  )
 
   await control.command('dropFile', sideComposerSelector, {
     filename: SIDE_CHAT_FILENAME,
@@ -809,12 +837,28 @@ async function verifySideChatAttachmentIsolation({
     'The side-chat follow-up was queued instead of guiding the active turn'
   )
   await captureVerificationScreenshot(control, '05-side-chat-follow-up-guiding.png')
+  for (const prompt of [
+    SIDE_CHAT_QUEUE_FOLLOW_UP,
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}_2`,
+    `${SIDE_CHAT_QUEUE_FOLLOW_UP}_3`,
+  ]) {
+    await control.command('fill', sideComposerSelector, { value: prompt })
+    await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+    await control.command(
+      'waitFor',
+      `${sideChatSelector} [data-testid="conversation-queue-panel"]`,
+      {
+        text: prompt,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+  }
   control.releaseSideChatGuidanceResponse()
-  await control.awaitScenarioRequestCount('side_chat_guidance', 2)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 5)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
-    'Applied guidance remained in the side-chat queue',
+    'The side-chat queue did not automatically drain after the active turn',
     DEFAULT_STEP_TIMEOUT_MS,
     sideChatSelector
   )

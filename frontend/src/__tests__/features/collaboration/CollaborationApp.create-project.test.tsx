@@ -97,8 +97,9 @@ describe('CollaborationApp shared project creation', () => {
 
     fireEvent.click(await screen.findByTestId('collaboration-project-create'))
 
-    expect(screen.getByTestId('cloud-project-location-cloud')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-github')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-gitlab')).toBeInTheDocument()
@@ -139,5 +140,58 @@ describe('CollaborationApp shared project creation', () => {
       issueId: null,
       view: 'board',
     })
+  })
+
+  it('creates a built-in project with related-task visibility', async () => {
+    const create = jest.fn().mockResolvedValue({
+      ...createdProject,
+      task_provider: 'local',
+      provider_config: {},
+      visibility: 'public_restricted',
+    })
+    const api = {
+      projects: {
+        list: jest.fn().mockResolvedValue([]),
+        create,
+      },
+    } as unknown as SharedWorkspaceApi
+    const host = homeHost()
+
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+
+    fireEvent.click(await screen.findByTestId('collaboration-project-create'))
+    fireEvent.change(screen.getByTestId('collaboration-project-name-input'), {
+      target: { value: ' Related tasks ' },
+    })
+    fireEvent.click(screen.getByTestId('cloud-project-visibility-public-restricted'))
+    fireEvent.click(screen.getByTestId('collaboration-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({
+        name: 'Related tasks',
+        description: '',
+        taskProvider: 'local',
+        providerConfig: {},
+        visibility: 'public_restricted',
+      })
+    )
+  })
+
+  it('hides related-task visibility for external providers', async () => {
+    render(<CollaborationApp api={homeApi()} host={homeHost()} locale="zh-CN" pollIntervalMs={0} />)
+
+    fireEvent.click(await screen.findByTestId('collaboration-project-create'))
+    fireEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
+    expect(screen.getByTestId('cloud-project-visibility-public-restricted')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('cloud-project-task-provider-github'))
+
+    expect(
+      screen.queryByTestId('cloud-project-visibility-public-restricted')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-visibility-private')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 })

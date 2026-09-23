@@ -31,6 +31,26 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("deletes a cloud Agent through its Team resource", async () => {
+    const { transport, remove } = createTransport();
+    const api = createSharedWorkspaceHttpApi(transport);
+
+    await api.resources.removeAgent?.({
+      id: "team-kind-12",
+      team_id: 12,
+      name: "review-agent",
+      owner_type: "user",
+      owner_id: "8",
+      owner_name: "王芳",
+      status: "available",
+      execution_environment_ids: [],
+    });
+
+    expect(remove).toHaveBeenCalledWith(
+      "/teams/12?force=true&confirm_name=review-agent",
+    );
+  });
+
   it("uses one collaboration-group resource for workspace and project scopes", async () => {
     const { transport, get, post, remove } = createTransport();
     const group = {

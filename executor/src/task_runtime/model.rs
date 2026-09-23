@@ -67,6 +67,7 @@ pub struct ProjectUpdate {
     pub workflow_definition: Option<Value>,
     pub collaboration_groups: Option<Value>,
     pub automatic_processing_rules: Option<Value>,
+    pub execution_environment: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,6 +82,8 @@ pub struct TaskCreate {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub assignee_user_id: Option<i64>,
     #[serde(default)]
     pub workflow: Option<Value>,
 }
@@ -118,10 +121,16 @@ fn deserialize_optional_group_id<'de, D: serde::Deserializer<'de>>(
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatAgentCreate {
     pub name: String,
+    pub display_name: Option<String>,
+    pub namespace: Option<String>,
     #[serde(default = "default_chat_agent_runtime")]
     pub runtime: String,
     pub model: Option<String>,
+    pub model_type: Option<String>,
+    pub model_namespace: Option<String>,
     pub capability_description: Option<String>,
+    #[serde(default)]
+    pub capability_mode: Option<String>,
     pub system_prompt: Option<String>,
     pub visibility: Option<String>,
     pub execution_environment: Option<String>,
@@ -147,9 +156,14 @@ pub struct ChatAgentCreate {
 pub struct ChatAgentUpdate {
     pub version: i64,
     pub name: Option<String>,
+    pub display_name: Option<String>,
+    pub namespace: Option<String>,
     pub runtime: Option<String>,
     pub model: Option<String>,
+    pub model_type: Option<String>,
+    pub model_namespace: Option<String>,
     pub capability_description: Option<String>,
+    pub capability_mode: Option<String>,
     pub system_prompt: Option<String>,
     pub status: Option<String>,
     pub visibility: Option<String>,
@@ -171,9 +185,14 @@ pub struct ChatAgent {
     pub id: String,
     pub project_id: String,
     pub name: String,
+    pub display_name: String,
+    pub namespace: String,
     pub runtime: String,
     pub model: Option<String>,
+    pub model_type: Option<String>,
+    pub model_namespace: String,
     pub capability_description: String,
+    pub capability_mode: String,
     pub system_prompt: String,
     pub status: String,
     pub visibility: String,
@@ -308,6 +327,18 @@ pub struct LocalCommentCreate {
     pub content: String,
     pub metadata: Value,
     pub reply_to_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LocalRuntimeCommentStart<'a> {
+    pub project_id: &'a str,
+    pub task_id: &'a str,
+    pub agent_id: &'a str,
+    pub trigger_message_id: &'a str,
+    pub runtime_device_id: &'a str,
+    pub runtime_task_id: &'a str,
+    pub prompt: Option<&'a str>,
+    pub model: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

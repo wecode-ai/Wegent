@@ -18,12 +18,14 @@ import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DesktopSidebarAccountSettingsOptions } from './DesktopSidebarAccount'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import { ExistingLocalProjectImportDialog } from '@/components/projects/ExistingLocalProjectImportDialog'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
   type StandaloneRemoteDialogIntent,
   type StandaloneWorkspaceDialogMode,
 } from '@/components/projects/StandaloneProjectDialogs'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
@@ -75,7 +77,16 @@ import {
 import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
-import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
+import {
+  conversationReferenceKey,
+  loadDshConversationTranscript,
+  readConversationAssetChunk,
+} from '@/features/dsh-runtime/dshConversationTranscript'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import type {
+  WeworkConversationAssetChunk,
+  WeworkConversationSnapshot,
+} from '../../../dsh/app-wework/client'
 import {
   readSettingsReturnPath,
   writeSettingsReturnPath,
@@ -153,6 +164,7 @@ export function DesktopWorkbenchLayout({
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
+    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -187,6 +199,7 @@ export function DesktopWorkbenchLayout({
     [state.projects, state.runtimeWork]
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
+  const dshConversationSnapshots = useRef(new Map<string, WeworkConversationSnapshot>())
   const workspaceTabs = useOptionalWorkspaceTabs()
   const ownedWorkspaceTab = workspaceTabs
     ? workspaceTabId
@@ -220,8 +233,24 @@ export function DesktopWorkbenchLayout({
   useEffect(() => {
     if (!routeActive || surfaceKind === 'board') return
     return bindDshConversationController({
-      getTranscript: reference =>
-        loadDshConversationTranscript(reference, state.runtimeWork, onLoadRuntimeTranscriptForPane),
+      getTranscript: async reference => {
+        const snapshot = await loadDshConversationTranscript(
+          reference,
+          state.runtimeWork,
+          onLoadRuntimeTranscriptForPane
+        )
+        dshConversationSnapshots.current.set(conversationReferenceKey(reference), snapshot)
+        return snapshot
+      },
+      readAssetChunk: async (reference, request) => {
+        const snapshot = dshConversationSnapshots.current.get(conversationReferenceKey(reference))
+        if (!snapshot) {
+          throw new Error('Conversation asset is not part of the exported conversation')
+        }
+        return readConversationAssetChunk(snapshot, request, input =>
+          invokeDesktopHost<WeworkConversationAssetChunk>('filesystem.readFileChunk', input)
+        )
+      },
     })
   }, [onLoadRuntimeTranscriptForPane, routeActive, state.runtimeWork, surfaceKind])
   const { activatePane: activateSplitPane } = splitGroups
@@ -1136,6 +1165,8 @@ export function DesktopWorkbenchLayout({
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
                 onCreateTask={startNewChatOutsideHarness}
+                projectSpaceApis={availableProjectSpaceApis}
+                onArchiveRuntimeTasks={onArchiveChatConversations}
                 onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                 onOpenRuntimeTask={address => {
                   void openRuntimeTaskOutsideHarness(address)
@@ -1201,6 +1232,7 @@ export function DesktopWorkbenchLayout({
               ) : (
                 <WeworkCollaborationPlatform
                   user={workItemUser}
+                  devices={state.devices}
                   localProjects={localTodoProjects}
                   runtimeWork={state.runtimeWork}
                   runtimeTaskLifecycle={runtimeTaskLifecycle}
@@ -1211,6 +1243,120 @@ export function DesktopWorkbenchLayout({
                   onCancelRuntimeTask={onCancelRuntimeTask}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}
+                  renderLocalProjectImporter={({ mode, projects, onClose, onCreated }) =>
+                    mode === 'existing' ? (
+                      <ExistingLocalProjectImportDialog
+                        open
+                        projects={projects}
+                        onClose={onClose}
+                        onImport={async project => {
+                          const runtimeProject = state.runtimeWork?.projects.find(
+                            projectWork => runtimeProjectUiId(projectWork.project) === project.id
+                          )
+                          if (runtimeProject) {
+                            const roots = Array.from(
+                              new Set([
+                                ...(runtimeProject.project.roots ?? []).map(root => root.path),
+                                ...runtimeProject.deviceWorkspaces
+                                  .filter(workspace => workspace.workspaceKind !== 'chat')
+                                  .map(workspace => workspace.workspacePath),
+                              ])
+                            ).filter(Boolean)
+                            const deviceId =
+                              runtimeProject.project.stateDeviceId?.trim() ||
+                              runtimeProject.deviceWorkspaces.find(
+                                workspace => workspace.workspaceKind !== 'chat'
+                              )?.deviceId
+                            if (!deviceId || roots.length === 0) {
+                              throw new Error(
+                                t(
+                                  'workbench.local_project_workspace_unavailable',
+                                  '本地项目缺少可用的设备或工作目录'
+                                )
+                              )
+                            }
+                            await onUpdateLocalRuntimeProject({
+                              deviceId,
+                              projectKey: runtimeProject.project.key,
+                              name: runtimeProject.project.name,
+                              roots,
+                              defaultProjectSpace:
+                                runtimeProject.project.defaultProjectSpace ?? null,
+                              aiSettings: runtimeProject.project.aiSettings ?? null,
+                            })
+                            await onCreated(
+                              runtimeProject.project.key,
+                              runtimeProject.project.name,
+                              roots
+                            )
+                            return
+                          }
+
+                          const deviceId = project.config?.execution?.deviceId
+                          const workspacePath =
+                            project.config?.workspace?.source === 'local_path'
+                              ? project.config.workspace.localPath
+                              : null
+                          if (!deviceId || !workspacePath) {
+                            throw new Error(
+                              t(
+                                'workbench.local_project_workspace_unavailable',
+                                '本地项目缺少可用的设备或工作目录'
+                              )
+                            )
+                          }
+                          const created = await onCreateLocalRuntimeProject({
+                            deviceId,
+                            name: project.name,
+                            roots: [workspacePath],
+                          })
+                          await onCreated(created.runtimeProjectKey, project.name, [workspacePath])
+                        }}
+                      />
+                    ) : (
+                      <StandaloneFolderProjectDialog
+                        key="collaboration-local-project-importer"
+                        open
+                        mode="existing"
+                        preferNativeLocalPicker={shouldUseNativeProjectDirectoryPicker()}
+                        devices={state.devices.filter(
+                          device => device.device_type === 'local' || device.device_type === 'app'
+                        )}
+                        preferredDeviceId={
+                          state.standaloneDeviceId ??
+                          state.user?.preferences?.default_execution_target
+                        }
+                        onClose={onClose}
+                        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                        onListDeviceDirectories={onListDeviceDirectories}
+                        onCreateDeviceDirectory={onCreateDeviceDirectory}
+                        onOpenStandaloneWorkspace={async (
+                          deviceId,
+                          workspacePath,
+                          name,
+                          projectRoots
+                        ) => {
+                          const roots = projectRoots?.length ? projectRoots : [workspacePath]
+                          const created = await onCreateLocalRuntimeProject({
+                            deviceId,
+                            name:
+                              name?.trim() ||
+                              workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+                              'Project',
+                            roots,
+                          })
+                          await onCreated(
+                            created.runtimeProjectKey,
+                            name?.trim() ||
+                              workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+                              'Project',
+                            roots
+                          )
+                        }}
+                        onRefreshDevices={onRefreshDevices}
+                      />
+                    )
+                  }
                   activeProjectRef={
                     ownedWorkspaceTab?.kind === 'board'
                       ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
@@ -1268,20 +1414,25 @@ export function DesktopWorkbenchLayout({
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          {!workItemSurfaceOpen ? (
-            <DesktopWorkbenchMain
-              visible={routeActive && !settingsOpen}
-              sidebarCollapsed={effectiveSidebarCollapsed}
-              sidebarResizing={sidebarResizing}
-              onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={activePane}
-              splitGroups={splitGroups}
-              localHarnessSessions={localHarnessSessions}
-              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
-              onLocalHarnessSessionStarted={registerLocalHarnessSession}
-              onLocalHarnessSessionClose={closeLocalHarnessSession}
-              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
-            />
+          {!routeWorkItemsOpen ? (
+            <div
+              style={{ display: taskBoardOpen ? 'none' : 'contents' }}
+              aria-hidden={taskBoardOpen}
+            >
+              <DesktopWorkbenchMain
+                visible={routeActive && !settingsOpen && !taskBoardOpen}
+                sidebarCollapsed={effectiveSidebarCollapsed}
+                sidebarResizing={sidebarResizing}
+                onSidebarCollapsedChange={updateSidebarCollapsed}
+                activePane={activePane}
+                splitGroups={splitGroups}
+                localHarnessSessions={localHarnessSessions}
+                activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+                onLocalHarnessSessionStarted={registerLocalHarnessSession}
+                onLocalHarnessSessionClose={closeLocalHarnessSession}
+                onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
+              />
+            </div>
           ) : null}
         </div>
       </div>

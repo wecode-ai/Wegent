@@ -9,7 +9,10 @@ export type ProjectManageRole =
   | "Maintainer"
   | "Developer"
   | "Reporter";
-export type ProjectManageVisibility = "private" | "public";
+export type ProjectManageVisibility =
+  | "private"
+  | "public_restricted"
+  | "public";
 export type ProjectManageStatusColor =
   | "gray"
   | "blue"
@@ -33,6 +36,7 @@ export interface ProjectManageCardDisplay {
 
 export interface ProjectManageProject {
   id: string;
+  current_user_id?: number;
   name: string;
   description: string;
   project_key: string;

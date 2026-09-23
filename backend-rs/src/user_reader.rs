@@ -19,12 +19,49 @@ use async_trait::async_trait;
 
 use crate::auth::UserRow;
 
-/// The `users` fields shared readers consume from `userReader` lookups.
+/// The `users` model a `userReader` lookup returns: `UserReader.get_by_id`
+/// and `get_by_name` hand back the complete mapped `User`, so the record
+/// carries every column of the source's `db.query(User)` projection in table
+/// order. A deployment reader that replaces the public one therefore derives
+/// the same values the source reader returns; consumers that only need
+/// `id`, `user_name`, and `is_active` ignore the rest.
 #[derive(Debug, Clone)]
 pub struct UserRecord {
     pub id: i64,
     pub user_name: String,
+    pub password_hash: String,
+    pub email: Option<String>,
+    /// `users.git_info`: the decoded JSON document (`JSON` columns restore
+    /// Python `None` as JSON `null`).
+    pub git_info: serde_json::Value,
     pub is_active: bool,
+    pub role: String,
+    pub auth_source: String,
+    pub preferences: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+impl UserRecord {
+    /// Decode one `users` projection row (columns labeled `users_<column>`)
+    /// into the record.
+    pub fn from_mysql_row(row: &brz_mysql::MysqlRow) -> brz_mysql::MysqlResult<Self> {
+        Ok(Self {
+            id: row.get_required::<i64>("users_id")?,
+            user_name: row.get_required::<String>("users_user_name")?,
+            password_hash: row.get_required::<String>("users_password_hash")?,
+            email: row.get::<String>("users_email")?,
+            git_info: row
+                .get::<serde_json::Value>("users_git_info")?
+                .unwrap_or(serde_json::Value::Null),
+            is_active: row.get_required::<i8>("users_is_active")? != 0,
+            role: row.get_required::<String>("users_role")?,
+            auth_source: row.get_required::<String>("users_auth_source")?,
+            preferences: row.get_required::<String>("users_preferences")?,
+            created_at: row.get_required::<chrono::NaiveDateTime>("users_created_at")?,
+            updated_at: row.get_required::<chrono::NaiveDateTime>("users_updated_at")?,
+        })
+    }
 }
 
 /// `userReader.get_by_id(db, user_id)` and `userReader.get_by_name(db,
@@ -76,7 +113,15 @@ impl From<UserRow> for UserRecord {
         Self {
             id: i64::from(row.id),
             user_name: row.user_name,
+            password_hash: row.users_password_hash,
+            email: row.email,
+            git_info: row.git_info.0.to_value(),
             is_active: row.is_active != 0,
+            role: row.role,
+            auth_source: row.auth_source,
+            preferences: row.preferences,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         }
     }
 }

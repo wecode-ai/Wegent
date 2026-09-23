@@ -92,6 +92,7 @@ struct PersistedRuntimeTask {
     continuable: bool,
     goal_status: Option<String>,
     goal_execution_status: Option<String>,
+    interaction_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -119,6 +120,7 @@ struct PersistedRuntimeTaskInput {
     continuable: bool,
     goal_status: Option<String>,
     goal_execution_status: Option<String>,
+    interaction_status: Option<String>,
     supervisor: Option<super::response::RuntimeSupervisorState>,
     created_at: i64,
     updated_at: i64,
@@ -149,6 +151,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
             continuable: input.continuable,
             goal_status: input.goal_status,
             goal_execution_status: input.goal_execution_status,
+            interaction_status: input.interaction_status,
             supervisor: input.supervisor,
             created_at: input.created_at,
             updated_at: input.updated_at,
@@ -177,6 +180,7 @@ impl PersistedRuntimeTask {
             continuable: link.continuable,
             goal_status: link.goal_status.clone(),
             goal_execution_status: link.goal_execution_status.clone(),
+            interaction_status: link.interaction_status.clone(),
             supervisor: link.supervisor.clone(),
             created_at: link.created_at,
             updated_at: link.updated_at,
@@ -215,6 +219,7 @@ impl PersistedRuntimeTask {
             turn_status: None,
             goal_status: self.goal_status,
             goal_execution_status: self.goal_execution_status,
+            interaction_status: self.interaction_status,
             supervisor: self.supervisor,
             git_info: None,
             created_at: self.created_at,
@@ -250,6 +255,7 @@ impl PersistedRuntimeTask {
         task.continuable = self.continuable;
         task.goal_status = self.goal_status;
         task.goal_execution_status = self.goal_execution_status;
+        task.interaction_status = self.interaction_status;
         task.supervisor = self.supervisor;
         task.created_at = self.created_at;
         task.updated_at = self.updated_at;
@@ -386,6 +392,16 @@ impl RuntimeWorkStore {
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         self.refresh_index_from_disk_if_changed();
         self.index.lock().ok()?.tasks.get(local_task_id).cloned()
+    }
+
+    pub fn get_task_summary(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        self.index
+            .lock()
+            .ok()?
+            .tasks
+            .get(local_task_id)
+            .map(RuntimeTaskLink::list_summary)
     }
 
     pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {

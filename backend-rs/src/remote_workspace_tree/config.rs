@@ -36,7 +36,15 @@ pub(crate) struct Config {
     pub(crate) executor_manager_url: String,
     /// Active JWT decode key first, then legacy decode-only keys
     /// (`JWT_LEGACY_SECRET_KEYS`, comma-separated).
+    #[allow(
+        dead_code,
+        reason = "route authentication now runs through AppAuthenticator"
+    )]
     pub(crate) jwt_decode_keys: Vec<String>,
+    #[allow(
+        dead_code,
+        reason = "route authentication now runs through AppAuthenticator"
+    )]
     pub(crate) jwt_algorithm: String,
 }
 

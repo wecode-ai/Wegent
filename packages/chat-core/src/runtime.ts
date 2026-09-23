@@ -9,6 +9,8 @@ export interface RuntimeTaskAddress {
   workspaceKind?: "workspace" | "worktree" | "chat" | string | null;
   worktreeId?: string | null;
   runtimeHandle?: Record<string, unknown> | null;
+  /** Read authority is resolved server-side from this Issue's durable binding. */
+  projectSession?: { projectId: string; issueId: string };
 }
 
 export interface RuntimeMessageSource {
@@ -103,6 +105,7 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;
   taskId?: string;
   workspacePath: string;
@@ -232,6 +235,8 @@ export interface ChatBlock {
   contentOriginalChars?: number;
   tool_use_id?: string;
   tool_name?: string;
+  plugin_id?: string;
+  mcp_server?: string;
   tool_input?: Record<string, unknown>;
   tool_output?: unknown;
   tool_output_truncated?: boolean;

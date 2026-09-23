@@ -49,6 +49,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -188,6 +189,7 @@ import {
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
+  shortenSidebarHomePath,
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
@@ -854,10 +856,6 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
   )
 }
 
-function shortenSidebarHomePath(path: string): string {
-  return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, '~')
-}
-
 function getSidebarRepositoryLabel(repoUrl?: string | null): string | null {
   const value = repoUrl?.trim()
   if (!value) return null
@@ -910,6 +908,7 @@ function hasRuntimeTaskBranchWarning(task: RuntimeTaskSummary): boolean {
 }
 
 function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
+  if (task.interactionStatus === 'waitingForUserInput') return true
   const status = task.status?.trim().toLowerCase() ?? ''
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)
@@ -920,12 +919,14 @@ function getRuntimeTaskPriorityReason(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary,
   unreadTaskKeys: ReadonlySet<string>,
-  runningTaskKeys: ReadonlySet<string>
+  runningTaskKeys: ReadonlySet<string>,
+  waitingTaskKeys: ReadonlySet<string>
 ): RuntimeTaskPriorityReason | null {
   if (unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))) return 'unread'
-  if (isRuntimeTaskWaiting(task)) return 'waiting'
   const address = getRuntimeTaskAddress(workspace, task)
-  if (runningTaskKeys.has(getRuntimeTaskLifecycleKey(address))) return 'active'
+  const lifecycleKey = getRuntimeTaskLifecycleKey(address)
+  if (waitingTaskKeys.has(lifecycleKey) || isRuntimeTaskWaiting(task)) return 'waiting'
+  if (runningTaskKeys.has(lifecycleKey)) return 'active'
   return null
 }
 
@@ -1951,6 +1952,21 @@ function RuntimeTaskRow({
                       aria-hidden="true"
                     />
                   </span>
+                ) : taskLifecycle?.derived.shouldShowSidebarWaiting ||
+                  priorityReason === 'waiting' ? (
+                  <span
+                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
+                    role="status"
+                    title={t('workbench.priority_filter_waiting', '等待回复')}
+                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
+                    className="flex h-[30px] w-[30px] items-center justify-center"
+                  >
+                    {priorityLayout ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : (
+                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    )}
+                  </span>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
@@ -1984,20 +2000,6 @@ function RuntimeTaskRow({
                         icon={Loader2}
                         className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
                       />
-                    )}
-                  </span>
-                ) : priorityReason === 'waiting' ? (
-                  <span
-                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
-                    role="status"
-                    title={t('workbench.priority_filter_waiting', '等待回复')}
-                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
-                    className="flex h-[30px] w-[30px] items-center justify-center"
-                  >
-                    {priorityLayout ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                    ) : (
-                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
                     )}
                   </span>
                 ) : unread ? (
@@ -2282,7 +2284,7 @@ function RuntimeTaskRow({
         confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
         onSubmit={title => {
-          if (workspace.available) onRenameRuntimeTask?.(taskAddress, title)
+          if (workspace.available) return onRenameRuntimeTask?.(taskAddress, title)
         }}
       />
       {archiveNoticeOpen &&
@@ -2509,6 +2511,15 @@ function ProjectItem({
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const waitingTaskKeys = useMemo(
+    () =>
+      new Set(
+        [...lifecycleSnapshot.tasks.entries()]
+          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
+          .map(([key]) => key)
+      ),
+    [lifecycleSnapshot.tasks]
+  )
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
@@ -2645,9 +2656,10 @@ function ProjectItem({
       getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
     )
   ).length
-  const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ task }) =>
-    isRuntimeTaskWaiting(task)
-  ).length
+  const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) => {
+    const key = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+    return waitingTaskKeys.has(key) || isRuntimeTaskWaiting(task)
+  }).length
   const projectUnreadTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
     unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
   ).length
@@ -3274,6 +3286,11 @@ export function DesktopSidebar({
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const [isArchivingPriority, setIsArchivingPriority] = useState(false)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
+  const projectCreateDialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => setProjectCreateDialogOpen(false),
+    projectCreateDialogOpen,
+    '[data-testid="project-create-local-option"]'
+  )
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
@@ -3327,6 +3344,15 @@ export function DesktopSidebar({
   } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const waitingTaskKeys = useMemo(
+    () =>
+      new Set(
+        [...lifecycleSnapshot.tasks.entries()]
+          .filter(([, lifecycle]) => lifecycle.derived.shouldShowSidebarWaiting)
+          .map(([key]) => key)
+      ),
+    [lifecycleSnapshot.tasks]
+  )
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
   const standaloneProjectWork = useMemo(
     () =>
@@ -3543,7 +3569,8 @@ export function DesktopSidebar({
           workspace,
           task,
           visibleUnreadRuntimeTaskKeys,
-          lifecycleSnapshot.runningTaskKeys
+          lifecycleSnapshot.runningTaskKeys,
+          waitingTaskKeys
         ),
       }))
     )
@@ -3557,7 +3584,8 @@ export function DesktopSidebar({
         workspace,
         task,
         visibleUnreadRuntimeTaskKeys,
-        lifecycleSnapshot.runningTaskKeys
+        lifecycleSnapshot.runningTaskKeys,
+        waitingTaskKeys
       ),
     }))
 
@@ -3567,6 +3595,7 @@ export function DesktopSidebar({
     lifecycleSnapshot.runningTaskKeys,
     sidebarRuntimeProjects,
     visibleUnreadRuntimeTaskKeys,
+    waitingTaskKeys,
   ])
   const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>
@@ -4024,12 +4053,12 @@ export function DesktopSidebar({
     })
   }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
 
-  const openProjectCreateDialog = () => {
+  const openProjectCreateDialog = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // Pointer activation should not restore keyboard focus to the icon on dismissal.
+    if (event.detail > 0) event.currentTarget.blur()
     setProjectCreateDialogOpen(true)
     void onRefreshDevices?.().catch(() => undefined)
   }
-
-  useEscapeKey(() => setProjectCreateDialogOpen(false), projectCreateDialogOpen)
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -4614,7 +4643,7 @@ export function DesktopSidebar({
                             data-testid="projects-create-button"
                             onClick={event => {
                               event.stopPropagation()
-                              openProjectCreateDialog()
+                              openProjectCreateDialog(event)
                             }}
                             className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                             aria-expanded={projectCreateDialogOpen}
@@ -4636,6 +4665,7 @@ export function DesktopSidebar({
                         }}
                       >
                         <div
+                          ref={projectCreateDialogRef}
                           role="dialog"
                           aria-modal="true"
                           aria-labelledby="project-create-dialog-title"

@@ -12,6 +12,7 @@ use serde::Deserialize;
 
 use super::db::{self, UserRow};
 use super::service::{self, ConnectorApp};
+use crate::auth::AppAuthenticator;
 use crate::state::AppState;
 
 /// Source `get_current_user` failure response.
@@ -26,24 +27,68 @@ struct Claims {
     token_use: Option<String>,
 }
 
+struct InstalledAppsUser(UserRow);
+
+impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<InstalledAppsUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok());
+        resolve_installed_apps_user(self.state(), authorization)
+            .await
+            .map(InstalledAppsUser)
+            .map_err(|(status, _)| {
+                if status == StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+            })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a InstalledAppsUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.users_user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+
+        let error = match failure {
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                unauthorized_error((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
+            }
+            _ => unauthorized_error((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY)),
+        };
+        error.into_http_error(arena)
+    }
+}
+
 /// GET /api/apps/installed: the apps-installed free function, injecting the
 /// process-lifetime application state.
 #[brz_http_server::get("/api/apps/installed")]
 async fn installed_apps(
     #[inject(state)] state: &Arc<AppState>,
-    #[header] authorization: Option<&str>,
+    #[auth] user: InstalledAppsUser,
 ) -> Result<super::models::InstalledResponse, crate::http_compat::FastApiError> {
-    apps(state, authorization).await
+    apps(state, user.0).await
 }
 
 /// Handler body for `GET /api/apps/installed`.
 async fn apps(
     state: &Arc<AppState>,
-    authorization: Option<&str>,
+    user: UserRow,
 ) -> Result<super::models::InstalledResponse, crate::http_compat::FastApiError> {
-    let user = authenticate(state, authorization)
-        .await
-        .map_err(unauthorized_error)?;
     // `installed_apps` reads the app catalog twice: once inside tool
     // discovery and once for the projection loop, mirroring the two
     // identical `list_visible_apps` queries the source issues.
@@ -77,8 +122,8 @@ fn unauthorized_error(
 }
 
 /// JWT session authentication mirroring `get_current_user`.
-async fn authenticate(
-    state: &Arc<AppState>,
+async fn resolve_installed_apps_user(
+    state: &AppState,
     authorization: Option<&str>,
 ) -> Result<UserRow, (StatusCode, &'static str)> {
     let Some(token) = bearer_token(authorization) else {

@@ -74,9 +74,12 @@ export function IssueMainCommentComposer({
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const caret = useRef<number | null>(null);
+  const activeMentionIndexRef = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mentionsOpen, setMentionsOpen] = useState(false);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
+  const mentionItems = mentionGroups.flatMap((group) => group.items);
 
   useLayoutEffect(() => {
     if (caret.current === null) return;
@@ -97,6 +100,31 @@ export function IssueMainCommentComposer({
     caret.current = insertion.length;
     onChange(`${insertion}${suffix}`);
     setMentionsOpen(false);
+  }
+
+  function setActiveMention(index: number) {
+    activeMentionIndexRef.current = index;
+    setActiveMentionIndex(index);
+  }
+
+  function openMentions() {
+    setActiveMention(0);
+    setMentionsOpen(true);
+  }
+
+  function selectActiveMention() {
+    const item = mentionItems[activeMentionIndexRef.current] ?? mentionItems[0];
+    if (!item) return false;
+    insertMention(item.name);
+    return true;
+  }
+
+  function moveActiveMention(delta: number) {
+    if (!mentionItems.length) return;
+    setActiveMention(
+      (activeMentionIndexRef.current + delta + mentionItems.length) %
+        mentionItems.length,
+    );
   }
 
   return (
@@ -126,17 +154,51 @@ export function IssueMainCommentComposer({
             disabled={disabled || sending}
             onChange={(event) => {
               onChange(event.target.value);
-              setMentionsOpen(
+              if (
                 event.target.value
                   .slice(0, event.target.selectionStart)
-                  .endsWith("@"),
-              );
+                  .endsWith("@")
+              ) {
+                openMentions();
+              } else {
+                setMentionsOpen(false);
+              }
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape" && mentionsOpen) {
                 event.preventDefault();
                 event.stopPropagation();
                 setMentionsOpen(false);
+                return;
+              }
+              if (
+                mentionsOpen &&
+                mentionItems.length > 0 &&
+                event.key === "ArrowDown"
+              ) {
+                event.preventDefault();
+                moveActiveMention(1);
+                return;
+              }
+              if (
+                mentionsOpen &&
+                mentionItems.length > 0 &&
+                event.key === "ArrowUp"
+              ) {
+                event.preventDefault();
+                moveActiveMention(-1);
+                return;
+              }
+              if (
+                mentionsOpen &&
+                mentionItems.length > 0 &&
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                selectActiveMention();
                 return;
               }
               if (
@@ -168,24 +230,39 @@ export function IssueMainCommentComposer({
               >
                 {mentionGroups
                   .filter((group) => group.items.length)
-                  .map((group) => (
-                    <section key={group.label}>
-                      <h4>{group.label}</h4>
-                      {group.items.map((item) => (
-                        <button
-                          type="button"
-                          key={item.id}
-                          data-testid={
-                            item.testId ?? `issue-comment-mention-${item.id}`
-                          }
-                          onClick={() => insertMention(item.name)}
-                        >
-                          <span>{item.avatar ?? item.name.slice(0, 1)}</span>
-                          {item.name}
-                        </button>
-                      ))}
-                    </section>
-                  ))}
+                  .map((group) => {
+                    const groupStart = mentionItems.findIndex(
+                      (item) => item === group.items[0],
+                    );
+                    return (
+                      <section key={group.label}>
+                        <h4>{group.label}</h4>
+                        {group.items.map((item, itemIndex) => {
+                          const flatIndex = groupStart + itemIndex;
+                          const active = flatIndex === activeMentionIndex;
+                          return (
+                            <button
+                              type="button"
+                              key={item.id}
+                              data-testid={
+                                item.testId ??
+                                `issue-comment-mention-${item.id}`
+                              }
+                              data-active={active ? "true" : "false"}
+                              aria-selected={active}
+                              onMouseEnter={() => setActiveMention(flatIndex)}
+                              onClick={() => insertMention(item.name)}
+                            >
+                              <span>
+                                {item.avatar ?? item.name.slice(0, 1)}
+                              </span>
+                              {item.name}
+                            </button>
+                          );
+                        })}
+                      </section>
+                    );
+                  })}
               </div>
             </div>
           ) : null}
@@ -193,18 +270,20 @@ export function IssueMainCommentComposer({
       }
       actions={
         <>
-          <button
-            type="button"
-            data-testid={testIds.settings}
-            aria-label={labels.settings}
-            title={labels.settings}
-            disabled={!settings || disabled || sending}
-            aria-expanded={settingsOpen}
-            aria-controls={settingsId}
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-          </button>
+          {settings && (
+            <button
+              type="button"
+              data-testid={testIds.settings}
+              aria-label={labels.settings}
+              title={labels.settings}
+              disabled={!settings || disabled || sending}
+              aria-expanded={settingsOpen}
+              aria-controls={settingsId}
+              onClick={() => setSettingsOpen((open) => !open)}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </button>
+          )}
           <span className="flex-1" />
           <input
             ref={fileInput}

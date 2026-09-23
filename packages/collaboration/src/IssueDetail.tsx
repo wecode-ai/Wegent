@@ -8,7 +8,7 @@ import type { RuntimeExecutionTarget } from './issue-detail/runtimeExecutionTarg
 // SPDX-License-Identifier: Apache-2.0
 
 import { collaborationTestIds } from './testIds'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import {
   collaborationMessages,
@@ -31,6 +31,7 @@ import type {
   CollaborationAgent,
   CollaborationAssignment,
   CollaborationComment,
+  CollaborationDefaultAssistant,
   CollaborationExecution,
   CollaborationIssue,
   CollaborationMember,
@@ -64,6 +65,7 @@ interface IssueDetailProps {
   executions?: CollaborationExecution[]
   members?: CollaborationMember[]
   agents?: CollaborationAgent[]
+  defaultAssistant?: CollaborationDefaultAssistant
   messages: Messages
   translate?: CollaborationTranslate
   onClose(): void
@@ -83,6 +85,7 @@ interface IssueCreateProps {
   allIssues: CollaborationIssue[]
   messages: Messages
   translate?: CollaborationTranslate
+  environmentNotice?: ReactNode
   onClose(): void
   onCreated(issue: CollaborationIssue): void | Promise<void>
   onError(): void
@@ -165,6 +168,7 @@ export function IssueCreate({
   allIssues,
   messages,
   translate,
+  environmentNotice,
   onClose,
   onCreated,
   onError,
@@ -185,7 +189,10 @@ export function IssueCreate({
         onClose={onClose}
         onCreated={onCreated}
         translate={editorTranslate}
-        extensions={browserDueDateExtensions}
+        extensions={{
+          ...browserDueDateExtensions,
+          ...(environmentNotice ? { renderCreateOptions: () => environmentNotice } : {}),
+        }}
       />
     </div>
   )
@@ -213,6 +220,7 @@ function BrowserIssueDetail({
   executions = [],
   members = [],
   agents = [],
+  defaultAssistant,
   messages,
   translate,
   onClose,
@@ -254,6 +262,7 @@ function BrowserIssueDetail({
         conversation={
           selectedConversation && api.runtime ? (
             <IssueTaskConversation
+              projectStore={project.project_store}
               key={selectedConversation.id}
               binding={selectedConversation}
               issueId={issue.id}
@@ -294,6 +303,7 @@ function BrowserIssueDetail({
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}
             canStartWork={permissions.canStartWork}
+            defaultAssistant={defaultAssistant}
             onCreateTask={onCreateTask}
             translate={editorTranslate}
             extensions={{
@@ -345,7 +355,20 @@ function BrowserIssueDetail({
       </IssueConversationDrawers>
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails
-          target={selectedExecution}
+          target={
+            project.project_store === 'backend'
+              ? {
+                  ...selectedExecution,
+                  address: {
+                    ...selectedExecution.address,
+                    projectSession: {
+                      projectId: String(project.id),
+                      issueId: issue.id,
+                    },
+                  },
+                }
+              : selectedExecution
+          }
           runtime={api.runtime}
           translate={editorTranslate}
           onClose={closeExecution}

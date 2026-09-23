@@ -12,6 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -327,25 +328,26 @@ async def _device_command_env(
     return env
 
 
-@router.get("", response_model=DeviceListResponse)
-async def get_all_devices(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get all devices for the current user (including offline).
-
-    Returns all registered devices with their current online status.
-    Devices auto-register via WebSocket when they connect.
-
-    Returns:
-        DeviceListResponse with all devices list
-    """
-    devices = await device_service.get_all_devices(db, current_user.id)
-    return DeviceListResponse(
-        items=[DeviceInfo(**d) for d in devices],
-        total=len(devices),
-    )
+# MIGRATION-CANDIDATE(api="GET /api/devices"): remove after final confirmation.
+# @router.get("", response_model=DeviceListResponse)
+# async def get_all_devices(
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(security.get_current_user),
+# ):
+#     """
+#     Get all devices for the current user (including offline).
+#
+#     Returns all registered devices with their current online status.
+#     Devices auto-register via WebSocket when they connect.
+#
+#     Returns:
+#         DeviceListResponse with all devices list
+#     """
+#     devices = await device_service.get_all_devices(db, current_user.id)
+#     return DeviceListResponse(
+#         items=[DeviceInfo(**d) for d in devices],
+#         total=len(devices),
+#     )
 
 
 @router.get("/online", response_model=DeviceListResponse)
@@ -878,6 +880,10 @@ class DeviceSessionResponse(BaseModel):
     transport: Literal["url", "socketio"] = Field(
         default="url",
         description="Browser transport for the interactive session",
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="UTC expiration time for the interactive session",
     )
 
 

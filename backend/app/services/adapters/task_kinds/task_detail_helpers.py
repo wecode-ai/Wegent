@@ -173,6 +173,10 @@ def add_group_chat_info_to_task(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
             ResourceMember.status == MemberStatus.APPROVED,
+            # Share recipients keep a record here too, but copying a shared
+            # task does not turn the original into a group chat. Mirrors the
+            # task list path in helpers._add_group_chat_info.
+            ResourceMember.copied_resource_id == 0,
         )
         .all()
     )

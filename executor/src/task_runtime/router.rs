@@ -2,14 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use serde_json::Value;
+
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
     IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
-    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
-    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskRuntimeError, TaskUpdate,
+    LocalRuntimeCommentStart, LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
+    TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -65,6 +67,17 @@ impl TaskRuntime {
 
     pub fn create_project(&self, input: ProjectCreate) -> Result<LoopItem, TaskRuntimeError> {
         self.local_store.create_project(input).map(mask_project)
+    }
+
+    pub fn import_code_project(
+        &self,
+        key: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store
+            .import_code_project(key, name, roots)
+            .map(mask_project)
     }
 
     pub fn update_project(
@@ -605,12 +618,42 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
+    pub fn local_automation_assignment_candidates(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .local_automation_assignment_candidates(project_id, task_id, run_id)
+    }
+
+    pub fn submit_local_automation_workflow_plan(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        run_id: &str,
+        plan: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
+    }
+
     pub fn create_chat_agent(
         &self,
         project_id: &str,
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         self.local_store.create_chat_agent(project_id, input)
+    }
+
+    pub fn ensure_default_chat_agent(
+        &self,
+        project_id: &str,
+        input: ChatAgentCreate,
+    ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
+        self.local_store
+            .ensure_default_chat_agent(project_id, input)
     }
 
     pub fn update_chat_agent(
@@ -631,6 +674,40 @@ impl TaskRuntime {
     ) -> Result<(), TaskRuntimeError> {
         self.local_store
             .archive_chat_agent(project_id, agent_id, version)
+    }
+
+    pub fn cancel_project_automation_run(
+        &self,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .cancel_project_automation_run(project_id, run_id)
+    }
+    pub fn retry_project_automation_run(
+        &self,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .retry_project_automation_run(project_id, run_id)
+    }
+    pub fn run_project_automation(
+        &self,
+        project_id: &str,
+        rule_id: &str,
+        issue_id: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .run_project_automation(project_id, rule_id, issue_id)
+    }
+    pub fn list_project_automation_runs(
+        &self,
+        project_id: &str,
+        rule_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store
+            .list_project_automation_runs(project_id, rule_id)
     }
 
     pub fn list_executions(
@@ -659,6 +736,21 @@ impl TaskRuntime {
         create: LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
         self.local_store.create_comment(&create)
+    }
+
+    pub fn start_runtime_comment(
+        &self,
+        input: &LocalRuntimeCommentStart<'_>,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.start_runtime_comment(input)
+    }
+
+    pub fn fail_runtime_comment(
+        &self,
+        message_id: &str,
+        error: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.fail_runtime_comment(message_id, error)
     }
 
     pub fn enqueue_execution(
@@ -702,6 +794,12 @@ impl TaskRuntime {
         &self,
         claim: LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if let Err(error) = self.local_store.tick_project_automations() {
+            crate::logging::log_executor_event(
+                "local project automation scheduling failed",
+                &[("error", error.to_string())],
+            );
+        }
         self.local_store.claim_next_local_execution(&claim)
     }
 
@@ -1516,6 +1614,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )
@@ -1619,6 +1718,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
+                    assignee_user_id: None,
                     workflow: None,
                 },
             )

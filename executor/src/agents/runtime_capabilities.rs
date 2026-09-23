@@ -1385,6 +1385,9 @@ async fn download_skill(
     skill_ref: Option<&SkillRef>,
     api_base_url: &str,
 ) -> Result<SkillDeploymentResult, String> {
+    if plan.auth_token.trim().is_empty() {
+        return Err("backend authentication is required to download Skill".to_owned());
+    }
     let Some((skill_id, namespace)) =
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {

@@ -20,13 +20,17 @@ const ERROR_TRANSLATION_KEYS: Record<string, string> = {
   index_lock_timeout: 'indexLockTimeout',
   index_dispatch_failed: 'indexDispatchFailed',
   processing_failed: 'processingFailed',
-  external_import_failed: 'externalImportFailed',
 }
 
 export function getProcessingErrorMessage(
   error: DocumentProcessingError,
   translate: (key: string) => string
 ): string {
+  // Import providers already reduce upstream failures to user-safe text. Keep
+  // that concrete reason (for example, a Wiki connection failure) instead of
+  // replacing it with the generic localized import message.
+  if (error.code === 'external_import_failed') return error.message
+
   // Known codes are localized by the client. The backend's safe message is a
   // rolling-upgrade fallback for codes this frontend version does not know.
   const translationKey = ERROR_TRANSLATION_KEYS[error.code]

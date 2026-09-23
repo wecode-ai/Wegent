@@ -1063,8 +1063,9 @@ class DockerExecutor(Executor):
 
     def _add_workspace_mount(self, cmd: List[str]) -> None:
         """Add workspace mount configuration"""
-        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
+        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")
         if executor_workspace:
+            os.makedirs(executor_workspace, exist_ok=True)
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
 
     def _add_git_token_crypto(self, cmd: List[str]) -> None:

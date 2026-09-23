@@ -160,8 +160,8 @@ def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
 ) -> None:
     from app.services.cloud_projects import cloud_project_service
-    from app.services.loop_items import loop_item_service
     from app.services.loop_items.external_provider import external_loop_item_provider
+    from app.services.loop_items.service import loop_item_service
 
     access = cloud_project_service.access(db, values.project_id, user_id)
     if access.is_public_visitor:

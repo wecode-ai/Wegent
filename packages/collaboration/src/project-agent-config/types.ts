@@ -18,6 +18,11 @@ export interface ProjectAgentSelectOption {
   value: string;
 }
 
+export interface ProjectAgentOwnerOption {
+  label: string;
+  namespace: string;
+}
+
 export interface ProjectAgentConfigurationHost {
   /**
    * Whether the host lets the user pick an already existing Agent resource.
@@ -25,15 +30,18 @@ export interface ProjectAgentConfigurationHost {
    * library set it to false so the picker is never rendered.
    */
   supportsExistingAgentSelection?: boolean;
+  createDefaultLocalAgent?(projectId?: string): Promise<string>;
   renderAgentCreator?(props: {
     namespace: string;
     onClose(): void;
     onCreated(agent: { name: string; teamId: number }): Promise<void>;
+    ownerOptions?: ProjectAgentOwnerOption[];
     workspaceName: string;
   }): ReactNode;
   renderLocalAgentCreator?(props: {
     onClose(): void;
     onCreated(): Promise<void>;
+    projectId?: string;
   }): ReactNode;
   /**
    * Edits the Agent resource behind a configured project Agent. Hosts that
@@ -47,6 +55,7 @@ export interface ProjectAgentConfigurationHost {
     workspaceName: string;
   }): ReactNode;
   renderLocalAgentEditor?(props: {
+    projectId?: string;
     resourceId: string;
     onClose(): void;
     onSaved(): Promise<void>;

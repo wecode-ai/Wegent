@@ -198,11 +198,12 @@ fn execution_repositories(request: &ExecutionRequest) -> Result<Vec<ExecutionRep
                 .unwrap_or(false),
         });
     }
-    if repositories
-        .iter()
-        .filter(|repository| repository.primary)
-        .count()
-        != 1
+    if !repositories.is_empty()
+        && repositories
+            .iter()
+            .filter(|repository| repository.primary)
+            .count()
+            != 1
     {
         return Err("Execution environment must have exactly one primary repository".to_owned());
     }
@@ -515,6 +516,10 @@ async fn validate_existing_git_repository(project_path: &Path) -> Result<(), Str
         .arg("-C")
         .arg(project_path)
         .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        // Validate the requested workspace, not a repository inherited from a hook.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -861,6 +866,7 @@ mod tests {
 
     #[test]
     fn expands_platform_home_relative_paths() {
+        let _lock = crate::test_env::lock();
         let home = home_dir().expect("test user has a home directory");
         assert_eq!(expand_tilde("~"), home);
         assert_eq!(expand_tilde("~/test/SKILL.md"), home.join("test/SKILL.md"));

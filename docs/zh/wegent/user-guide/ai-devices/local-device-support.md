@@ -203,7 +203,7 @@ WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> 
 
 目标主机的内网防火墙需要允许浏览器访问 17888，但不能把该端口开放到公网。17888 只提供带短期会话 token 的 IDE 访问；session gateway 校验 token 后设置 HttpOnly Cookie，并从重定向 URL 中移除 token，不提供匿名 code-server 入口。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过自动探测地址对应的 session gateway 访问，因此探测到的设备 IP 必须能从用户浏览器访问。公开版 Wework 不提供云桌面；部分产品发行版可以通过可选扩展增加该能力。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过自动探测地址对应的 session gateway 访问，因此探测到的设备 IP 必须能从用户浏览器访问。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 只监听容器回环地址并使用 `auth: none`，session gateway 在外层校验短期 token，浏览器不会直接访问 code-server。
@@ -362,16 +362,16 @@ wegent-executor
 
 云设备会显示在线状态、executor 版本、CPU、内存和磁盘使用率。当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。Wework 前端可通过 `VITE_CLOUD_DEVICE_SCALING_WIKI_URL` 配置资源说明卡中的扩容 Wiki 链接，用于引导用户在 CPU、MEM 或磁盘持续超过 80% 时申请扩容或清理工作区缓存。
 
-本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、云桌面、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
+本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
-在线云设备和远程 Docker 设备支持直接打开交互式会话：
+在线云设备和远程 Docker 设备支持直接打开终端和 IDE。
 
-| 操作     | 后端接口                                    | 说明                                                                                                                                 |
-| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
+| 操作     | 适用设备                 | 后端接口                                    | 说明                                                                                                                                 |
+| -------- | ------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | 云设备、远程 Docker 设备 | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
 
-终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，对应按钮不可用。
 
 更多菜单提供低频管理操作：
 

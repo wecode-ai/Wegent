@@ -45,6 +45,27 @@ fn client_origin_matches_the_source_pattern() {
     assert!(parse_client_origin(Some("app")).is_err());
 }
 
+/// The route's declared response type must be the typed model, which the API
+/// adapter converts through its JSON kind. The source declares
+/// `response_model=ProjectListResponse`, so FastAPI renders the body with the
+/// `application/json` media type; a raw `HttpResponse<Binary>` body only
+/// satisfies the binary kind and renders `application/octet-stream`.
+#[test]
+fn list_projects_declares_the_json_response_model() {
+    fn assert_json_route<F>(_route: F)
+    where
+        F: for<'a> std::ops::AsyncFn(
+                &'a Arc<AppState>,
+                crate::auth::SessionUser,
+                Option<String>,
+                Option<String>,
+            ) -> Result<ProjectListResponse, FastApiError>,
+    {
+    }
+
+    assert_json_route(list_projects);
+}
+
 #[test]
 fn merge_puts_shard_rows_first_dedups_and_sorts_desc() {
     let shard = vec![
@@ -243,7 +264,7 @@ async fn project_task_queries_bind_origin_and_preserve_ordering() {
     use crate::sql_test_support::{QueryCapture, Route};
     for origin in [None, Some(""), Some("client'\\name")] {
         let mysql = QueryCapture::default();
-        query_legacy_project_tasks(&mysql, 11, 7, origin)
+        query_base_project_tasks(&mysql, 11, 7, origin)
             .await
             .unwrap();
         query_shard_project_tasks(&mysql, 11, 7, origin)
@@ -251,8 +272,12 @@ async fn project_task_queries_bind_origin_and_preserve_ordering() {
             .unwrap();
         let queries = mysql.queries();
         assert_eq!(queries.len(), 2);
+        // The legacy rows live in the base table, so the base read passes the
+        // zero routing key even though an owner id is available; only the
+        // shard read routes to the owner's shard.
+        assert_eq!(queries[0].route, Route::User(0));
+        assert_eq!(queries[1].route, Route::User(7));
         for query in &queries {
-            assert_eq!(query.route, Route::User(7));
             assert_eq!(query.args, 2 + usize::from(origin.is_some()));
             assert_eq!(
                 query.sql.contains("AND client_origin = ?"),
@@ -266,7 +291,7 @@ async fn project_task_queries_bind_origin_and_preserve_ordering() {
 }
 
 #[tokio::test]
-async fn public_project_task_query_uses_base_route_once() {
+async fn base_project_task_query_uses_the_base_route_once() {
     use crate::sql_test_support::{QueryCapture, Route};
     let mysql = QueryCapture::default();
     let rows = query_base_project_tasks(&mysql, 11, 7, Some("frontend"))
@@ -278,6 +303,7 @@ async fn public_project_task_query_uses_base_route_once() {
     assert_eq!(queries[0].route, Route::User(0));
     assert_eq!(queries[0].args, 3);
     assert!(queries[0].sql.contains("FROM {{tasks}}"));
+    assert!(queries[0].sql.contains("user_id = ?"));
     assert!(queries[0].sql.ends_with("ORDER BY updated_at DESC"));
 }
 
@@ -310,4 +336,24 @@ async fn migrated_task_probe_binds_each_id_and_skips_empty_input() {
         "SELECT id FROM {{tasks}} WHERE id IN (?, ?)"
     );
     assert_eq!(queries[0].args, 2);
+}
+
+#[tokio::test]
+async fn migrated_task_read_uses_the_base_route_for_the_legacy_half() {
+    use crate::sql_test_support::{QueryCapture, Route};
+    let mysql = QueryCapture::default();
+    // The capture stub returns no rows, so the legacy half is empty and the
+    // source's probe early-out applies; only the two reads are issued.
+    let merged = query_migrated_project_tasks(&mysql, 11, 7, Some("frontend"))
+        .await
+        .unwrap();
+    assert!(merged.is_empty());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 2);
+    // The legacy rows are read from the base `tasks` table (`ByUserId(0)`),
+    // while the shard half routes to the owner's shard table.
+    assert_eq!(queries[0].route, Route::User(0));
+    assert!(queries[0].sql.ends_with("ORDER BY updated_at DESC"));
+    assert_eq!(queries[1].route, Route::User(7));
+    assert!(!queries[1].sql.contains("ORDER BY"));
 }

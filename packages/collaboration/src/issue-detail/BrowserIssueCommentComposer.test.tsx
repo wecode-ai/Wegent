@@ -173,7 +173,7 @@ describe('browser main comment with the PC execution pipeline', () => {
   })
   const element = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
   const input = () => element('collaboration-issue-comment') as HTMLTextAreaElement
-  async function mount() {
+  async function mount(agents = [agent]) {
     await act(async () =>
       root.render(
         <BrowserTaskDrafts runtime={runtime}>
@@ -184,7 +184,7 @@ describe('browser main comment with the PC execution pipeline', () => {
               client={client}
               project={project}
               issue={issue}
-              agents={[agent]}
+              agents={agents}
               members={[]}
               messages={[]}
               canComment
@@ -210,6 +210,25 @@ describe('browser main comment with the PC execution pipeline', () => {
   async function click(id: string) {
     await act(async () => element(id).click())
   }
+  it('executes an assigned hidden agent without requiring the members own runtime catalog', async () => {
+    client.executeTaskComment = vi.fn().mockResolvedValue([message])
+    vi.mocked(runtime.listDevices).mockResolvedValue([])
+    vi.mocked(runtime.listModels).mockResolvedValue([])
+    await mount([])
+    await type('Run pwd')
+    await click('collaboration-issue-comment-submit')
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: project.id,
+      taskId: issue.id,
+      triggerMessageId: message.messageId,
+      attachmentIds: [],
+    })
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+    expect(input().value).toBe('')
+    expect(element('collaboration-comment-settings-toggle')).toBeNull()
+  })
+
   it('renders PC controls and launches the explicitly selected project with the complete model identity', async () => {
     await mount()
     await type('Run pwd')

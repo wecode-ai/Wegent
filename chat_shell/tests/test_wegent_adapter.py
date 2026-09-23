@@ -49,3 +49,17 @@ def test_build_model_config_falls_through_none_identity_values() -> None:
 
     assert model_config["model_name"] == "nested-model"
     assert model_config["model_namespace"] == "group-b"
+
+
+def test_build_model_config_preserves_developer_role_support_flag() -> None:
+    model_config = WeGentToResponseAdapter._build_model_config(
+        {
+            "model_spec": {
+                "model_id": "qwen3.6-plus",
+                "model": "openai",
+                "supports_developer_role": False,
+            },
+        }
+    )
+
+    assert model_config["supports_developer_role"] is False

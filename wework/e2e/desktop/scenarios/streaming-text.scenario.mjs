@@ -82,6 +82,9 @@ const MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_PARTIAL'
 const VIEWPORT_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_VIEWPORT_ANCHOR'
 const APPEND_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_APPENDED'
 const SCROLL_BUTTON_APPEND_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_BUTTON_APPEND'
+const COMPLETED_SCROLL_ANCHOR_TEXT =
+  'Scroll button growth paragraph 21: the click must continue following the virtualized conversation bottom.'
+const COMPLETED_SCROLL_ANCHOR_E2E_ID = 'streaming-text-completed-scroll-anchor'
 const ATTACHMENT_FILENAME = 'streaming-turn-navigation.png'
 const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
@@ -106,6 +109,7 @@ const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fix
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
 const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
+const COMPLETED_SCROLL_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${COMPLETED_SCROLL_ANCHOR_E2E_ID}"]`
 const HISTORY_PARAGRAPHS = Array.from(
   { length: 28 },
   (_, index) =>
@@ -687,18 +691,29 @@ async function waitForBottom(control, description, timeoutMs) {
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
 }
 
-async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
+async function assertScrollPositionRemainsStable(
+  control,
+  initialMetrics,
+  anchorSelector,
+  initialAnchorMetrics,
+  description,
+  timeoutMs
+) {
   const startedAt = Date.now()
-  const initialDistanceFromTop = distanceFromTop(initialMetrics)
   while (Date.now() - startedAt < timeoutMs) {
     const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
+    const anchorMetrics = await getSingleElementMetrics(
+      control,
+      anchorSelector,
+      `${description} anchor`
+    )
     assert.ok(
       distanceFromBottom(metrics) > 8,
       `${description} returned to the bottom after the user scrolled upward`
     )
     assert.ok(
-      Math.abs(distanceFromTop(metrics) - initialDistanceFromTop) <= 8,
-      `${description} jumped from ${initialDistanceFromTop}px to ${distanceFromTop(metrics)}px from the content top`
+      Math.abs(anchorMetrics.top - initialAnchorMetrics.top) <= 8,
+      `${description} moved the visible anchor from ${initialAnchorMetrics.top}px to ${anchorMetrics.top}px on screen`
     )
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -894,6 +909,7 @@ export function createDesktopScenario({
   let resolvePartialWritten
   let resolveRequest
   let resolveScrollButtonAppendWritten
+  let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -930,6 +946,9 @@ export function createDesktopScenario({
   })
   const subagentCompletionRelease = new Promise(resolve => {
     releaseSubagentCompletion = resolve
+  })
+  const subagentChildRequestStarted = new Promise(resolve => {
+    resolveSubagentChildRequestStarted = resolve
   })
   const subagentPartialWritten = new Promise(resolve => {
     resolveSubagentPartialWritten = resolve
@@ -1335,6 +1354,7 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (request.headers['x-openai-subagent']) {
+        resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
           const tool = selectShellTool(
             body,
@@ -1408,6 +1428,7 @@ export function createDesktopScenario({
         requestContainsToolOutputForCall(body, SUBAGENT_CALL_ID)
       ) {
         const agentId = spawnedAgentId(body)
+        await subagentChildRequestStarted
         subagentStage = 'awaiting-wait-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -2678,9 +2699,21 @@ export function createDesktopScenario({
         distanceFromBottom(completedUserScrollPosition) > 8,
         'The user scroll did not move the completed conversation away from the bottom'
       )
+      await control.command('markElementWithText', `${ASSISTANT_CONTENT_SELECTOR} p`, {
+        text: COMPLETED_SCROLL_ANCHOR_TEXT,
+        value: COMPLETED_SCROLL_ANCHOR_E2E_ID,
+        timeoutMs: uiTimeoutMs,
+      })
+      const completedScrollAnchorPosition = await getSingleElementMetrics(
+        control,
+        COMPLETED_SCROLL_ANCHOR_SELECTOR,
+        'The visible paragraph after the completed conversation scrolled upward'
+      )
       await assertScrollPositionRemainsStable(
         control,
         completedUserScrollPosition,
+        COMPLETED_SCROLL_ANCHOR_SELECTOR,
+        completedScrollAnchorPosition,
         'The completed conversation while delayed bottom-follow work could still run',
         uiTimeoutMs
       )

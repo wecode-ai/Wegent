@@ -85,6 +85,7 @@ import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
@@ -121,9 +122,11 @@ import {
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   beginRuntimeGoalSnapshot,
+  getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
+  reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationGoal,
   setRuntimeConversationTaskPlan,
@@ -879,13 +882,26 @@ export function WorkbenchProvider({
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
   })
-  const activeModel = useMemo(
-    () =>
-      state.currentRuntimeTask
-        ? findModelForSelection(modelSelection.models, modelSelectionConfig)
-        : null,
-    [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
-  )
+  const activeModel = useMemo(() => {
+    if (!state.currentRuntimeTask) return null
+    const configuredModel = findModelForSelection(modelSelection.models, modelSelectionConfig)
+    if (configuredModel) return configuredModel
+    if (
+      !modelSelection.isConfiguredModelUnavailable ||
+      modelSelectionConfig?.modelType !== 'runtime'
+    ) {
+      return null
+    }
+    return (
+      modelSelection.models.find(model => model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) ??
+      null
+    )
+  }, [
+    modelSelection.isConfiguredModelUnavailable,
+    modelSelection.models,
+    modelSelectionConfig,
+    state.currentRuntimeTask,
+  ])
   const continueInNewConversation = useCallback(
     (
       model: UnifiedModel,
@@ -1620,6 +1636,7 @@ export function WorkbenchProvider({
     lifecycleStore,
     markRuntimeTasksArchived,
     refreshWorkLists,
+    setComposerErrorForScope,
     canNavigate: canNavigateWorkspaceTab,
   })
 
@@ -1909,6 +1926,7 @@ export function WorkbenchProvider({
                 refresh: true,
               })
               if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              reconcileRuntimeConversationSnapshot(address, transcript.turns)
               lifecycleStore.syncTranscript(address, transcript)
               if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
               continue
@@ -1950,7 +1968,13 @@ export function WorkbenchProvider({
   )
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
-    if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
+    const conversationGoal = getRuntimeConversationMetadata(address).goal
+    if (
+      (expectedGoalStatus === null || expectedGoalStatus === undefined) &&
+      conversationGoal === null
+    ) {
+      return
+    }
 
     const snapshotVersion = beginRuntimeGoalSnapshot(address)
     void runtimeTasks

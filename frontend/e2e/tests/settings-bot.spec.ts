@@ -1,5 +1,7 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
+import { ADMIN_USER } from '../config/test-users'
+import { createApiClient } from '../utils/api-client'
 
 const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&source=mine'
 
@@ -91,6 +93,91 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
     await expect(dialog.locator('[data-testid="simple-bind-mode-code-card"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-manage-skills-button"]')).toBeVisible()
+  })
+
+  test('should persist shared base capabilities without hiding skills', async ({
+    page,
+    request,
+    testPrefix,
+  }) => {
+    const apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
+    const agentName = TestData.uniqueName(`${testPrefix}-base-capabilities`)
+    let botName = ''
+
+    try {
+      const dialog = await openCreateAgentDialog(page)
+      const baseCapabilitiesSwitch = dialog.locator(
+        '[data-testid="inherit-base-capabilities-switch"]'
+      )
+
+      await expect(baseCapabilitiesSwitch).toBeChecked()
+      await expect(
+        dialog.getByText(
+          /Reuse the system agent's general skills, tools, and plugins|沿用系统智能体的通用 Skill、工具和插件能力/
+        )
+      ).toBeVisible()
+      await expect(dialog.locator('[data-testid="simple-manage-skills-button"]')).toBeVisible()
+
+      await baseCapabilitiesSwitch.click()
+      await expect(baseCapabilitiesSwitch).not.toBeChecked()
+      await baseCapabilitiesSwitch.click()
+      await expect(baseCapabilitiesSwitch).toBeChecked()
+
+      await dialog.locator('input#teamName').fill(agentName)
+      const botResponsePromise = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/bots'
+      )
+      const teamResponsePromise = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === '/api/teams'
+      )
+
+      await dialog.getByRole('button', { name: /Save|保存/ }).click()
+
+      const botResponse = await botResponsePromise
+      expect(botResponse.ok(), await botResponse.text()).toBe(true)
+      const botRequest = botResponse.request().postDataJSON() as {
+        inherit_base_capabilities?: boolean
+        capability_mode?: string
+      }
+      expect(botRequest.inherit_base_capabilities).toBe(true)
+      expect(botRequest.capability_mode).toBe('manual')
+
+      const savedBot = (await botResponse.json()) as {
+        name: string
+        inherit_base_capabilities?: boolean
+      }
+      botName = savedBot.name
+      expect(savedBot.inherit_base_capabilities).toBe(true)
+
+      const teamResponse = await teamResponsePromise
+      expect(teamResponse.ok(), await teamResponse.text()).toBe(true)
+
+      const persistedBots = await apiClient.getBots('personal')
+      expect(persistedBots.status).toBe(200)
+      const persistedBot = (
+        persistedBots.data as {
+          items?: Array<{
+            name: string
+            inherit_base_capabilities?: boolean
+            capability_mode?: string
+          }>
+        }
+      ).items?.find(bot => bot.name === botName)
+      expect(persistedBot).toMatchObject({
+        name: botName,
+        inherit_base_capabilities: true,
+        capability_mode: 'manual',
+      })
+    } finally {
+      await apiClient.deleteTeam(agentName).catch(() => undefined)
+      if (botName) {
+        await apiClient.deleteBot(botName).catch(() => undefined)
+      }
+    }
   })
 
   test('should accept bot-backed agent form input', async ({ page, testPrefix }) => {

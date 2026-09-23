@@ -45,9 +45,10 @@ const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
 }))
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
+const deviceSurfaceExtensionMock = vi.hoisted(() => ({
   available: true,
   DeviceAction: vi.fn(),
+  supportsDevice: vi.fn((device: { device_type: string }) => device.device_type === 'cloud'),
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
@@ -60,8 +61,8 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: deviceSurfaceExtensionMock,
 }))
 
 vi.mock('@extensions/remote-device-onboarding', () => ({
@@ -313,16 +314,16 @@ describe('ConnectionsSettingsPage', () => {
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
-    cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+    deviceSurfaceExtensionMock.available = true
+    deviceSurfaceExtensionMock.DeviceAction.mockImplementation(
       ({ deviceId, disabled, onOpened }) => (
         <button
           type="button"
-          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          data-testid={`connection-device-surface-button-${deviceId}`}
           disabled={disabled}
           onClick={onOpened}
         >
-          桌面
+          设备界面
         </button>
       )
     )
@@ -1935,7 +1936,7 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('当前有任务运行')
     expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent(
-      '终端、IDE 和桌面不可用'
+      '终端、IDE 等设备连接不可用'
     )
 
     await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
@@ -1944,7 +1945,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(notice).toHaveTextContent('设备将短暂离线')
     expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
-    expect(screen.getByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-device-surface-button-device-1')).toBeDisabled()
     expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
     expect(
       within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
@@ -2096,14 +2097,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('connection-upgrade-badge-device-1')).toBeVisible()
   })
 
-  test('keeps connection settings open after the cloud desktop extension opens', async () => {
+  test('keeps connection settings open after the device surface extension opens', async () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={onBack} />)
 
-    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    const button = await screen.findByTestId('connection-device-surface-button-device-1')
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
         disabled: false,
@@ -2116,23 +2117,40 @@ describe('ConnectionsSettingsPage', () => {
     expect(onBack).not.toHaveBeenCalled()
   })
 
-  test('does not render a cloud desktop action when the extension is unavailable', async () => {
-    cloudDesktopExtensionMock.available = false
+  test('does not render a device surface action for an unsupported remote device', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-remote-device')
+    expect(
+      screen.queryByTestId('connection-device-surface-button-remote-device')
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not render a device surface action when the extension is unavailable', async () => {
+    deviceSurfaceExtensionMock.available = false
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     await screen.findByTestId('connection-device-device-1')
-    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-device-surface-button-device-1')
+    ).not.toBeInTheDocument()
   })
 
-  test('passes an offline device as disabled to the cloud desktop action', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+  test('passes an offline device as disabled to the device surface action', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        status: 'offline',
+      }),
+    ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
-    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+    expect(await screen.findByTestId('connection-device-surface-button-device-1')).toBeDisabled()
+    expect(deviceSurfaceExtensionMock.DeviceAction).toHaveBeenCalledWith(
       expect.objectContaining({ deviceId: 'device-1', disabled: true }),
       undefined
     )
@@ -2541,7 +2559,77 @@ describe('ConnectionsSettingsPage', () => {
     expect(openSpy).not.toHaveBeenCalled()
   })
 
-  test('shows the actual IDE target before opening a remote device session', async () => {
+  test.each([
+    ['cloud', cloudDevice(), 'device-1'],
+    ['remote Docker', remoteDevice(), 'remote-device'],
+  ])('opens a %s device IDE directly in the system browser', async (_label, device, deviceId) => {
+    api.getAllDevices.mockResolvedValue([device])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: deviceId,
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId(`connection-code-server-button-${deviceId}`))
+    await waitFor(() => {
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'http://10.20.30.40:17888/session/code-server-1?token=secret',
+        { target: 'system' }
+      )
+    })
+    expect(screen.queryByTestId(`connection-ide-target-${deviceId}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`connection-ide-confirm-${deviceId}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`connection-ide-cancel-${deviceId}`)).not.toBeInTheDocument()
+  })
+
+  test('reports a missing IDE URL instead of silently doing nothing', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: '',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '设备未返回 IDE 地址，请重试'
+    )
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+  })
+
+  test('reports invalid IDE URLs returned by the external URL helper', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'not-a-valid-url',
+      transport: 'http',
+    })
+    openExternalUrlMock.mockResolvedValue(false)
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '无法使用系统默认浏览器打开 IDE，请重试'
+    )
+  })
+
+  test('allows retrying after the system browser fails to open the IDE', async () => {
     api.getAllDevices.mockResolvedValue([remoteDevice()])
     api.startCodeServer.mockResolvedValue({
       session_id: 'code-server-1',
@@ -2551,21 +2639,22 @@ describe('ConnectionsSettingsPage', () => {
       url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
       transport: 'http',
     })
+    openExternalUrlMock
+      .mockRejectedValueOnce(new Error('System browser unavailable'))
+      .mockResolvedValueOnce(true)
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
-    const target = await screen.findByTestId('connection-ide-target-remote-device')
-    expect(target).toHaveTextContent('http://10.20.30.40:17888')
-    expect(target).not.toHaveTextContent('token=secret')
-    expect(openExternalUrlMock).not.toHaveBeenCalled()
+    const ideButton = await screen.findByTestId('connection-code-server-button-remote-device')
+    await userEvent.click(ideButton)
+    expect(await screen.findByTestId('connection-session-error-remote-device')).toHaveTextContent(
+      '无法使用系统默认浏览器打开 IDE，请重试'
+    )
 
-    await userEvent.click(screen.getByTestId('connection-ide-confirm-remote-device'))
-    await waitFor(() => {
-      expect(openExternalUrlMock).toHaveBeenCalledWith(
-        'http://10.20.30.40:17888/session/code-server-1?token=secret'
-      )
-    })
+    await userEvent.click(ideButton)
+    await waitFor(() => expect(openExternalUrlMock).toHaveBeenCalledTimes(2))
+    expect(api.startCodeServer).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('connection-session-error-remote-device')).not.toBeInTheDocument()
   })
 
   test('allows deleting offline remote device registrations', async () => {

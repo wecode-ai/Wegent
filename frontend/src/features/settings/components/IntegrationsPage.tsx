@@ -5,6 +5,7 @@
 'use client'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import ExternalWikiConnectionCard from './ExternalWikiConnectionCard'
 import GitHubIntegration from './GitHubIntegration'
 import McpProviderIntegrations from './McpProviderIntegrations'
 
@@ -25,6 +26,8 @@ export default function IntegrationsPage() {
       <GitHubIntegration />
 
       <McpProviderIntegrations providerId="dingtalk" />
+
+      <ExternalWikiConnectionCard />
     </div>
   )
 }

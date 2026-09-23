@@ -66,6 +66,7 @@ pub(crate) struct RuntimeTaskLink {
     pub turn_status: Option<String>,
     pub goal_status: Option<String>,
     pub goal_execution_status: Option<String>,
+    pub interaction_status: Option<String>,
     pub supervisor: Option<RuntimeSupervisorState>,
     #[serde(skip)]
     pub git_info: Option<Value>,
@@ -122,6 +123,7 @@ impl RuntimeTaskLink {
             turn_status: None,
             goal_status: None,
             goal_execution_status: None,
+            interaction_status: None,
             supervisor: None,
             git_info: None,
             created_at: now,
@@ -167,6 +169,7 @@ impl RuntimeTaskLink {
             turn_status: None,
             goal_status: None,
             goal_execution_status: None,
+            interaction_status: None,
             supervisor: None,
             git_info: None,
             created_at: now,
@@ -275,6 +278,9 @@ impl RuntimeTaskLink {
             goal_execution_status: local_link
                 .as_ref()
                 .and_then(|link| link.goal_execution_status.clone()),
+            interaction_status: local_link
+                .as_ref()
+                .and_then(|link| link.interaction_status.clone()),
             supervisor,
             git_info,
             created_at,
@@ -338,6 +344,7 @@ impl RuntimeTaskLink {
             turn_status: self.turn_status.clone(),
             goal_status: self.goal_status.clone(),
             goal_execution_status: self.goal_execution_status.clone(),
+            interaction_status: self.interaction_status.clone(),
             supervisor: self.supervisor.clone(),
             git_info: self.git_info.clone(),
             created_at: self.created_at,
@@ -463,6 +470,7 @@ impl Default for RuntimeTaskLink {
             turn_status: None,
             goal_status: None,
             goal_execution_status: None,
+            interaction_status: None,
             supervisor: None,
             git_info: None,
             created_at: now,
@@ -771,7 +779,7 @@ pub(crate) fn search_result_item(
     })
 }
 
-fn local_task_json(link: RuntimeTaskLink) -> Value {
+pub(crate) fn local_task_json(link: RuntimeTaskLink) -> Value {
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
@@ -808,6 +816,13 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(goal_status) = link.goal_status.clone() {
         task.insert("goalStatus".to_owned(), Value::String(goal_status));
     }
+    task.insert(
+        "interactionStatus".to_owned(),
+        link.interaction_status
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
     if let Some(supervisor) = link.supervisor.clone() {
         if let Ok(supervisor) = serde_json::to_value(supervisor) {
             task.insert("supervisor".to_owned(), supervisor);

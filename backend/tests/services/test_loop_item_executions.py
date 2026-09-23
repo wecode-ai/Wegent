@@ -301,6 +301,7 @@ def _make_native_team_binding(
                 "ghostRef": {"name": ghost.name, "namespace": "default"},
                 "shellRef": {"name": shell.name, "namespace": "default"},
                 "modelRef": {"name": model.name, "namespace": "default"},
+                "capability_mode": "manual",
             },
         },
     )

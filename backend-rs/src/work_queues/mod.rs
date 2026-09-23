@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
-use crate::teams::auth::get_current_user;
+use crate::teams::auth::TeamsUser;
 use crate::teams::auth_error::AuthError;
 
 /// Grouped unread count row, in the source's SQLAlchemy label shape
@@ -43,21 +43,17 @@ struct UnreadCountResponse {
 #[brz_http_server::get("/api/work-queues/messages/unread-count")]
 async fn get_unread_message_count(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: TeamsUser,
 ) -> Result<UnreadCountResponse, FastApiError> {
-    unread_count(state, authorization).await
+    unread_count(state, current_user).await
 }
 
 /// Handler body for `GET /api/work-queues/messages/unread-count`.
 async fn unread_count(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: TeamsUser,
 ) -> Result<UnreadCountResponse, FastApiError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view())
-        .await
-        .map_err(FastApiError::from)?;
-    let user_id = current_user.users_id;
+    let user_id = current_user.0.users_id;
 
     // Source: db.query(QueueMessage.queue_id,
     // func.count(QueueMessage.id).label("count")).filter(

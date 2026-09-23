@@ -360,6 +360,7 @@ const ModelList: React.FC<ModelListProps> = ({
       spec: {
         modelConfig: {
           env: {
+            ...env,
             model: displayModel.modelType === 'openai' ? 'openai' : 'claude',
             model_id: displayModel.modelId,
             api_key: (env.api_key as string) || '',

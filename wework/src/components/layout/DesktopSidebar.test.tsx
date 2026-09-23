@@ -331,6 +331,53 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
   })
 
+  test.each(['projects-create-button', 'projects-empty-create-button'])(
+    'closes project creation with Escape without refocusing the clicked %s',
+    async triggerTestId => {
+      renderSidebar({
+        projects: [],
+        runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+        cloudWorkStatus: cloudWorkStatus({
+          availability: 'empty',
+          checks: { runtimeWork: 'empty' },
+        }),
+      })
+      const user = userEvent.setup()
+      const trigger = screen.getByTestId(triggerTestId)
+      await user.click(trigger)
+      const localOption = screen.getByTestId('project-create-local-option')
+      expect(localOption).toHaveFocus()
+
+      fireEvent.keyDown(localOption, { key: 'Escape', isComposing: true })
+      expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+      expect(trigger).not.toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+    }
+  )
+
+  test('keeps project creation keyboard navigation inside the dialog and returns to its keyboard trigger', async () => {
+    renderSidebar()
+    const user = userEvent.setup()
+    const trigger = screen.getByTestId('projects-create-button')
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('project-create-local-option')).toHaveFocus()
+
+    await user.tab()
+    expect(screen.getByTestId('project-create-remote-option')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByTestId('close-project-source-dialog')).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByTestId('project-create-remote-option')).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
   test('does not show the empty project creation action before runtime work loads', () => {
     renderSidebar({
       projects: [],
@@ -3077,8 +3124,7 @@ describe('DesktopSidebar', () => {
     expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
     await user.clear(renameInput)
-    await user.type(renameInput, '对齐方案')
-    await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
+    await user.type(renameInput, '对齐方案{Enter}')
 
     await waitFor(() => {
       expect(onRenameRuntimeTask).toHaveBeenCalledWith(
@@ -3124,12 +3170,19 @@ describe('DesktopSidebar', () => {
       onRenameRuntimeTask,
     })
 
-    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
-
-    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('rename-runtime-local-task-input-codex-double-click')).toHaveValue(
-      'Double click rename'
-    )
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
+      expect(onOpenRuntimeTask).toHaveBeenCalledTimes(attempt)
+      const input = screen.getByTestId('rename-runtime-local-task-input-codex-double-click')
+      expect(input).toHaveValue('Double click rename')
+      expect(input).toHaveFocus()
+      await user.type(input, `Draft ${attempt}`)
+      await user.keyboard('{Escape}')
+      expect(
+        screen.queryByTestId('rename-runtime-local-task-input-codex-double-click')
+      ).not.toBeInTheDocument()
+    }
+    expect(onRenameRuntimeTask).not.toHaveBeenCalled()
   })
 
   test('renders project runtime tasks directly under projects and opens by address', async () => {
@@ -3650,13 +3703,22 @@ describe('DesktopSidebar', () => {
                     running: false,
                     updatedAt: '2026-06-20T02:00:00Z',
                   },
+                  {
+                    taskId: 'codex-waiting',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Waiting for an answer',
+                    runtime: 'codex',
+                    running: true,
+                    interactionStatus: 'waitingForUserInput',
+                    updatedAt: '2026-06-20T01:30:00Z',
+                  },
                 ],
               },
             ],
           },
         ],
         chats: [],
-        totalTasks: 3,
+        totalTasks: 4,
       },
     })
 
@@ -3680,6 +3742,8 @@ describe('DesktopSidebar', () => {
       screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
     ).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-waiting-codex-waiting')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-running-codex-waiting')).not.toBeInTheDocument()
   })
 
   test('shows a queued active Goal recovery as running while preserving queue actions', async () => {

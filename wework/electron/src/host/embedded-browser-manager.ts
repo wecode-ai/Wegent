@@ -60,6 +60,7 @@ interface BrowserEntry {
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
   historyGeneration: number
+  initialNavigation: boolean
 }
 
 interface BrowserOpenInput {
@@ -144,6 +145,7 @@ export interface BrowserBackgroundPageState {
 }
 
 const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
+const DETACHED_INSPECTOR_OPEN_TIMEOUT_MS = 15_000
 // Chromium's ERR_ABORTED: the load was superseded by a newer navigation, which
 // is a normal race, not a user-facing failure.
 const NAVIGATION_ABORTED_ERROR_CODE = -3
@@ -412,6 +414,7 @@ export class EmbeddedBrowserManager {
       navigationError: null,
       historyId: null,
       historyGeneration: this.historyGeneration,
+      initialNavigation: true,
     }
     contents.on('before-input-event', (event, input) => {
       const isBareF12 =
@@ -458,6 +461,14 @@ export class EmbeddedBrowserManager {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
     contents.on('did-navigate', (_event, url) => {
+      if (entry.initialNavigation && url !== 'about:blank') {
+        entry.initialNavigation = false
+        const history = contents.navigationHistory
+        // The host's bootstrap page must not become a user-visible Back destination.
+        if (history.getActiveIndex() > 0 && history.getEntryAtIndex(0)?.url === 'about:blank') {
+          history.removeEntryAtIndex(0)
+        }
+      }
       // A committed main-frame navigation means a page is on screen again, so
       // any failure recorded by a superseded load is now stale.
       entry.navigationError = null
@@ -1062,7 +1073,7 @@ export class EmbeddedBrowserManager {
     contents.openDevTools({ mode: 'detach', activate: true })
     await waitForState(
       () => contents.isDevToolsOpened() && contents.devToolsWebContents !== null,
-      5_000,
+      DETACHED_INSPECTOR_OPEN_TIMEOUT_MS,
       'Timed out waiting for detached embedded browser Inspector'
     )
     await waitForStableFrame(entry, beforeFrame, 5_000)

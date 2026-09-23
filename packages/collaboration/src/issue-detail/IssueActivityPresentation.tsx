@@ -1,6 +1,7 @@
 import { ArrowUp, Bot } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
 import { activityClassNames as cn } from "./activityClassNames";
+import { formatIssueTimestamp } from "./issueTimestamp";
 
 export function IssueActivityAvatar({
   author,
@@ -56,7 +57,7 @@ export function IssueActivityMessage({
         </span>
         {metadata}
         <time className="text-sm text-text-muted" dateTime={createdAt}>
-          {createdAt.slice(5, 16).replace("T", " ")}
+          {formatIssueTimestamp(createdAt)}
         </time>
       </header>
       <div className="task-detail-thread-message-body">{children}</div>

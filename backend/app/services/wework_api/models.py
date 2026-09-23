@@ -14,12 +14,13 @@ from app.services.model_aggregation_service import model_aggregation_service
 
 
 def catalog(db: Session, user: User) -> list[dict]:
+    # Match the desktop catalog: the gateway adapts upstream model protocols.
+    # Native Codex shell filtering would hide supported Anthropic/chat models.
     return model_aggregation_service.list_available_models(
         db=db,
         current_user=user,
         scope="all",
         include_config=False,
-        shell_type="Codex",
         model_category_type="llm",
         client_origin="wework",
     )

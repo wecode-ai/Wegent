@@ -36,16 +36,25 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
 ];
 
 struct EnvLockGuard {
+    _codex_home: EnvGuard,
+    _codex_home_directory: tempfile::TempDir,
     _guard: MutexGuard<'static, ()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("environment lock should be available");
+    // Project listing imports the native Codex catalog independently of the
+    // executor home. Keep personal projects out of every IPC fixture.
+    let codex_home_directory = tempfile::tempdir().unwrap();
+    let codex_home = EnvGuard::set("CODEX_HOME", codex_home_directory.path().to_str().unwrap());
     EnvLockGuard {
-        _guard: LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("environment lock should be available"),
+        _codex_home: codex_home,
+        _codex_home_directory: codex_home_directory,
+        _guard: guard,
     }
 }
 
@@ -2630,4 +2639,90 @@ impl DeviceCommandHandler for CaptureCommandHandler {
             CommandResult::ok(".\n..\nsrc/\nREADME.md\n")
         })
     }
+}
+
+#[tokio::test]
+async fn local_project_automation_ipc_runs_cancels_and_retries_without_backend() {
+    use wegent_executor::task_runtime::{LocalTaskStore, ProjectUpdate};
+    let _lock = env_lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+    let store = LocalTaskStore::open(home.path().join("data/tasks.sqlite")).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Local automation"})).unwrap())
+        .unwrap();
+    let agent = store
+        .create_chat_agent(
+            &project.id,
+            serde_json::from_value(json!({"name":"Local Agent"})).unwrap(),
+        )
+        .unwrap();
+    store.update_project(&project.id, ProjectUpdate {
+        version:project.version,
+        automatic_processing_rules:Some(json!([{"id":"rule","targetKind":"agent","targetId":agent.id,"triggerType":"event","eventType":"task.tag_added","eventConfig":{"tags":["ready"]},"enabled":true}])),
+        ..Default::default()
+    }).unwrap();
+    let task = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Process locally"})).unwrap(),
+        )
+        .unwrap();
+    let server = AppIpcServer::new();
+    let runs = server
+        .dispatch(
+            "projects.automation.run",
+            json!({"project_id":project.id,"automation_id":"rule","issue_id":task.id}),
+        )
+        .await
+        .unwrap();
+    let run_id = &runs[0]["id"];
+    assert_eq!(runs[0]["status"], "queued");
+    let comments = server
+        .dispatch(
+            "todos.comment.list",
+            json!({"project_id":project.id,"task_id":task.id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(comments.as_array().unwrap().len(), 1);
+    assert_eq!(comments[0]["status"], "pending");
+    let stopped = server
+        .dispatch(
+            "projects.automation.cancel",
+            json!({"project_id":project.id,"run_id":run_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped["executions"][0]["status"], "cancelled");
+    let comments = server
+        .dispatch(
+            "todos.comment.list",
+            json!({"project_id":project.id,"task_id":task.id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(comments[0]["status"], "cancelled");
+    let retried = server
+        .dispatch(
+            "projects.automation.retry",
+            json!({"project_id":project.id,"run_id":run_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retried[0]["status"], "queued");
+    assert_ne!(&retried[0]["id"], run_id);
+    let persisted = AppIpcServer::new()
+        .dispatch(
+            "projects.automation.runs",
+            json!({"project_id":project.id,"automation_id":"rule"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(persisted.as_array().unwrap().len(), 2);
+    assert!(persisted
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|run| run["id"] == *run_id && run["status"] == "cancelled"));
 }

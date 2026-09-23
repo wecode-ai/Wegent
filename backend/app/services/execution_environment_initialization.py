@@ -143,15 +143,16 @@ async def initialize_execution_environment(
     state via :func:`merge_execution_environment_device_state`; the route id is
     ``runtime_device_route_id(device)``.
     """
-    # Saving tolerates an empty repository list so a draft environment can be
-    # stored, but preparation on a device cannot run without one; reject here
-    # instead of letting the executor surface a raw internal error.
     repositories = [
         repository
         for repository in definition.get("repositories") or []
         if isinstance(repository, dict)
     ]
-    if sum(1 for repository in repositories if bool(repository.get("primary"))) != 1:
+    if (
+        repositories
+        and sum(1 for repository in repositories if bool(repository.get("primary")))
+        != 1
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Execution environment requires exactly one primary repository",
@@ -177,7 +178,8 @@ async def initialize_execution_environment(
                 "on this device",
             )
         try:
-            await _sync_device_git_credentials(db, device)
+            if repositories:
+                await _sync_device_git_credentials(db, device)
             result = await execute_configured_device_command(
                 db=db,
                 user_id=int(device.user_id),

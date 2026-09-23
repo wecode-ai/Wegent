@@ -8,7 +8,7 @@ import logging
 import secrets
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.socketio import get_sio
@@ -44,6 +44,9 @@ SESSION_DISABLED_MESSAGES = {
     "terminal": "Terminal sessions are disabled on this device",
     "code_server": "Code-server sessions are disabled on this device",
 }
+
+CloudSessionHostResolver = Callable[[str], Awaitable[Any]]
+_cloud_session_host_resolver: CloudSessionHostResolver | None = None
 
 
 class DeviceSessionError(RuntimeError):
@@ -99,7 +102,7 @@ class LocalDeviceSessionService:
             raise DeviceSessionError(
                 f"Device '{route_identity.logical_device_id}' is offline"
             )
-        if not _interactive_session_enabled(online_info, session_type):
+        if not session_enabled(online_info, session_type):
             raise DeviceSessionError(SESSION_DISABLED_MESSAGES[session_type])
 
         socket_id = online_info.get("socket_id")
@@ -201,7 +204,10 @@ class LocalDeviceSessionService:
     def _build_session_id(
         self, session_type: DeviceSessionType, project_id: int
     ) -> str:
-        prefix = "terminal" if session_type == "terminal" else "code"
+        prefix = {
+            "terminal": "terminal",
+            "code_server": "code",
+        }[session_type]
         return f"{prefix}-{project_id}-{secrets.token_urlsafe(SESSION_ID_TOKEN_BYTES)}"
 
     def _normalize_ttl(self, ttl_seconds: Any) -> int:
@@ -217,7 +223,7 @@ class LocalDeviceSessionService:
 local_device_session_service = LocalDeviceSessionService()
 
 
-def _interactive_session_enabled(
+def session_enabled(
     online_info: dict[str, Any],
     session_type: DeviceSessionType,
 ) -> bool:
@@ -285,7 +291,9 @@ async def _rewrite_cloud_localhost_url(
             return result
 
         try:
-            vm_status = await _get_cloud_device_provider().get_vm_status(sandbox_id)
+            if _cloud_session_host_resolver is None:
+                return result
+            vm_status = await _cloud_session_host_resolver(sandbox_id)
         except Exception as exc:
             logger.warning(
                 "[LocalDeviceSessionService] Failed to resolve cloud session host: "
@@ -311,14 +319,18 @@ async def _rewrite_cloud_localhost_url(
     return rewritten
 
 
-def _get_cloud_device_provider() -> Any:
-    from wecode.service.cloud_device_provider import cloud_device_provider
-
-    return cloud_device_provider
+def register_cloud_session_host_resolver(
+    resolver: CloudSessionHostResolver,
+) -> None:
+    """Register the internal cloud host resolver without importing internal code."""
+    global _cloud_session_host_resolver
+    if _cloud_session_host_resolver is not None:
+        raise RuntimeError("Cloud session host resolver is already registered")
+    _cloud_session_host_resolver = resolver
 
 
 def _extract_cloud_session_host(value: Any) -> str:
-    """Extract a browser-reachable host from Nevis status URL metadata."""
+    """Extract a browser-reachable host from cloud provider status metadata."""
     if isinstance(value, str):
         text = value.strip()
         if not text:

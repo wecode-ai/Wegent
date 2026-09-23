@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -43,13 +44,19 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.ghost_capabilities import MergedGhostCapabilities
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
     loop_item_execution_service,
 )
 from app.services.loop_items.service import loop_item_service
-from app.services.project_chat.service import bot_config, project_chat_service
+from app.services.project_chat.service import (
+    bot_config,
+    compiled_bot_config,
+    project_chat_service,
+)
 from app.services.runtime_work_service import upsert_device_workspace
 
 
@@ -78,6 +85,88 @@ def create_project(test_db: Session, user: User) -> CloudProject:
     test_db.add(agent)
     test_db.commit()
     return project
+
+
+def test_compiled_bot_config_follow_device_keeps_identity_without_ghost_capabilities(
+    mocker,
+) -> None:
+    row = ProjectChatAgent(
+        id="native-follow-device",
+        cloud_project_id=1,
+        title="Native agent",
+        name="Native agent",
+        status="active",
+        created_by_user_id=7,
+        metadata_json={"runtime": "wegent", "wegent_team_id": 9},
+    )
+    member = SimpleNamespace(
+        botRef=SimpleNamespace(namespace="default", name="custom-bot"),
+        prompt="Project role",
+    )
+    team = SimpleNamespace(user_id=7, json={})
+    bot = SimpleNamespace(json={})
+    shell = SimpleNamespace(json={})
+    own_ghost = SimpleNamespace(
+        spec=SimpleNamespace(systemPrompt="Custom native identity"),
+    )
+
+    mocker.patch(
+        "app.services.project_automation_domain.wegent_team",
+        return_value=team,
+    )
+    mocker.patch(
+        "app.services.execution.team_readiness.validate_team_execution_readiness"
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Team.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(collaborationModel="solo", members=[member])
+        ),
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Bot.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                capability_mode="follow_device",
+                ghostRef=SimpleNamespace(namespace="default", name="custom-ghost"),
+                shellRef=SimpleNamespace(namespace="default", name="ClaudeCode"),
+                modelRef=None,
+            )
+        ),
+    )
+    mocker.patch(
+        "app.services.project_chat.service.Shell.model_validate",
+        return_value=SimpleNamespace(spec=SimpleNamespace(shellType="ClaudeCode")),
+    )
+    mocker.patch(
+        "app.services.readers.kindReader.get_by_name_and_namespace",
+        side_effect=[bot, shell],
+    )
+    mocker.patch(
+        "app.services.project_chat.service.load_ghost_chain",
+        return_value=[
+            (SimpleNamespace(), SimpleNamespace()),
+            (SimpleNamespace(), own_ghost),
+        ],
+    )
+    merge_capabilities = mocker.patch(
+        "app.services.project_chat.service.merge_ghost_capabilities",
+        return_value=MergedGhostCapabilities(),
+    )
+    mocker.patch(
+        "app.services.chat.config.model_resolver.resolve_model_name_for_bot",
+        return_value="claude-test",
+    )
+
+    result = compiled_bot_config(mocker.Mock(), row, execution_user_id=7)
+
+    merge_capabilities.assert_called_once_with([])
+    assert result["runtime"] == "claude_code"
+    assert result["system_prompt"] == (
+        "<base_prompt>\nCustom native identity\n\nProject role\n</base_prompt>"
+    )
+    assert result["additional_skills"] == []
+    assert result["mcp_servers"] == {}
 
 
 def make_device(
@@ -2677,6 +2766,81 @@ def test_device_runtime_event_projects_directly_bound_issue_status(
     ]
 
 
+def test_device_runtime_event_preserves_direct_human_issue_status(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-HUMAN-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Human Issue with AI assistance",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        assignee_user_id=test_user.id,
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="runtime-human-1",
+        linked_by_user_id=test_user.id,
+    )
+    test_db.add_all([task, binding])
+    test_db.flush()
+    issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=task.id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step=None,
+        notify=False,
+        trigger="test",
+    )
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    for sequence, event_name in enumerate(
+        ("response.created", "response.completed"), start=1
+    ):
+        _project_chat_runtime_event_sync(
+            "local-device",
+            {
+                "event": event_name,
+                "payload": {
+                    "taskId": binding.task_id,
+                    "eventSeq": sequence,
+                    "data": {"value": "Done"},
+                },
+            },
+            test_user.id,
+        )
+        test_db.refresh(task)
+        assert task.status == "in_progress"
+
+    test_db.refresh(binding)
+    assert binding.metadata_json["runtime_status_event_seq"] == 2
+    assert not any(
+        entry.get("trigger") == "runtime_succeeded"
+        for entry in (task.metadata_json or {}).get("status_history", [])
+    )
+
+
 def test_device_runtime_event_projects_bound_workflow_task_status(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3233,6 +3397,99 @@ def test_reply_target_missing_raises_404(test_db: Session, test_user: User) -> N
             ),
         )
     assert exc.value.status_code == 404
+
+
+def test_related_task_visitor_can_use_visible_task_chat_only(
+    test_db: Session, test_user: User
+) -> None:
+    visitor = User(
+        user_name=f"related-chat-{uuid.uuid4().hex[:8]}",
+        password_hash="unused",
+        email=f"related-chat-{uuid.uuid4().hex[:8]}@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    test_db.refresh(visitor)
+    project = create_project(test_db, test_user)
+    project.metadata_json = {"visibility": "public_restricted"}
+    visible_task = LoopItem(
+        id=f"CHAT-RELATED-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="Visible task",
+        description="",
+        status="open",
+        assignee_user_id=visitor.id,
+        created_by_user_id=test_user.id,
+    )
+    hidden_task = LoopItem(
+        id=f"CHAT-HIDDEN-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="Hidden task",
+        description="",
+        status="open",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add_all([visible_task, hidden_task])
+    test_db.commit()
+
+    owner_message = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Owner context",
+        ),
+    )
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=visitor.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=visible_task.id),
+    )
+    visitor_message = project_chat_service.send(
+        test_db,
+        user_id=visitor.id,
+        user_name=visitor.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Visitor reply",
+        ),
+    )
+
+    assert [message.message_id for message in messages] == [
+        owner_message.message.message_id
+    ]
+    assert visitor_message.message.content == "Visitor reply"
+    with pytest.raises(HTTPException) as privileged:
+        project_chat_service.start_agent_response(
+            test_db,
+            user_id=visitor.id,
+            request=ProjectChatAgentStart(
+                projectId=project.id,
+                taskId=visible_task.id,
+                agentId="12",
+                runtimeDeviceId="related-visitor-device",
+                runtimeTaskId="related-visitor-runtime-task",
+            ),
+        )
+    assert privileged.value.status_code == 403
+    with pytest.raises(HTTPException) as hidden:
+        project_chat_service.subscribe(
+            test_db,
+            user_id=visitor.id,
+            request=ProjectChatSubscribe(
+                projectId=project.id,
+                taskId=hidden_task.id,
+            ),
+        )
+    assert hidden.value.status_code == 404
 
 
 def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(

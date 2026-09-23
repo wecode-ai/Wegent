@@ -27,8 +27,8 @@ from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.schemas.base_role import BaseRole
-from app.schemas.kind import Bot, Ghost, Shell, Team
+from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.kind import Bot, Shell, Team
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
@@ -43,9 +43,15 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
+from app.services.ghost_capabilities import (
+    load_ghost_chain,
+    merge_ghost_capabilities,
+)
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
+from app.services.loop_items.access import can_view_item
 from app.services.project_chat.workspace_binding import (
     WORKSPACE_BINDING_METADATA_KEY,
     adapt_legacy_workspace_binding,
@@ -87,21 +93,22 @@ def require_project_execution_environment(
     project_id: int | str,
     execution_device_id: str,
 ) -> None:
-    configured = (
-        db.query(ResourceMember)
-        .join(Kind, Kind.id == ResourceMember.resource_id)
+    devices = (
+        db.query(Kind)
+        .join(ResourceMember, Kind.id == ResourceMember.resource_id)
         .filter(
             ResourceMember.resource_type == ResourceType.DEVICE.value,
             ResourceMember.entity_type == "project",
             ResourceMember.entity_id == str(project_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
             Kind.kind == "Device",
-            Kind.name == execution_device_id,
             Kind.is_active.is_(True),
         )
-        .first()
+        .all()
     )
-    if configured is None:
+    if not any(
+        runtime_device_route_id(device) == execution_device_id for device in devices
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Execution environment is not configured in this Project",
@@ -289,21 +296,20 @@ def compiled_bot_config(
     if native_runtime is None:
         return config
 
-    ghost = kindReader.get_by_name_and_namespace(
+    ghost_chain = load_ghost_chain(
         db,
-        team.user_id,
-        KindType.GHOST,
-        bot_crd.spec.ghostRef.namespace,
-        bot_crd.spec.ghostRef.name,
+        owner_user_id=team.user_id,
+        ghost_ref=bot_crd.spec.ghostRef,
     )
-    if ghost is None:
+    if not ghost_chain:
         return config
-    ghost_crd = Ghost.model_validate(ghost.json)
-
-    from app.services.chat.config.model_resolver import (
-        get_bot_system_prompt,
-        resolve_model_name_for_bot,
+    own_ghost_crd = ghost_chain[-1][1]
+    capability_chain = (
+        ghost_chain if bot_crd.spec.capability_mode != "follow_device" else []
     )
+    merged_capabilities = merge_ghost_capabilities(capability_chain)
+
+    from app.services.chat.config.model_resolver import resolve_model_name_for_bot
 
     model_name = resolve_model_name_for_bot(
         db,
@@ -340,32 +346,32 @@ def compiled_bot_config(
             CLOUD_MODEL_RESOURCE_USER_ID_OPTION: str(model_kind.user_id),
         }
 
-    skill_refs = ghost_crd.spec.skill_refs or {}
     additional_skills = [
         {
             "name": name,
             "namespace": (
-                skill_refs[name].namespace
-                if name in skill_refs
-                else bot_crd.spec.ghostRef.namespace
+                merged_capabilities.skill_refs[name].namespace
+                if name in merged_capabilities.skill_refs
+                else merged_capabilities.skill_namespaces[name]
             ),
         }
-        for name in (ghost_crd.spec.skills or [])
+        for name in merged_capabilities.skills
     ]
+    prompt_parts = [own_ghost_crd.spec.systemPrompt.strip()]
+    if member.prompt:
+        prompt_parts.append(member.prompt)
+    system_prompt = "\n\n".join(part for part in prompt_parts if part)
+    if system_prompt:
+        system_prompt = f"<base_prompt>\n{system_prompt}\n</base_prompt>"
     return {
         **config,
         "runtime": native_runtime,
         "model": model_name,
         "model_type": model_type,
         "model_options": model_options,
-        "system_prompt": get_bot_system_prompt(
-            db,
-            bot,
-            team.user_id,
-            member.prompt,
-        ),
+        "system_prompt": system_prompt,
         "additional_skills": additional_skills,
-        "mcp_servers": ghost_crd.spec.mcpServers or {},
+        "mcp_servers": dict(merged_capabilities.mcp_servers),
     }
 
 
@@ -731,7 +737,9 @@ class ProjectChatService:
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
-            required_role=BaseRole.Developer,
+            required_role=(
+                BaseRole.Reporter if request.task_id else BaseRole.Developer
+            ),
         )
         self._validate_agent_mentions(db, project, request)
         existing = (
@@ -1776,11 +1784,18 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            if not external_index and task.status not in {
-                "in_progress",
-                "in_review",
-                "completed",
-            }:
+            from app.services.human_issue_work import human_issue_work_service
+
+            if (
+                not external_index
+                and not human_issue_work_service.is_direct_human_assignment(db, task)
+                and task.status
+                not in {
+                    "in_progress",
+                    "in_review",
+                    "completed",
+                }
+            ):
                 project = db.get(CloudProject, task.cloud_project_id)
                 if project is not None:
                     write_status_change(
@@ -2059,10 +2074,15 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        project = require_cloud_project_role(
-            db, project_id, user_id, required_role
-        ).project
+        access = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        project = access.project
         if task_id is None:
+            if not has_permission(access.role, required_role):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
             return project
         task = (
             db.query(LoopItem)
@@ -2080,6 +2100,12 @@ class ProjectChatService:
                 # are keyed by the provider issue id and need no existence row.
                 return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        if not can_view_item(db, access, task, user_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        if not (
+            required_role == BaseRole.Reporter and access.restricts_unrelated_issues
+        ) and not has_permission(access.role, required_role):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 
     def _validate_agent_mentions(

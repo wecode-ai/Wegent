@@ -18,6 +18,7 @@ import type {
   CollaborationPlatformResources,
   CollaborationPriority,
   CollaborationProject,
+  CollaborationProjectVisibility,
   CollaborationRole,
   CollaborationUser,
   CollaborationWorkspace,
@@ -35,7 +36,7 @@ export interface WorkspaceProjectCreateInput {
   name: string
   description?: string
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
-  visibility?: 'private' | 'public'
+  visibility?: CollaborationProjectVisibility
   providerConfig?: Record<string, unknown>
 }
 
@@ -44,7 +45,7 @@ export interface WorkspaceProjectUpdateInput {
   name?: string
   description?: string
   tags?: string[]
-  visibility?: 'private' | 'public'
+  visibility?: CollaborationProjectVisibility
   providerConfig?: Record<string, unknown>
   boardConfig?: CollaborationProject['board_config']
   cardDisplay?: CollaborationProject['card_display']
@@ -126,6 +127,8 @@ export interface WorkspaceIssueCreateInput {
   workflow?: Record<string, unknown> | null
   executionConfig?: Record<string, unknown> | null
   automationRuleId?: string | null
+  assigneeUserId?: number | null
+  notifyAssignee?: boolean
 }
 
 export interface WorkspaceIssueUpdateInput {
@@ -148,7 +151,7 @@ export interface WorkspaceIssueUpdateInput {
 
 export interface WorkspaceIssueAssignmentInput {
   version: number
-  assigneeType: 'user' | 'agent' | 'team'
+  assigneeType: 'user' | 'agent' | 'team' | 'group'
   assigneeId: string
   notifyAssignee?: boolean
 }
@@ -525,6 +528,7 @@ export interface SharedCollaborationWorkspacesApi {
 
 export interface SharedCollaborationResourcesApi {
   list(): Promise<CollaborationPlatformResources>
+  removeAgent?(agent: CollaborationOwnedAgent): Promise<void>
 }
 
 /**

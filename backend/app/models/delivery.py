@@ -162,7 +162,10 @@ class CloudProject(LoopNode):
         metadata = self.metadata_json
         if not isinstance(metadata, dict):
             return "private"
-        return "public" if metadata.get("visibility") == "public" else "private"
+        visibility = metadata.get("visibility")
+        if visibility in {"private", "public_restricted", "public"}:
+            return str(visibility)
+        return "private"
 
     @property
     def tags(self) -> list[str]:
@@ -324,6 +327,12 @@ class LoopItemTaskBinding(LoopNode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("linked_at", func.now())
         super().__init__(**kwargs)
+
+
+class WorkspaceCleanupIntent(LoopNode):
+    """Durable Issue lifecycle intent addressed to one Executor."""
+
+    __mapper_args__ = {"polymorphic_identity": "workspace_cleanup"}
 
 
 class CloudProjectFile(LoopNode):

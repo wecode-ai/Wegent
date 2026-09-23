@@ -1,3 +1,4 @@
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
@@ -244,6 +245,7 @@ export function PopupMenu({
     null
   )
   const close = useCallback(() => setOpen(false), [])
+  useEscapeKey(close, open, menuRef)
 
   useLayoutEffect(() => {
     if (!open) return
@@ -269,14 +271,9 @@ export function PopupMenu({
       const target = event.target as Node
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close()
     }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
     document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
     }
   }, [close, open])
 

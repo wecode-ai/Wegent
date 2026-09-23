@@ -20,7 +20,7 @@ class RuntimeProfileCreate(ProjectChatSchema):
     model: str = Field(default="", max_length=255)
     model_type: Literal["public", "user", "group", "runtime"] | None = None
     model_options: dict[str, str] = Field(default_factory=dict)
-    workspace_policy: RuntimeWorkspacePolicy = "project"
+    workspace_policy: RuntimeWorkspacePolicy = "git_worktree"
 
 
 class RuntimeProfileUpdate(ProjectChatSchema):

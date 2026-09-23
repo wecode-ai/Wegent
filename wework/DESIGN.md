@@ -574,6 +574,13 @@ recipe closely:
   their larger touch-oriented typography;
 - selecting a model is a terminal menu action and closes the model selector;
   reasoning and speed adjustments keep it open for consecutive changes;
+- keep the last successfully loaded local model catalog visible when a
+  background refresh fails; a transient catalog or authentication-status
+  request must not remove the model currently attached to an active thread;
+- when no valid local catalog has ever loaded and the selected model is
+  unavailable, keep the model selector visible with an explicit disabled
+  unavailable entry so the user can understand the state and choose another
+  model; reserve the blank loading placeholder for the initial pending load;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -701,6 +708,25 @@ must not discard entered data without warning. Do not stack modal dialogs.
   hide them.
 
 ### 6.7 Cards and empty states
+
+项目看板卡片按短编号/标签、两行标题、进展摘要、负责人/日期排列。
+只突出高和紧急优先级，完整编号和标签通过提示保留；卡片日期固定展示创建时间，
+不随更新时间或截止日期变化，提示明确标注“创建时间”。
+点击卡片打开 Issue 详情与动态，点击“查看进展”打开可回复的
+任务对话浮层。进展入口必须有关联任务：任务正在运行、事项正在执行或待确认时显示；
+桌面端还保留未关闭 PR/MR 的任务入口。无绑定或无详情权限时隐藏，拖拽或已打开
+Issue 侧栏时禁用预览。已完成且无活动任务、未关闭 PR/MR 的卡片不显示入口。
+
+Project-board cards order short reference/tags, a two-line title, progress summary,
+and an assignee/date row. Highlight only high and urgent priorities; retain
+full references and tags in tooltips. Always show the creation date with a Created
+tooltip and accessible label; updates and deadlines must not change that date.
+Card clicks open Issue details and activity; View progress
+opens the existing task conversation with its reply composer. The progress action
+requires a bound task that is running, an active execution, or an Issue in review;
+desktop also retains access for an open PR/MR. Hide it without a binding or detail
+permission, and suppress previews during drag or while the Issue drawer is open.
+Completed Issues without active tasks or open PR/MRs have no progress action.
 
 Use a card only when a boundary communicates grouping, preview, selection, or a
 single contained action. Prefer rows, whitespace, and a quiet surface. Do not
@@ -1760,3 +1786,58 @@ For each material UI change, review:
 When a screenshot feels wrong, compare it in this order: composition, surface
 hierarchy, typography, spacing, control sizing, radii, elevation, then color.
 Do not try to rescue incorrect composition by adding accent color or decoration.
+
+## 14. Notification inbox and unread contract
+
+The title-bar bell is the product's single notification inbox. Its badge is the
+sum of unread items from every registered source. The macOS Dock badge mirrors
+that sum; it does not count tray-menu rows. A tray preference may hide the
+unread-task section in the tray, but must never change the bell or Dock total.
+
+```mermaid
+flowchart LR
+  Runtime[Visible runtime tasks and lifecycle read state] --> Tasks[Task updates]
+  Cloud[Persistent cloud inbox and server read state] --> Collaboration[Collaboration]
+  Cloud --> General[Other notifications]
+  Tasks --> Bell[Category popover and total badge]
+  Collaboration --> Bell
+  General --> Bell
+  Bell --> Dock[macOS Dock count]
+  Runtime --> Tray[Optional unread-task tray section]
+```
+
+- Count one unread item per source identity. Runtime tasks use the device and
+  task address; persistent notifications use their server ID. If a future
+  producer represents the same event in both sources, it must declare a shared
+  event identity and deduplicate before aggregation.
+- Only visible runtime tasks count. A stored lifecycle key whose task has been
+  removed from the runtime work list must not produce a notification or badge.
+- The bell opens a compact category index, inspired by message inboxes. Show
+  Task updates, Collaboration, and Other notifications as separate rows with
+  each category's unread count and latest title. Selecting a row opens only
+  that category's entries; never interleave unrelated events in one list.
+  Keep the popover approximately 374px wide, with one 48px header and compact
+  two-line category rows. Use a neutral 32px icon surface, short timestamps,
+  and a count on the trailing edge. Do not add a second title bar, an overview
+  dashboard, or an explanatory footer inside the popover. In category details,
+  place each unread indicator in the same layout row as its title so the dot
+  stays vertically centered as text and row height change.
+  Sort entries within each category by event time, newest first. Cloud category
+  counts and pagination must be computed by the server, not inferred from the
+  first page. Cloud `assignment` and `human_work` events belong to Collaboration;
+  every other cloud kind belongs to Other notifications until given an explicit
+  category in the product contract.
+- Keep source-specific navigation and
+  read operations: opening a task marks its lifecycle state read; opening a
+  cloud entry acknowledges its server record. Opening the popover alone does not
+  mark anything read. “Mark all read” acknowledges every available source.
+- Preserve the current local task list and read actions while disconnected.
+  Show cloud unavailability in the popover rather than disabling the whole bell.
+  Never discard already loaded cloud items because a refresh fails.
+- Keep the compact, neutral title-bar bell and row design. Unread rows have a
+  quiet neutral fill; read rows have no fill. Cap the visual count at `99+`,
+  keep its exact numeric value for the Dock, and give every action a stable
+  test ID and accessible name.
+- A new notification source must provide stable event identity, timestamp,
+  title/body, destination, unread state, read-one and read-all operations, plus
+  an account scope. Register it with the feed before adding another badge.

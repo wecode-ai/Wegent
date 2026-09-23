@@ -211,6 +211,11 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         team_id=8,
         executor_owner_user_id=7,
         backend_task_id=None,
+        runtime_origin_context={},
+    )
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.loop_item_execution_service._linked_activity",
+        MagicMock(return_value=None),
     )
     db = MagicMock()
     db.get.side_effect = lambda model, row_id: (

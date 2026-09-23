@@ -140,6 +140,8 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
 
+上游 Responses 接口按位置把 `function_call` 与其紧随其后的 `function_call_output` 配对，因此编码时必须把同一轮的文本条目放在该轮调用/结果组之外：assistant 轮的文本与思考排在调用之前，user 轮的文本排在工具结果之后。若报文里出现调用、文本、结果三者交替的排布，即使客户端已经给出全部结果，也会被判成该调用缺少结果而拒绝。
+
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 实时发送响应中的回合 ID 可能是 executor 在 provider 回合出现前分配的临时 ID，而随后 transcript 会返回 Codex 的规范回合 ID。Wework 合并实时会话和 transcript 时必须先按规范回合 ID 对账；两者不同时，再按稳定的 `clientUserMessageId` 合并为同一个回合，并采用 transcript 的规范回合 ID。不能因为本地回合已经有非空 ID 就跳过客户端消息 ID 对账，否则 Goal 自动续轮等竞态会把同一轮用户消息和后续输出重复渲染。
@@ -470,6 +472,34 @@ flowchart TB
     style DR fill:#14B8A6,color:#fff
     style EX fill:#14B8A6,color:#fff
 ```
+
+### 本地协作小组编排
+
+本地项目、智能体和协作小组由 Wework 通过本地 Executor 管理，并持久化在
+Executor 的本地 SQLite 数据库中。云端项目及其成员、智能体和协作小组仍由
+Backend 管理。界面中的“本地”和“云端”切换只负责选择当前资源域，不能把两个域
+的数据合并成同一个列表，也不能让本地资源调用邀请云端成员等仅属于云端的能力。
+
+当本地 Issue 指派给协作小组时，Executor 从所属项目的
+`collaboration_groups` 配置中读取负责人、成员和协作规则。没有负责人的小组不会
+启动自动编排；有固定阶段的小组按阶段顺序创建工作流节点。使用“负责人协调”且
+未配置固定阶段时，Executor 先创建负责人节点，由负责人根据 Issue 内容规划后续
+工作。
+
+负责人运行时只能通过任务作用域内的 `wework_space` 工具读取当前 Issue、查询
+当前协作小组允许的候选人，并调用 `submit_workflow_plan` 提交一次工作计划。计划
+在同一事务内校验：
+
+- 调用来自当前 Issue 的活跃协作工作流；
+- 每个 `client_key` 唯一，且任务包含标题和负责人；
+- 负责人必须属于当前协作小组；
+- 智能体必须处于当前项目并保持启用；
+- 同一个工作流只能成功提交一次计划。
+
+校验通过后，Executor 将计划展开为持久化工作流节点，并按依赖顺序创建或推进
+子任务。校验失败时不写入部分节点，原 Issue 和工作流保持可诊断的一致状态。本地
+工作流不调用云端项目空间的分配或结果上报接口；云端协作继续使用 Backend 的项目
+空间工作流。
 
 ### 任务状态流转
 

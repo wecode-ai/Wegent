@@ -179,8 +179,10 @@ async fn handle_gateway_request(
         if !is_websocket_request(request.headers()) {
             return session_error(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade request");
         };
-        if let Err(error) = ensure_code_server_login(&state, &session).await {
-            return session_error(StatusCode::BAD_GATEWAY, &error);
+        if session.session_type == SessionType::CodeServer {
+            if let Err(error) = ensure_code_server_login(&state, &session).await {
+                return session_error(StatusCode::BAD_GATEWAY, &error);
+            }
         }
         return upgrade_websocket(state, websocket_upgrade, gateway_request, session).await;
     }
@@ -208,7 +210,7 @@ fn resolve_session(
         .ok_or_else(|| {
             Box::new(session_error(
                 StatusCode::NOT_FOUND,
-                "This terminal or IDE session is no longer available. Return to Wegent and open it again from the workspace tools.",
+            "This terminal, IDE, or desktop session is no longer available. Return to Wegent and open it again from the workspace tools.",
             ))
         })?;
     if !is_authorized(request, &session) {
@@ -220,7 +222,7 @@ fn resolve_session(
     if epoch_seconds() > session.expires_at {
         return Err(Box::new(session_error(
             StatusCode::GONE,
-            "This terminal or IDE session has expired. Return to Wegent and open it again from the workspace tools.",
+            "This terminal, IDE, or desktop session has expired. Return to Wegent and open it again from the workspace tools.",
         )));
     }
     if session.session_type == SessionType::Terminal {
