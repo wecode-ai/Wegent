@@ -37,8 +37,6 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
@@ -55,6 +53,7 @@ from app.schemas.issue_workflow import (
     workflow_node_execution_mode,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.cloud_project_visibility import explicit_project_member_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -960,10 +959,10 @@ class LoopItemService:
     def list_project_attachments(
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[tuple[LoopItemAttachment, LoopItem]]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
+        access = require_cloud_project_role(db, cloud_project_id, user_id)
         attachment = aliased(LoopItemAttachment)
         item = aliased(LoopItem)
-        return (
+        query = (
             db.query(attachment, item)
             .join(item, item.id == attachment.loop_item_id)
             .filter(
@@ -971,8 +970,30 @@ class LoopItemService:
                 loop_datetime_is_unset(item.deleted_at),
             )
             .order_by(attachment.created_at.desc(), item.sequence_number)
-            .all()
         )
+        if access.project.task_provider == "local":
+            visible_ids = select(LoopItem.id).where(
+                visible_item_filter(user_id, access.project)
+            )
+            return query.filter(item.id.in_(visible_ids)).all()
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        rows = query.all()
+        visible_ids = {
+            str(item["id"])
+            for item in external_loop_item_provider.get_many(
+                db,
+                str(cloud_project_id),
+                user_id,
+                list({item.id for _, item in rows}),
+            )
+        }
+        return [
+            (attachment, item) for attachment, item in rows if item.id in visible_ids
+        ]
 
     def add_attachment(
         self,
@@ -1679,11 +1700,13 @@ class LoopItemService:
         ):
             return
         project_id = int(item.cloud_project_id)
-        if target_user_id not in self._project_member_ids(db, project_id):
+        project = db.get(CloudProject, project_id)
+        if project is None or target_user_id not in explicit_project_member_ids(
+            db, project
+        ):
             raise HTTPException(422, "Assignee is not a member of this project")
         if not notify:
             return
-        project = db.get(CloudProject, project_id)
         actor = db.get(User, actor_user_id)
         notify_project_task_assignee(
             db,
@@ -1822,7 +1845,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            member_ids = self._project_member_ids(db, project_id)
+            member_ids = explicit_project_member_ids(db, project)
             if target_user_id not in member_ids:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2855,28 +2878,6 @@ class LoopItemService:
         """Robots are project assets that follow their creator's environment."""
 
         return ProjectChatService._agent_visible_to_user(agent, user_id, role)
-
-    def _project_member_ids(self, db: Session, project_id: int) -> set[int]:
-        project = db.get(CloudProject, project_id)
-        member_ids: set[int] = set()
-        if project is not None and project.created_by_user_id:
-            member_ids.add(project.created_by_user_id)
-        rows = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == project_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for row in rows:
-            try:
-                member_ids.add(int(row.entity_id))
-            except (TypeError, ValueError):
-                continue
-        return member_ids
 
     def _require_bot_creator_scope(
         self, db: Session, project_id: int, item: LoopItem, user_id: int

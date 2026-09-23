@@ -995,6 +995,13 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         ).status_code
         == 404
     )
+    assert (
+        test_client.get(
+            f"/api/v1/loop-items/{owner_item['id']}/assignments",
+            headers=_auth(visitor_token),
+        ).status_code
+        == 404
+    )
 
     visitor_item_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
@@ -1030,6 +1037,13 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
     assert related_detail.status_code == 200
     assert related_detail.json()["description"] == "owner-only details"
     assert related_detail.json()["can_edit"] is True
+    assert (
+        test_client.get(
+            f"/api/v1/loop-items/{owner_item['id']}/assignments",
+            headers=_auth(visitor_token),
+        ).status_code
+        == 200
+    )
     security_update = test_client.patch(
         f"/api/v1/loop-items/{owner_item['id']}",
         headers=_auth(visitor_token),
@@ -2928,6 +2942,60 @@ def test_cloud_project_owner_can_manage_members(
         headers=_auth(test_token),
     )
     assert removed.status_code == 204
+
+
+def test_public_project_does_not_expose_member_emails_to_nonmembers(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    direct_member = User(
+        user_name="public-direct-member",
+        password_hash="unused",
+        email="direct@example.com",
+        is_active=True,
+    )
+    visitor = User(
+        user_name="public-email-visitor",
+        password_hash="unused",
+        email="visitor@example.com",
+        is_active=True,
+    )
+    test_db.add_all([direct_member, visitor])
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "PUBLICEMAIL",
+            "name": "Public member privacy",
+            "visibility": "public",
+            "public_access": {"role": "Developer"},
+        },
+    ).json()
+    assert (
+        test_client.post(
+            f"/api/v1/cloud-projects/{project['id']}/members",
+            headers=_auth(test_token),
+            json={"user_id": direct_member.id, "role": "Viewer"},
+        ).status_code
+        == 201
+    )
+    endpoint = f"/api/v1/cloud-projects/{project['id']}/members"
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+    member_token = create_access_token(data={"sub": direct_member.user_name})
+
+    public_members = test_client.get(endpoint, headers=_auth(visitor_token))
+    direct_members = test_client.get(endpoint, headers=_auth(member_token))
+
+    assert public_members.status_code == 200
+    assert {row["email"] for row in public_members.json()} == {None}
+    assert direct_members.status_code == 200
+    assert {row["user_id"]: row["email"] for row in direct_members.json()} == {
+        test_user.id: test_user.email,
+        direct_member.id: direct_member.email,
+    }
 
 
 def test_todo_can_move_directly_between_board_states(

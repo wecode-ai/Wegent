@@ -19,15 +19,15 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.services.cloud_project_visibility import explicit_project_member_ids
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.loop_items.access import can_view_item
 
 ASSIGNMENT_EVENT_TYPE = "assignment"
 
@@ -85,8 +85,16 @@ class IssueAssignmentService:
         issue_id: str,
         user_id: int,
     ) -> list[AssignmentEvent]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
-        self._require_issue_project(db, project_id, issue_id)
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        item = self._require_issue_project(db, project_id, issue_id)
+        if access.project.task_provider in {"github", "gitlab"}:
+            from app.services.loop_items.external_provider import (
+                external_loop_item_provider,
+            )
+
+            external_loop_item_provider.get(db, issue_id, user_id)
+        elif not can_view_item(db, access, item, user_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
         return list(self._active_events(db, issue_id).values())
 
     def active_for_issue(self, db: Session, issue_id: str) -> list[AssignmentEvent]:
@@ -258,7 +266,7 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in self._project_member_ids(db, project):
+            if user_id not in explicit_project_member_ids(db, project):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this Project",
@@ -414,27 +422,6 @@ class IssueAssignmentService:
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
         return item
-
-    @staticmethod
-    def _project_member_ids(db: Session, project: CloudProject) -> set[int]:
-        member_ids = {int(project.created_by_user_id or 0)}
-        rows = (
-            db.query(ResourceMember.entity_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == project.id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for (entity_id,) in rows:
-            try:
-                member_ids.add(int(entity_id))
-            except (TypeError, ValueError):
-                continue
-        member_ids.discard(0)
-        return member_ids
 
 
 issue_assignment_service = IssueAssignmentService()

@@ -5,10 +5,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.wework_notification import NotificationCreate
+from app.services.cloud_project_visibility import (
+    AUTHENTICATED_ENTITY_ID,
+    AUTHENTICATED_ENTITY_TYPE,
+)
 from app.services.loop_items.service import loop_item_service
 from app.services.wework_notifications import (
     create_notification,
@@ -264,6 +271,49 @@ def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
                     project_id=project.id, title="Review", body="Please review", **data
                 ),
             )
+    assert test_db.query(WeworkNotification).count() == 0
+
+
+def test_public_developer_cannot_send_project_notifications_without_membership(
+    test_db, test_user
+):
+    project = _make_project(test_db, test_user)
+    visitor = User(
+        user_name="public-notification-visitor",
+        password_hash="unused",
+        email="public-notification-visitor@example.com",
+        is_active=True,
+    )
+    test_db.add(visitor)
+    test_db.flush()
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=project.id,
+            entity_type=AUTHENTICATED_ENTITY_TYPE,
+            entity_id=AUTHENTICATED_ENTITY_ID,
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+
+    for sender_id, recipient_id in (
+        (visitor.id, test_user.id),
+        (test_user.id, visitor.id),
+    ):
+        with pytest.raises(HTTPException) as error:
+            send_wework_notification(
+                test_db,
+                user_id=sender_id,
+                values=NotificationCreate(
+                    project_id=project.id,
+                    recipient_user_id=recipient_id,
+                    title="Review",
+                    body="Please review",
+                ),
+            )
+        assert error.value.status_code == 403
     assert test_db.query(WeworkNotification).count() == 0
 
 

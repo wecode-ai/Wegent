@@ -27,12 +27,11 @@ from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.cloud_project_visibility import explicit_project_member_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -790,7 +789,7 @@ class ExternalLoopItemProvider:
             team = runnable_wegent_team(db, user_id, values.assignee_team_id)
             return self._assignee_label("team", str(team.id), team.name)
         if values.assignee_user_id:
-            if values.assignee_user_id not in self._project_member_ids(db, project):
+            if values.assignee_user_id not in explicit_project_member_ids(db, project):
                 raise HTTPException(422, "Assignee is not a member of this project")
             target = db.get(User, values.assignee_user_id)
             return self._assignee_label(
@@ -1017,7 +1016,7 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            if target_user_id not in self._project_member_ids(db, project):
+            if target_user_id not in explicit_project_member_ids(db, project):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this project",
@@ -1053,6 +1052,7 @@ class ExternalLoopItemProvider:
                     self._priority(current_labels),
                     self._status(current_labels, str(current.get("state") or "")),
                     assignee=assignee_label,
+                    security_level=self._security_level(current_labels, project),
                 )
             },
         )
@@ -1205,28 +1205,6 @@ class ExternalLoopItemProvider:
         if row is None:
             return
         row.deleted_at = utcnow()
-
-    @staticmethod
-    def _project_member_ids(db: Session, project: CloudProject) -> set[int]:
-        member_ids: set[int] = set()
-        if project.created_by_user_id:
-            member_ids.add(project.created_by_user_id)
-        rows = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == project.id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for row in rows:
-            try:
-                member_ids.add(int(row.entity_id))
-            except (TypeError, ValueError):
-                continue
-        return member_ids
 
     def approve_run(
         self,
@@ -1441,19 +1419,7 @@ class ExternalLoopItemProvider:
         labels = self._labels(issue)
         creator_id = self._creator_id(labels)
         creator_name = self._creator_name(labels)
-        security_label = next(
-            (
-                label.removeprefix(SECURITY_PREFIX)
-                for label in labels
-                if label.startswith(SECURITY_PREFIX)
-            ),
-            None,
-        )
-        security_level = (
-            security_label
-            if security_label in {"open", "related"}
-            else default_issue_security(project)
-        )
+        security_level = self._security_level(labels, project)
         number = self._number(issue)
         item_id = f"{project.project_key}-{number}"
         assignee = self._assignee_from_labels(labels)
@@ -2156,6 +2122,20 @@ class ExternalLoopItemProvider:
                 )
             )
         ]
+
+    @staticmethod
+    def _security_level(labels: list[str], project: CloudProject) -> str:
+        value = next(
+            (
+                label.removeprefix(SECURITY_PREFIX)
+                for label in labels
+                if label.startswith(SECURITY_PREFIX)
+            ),
+            None,
+        )
+        return (
+            value if value in {"open", "related"} else default_issue_security(project)
+        )
 
     @staticmethod
     def _labels_for_write(

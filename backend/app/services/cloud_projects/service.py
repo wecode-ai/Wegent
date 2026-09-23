@@ -33,6 +33,7 @@ from app.services.cloud_project_visibility import (
     AUTHENTICATED_ENTITY_ID,
     AUTHENTICATED_ENTITY_TYPE,
     accessible_cloud_projects,
+    explicit_project_member_ids,
     workspace_project_ids,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -565,6 +566,7 @@ class CloudProjectService:
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[dict[str, object]]:
         project = require_cloud_project_role(db, cloud_project_id, user_id).project
+        can_view_emails = user_id in explicit_project_member_ids(db, project)
         rows = (
             db.query(ResourceMember, User)
             .join(User, User.id == ResourceMember.user_id)
@@ -583,7 +585,7 @@ class CloudProjectService:
                 "id": member.id,
                 "user_id": member_user.id,
                 "user_name": member_user.user_name,
-                "email": member_user.email,
+                "email": member_user.email if can_view_emails else None,
                 "role": member.role,
                 "capability_description": capabilities.get(str(member_user.id), ""),
             }
@@ -600,7 +602,7 @@ class CloudProjectService:
                         "id": 0,
                         "user_id": creator.id,
                         "user_name": creator.user_name,
-                        "email": creator.email,
+                        "email": creator.email if can_view_emails else None,
                         "role": BaseRole.Owner.value,
                         "capability_description": capabilities.get(str(creator.id), ""),
                     },

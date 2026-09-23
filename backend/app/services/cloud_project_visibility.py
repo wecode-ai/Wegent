@@ -29,6 +29,30 @@ ROLES_BY_PRIORITY = {
 }
 
 
+def explicit_project_member_ids(db: Session, project: CloudProject) -> set[int]:
+    """Return the creator and approved direct members, excluding public grants."""
+    member_ids = (
+        {int(project.created_by_user_id)} if project.created_by_user_id else set()
+    )
+    rows = (
+        db.query(ResourceMember.entity_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+            ResourceMember.resource_id == project.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.role.in_(VALID_CLOUD_PROJECT_MEMBER_ROLES),
+        )
+        .all()
+    )
+    for (entity_id,) in rows:
+        try:
+            member_ids.add(int(entity_id))
+        except (TypeError, ValueError):
+            continue
+    return member_ids
+
+
 def user_memberships(
     user_id: int, resource_type: str, *, project_roles_only: bool = True
 ) -> Select:

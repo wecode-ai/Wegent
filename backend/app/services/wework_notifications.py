@@ -159,15 +159,17 @@ def send_wework_notification(
 def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
 ) -> None:
+    from app.services.cloud_project_visibility import explicit_project_member_ids
     from app.services.cloud_projects import cloud_project_service
     from app.services.loop_items.external_provider import external_loop_item_provider
     from app.services.loop_items.service import loop_item_service
 
     access = cloud_project_service.access(db, values.project_id, user_id)
-    if access.is_viewer:
+    member_ids = explicit_project_member_ids(db, access.project)
+    if access.is_viewer or user_id not in member_ids:
         raise HTTPException(403, "Project membership required")
     recipient = cloud_project_service.access(db, values.project_id, recipient_id)
-    if recipient.is_viewer:
+    if recipient.is_viewer or recipient_id not in member_ids:
         raise HTTPException(403, "Recipient must be a project member")
     if values.item_id:
         if access.project.task_provider in {"github", "gitlab"}:

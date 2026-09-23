@@ -3168,6 +3168,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           onChange={async (event) => {
                             if (!editProps) return;
                             setSecurityBusy(true);
+                            setSaveError(null);
                             try {
                               const updated = await editorPort.issues.update(
                                 item.id,
@@ -3179,6 +3180,12 @@ export function TodoEditor(props: TodoEditorProps) {
                                 },
                               );
                               editProps.onUpdated(updated);
+                            } catch (cause) {
+                              setSaveError(
+                                cause instanceof Error
+                                  ? cause.message
+                                  : t("todo.save_issue_failed", "保存任务失败"),
+                              );
                             } finally {
                               setSecurityBusy(false);
                             }

@@ -136,6 +136,7 @@ const copy = {
     owner: "所有者",
     maintainer: "管理员",
     developer: "开发者",
+    viewer: "只读成员",
     reporter: "参与者",
     noMembers: "空间中还没有成员",
     collaborationGroups: "协作小组",
@@ -193,6 +194,7 @@ const copy = {
     owner: "Owner",
     maintainer: "Maintainer",
     developer: "Developer",
+    viewer: "Viewer",
     reporter: "Reporter",
     noMembers: "No members in this workspace",
     collaborationGroups: "Collaboration groups",
@@ -251,6 +253,7 @@ function roleLabel(role: CollaborationWorkspaceRole, messages: ResourceCopy) {
   if (role === "Owner") return messages.owner;
   if (role === "Maintainer") return messages.maintainer;
   if (role === "Developer") return messages.developer;
+  if (role === "Viewer") return messages.viewer;
   return messages.reporter;
 }
 
@@ -322,6 +325,7 @@ function MemberInviteDialog({
           >
             <option value="Maintainer">{messages.maintainer}</option>
             <option value="Developer">{messages.developer}</option>
+            <option value="Viewer">{messages.viewer}</option>
             <option value="Reporter">{messages.reporter}</option>
           </select>
         </label>
@@ -452,6 +456,7 @@ export function WorkspaceMembersConfiguration({
                     >
                       <option value="Maintainer">{messages.maintainer}</option>
                       <option value="Developer">{messages.developer}</option>
+                      <option value="Viewer">{messages.viewer}</option>
                       <option value="Reporter">{messages.reporter}</option>
                     </select>
                     <button
