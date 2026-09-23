@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
 
 import {
   CLOUD_DEVICE_ID,
@@ -82,10 +83,6 @@ async function waitForMysqlReady(connectionOptions, mysqlProcess, logPath) {
 async function startMysqlServer(logPath) {
   const mysqlBinary = process.env.WEWORK_E2E_MYSQLD_BIN?.trim() || 'mysqld'
   const dataDirectory = join(resultDir, `cloud-mysql-${process.pid}`)
-  const socketPath =
-    process.platform === 'win32'
-      ? null
-      : join('/tmp', `wework-mysql-${process.pid}-${randomBytes(4).toString('hex')}.sock`)
   await rm(dataDirectory, { recursive: true, force: true })
   await mkdir(dataDirectory, { recursive: true })
 
@@ -94,6 +91,8 @@ async function startMysqlServer(logPath) {
   await runChecked(mysqlBinary, initializeArgs)
 
   const port = await reservePort()
+  const socketPath = join(tmpdir(), `wework-mysql-${process.pid}.sock`)
+  await rm(socketPath, { force: true })
   const serverArgs = [
     '--no-defaults',
     `--datadir=${dataDirectory}`,
@@ -104,7 +103,7 @@ async function startMysqlServer(logPath) {
     '--max-connections=64',
     '--innodb-buffer-pool-size=64M',
   ]
-  if (socketPath) {
+  if (process.platform !== 'win32') {
     serverArgs.push('--user=root', `--socket=${socketPath}`)
   } else {
     serverArgs.push('--console')
@@ -125,7 +124,6 @@ async function startMysqlServer(logPath) {
     await waitForMysqlReady(connectionOptions, server, logPath)
   } catch (error) {
     await stopProcessGroup(server)
-    if (socketPath) await rm(socketPath, { force: true })
     throw error
   }
 
@@ -138,7 +136,6 @@ async function startMysqlServer(logPath) {
     })
   } catch (error) {
     await stopProcessGroup(server)
-    if (socketPath) await rm(socketPath, { force: true })
     throw error
   }
   return {
@@ -146,17 +143,13 @@ async function startMysqlServer(logPath) {
     databaseUrl: `mysql+pymysql://root@127.0.0.1:${port}/${databaseName}`,
     connectionOptions,
     server,
-    socketPath,
   }
 }
 
 async function resolveBackendRsBinary() {
   const configured = process.env.WEWORK_E2E_BACKEND_RS_BIN?.trim()
   if (configured) {
-    assert.ok(
-      await pathExists(configured),
-      `Configured backend-rs binary does not exist: ${configured}`
-    )
+    assert.ok(await pathExists(configured), `Configured backend-rs binary does not exist: ${configured}`)
     return configured
   }
   const binary = join(
@@ -350,7 +343,6 @@ class RealCloudEnvironment {
     this.redis = redisServer.redis
     const mysqlServer = await startMysqlServer(this.mysqlLogPath)
     this.mysql = mysqlServer.server
-    this.mysqlSocketPath = mysqlServer.socketPath
     this.mysqlConnectionOptions = mysqlServer.connectionOptions
     this.databaseName = mysqlServer.databaseName
     this.databaseUrl = mysqlServer.databaseUrl
@@ -382,7 +374,6 @@ class RealCloudEnvironment {
       CHAT_SHELL_URL: this.modelServerUrl,
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
-      EXECUTOR_MANAGER_URL: 'http://localhost:8001',
       WEGENT_SOCKET_URL: this.socketUrl,
       FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
       ...remoteDeviceE2EExtension.backendEnv,
@@ -772,7 +763,10 @@ class RealCloudEnvironment {
       `UPDATE kinds
        SET json = JSON_SET(
          json,
-         '$.spec.cloudConfig', JSON_OBJECT('sandboxId', %s, 'deviceId', %s)
+         '$.spec.cloudConfig', JSON_OBJECT(
+           'sandboxId', %s,
+           'deviceId', %s
+         )
        )
        WHERE kind = 'Device' AND name = %s`,
       [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
@@ -978,6 +972,7 @@ class RealCloudEnvironment {
   }
 
   async devices() {
+    // Exercise the public hybrid endpoint so Cloud E2E covers Rust routing and shared MySQL state.
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
@@ -1566,7 +1561,6 @@ class RealCloudEnvironment {
     await this.nevisSandboxService?.stop()
     await stopProcess(this.redis)
     await stopProcessGroup(this.mysql)
-    if (this.mysqlSocketPath) await rm(this.mysqlSocketPath, { force: true })
   }
 }
 
