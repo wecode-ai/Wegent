@@ -13,9 +13,9 @@ from app.models.delivery import CloudProject, LoopItem, loop_datetime_is_unset
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.feedback import FeedbackCreate, FeedbackResponse
-from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import loop_item_provider_router
+from app.services.loop_items.service import loop_item_service
 
 CHANNEL_ERROR = "反馈通道异常，请联系开发者"
 EXTERNAL_PROVIDERS = {"github", "gitlab"}

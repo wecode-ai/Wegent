@@ -23,14 +23,14 @@ pub(crate) struct ExportQuery {
 
 /// GET /api/tasks/{task_id}/export/docx: the export free function, injecting
 /// the process-lifetime application state.
-#[brz_http_server::get("/api/tasks/:task_id/export/docx")]
+#[brz_http_server::get("/api/tasks/:task_id/export/docx", access = optional)]
 pub(crate) async fn export_task_docx(
     #[inject(state)] state: &AppState,
     task_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: Option<crate::auth::OptionalSessionUser>,
     query: brz_http_server::Query<ExportQuery>,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    export(state, task_id, authorization, &query.0)
+    export(state, task_id, current_user.as_ref(), &query.0)
         .await
         .map(|(filename, body)| {
             let mut response = HttpResponse::new(Binary::new(body));
@@ -96,7 +96,7 @@ fn internal_error() -> FastApiError {
 async fn export(
     state: &AppState,
     task_id: i64,
-    authorization: Option<&str>,
+    current_user: Option<&crate::auth::OptionalSessionUser>,
     params: &ExportQuery,
 ) -> Result<(String, Vec<u8>), ExportError> {
     // Authentication: download token first, then optional bearer session.
@@ -123,13 +123,10 @@ async fn export(
     } else {
         // `get_current_user_optional`: a missing or invalid token yields
         // `None`, and the member check below turns that into 404.
-        let current = current_user_optional(state, authorization)
-            .await
-            .map_err(|_| ExportError::Internal)?;
-        let Some(user) = current else {
+        let Some(user) = current_user else {
             return Err(not_found().into());
         };
-        user.id
+        i64::from(user.id)
     };
 
     // `task_member_service.is_member` (accessible task + owner/member check).
@@ -231,27 +228,6 @@ async fn export(
     let filename = generator::export_filename(&input, now);
     let body = generator::generate_docx(&input, now);
     Ok((filename, body))
-}
-
-/// `security.get_current_user_optional`: verify the bearer session token and
-/// load the active user; any failure yields `None`.
-async fn current_user_optional(
-    state: &AppState,
-    authorization: Option<&str>,
-) -> Result<Option<repository::UserRow>, ()> {
-    let token = crate::auth::extract_authorization_token(authorization);
-    if token.is_empty() {
-        return Ok(None);
-    }
-    // Reuse the session verification; optional auth treats every failure as
-    // an anonymous request.
-    match crate::auth::get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => Ok(Some(repository::UserRow {
-            id: user.id as i64,
-            user_name: user.user_name,
-        })),
-        Err(_) => Ok(None),
-    }
 }
 
 /// `_add_file_attachment` card inputs from a context row's `type_data`.

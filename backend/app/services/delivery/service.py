@@ -129,7 +129,7 @@ class DeliveryService:
                 markdown_object_key=markdown_key,
                 chat_object_key=chat_key,
             )
-            from app.services.loop_items import loop_item_service
+            from app.services.loop_items.service import loop_item_service
 
             loop_item_service.ensure_collaborator(
                 db, item, user_id, user_id, "delivery", commit=False

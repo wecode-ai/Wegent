@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import i18n from '@/i18n'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import { installTraySettingsNavigation, syncTrayMenuState } from './trayNavigation'
+import {
+  installTraySettingsNavigation,
+  syncNotificationUnreadCount,
+  syncTrayMenuState,
+} from './trayNavigation'
+import { EMPTY_TRAY_MENU_TASK_GROUPS } from './trayMenuState'
 
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn().mockResolvedValue(undefined),
@@ -63,5 +68,22 @@ describe('trayNavigation', () => {
         { title: 'Usage', tooltip: 'Usage details' }
       )
     ).not.toThrow()
+  })
+
+  test('uses the notification total for the Dock while keeping unread tray tasks separate', () => {
+    syncTrayMenuState({
+      ...EMPTY_TRAY_MENU_TASK_GROUPS,
+      unreadCount: 1,
+      unread: [{ id: 'task:1', title: 'Task', projectName: 'Project' }],
+    })
+    syncNotificationUnreadCount(2)
+
+    expect(desktopHostMocks.invoke).toHaveBeenLastCalledWith('tray.setState', {
+      state: expect.objectContaining({
+        unreadCount: 2,
+        unread: [{ id: 'task:1', title: 'Task', projectName: 'Project' }],
+      }),
+    })
+    syncNotificationUnreadCount(0)
   })
 })

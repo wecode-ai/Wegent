@@ -982,7 +982,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           {state.location === "cloud" && (
             <section>
               <h3>{labels.visibility}</h3>
-              <div className="collaboration-project-create-grid columns-2">
+              <div
+                className={`collaboration-project-create-grid ${
+                  state.taskProvider === "local" ? "columns-3" : "columns-2"
+                }`}
+              >
                 <ChoiceButton
                   testId="cloud-project-visibility-private"
                   selected={state.visibility === "private"}
@@ -991,6 +995,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   description={labels.privateVisibilityDescription}
                   onClick={() => commands.setVisibility("private")}
                 />
+                {state.taskProvider === "local" ? (
+                  <ChoiceButton
+                    testId="cloud-project-visibility-public-restricted"
+                    selected={state.visibility === "public_restricted"}
+                    icon={<ListTodo aria-hidden="true" />}
+                    label={labels.restrictedVisibility}
+                    description={labels.restrictedVisibilityDescription}
+                    onClick={() => commands.setVisibility("public_restricted")}
+                  />
+                ) : null}
                 <ChoiceButton
                   testId="cloud-project-visibility-public"
                   selected={state.visibility === "public"}
@@ -1000,9 +1014,11 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   onClick={() => commands.setVisibility("public")}
                 />
               </div>
-              {state.visibility === "public" && (
+              {state.visibility !== "private" && (
                 <p className="collaboration-project-create-hint">
-                  {labels.publicVisibilityNotice}
+                  {state.visibility === "public_restricted"
+                    ? labels.restrictedVisibilityDescription
+                    : labels.publicVisibilityNotice}
                 </p>
               )}
             </section>

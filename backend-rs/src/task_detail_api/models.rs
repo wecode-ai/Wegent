@@ -79,6 +79,17 @@ pub(crate) struct TeamBotResponse {
     pub bot: BotSummaryResponse,
 }
 
+/// `TeamDisplayConfig` (app/schemas/kind.py). The source `dump_team_display_config`
+/// compacts the stored config to its non-null keys, and the task-detail team is
+/// then rendered through the response model (`TeamInDB`), which re-serializes
+/// the schema model: `show_final_answer_only` is always present, and null when
+/// the CRD leaves it unset.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct TeamDisplayConfig {
+    pub show_final_answer_only: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct TeamResponse {
     pub quick_phrases: Vec<String>,
@@ -92,7 +103,7 @@ pub(crate) struct TeamResponse {
     pub mode_spec: Box<RawValue>,
     pub is_active: bool,
     pub icon: Box<RawValue>,
-    pub display_config: Box<RawValue>,
+    pub display_config: TeamDisplayConfig,
     #[serde(rename = "inputPlaceholder")]
     pub input_placeholder: Option<TeamInputPlaceholder>,
     pub requires_workspace: Box<RawValue>,

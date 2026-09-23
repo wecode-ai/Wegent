@@ -16,6 +16,67 @@ use crate::auth::SessionClaims;
 
 pub struct AuthenticatedUser(pub UserRow);
 
+const MODELS_USER_INACTIVE: &str = "Wegent-Models-User-Inactive";
+
+impl brz_http_server::Authenticator<AuthenticatedUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<AuthenticatedUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
+        let mut keys = vec![self.state().auth.jwt_key.clone()];
+        keys.extend(self.state().auth.legacy_jwt_keys.iter().cloned());
+        let algorithm = match self.state().auth.algorithm.as_str() {
+            "HS384" => jsonwebtoken::Algorithm::HS384,
+            "HS512" => jsonwebtoken::Algorithm::HS512,
+            _ => jsonwebtoken::Algorithm::HS256,
+        };
+        authenticate(&headers.view(), &self.state().mysql, &keys, algorithm)
+            .await
+            .map_err(|error| match error {
+                AuthError::MissingCredentials => {
+                    brz_http_server::AuthFailure::missing_credentials("Bearer")
+                }
+                AuthError::InvalidCredentials => {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+                AuthError::UserNotActive => {
+                    brz_http_server::AuthFailure::invalid_credentials(MODELS_USER_INACTIVE)
+                }
+                AuthError::Internal(_) => brz_http_server::AuthFailure::Internal,
+            })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a AuthenticatedUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: MODELS_USER_INACTIVE,
+            } => crate::http_compat::FastApiError::unauthorized("User not activated"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::internal()
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 pub enum AuthError {
     MissingCredentials,
     InvalidCredentials,

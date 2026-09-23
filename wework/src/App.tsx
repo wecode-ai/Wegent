@@ -1,4 +1,8 @@
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import {
+  NotificationTaskSourceBridge,
+  NotificationTaskSourceProvider,
+} from '@/features/notifications/NotificationTaskSource'
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
@@ -33,6 +37,7 @@ import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
+import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
@@ -481,6 +486,7 @@ export function WorkspaceTabSurface({
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
+              <NotificationTaskSourceBridge id={tab.id} active={active} />
               {workbenchContent}
             </WorkbenchProvider>
           ) : null}
@@ -740,6 +746,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <GlobalIconButtonTooltip />
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <div className="pointer-events-none fixed inset-0 z-system-popover">
@@ -1144,70 +1151,72 @@ function AppShell() {
   }
 
   const shell = (
-    <WorkspaceTabsProvider
-      pathname={path}
-      search={search}
-      storageScope={workspaceTabStorageScope}
-      labels={workspaceTabLabels}
-      fixedTabs={fixedWorkspaceTabs}
-      startupTabId={startupWorkspaceTabId}
-      restoreSessionTabs={!isMainWindow}
-    >
-      <ElectronWorkbenchTabBridge />
-      <WeworkSchemeBridge />
-      <div
-        data-testid="app-shell"
-        className={cn(
-          isDesktop ? 'fixed inset-0' : 'h-dvh',
-          isPopoutWindow
-            ? 'overflow-visible bg-transparent'
-            : isWorkspaceWindow
-              ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
-              : 'overflow-hidden bg-surface',
-          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-        )}
+    <NotificationTaskSourceProvider key={user.id}>
+      <WorkspaceTabsProvider
+        pathname={path}
+        search={search}
+        storageScope={workspaceTabStorageScope}
+        labels={workspaceTabLabels}
+        fixedTabs={fixedWorkspaceTabs}
+        startupTabId={startupWorkspaceTabId}
+        restoreSessionTabs={!isMainWindow}
       >
-        {showChromeTitlebar && (
-          <ChromeTitlebar
-            showWorkspacePortals={activeAppKey !== 'wework'}
-            showFeedback={activeAppKey !== 'wework'}
-          />
-        )}
-        {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
-        {!isPopoutWindow && !isWorkspaceWindow ? (
-          <LocalExecutorCloudBridge
-            apiBaseUrl={cloudConnection.apiBaseUrl}
-            backendUrl={cloudConnection.backendUrl}
-            socketBaseUrl={cloudConnection.socketBaseUrl}
-            isConnected={cloudConnection.isConnected}
-            token={cloudConnection.token}
-            preferencesLoaded={appPreferences?.loaded ?? false}
-          />
-        ) : null}
-        {isMainWindow && isElectron ? (
-          <>
-            <IdleTaskCoordinator active={workbenchStartupReady} />
-            <WeworkIdleTasks />
-          </>
-        ) : null}
-        {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
-        <CloudModelCatalogSyncDialogHost />
+        <ElectronWorkbenchTabBridge />
+        <WeworkSchemeBridge />
         <div
-          data-testid="app-route-host"
+          data-testid="app-shell"
           className={cn(
-            'relative min-h-0',
-            isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-            titlebarOverlaysContent ? 'h-full' : 'flex-1'
+            isDesktop ? 'fixed inset-0' : 'h-dvh',
+            isPopoutWindow
+              ? 'overflow-visible bg-transparent'
+              : isWorkspaceWindow
+                ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+                : 'overflow-hidden bg-surface',
+            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
           )}
         >
-          <AppRoutes
-            onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-            onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
-          />
+          {showChromeTitlebar && (
+            <ChromeTitlebar
+              showWorkspacePortals={activeAppKey !== 'wework'}
+              showFeedback={activeAppKey !== 'wework'}
+            />
+          )}
+          {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+          {!isPopoutWindow && !isWorkspaceWindow ? (
+            <LocalExecutorCloudBridge
+              apiBaseUrl={cloudConnection.apiBaseUrl}
+              backendUrl={cloudConnection.backendUrl}
+              socketBaseUrl={cloudConnection.socketBaseUrl}
+              isConnected={cloudConnection.isConnected}
+              token={cloudConnection.token}
+              preferencesLoaded={appPreferences?.loaded ?? false}
+            />
+          ) : null}
+          {isMainWindow && isElectron ? (
+            <>
+              <IdleTaskCoordinator active={workbenchStartupReady} />
+              <WeworkIdleTasks />
+            </>
+          ) : null}
+          {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
+          <CloudModelCatalogSyncDialogHost />
+          <div
+            data-testid="app-route-host"
+            className={cn(
+              'relative min-h-0',
+              isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+              titlebarOverlaysContent ? 'h-full' : 'flex-1'
+            )}
+          >
+            <AppRoutes
+              onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+              onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
+            />
+          </div>
+          {!isPopoutWindow && <WeworkDevInstanceBadge />}
         </div>
-        {!isPopoutWindow && <WeworkDevInstanceBadge />}
-      </div>
-    </WorkspaceTabsProvider>
+      </WorkspaceTabsProvider>
+    </NotificationTaskSourceProvider>
   )
 
   if (isPopoutWindow) {

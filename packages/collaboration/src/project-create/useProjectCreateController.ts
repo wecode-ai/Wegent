@@ -19,6 +19,10 @@ import type {
   ProjectCreateLabels,
 } from "./types";
 
+type ProjectVisibility = NonNullable<
+  import("../ports/SharedWorkspaceApi").WorkspaceProjectCreateInput["visibility"]
+>;
+
 export function defaultExecutionEnvironmentDeviceIds(
   environments: CollaborationExecutionEnvironment[],
 ): number[] {
@@ -80,7 +84,7 @@ export function useProjectCreateController({
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [visibility, setVisibility] = useState<ProjectVisibility>("private");
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
@@ -132,6 +136,12 @@ export function useProjectCreateController({
       ...new Set([...defaultAgentResourceIds, ...current]),
     ]);
   }, [defaultAgentResourceIdsKey]);
+
+  useEffect(() => {
+    if (taskProvider !== "local" && visibility === "public_restricted") {
+      setVisibility("private");
+    }
+  }, [taskProvider, visibility]);
 
   async function submit() {
     if (!canSubmit) return;

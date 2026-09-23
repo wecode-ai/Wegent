@@ -230,13 +230,15 @@
     },
     "quick_phrases": {
       "label": "快捷短语",
-      "description": "点击 QuickCard 后展示给用户的提示词候选，点击短语会填入发送框。",
+      "description": "显示在聊天输入框上方，点击后可快速填入。",
       "placeholder": "例如：帮我创建一个产品路线图 PPT",
       "add": "添加短语"
     },
     "input_placeholder": {
       "label": "输入框提示语",
       "description": "优先使用当前设备和语言的提示语；设备提示未填写时使用通用提示，全部未填写时使用系统默认提示。",
+      "default_summary": "使用系统默认提示语",
+      "custom_summary": "已设置自定义提示语",
       "generic": "通用（兜底）",
       "desktop": "桌面端",
       "mobile": "移动端",
@@ -246,17 +248,25 @@
       "en_placeholder": "英文提示语"
     },
     "simple": {
+      "description": "设置名称、用途和能力，快速创建一个可直接使用的智能体。",
+      "display_name_placeholder": "例如：产品分析助手",
+      "optional": "可选",
+      "prompt_label": "系统提示词",
+      "prompt_placeholder": "例如：你是一名产品分析助手，负责分析需求、识别风险并给出建议。",
+      "prompt_help": "描述它的角色、任务、限制和回答方式。",
       "advanced_title": "高级配置",
-      "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",
-      "open_advanced": "打开高级",
-      "advanced_toggle": "高级模式",
-      "advanced_toggle_description": "开启后切换到完整配置界面，可设置协作模式和多机器人编排。",
+      "advanced_description": "智能体描述、使用入口、编码仓库和交互文案",
+      "agent_description_label": "智能体描述",
+      "agent_description_placeholder": "简要描述这个智能体",
+      "name_required": "请输入智能体名称",
       "non_solo_notice": "这个智能体使用了高级协作模式，已切换到完整配置。",
       "sections": {
-        "basic": "基础设置",
+        "basic": "基本信息",
+        "model": "模型",
         "prompt": "提示词",
-        "capability": "能力配置",
-        "execution": "模式设置"
+        "capability": "能力",
+        "execution": "模式设置",
+        "advanced": "更多设置"
       },
       "core": {
         "model_description": "不绑定时使用系统默认模型，可按需指定默认模型。",
@@ -271,21 +281,23 @@
       },
       "capability": {
         "base_title": "使用通用基础能力",
-        "base_description": "沿用系统智能体的通用 Skill、工具和插件能力，不改变当前智能体的人设与执行方式。启用后可能增加上下文与工具调用消耗。",
+        "base_description": "沿用系统智能体的通用 Skill、工具和插件能力，会增加上下文与工具调用消耗。",
         "enabled": "已启用",
-        "disabled": "未启用"
+        "disabled": "未启用",
+        "additional_title": "附加能力",
+        "additional_summary": "已添加 {{count}} 项 · Skill、知识库、MCP"
       },
       "execution": {
         "bind_mode_description": "决定这个智能体可以在哪些入口和任务类型中使用。",
-        "requires_workspace_description": "开启后，编码任务必须先选择仓库。",
-        "executor_description": "决定智能体处理任务时使用的运行环境。"
+        "requires_workspace_title": "绑定编码仓库",
+        "requires_workspace_description": "开启后，使用编码能力前必须先选择仓库。"
       },
       "bind_mode": {
-        "advanced_title": "高级设置",
-        "available_modules": "可用模块",
-        "automatic": "自动（根据运行方式）",
-        "selected": "已选择",
-        "automatic_hint": "不选择任何模块时，将根据运行方式自动设置；选择后完全按所选模块保存。",
+        "advanced_title": "使用入口",
+        "available_modules": "可用入口",
+        "automatic": "默认入口",
+        "selected": "自定义入口",
+        "automatic_hint": "默认根据智能体用途出现在合适入口；手动选择后，仅在所选入口中使用。",
         "summary_separator": "、",
         "more_modes": "更多模式",
         "collapse_more_modes": "收起更多模式",
@@ -311,28 +323,29 @@
         }
       },
       "executor": {
-        "title": "运行方式",
-        "required": "请选择一种可用的运行方式",
-        "requires_coding_agent_hint": "编码和设备模式需要选择一种编程引擎。",
+        "title": "用途",
+        "required": "请选择智能体用途",
+        "requires_coding_agent_hint": "编码和设备模式需要选择一种执行引擎。",
         "custom_shell_placeholder": "选择自定义运行环境",
         "no_custom_shells": "暂无自定义运行环境",
         "manage_custom_shells_hint": "可前往资源库 - 执行器管理中添加自定义运行环境。",
         "simple": {
-          "title": "日常对话",
-          "description": "适合对话、知识问答和轻量任务。"
+          "title": "日常问答",
+          "description": "适合问答、写作和知识查询。"
         },
         "complex": {
-          "title": "复杂任务与编程",
-          "description": "适合多步骤复杂任务、代码开发、文件操作和命令执行。"
+          "title": "编程与复杂任务",
+          "description": "适合编程、文件处理和多步骤任务。"
         },
-        "coding_runtime_label": "选择编程引擎",
+        "coding_runtime_label": "执行引擎",
+        "coding_runtime_description": "请选择与模型匹配的执行引擎。",
         "codex": {
           "title": "Codex",
-          "description": "适合使用 OpenAI 模型完成自主编程和工具调用。"
+          "description": "适合 OpenAI 模型。"
         },
         "claude_code": {
           "title": "Claude Code",
-          "description": "适合使用 Anthropic 模型完成编程和工具调用。"
+          "description": "适合 Anthropic 模型。"
         },
         "custom": {
           "title": "高级自定义",

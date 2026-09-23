@@ -193,10 +193,15 @@ where
     };
     let mut entity_ns_ids: Vec<i64> = Vec::new();
     if !org_bindings.is_empty() {
-        // ErpEntityResolver.match_entity_bindings: resolve the user's ssn,
-        // then check membership through the provider (`entity_ids` is the
-        // deduplicated department list).
-        let ssn = erp.erp.employee_id(user_id).await?;
+        // `NamespaceEntityResolver.get_resource_ids_by_entity` delegates to
+        // `ErpEntityResolver.match_entity_bindings`, whose
+        // `_resolve_matched_departments` resolves the ssn through
+        // `_get_user_ssn` — the full lazy-sync path (profile read, email
+        // read, distributed lock, ERP search), not a bare profile read.
+        let ssn = erp
+            .erp
+            .resolve_employee_id(erp.redis, i32::try_from(user_id).unwrap_or(0))
+            .await?;
         if let Some(ssn) = ssn {
             let mut department_ids: Vec<String> = org_bindings
                 .iter()
@@ -246,7 +251,13 @@ where
     };
     let mut erp_ns_ids: Vec<i64> = Vec::new();
     if !distinct_departments.is_empty() {
-        let ssn = erp.erp.employee_id(user_id).await?;
+        // `ErpEntityResolver.get_resource_ids_by_entity` ->
+        // `_resolve_matched_departments` -> `_get_user_ssn`: the same full
+        // lazy-sync resolution as the NamespaceEntityResolver pass above.
+        let ssn = erp
+            .erp
+            .resolve_employee_id(erp.redis, i32::try_from(user_id).unwrap_or(0))
+            .await?;
         if let Some(ssn) = ssn {
             let matched =
                 DirectoryMembership::matched_departments(erp, user_id, &ssn, &distinct_departments)
@@ -340,6 +351,111 @@ pub fn effective_roles(
         }
     }
     effective
+}
+
+/// `app.services.team_access_policy.should_redact_team_for_user`: whether a
+/// team response must hide its private agent configuration from the
+/// requesting user.
+///
+/// Every API whose response renders a team shares this check
+/// (`get_task_detail` and the remote-workspace endpoints), so it lives with
+/// the membership resolution it builds on rather than inside one of those
+/// callers.
+///
+/// Short-circuits for the team owner or a `default`-namespace team; otherwise
+/// it resolves the user's effective group roles (`get_user_group_roles`) and
+/// then the restricted-analyst namespace checks. The caller maps the
+/// dependency error into its own response error.
+pub async fn should_redact_team_for_user<M, R: brz_redis::Redis>(
+    mysql: &M,
+    erp: &ErpContext<'_, R>,
+    user_id: i64,
+    team_id: i64,
+    team_user_id: i64,
+    team_namespace: &str,
+) -> Result<bool, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
+    if team_user_id == user_id || team_namespace == "default" {
+        return Ok(false);
+    }
+    // `get_user_group_roles`: active namespace names, then
+    // `get_effective_roles_in_groups` (direct + entity memberships).
+    let resolved = user_group_memberships(mysql, erp, user_id).await?;
+    let roles = effective_roles(&resolved.memberships, &resolved.active_names);
+    let restricted: Vec<&str> = roles
+        .iter()
+        .filter(|(_, role)| role.as_str() == "RestrictedAnalyst")
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if restricted.contains(&team_namespace) {
+        return Ok(true);
+    }
+    if restricted.is_empty() {
+        return Ok(false);
+    }
+    // Restricted namespaces' active ids (`Namespace.id.in_(names)`).
+    let mut sorted: Vec<String> = restricted.iter().map(|name| name.to_string()).collect();
+    sorted.sort();
+    let namespace_ids = repo::namespace_ids_by_names(mysql, &sorted).await?;
+    if namespace_ids.is_empty() {
+        return Ok(false);
+    }
+    // Approved team member rows bound to those namespaces.
+    Ok(
+        team_member_bound_to_namespaces(mysql, team_id, &namespace_ids)
+            .await?
+            .is_some(),
+    )
+}
+
+/// The `should_redact_team_for_user` tail query: one approved
+/// `resource_members` row of the team bound to a restricted namespace.
+async fn team_member_bound_to_namespaces<M>(
+    mysql: &M,
+    team_id: i64,
+    namespace_ids: &[i64],
+) -> Result<Option<i64>, brz_mysql::MysqlError>
+where
+    M: Mysql,
+{
+    if namespace_ids.is_empty() {
+        return Ok(None);
+    }
+    let placeholders = vec!["?"; namespace_ids.len()].join(", ");
+    #[derive(brz_mysql::FromMysqlRow)]
+    struct Row {
+        resource_members_id: i64,
+    }
+    let mut args: Vec<repo::BindingArg> = Vec::with_capacity(namespace_ids.len() + 3);
+    args.push(repo::BindingArg::Int(team_id));
+    args.push(repo::BindingArg::Str("Team".to_owned()));
+    args.push(repo::BindingArg::Str("TEAM".to_owned()));
+    args.push(repo::BindingArg::Str("namespace".to_owned()));
+    args.extend(
+        namespace_ids
+            .iter()
+            .map(|id| repo::BindingArg::Str(id.to_string())),
+    );
+    args.push(repo::BindingArg::Str("approved".to_owned()));
+    args.push(repo::BindingArg::Str("APPROVED".to_owned()));
+    let row: Option<Row> = mysql
+        .fetch_optional(
+            &format!(
+                "SELECT resource_members.id AS resource_members_id \
+                 FROM resource_members \
+                 WHERE resource_members.resource_id = ? \
+                 AND resource_members.resource_type IN (?, ?) \
+                 AND resource_members.entity_type = ? \
+                 AND resource_members.entity_id IN ({placeholders}) \
+                 AND resource_members.status IN (?, ?) \
+                 LIMIT 1"
+            ),
+            args,
+        )
+        .await?;
+    Ok(row.map(|row| row.resource_members_id))
 }
 
 #[cfg(test)]

@@ -17,10 +17,15 @@ export interface WeworkInbox {
   next_offset: number | null
 }
 
+export type WeworkNotificationCategory = 'collaboration' | 'general'
+
 export function createNotificationsApi(client: HttpClient) {
   const path = '/v1/wework-notifications'
   return {
-    list: (offset = 0): Promise<WeworkInbox> => client.get(`${path}?offset=${offset}`),
+    list: (offset = 0, category?: WeworkNotificationCategory): Promise<WeworkInbox> =>
+      client.get(
+        `${path}?offset=${offset}${category ? `&category=${encodeURIComponent(category)}` : ''}`
+      ),
     read: (id: string): Promise<WeworkNotification> =>
       client.post(`${path}/${encodeURIComponent(id)}/read`, {}),
     readAll: (): Promise<void> => client.post(`${path}/read-all`, {}),

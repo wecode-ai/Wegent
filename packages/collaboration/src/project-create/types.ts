@@ -162,6 +162,8 @@ export interface ProjectCreateLabels {
   visibility: string;
   privateVisibility: string;
   privateVisibilityDescription: string;
+  restrictedVisibility: string;
+  restrictedVisibilityDescription: string;
   publicVisibility: string;
   publicVisibilityDescription: string;
   publicVisibilityNotice: string;

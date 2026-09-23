@@ -23,26 +23,18 @@ use crate::state::AppState;
 #[brz_http_server::get("/api/plugins/installed")]
 async fn list_installed_plugins(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: auth::InstalledPluginsUser,
     device_id: Option<String>,
 ) -> Result<InstalledPluginsResponse, FastApiError> {
-    installed(state, authorization, device_id.as_deref()).await
+    installed(state, &user, device_id.as_deref()).await
 }
 
 /// Handler body for `GET /api/plugins/installed`.
 async fn installed(
     state: &AppState,
-    authorization: Option<&str>,
+    user: &auth::InstalledPluginsUser,
     device_id: Option<&str>,
 ) -> Result<InstalledPluginsResponse, FastApiError> {
-    let user = auth::authenticate(
-        &state.mysql,
-        &authorization_headers(authorization).view(),
-        &state.jwt_secret_keys,
-        &state.jwt_algorithm,
-    )
-    .await
-    .map_err(|(status, _)| FastApiError::detail(status, "Could not validate credentials"))?;
     match list_installed(&state.mysql, user.id, device_id).await {
         Ok(body) => Ok(body),
         Err(error) => {
@@ -50,16 +42,6 @@ async fn installed(
             Err(FastApiError::internal())
         }
     }
-}
-
-/// Adapts the bound `authorization` header value for the auth module's
-/// header view.
-fn authorization_headers(authorization: Option<&str>) -> crate::headers::OwnedHeaders {
-    let mut headers = crate::headers::OwnedHeaders::new();
-    if let Some(value) = authorization {
-        headers.push("authorization", value);
-    }
-    headers
 }
 
 async fn list_installed<M>(

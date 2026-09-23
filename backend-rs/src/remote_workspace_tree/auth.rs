@@ -24,6 +24,76 @@ pub(crate) struct AuthContext {
     pub(crate) is_active: bool,
 }
 
+pub(crate) struct RemoteWorkspaceFileUser(pub(crate) AuthContext);
+
+impl std::ops::Deref for RemoteWorkspaceFileUser {
+    type Target = AuthContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl brz_http_server::Authenticator<RemoteWorkspaceFileUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<RemoteWorkspaceFileUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
+        let query = brz_http_server::__private::QueryParams::new(request.query());
+        let token = query.get("token");
+        let mut keys = vec![self.state().auth.jwt_key.clone()];
+        keys.extend(self.state().auth.legacy_jwt_keys.iter().cloned());
+        authenticate_with_query_fallback(
+            &self.state().mysql,
+            &keys,
+            &self.state().auth.algorithm,
+            &headers.view(),
+            token,
+        )
+        .await
+        .map(RemoteWorkspaceFileUser)
+        .map_err(|error| {
+            if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                brz_http_server::AuthFailure::Internal
+            } else if error.detail() == "User not activated" {
+                brz_http_server::AuthFailure::invalid_credentials("Wegent-Remote-User-Inactive")
+            } else {
+                brz_http_server::AuthFailure::invalid_credentials("Bearer")
+            }
+        })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a RemoteWorkspaceFileUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: "Wegent-Remote-User-Inactive",
+            } => crate::http_compat::FastApiError::unauthorized("User not activated"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::internal()
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 #[derive(Debug, FromMysqlRow)]
 struct UserRow {
     #[mysql(rename = "users_id")]
@@ -81,19 +151,6 @@ fn extract_token(headers: &impl crate::headers::Headers) -> Option<String> {
 
 fn unauthorized() -> ApiError {
     ApiError::unauthorized("Could not validate credentials")
-}
-
-/// Authenticate the request: verify the JWT and load the user.
-pub(crate) async fn authenticate<M>(
-    mysql: &M,
-    jwt_decode_keys: &[String],
-    jwt_algorithm: &str,
-    headers: &impl crate::headers::Headers,
-) -> Result<AuthContext, ApiError>
-where
-    M: brz_mysql::Mysql,
-{
-    authenticate_with_query_fallback(mysql, jwt_decode_keys, jwt_algorithm, headers, None).await
 }
 
 /// `get_current_user_from_query_or_header`: the Authorization bearer token

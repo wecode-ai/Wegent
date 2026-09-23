@@ -9,7 +9,6 @@
 //! `settings.ALGORITHM` for the `wegent-connector-runtime` audience, its
 //! `token_type`/`scope` claims are checked, and the referenced active user must
 //! exist under the token's `user_id` and `sub` username.
-use std::sync::Arc;
 
 use brz_http_server::StatusCode;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -18,6 +17,86 @@ use serde::{Deserialize, Deserializer};
 use crate::apps_installed::db::{self, UserRow};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+
+pub struct ConnectorUser(pub UserRow);
+
+impl std::ops::Deref for ConnectorUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const CONNECTOR_REQUIRED: &str = "Wegent-Connector-Required";
+const CONNECTOR_SCOPE_INVALID: &str = "Wegent-Connector-Scope-Invalid";
+const CONNECTOR_USER_UNAVAILABLE: &str = "Wegent-Connector-User-Unavailable";
+
+impl brz_http_server::Authenticator<ConnectorUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<ConnectorUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        authenticate(self.state(), authorization)
+            .await
+            .map(ConnectorUser)
+            .map_err(|error| {
+                if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else {
+                    match error.detail_message() {
+                        Some("Connector token required") => {
+                            brz_http_server::AuthFailure::missing_credentials(CONNECTOR_REQUIRED)
+                        }
+                        Some("Invalid connector token scope") => {
+                            brz_http_server::AuthFailure::invalid_credentials(
+                                CONNECTOR_SCOPE_INVALID,
+                            )
+                        }
+                        Some("Connector user unavailable") => {
+                            brz_http_server::AuthFailure::invalid_credentials(
+                                CONNECTOR_USER_UNAVAILABLE,
+                            )
+                        }
+                        _ => brz_http_server::AuthFailure::invalid_credentials("Bearer"),
+                    }
+                }
+            })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a ConnectorUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.users_user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        let detail = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: CONNECTOR_REQUIRED,
+            } => "Connector token required",
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: CONNECTOR_SCOPE_INVALID,
+            } => "Invalid connector token scope",
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: CONNECTOR_USER_UNAVAILABLE,
+            } => "Connector user unavailable",
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                return crate::http_compat::FastApiError::internal().into_http_error(arena);
+            }
+            _ => "Invalid connector token",
+        };
+        crate::http_compat::FastApiError::detail(brz_http_server::StatusCode::UNAUTHORIZED, detail)
+            .into_http_error(arena)
+    }
+}
 
 /// `aud` required by the connector-runtime audience check.
 const CONNECTOR_AUDIENCE: &str = "wegent-connector-runtime";
@@ -28,7 +107,7 @@ const CONNECTOR_TOKEN_TYPE: &str = "connector";
 
 /// `get_connector_runtime_user`: resolve the caller from a connector token.
 pub(crate) async fn authenticate(
-    state: &Arc<AppState>,
+    state: &AppState,
     authorization: Option<&str>,
 ) -> Result<UserRow, FastApiError> {
     let Some(token) = connector_token(authorization) else {

@@ -18,7 +18,9 @@
 //! 3. per project, `task_store.list_active_project_tasks` reads the
 //!    configured task repository. The public repository reads the base
 //!    `tasks` table once; the private deployment enables the migration
-//!    repository, which performs the legacy/shard merge and deduplication.
+//!    repository, which reads the base table (legacy rows), probes the owner's
+//!    shard table for migrated legacy ids, then reads the owner's shard table,
+//!    and finally merges both halves with id deduplication.
 //! 4. `ProjectWithTasksResponse` per project with `task_count=len(tasks)`
 //!    and the `_get_project_tasks` projection (`task_title` from
 //!    `spec.title or task.name or "Task #{id}"`, `task_status` from
@@ -28,13 +30,11 @@
 //! The response is the `ProjectListResponse` (`total`, `items`).
 use std::sync::Arc;
 
-use brz_http_server::{Binary, HttpResponse};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::auth::{AuthFailure, get_current_user};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::task_routing::ByUserId;
@@ -391,7 +391,10 @@ struct ProjectItem {
     tasks: Vec<ProjectTaskItem>,
 }
 
-/// `ProjectListResponse`.
+/// `ProjectListResponse`. The source declares it as the endpoint's
+/// `response_model`, so FastAPI renders the response body as
+/// `application/json`; returning the typed model keeps that media type
+/// (a raw binary body renders `application/octet-stream`).
 #[derive(Debug, serde::Serialize)]
 struct ProjectListResponse {
     total: i64,
@@ -483,45 +486,18 @@ async fn query_projects<M: Mysql>(
         .await
 }
 
-/// The legacy `tasks` per-project query
+/// The legacy per-project read over the **base** `tasks` table
 /// (`SqlAlchemyTaskStore.list_active_project_tasks`): `ORDER BY
-/// tasks.updated_at DESC`; the owner and origin filters mirror the
-/// recorded rendering (the project id and owner bind as integers, the
-/// origin binds as a string). Uses `{{tasks}}` routed by
-/// the owner's user id (legacy ids land on the base table).
-async fn query_legacy_project_tasks<M: Mysql>(
-    mysql: &M,
-    project_id: i64,
-    owner_user_id: i64,
-    client_origin: Option<&str>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE project_id = ? AND kind = 'Task' AND is_active = 1 AND user_id = ?",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" ORDER BY updated_at DESC");
-    let mysql = mysql.route(ByUserId(owner_user_id as u64));
-    let rows: Vec<MysqlRow> = match client_origin {
-        Some(origin) => {
-            mysql
-                .fetch_all(&sql, (project_id, owner_user_id, origin))
-                .await?
-        }
-        None => mysql.fetch_all(&sql, (project_id, owner_user_id)).await?,
-    };
-    rows.iter().map(decode_task_row).collect()
-}
-
-/// Public task-store implementation: one base-table query with the same
-/// projection and ordering as the open-source SQLAlchemy store. Passing a
-/// zero routing key is the explicit base-table contract for both the public
-/// `NoSharding` router and a private router when a caller opts out of the
-/// migration path.
+/// tasks.updated_at DESC`; the owner and origin filters mirror the recorded
+/// rendering (the project id and owner bind as integers, the origin binds as
+/// a string).
+///
+/// Legacy rows live in the base table, so the read passes the zero routing key
+/// — the explicit base-table contract already used by the migration-free
+/// repository — rather than the owner's routing key, which resolves to the
+/// owner's shard. Both task-store policies use this read: the migration-free
+/// store on its own, and the migration store as the legacy half of its merge,
+/// whose shard half is [`query_shard_project_tasks`].
 async fn query_base_project_tasks<M: Mysql>(
     mysql: &M,
     project_id: i64,
@@ -582,10 +558,10 @@ async fn query_shard_project_tasks<M: Mysql>(
 }
 
 /// `ShardedTaskStore._exclude_migrated_legacy_index_rows`: drop legacy
-/// rows whose id also exists in the owner's shard table. Returns the
-/// input unchanged when the legacy result is empty (the source early-out,
-/// as in the recorded case). Probes `{{tasks}}` routed by the owner's user
-/// id (same shard as the legacy rows).
+/// rows whose id is already migrated into the owner's shard table. Returns
+/// the input unchanged when the legacy result is empty (the source
+/// early-out, as in the recorded case). Probes `{{tasks}}` routed by the
+/// owner's user id, because the migrated ids are indexed in that shard.
 async fn exclude_migrated_legacy_rows<M: Mysql>(
     mysql: &M,
     owner_user_id: i64,
@@ -626,6 +602,23 @@ fn merge_project_tasks(
     }
     merged.sort_by_key(|row| std::cmp::Reverse(row.updated_at));
     merged
+}
+
+/// The migration task store's `list_active_project_tasks`
+/// (`ShardedTaskStore`): the legacy base-table read, then the migrated-index
+/// probe, then the owner's shard read, then the merge. The source performs
+/// exactly these calls in this order, and the probe only filters the legacy
+/// rows, so the merge itself is order-independent.
+async fn query_migrated_project_tasks<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    owner_user_id: i64,
+    client_origin: Option<&str>,
+) -> MysqlResult<Vec<ProjectTaskRow>> {
+    let legacy = query_base_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
+    let legacy = exclude_migrated_legacy_rows(mysql, owner_user_id, legacy).await?;
+    let shard = query_shard_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
+    Ok(merge_project_tasks(shard, legacy))
 }
 
 /// The `_get_project_tasks` projection for one task row.
@@ -687,10 +680,10 @@ fn pydantic_datetime(value: NaiveDateTime) -> String {
 #[brz_http_server::get("/api/projects")]
 async fn list_projects(
     #[inject(state)] state: &Arc<AppState>,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
     include_tasks: Option<String>,
     client_origin: Option<String>,
-) -> Result<HttpResponse<Binary>, FastApiError> {
+) -> Result<ProjectListResponse, FastApiError> {
     // FastAPI validates the query parameters before the endpoint body
     // runs; invalid values surface as 422 without any dependency
     // traffic.
@@ -698,18 +691,15 @@ async fn list_projects(
         include_tasks: parse_include_tasks(include_tasks.as_deref())?,
         client_origin: parse_client_origin(client_origin.as_deref())?,
     };
-    projects_list(state, authorization, &params).await
+    projects_list(state, &current_user, &params).await
 }
 
 /// Handler body for `GET /api/projects`.
 async fn projects_list(
     state: &Arc<AppState>,
-    authorization: Option<&str>,
+    user: &crate::auth::SessionUser,
     params: &ListProjectsParams,
-) -> Result<HttpResponse<Binary>, FastApiError> {
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
+) -> Result<ProjectListResponse, FastApiError> {
     let user_id = i64::from(user.id);
 
     let projects = query_projects(&state.mysql, user_id, &params.client_origin)
@@ -723,27 +713,14 @@ async fn projects_list(
         // remains zero as in the recorded implementation.
         let (tasks, task_count) = if params.include_tasks {
             let merged = if state.task_policy.resolve_migrated_legacy {
-                let legacy = query_legacy_project_tasks(
+                query_migrated_project_tasks(
                     &state.mysql,
                     project.projects_id,
                     project.projects_user_id,
                     Some(&params.client_origin),
                 )
                 .await
-                .map_err(dependency_error)?;
-                let shard = query_shard_project_tasks(
-                    &state.mysql,
-                    project.projects_id,
-                    project.projects_user_id,
-                    Some(&params.client_origin),
-                )
-                .await
-                .map_err(dependency_error)?;
-                let legacy =
-                    exclude_migrated_legacy_rows(&state.mysql, project.projects_user_id, legacy)
-                        .await
-                        .map_err(dependency_error)?;
-                merge_project_tasks(shard, legacy)
+                .map_err(dependency_error)?
             } else {
                 query_base_project_tasks(
                     &state.mysql,
@@ -784,23 +761,10 @@ async fn projects_list(
         });
     }
 
-    let response = ProjectListResponse {
+    Ok(ProjectListResponse {
         total: items.len() as i64,
         items,
-    };
-    Ok(HttpResponse::new(Binary::new(
-        serde_json::to_vec(&response).unwrap_or_default(),
-    )))
-}
-
-/// `get_current_user` failures mapped to the source 401 responses.
-fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
-    }
+    })
 }
 
 /// Dependency failure mapped to the source 500 response.

@@ -17,7 +17,7 @@ use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use serde::Serialize;
 
-use crate::auth::{AuthFailure, get_current_user};
+use crate::auth::SessionUser;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::group_membership::{ErpContext, iter_user_groups_with_roles};
@@ -87,31 +87,28 @@ pub struct GroupListResponse {
 #[brz_http_server::get("/api/groups")]
 async fn list_groups(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
     page: Option<String>,
     limit: Option<String>,
 ) -> Result<GroupListResponse, FastApiError> {
-    groups_list(state, authorization, page.as_deref(), limit.as_deref()).await
+    groups_list(state, &current_user, page.as_deref(), limit.as_deref()).await
 }
 
 /// Handler body for `GET /api/groups`.
 async fn groups_list(
     state: &AppState,
-    authorization: Option<&str>,
+    user: &SessionUser,
     page_raw: Option<&str>,
     limit_raw: Option<&str>,
 ) -> Result<GroupListResponse, FastApiError> {
     // FastAPI validates the query parameters before the endpoint body runs;
     // invalid values surface as 422 without any dependency traffic.
     let (page, limit) = parse_paging(page_raw, limit_raw)?;
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
     let user_id = i64::from(user.id);
-    let user_role = user.role;
+    let user_role = &user.role;
 
     let skip = (page - 1) * limit;
-    let group_roles = user_group_roles(state, user_id, &user_role).await?;
+    let group_roles = user_group_roles(state, user_id, user_role).await?;
     let names: Vec<String> = group_roles.iter().map(|(name, _)| name.clone()).collect();
     let namespaces = paged_namespaces(&state.mysql, &names, skip, limit)
         .await
@@ -133,7 +130,7 @@ async fn groups_list(
     let total = if page == 1 && (namespaces.len() as i64) < limit {
         namespaces.len() as i64
     } else {
-        let all_roles = user_group_roles(state, user_id, &user_role).await?;
+        let all_roles = user_group_roles(state, user_id, user_role).await?;
         let all_names: Vec<String> = all_roles.iter().map(|(name, _)| name.clone()).collect();
         paged_namespaces(&state.mysql, &all_names, 0, 1000)
             .await
@@ -236,16 +233,6 @@ fn validation_error(field: &str, kind: &str, message: &str, input: impl Serializ
             "input": input,
         }
     ]))
-}
-
-/// `get_current_user` failures mapped to the source 401 responses.
-fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
-    }
 }
 
 /// Dependency failure mapped to the source 500 response.

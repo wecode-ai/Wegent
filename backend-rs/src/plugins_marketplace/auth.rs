@@ -18,6 +18,43 @@ use crate::plugins_marketplace::db::{MysqlCapability, UserRepository, UserRow};
 /// Result of optional authentication: the active user row or `None`.
 pub type OptionalUser = Option<UserRow>;
 
+pub struct MarketplaceUser(pub UserRow);
+
+impl std::ops::Deref for MarketplaceUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl brz_http_server::Authenticator<MarketplaceUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<MarketplaceUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        current_user_optional(
+            &self.state().mysql,
+            &self.state().jwt_secret_keys,
+            &self.state().jwt_algorithm,
+            authorization,
+        )
+        .await
+        .map(MarketplaceUser)
+        .ok_or_else(|| brz_http_server::AuthFailure::missing_credentials("Bearer"))
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a MarketplaceUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+}
+
 fn bearer_token(header: Option<&str>) -> Option<&str> {
     let header = header?;
     let (scheme, token) = header.split_once(' ')?;

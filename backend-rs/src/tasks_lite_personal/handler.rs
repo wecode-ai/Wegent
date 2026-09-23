@@ -38,7 +38,6 @@ use super::lite_repository::{
     TaskCandidateRow, batch_query_teams, batch_query_workspaces, filter_personal_tasks,
     list_personal_task_candidates_after,
 };
-use crate::auth::{AuthFailure, get_current_user};
 use crate::state::AppState;
 
 /// Source `PERSONAL_TASK_CANDIDATE_EXTRA_LIMIT`-driven cursor batch size:
@@ -229,16 +228,16 @@ fn format_python_datetime(value: &NaiveDateTime) -> String {
 #[brz_http_server::get("/api/tasks/lite/personal")]
 async fn get_personal_tasks_lite(
     #[inject(state)] state: &Arc<AppState>,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
     query: brz_http_server::Query<PersonalTasksParams>,
 ) -> Result<PersonalTasksResponse, crate::http_compat::FastApiError> {
-    personal_tasks_lite(state, authorization, &query).await
+    personal_tasks_lite(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/tasks/lite/personal`.
 async fn personal_tasks_lite(
     state: &Arc<AppState>,
-    authorization: Option<&str>,
+    current_user: &crate::auth::SessionUser,
     params: &PersonalTasksParams,
 ) -> Result<PersonalTasksResponse, crate::http_compat::FastApiError> {
     let params = PersonalTasksParams {
@@ -249,11 +248,6 @@ async fn personal_tasks_lite(
         cursor: params.cursor.clone(),
     }
     .validated()?;
-
-    let current_user = match get_current_user(&state.auth, &state.mysql, authorization).await {
-        Ok(user) => user,
-        Err(error) => return Err(auth_error(error)),
-    };
 
     let cursor_value = match params.cursor.as_deref().map(decode_cursor) {
         None => None,
@@ -646,18 +640,6 @@ async fn device_display_names(
         }
     }
     result
-}
-
-fn auth_error(error: AuthFailure) -> crate::http_compat::FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => crate::http_compat::FastApiError::detail(
-            StatusCode::UNAUTHORIZED,
-            "Could not validate credentials",
-        ),
-        AuthFailure::UserNotActivated => {
-            crate::http_compat::FastApiError::detail(StatusCode::UNAUTHORIZED, "User not activated")
-        }
-    }
 }
 
 fn internal_error(error: brz_mysql::MysqlError) -> crate::http_compat::FastApiError {

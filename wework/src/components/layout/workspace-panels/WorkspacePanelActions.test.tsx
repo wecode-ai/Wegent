@@ -118,6 +118,7 @@ describe('WorkspacePanelActions', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     setWindowWidth(originalInnerWidth)
     Object.defineProperty(window.navigator, 'userAgent', {
       configurable: true,
@@ -636,7 +637,7 @@ describe('WorkspacePanelActions', () => {
 
     const button = screen.getByTestId('open-code-server-titlebar-button')
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'workbench.project_ide_unavailable_tooltip')
+    expect(button).not.toHaveAttribute('title')
     await userEvent.click(button)
     expect(startProjectCodeServerMock).not.toHaveBeenCalled()
     expect(startDeviceCodeServerMock).not.toHaveBeenCalled()

@@ -829,6 +829,12 @@ async fn subscription_skill_refs<M: Mysql>(
                 .filter_map(|reference| reference.as_ref())
                 .filter_map(|reference| {
                     (!reference.name().is_empty()).then_some(RequestedSkillRef {
+                        // `spec.skillRefs` holds `SubscriptionSkillRef`
+                        // documents (`app/schemas/subscription.py:199-206`),
+                        // which carry name, namespace and is_public only. The
+                        // skills response renders `SkillRefMeta` values and
+                        // never this type, so no id is projected here.
+                        skill_id: None,
                         name: reference.name().to_owned(),
                         namespace: if reference.namespace().is_empty() {
                             "default".to_owned()

@@ -76,7 +76,7 @@ class BotInDB(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
-    capability_mode: str = "follow_device"
+    capability_mode: str = "manual"
     inherit_base_capabilities: bool = False
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
@@ -107,7 +107,7 @@ class BotDetail(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
-    capability_mode: str = "follow_device"
+    capability_mode: str = "manual"
     inherit_base_capabilities: bool = False
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None

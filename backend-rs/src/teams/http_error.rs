@@ -124,7 +124,52 @@ impl IntoHttpError for HttpError {
 }
 
 impl From<HttpError> for crate::http_compat::FastApiError {
+    /// Converts the mapped error without losing the source's 401 challenge.
+    ///
+    /// Every 401 this endpoint family produces comes from the source
+    /// `app.core.security` authentication dependency, whose
+    /// `HTTPException(401, ..., headers={"WWW-Authenticate": "Bearer"})` always
+    /// carries the challenge; [`IntoHttpError`] applies the same rule, so the
+    /// conversion must not drop it.
     fn from(error: HttpError) -> Self {
-        crate::http_compat::FastApiError::detail(error.status(), error.detail())
+        if error.status == StatusCode::UNAUTHORIZED {
+            crate::http_compat::FastApiError::unauthorized(error.detail)
+        } else {
+            crate::http_compat::FastApiError::detail(error.status, error.detail)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authentication_failures_keep_the_source_bearer_challenge() {
+        for (error, detail) in [
+            (
+                HttpError::could_not_validate_credentials(),
+                "\"Could not validate credentials\"",
+            ),
+            (HttpError::user_not_activated(), "\"User not activated\""),
+            (HttpError::not_authenticated(), "\"Not authenticated\""),
+        ] {
+            let converted = crate::http_compat::FastApiError::from(error);
+            assert_eq!(converted.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(converted.validation_detail(), detail);
+            assert!(
+                converted.carries_challenge(),
+                "the source 401 always carries WWW-Authenticate: Bearer"
+            );
+        }
+    }
+
+    #[test]
+    fn non_authentication_failures_keep_their_status_without_a_challenge() {
+        let converted =
+            crate::http_compat::FastApiError::from(HttpError::internal("database down"));
+        assert_eq!(converted.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(converted.validation_detail(), "\"Internal server error\"");
+        assert!(!converted.carries_challenge());
     }
 }

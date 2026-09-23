@@ -11,12 +11,18 @@ use super::error::ApiError;
 use super::kinds::KindStore;
 use crate::crd::{CrdDocument, reference_parts};
 
-/// `team_kinds_service._convert_to_team_dict` (non-cache variant): per
-/// member, resolve the bot through the cached reader (`get_by_name_and_namespace`
-/// in namespace `default`, i.e. personal-then-public for Bot), then
-/// `_get_bot_summary` for the member's bot (shell + model reads). The
-/// result feeds only fields the tree response discards; the function is
-/// reproduced for its recorded kind-cache read sequence.
+/// `team_kinds_service._convert_to_team_dict`: per member, resolve the bot
+/// through the reader the Team resolution uses — the member bot of a
+/// non-group team is looked up with the resolved Team row's owner
+/// (`team.user_id`, so a personal Bot of the team owner wins and the public
+/// fallback follows), a group team resolves by name and namespace
+/// (`get_group`), then `_get_bot_summary` for the member's bot (shell +
+/// model reads). `user_id` is the task owner, used as the summary user for a
+/// non-group team.
+///
+/// The outcome feeds only fields the tree and status responses discard; the
+/// function is shared by both flows for its recorded kind-cache read
+/// sequence.
 pub(crate) async fn convert_team_dict<M>(
     kinds: &KindStore<'_, M, impl brz_redis::Redis>,
     team: &super::kinds::KindRecord,
@@ -168,4 +174,145 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote_workspace_tree::kinds::KindRecord;
+
+    fn team_record(
+        user_id: i64,
+        namespace: &str,
+        bot_name: &str,
+        bot_namespace: &str,
+    ) -> KindRecord {
+        KindRecord {
+            id: 19709,
+            user_id,
+            kind: "Team".to_owned(),
+            name: "AI助理".to_owned(),
+            namespace: namespace.to_owned(),
+            json: brz_mysql::Json(serde_json::json!({
+                "kind": "Team",
+                "spec": {
+                    "members": [{
+                        "role": "leader",
+                        "botRef": {"name": bot_name, "namespace": bot_namespace},
+                        "prompt": ""
+                    }],
+                    "collaborationModel": "solo"
+                },
+                "metadata": {"name": "AI助理", "namespace": namespace},
+                "apiVersion": "agent.wecode.io/v1"
+            })),
+            is_active: 1,
+            created_at: chrono::NaiveDateTime::default(),
+            updated_at: chrono::NaiveDateTime::default(),
+        }
+    }
+
+    /// `_convert_to_team_dict` resolves a member bot of a personal team with
+    /// the resolved Team row's owner (`team.user_id`), not with the task
+    /// CRD's teamRef: the source passes `team.user_id` to
+    /// `get_by_name_and_namespace`, so the personal index/SQL of the team
+    /// owner is the one that serves the lookup. The recorded
+    /// `remote-workspace/status` case for task 19712 proves the lookup:
+    /// `kind:v2:idx:personal:Bot:457:default:AI助理` followed by
+    /// `kinds.user_id = 457 ... kind = 'Bot' ...`.
+    #[tokio::test]
+    async fn personal_team_member_bot_lookup_uses_the_team_owner() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let kinds: KindStore<'_, _, brz_redis::RedisService> = KindStore {
+            mysql: &mysql,
+            redis: None,
+        };
+        convert_team_dict(
+            &kinds,
+            &team_record(457, "default", "AI助理", "default"),
+            457,
+        )
+        .await
+        .expect("conversion succeeds");
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 2, "{queries:?}");
+        assert_eq!(queries[0].first_integer, Some(457), "{queries:?}");
+        assert!(
+            queries[0]
+                .sql
+                .contains("WHERE kinds.user_id = ? AND kinds.kind = ? AND kinds.namespace = ?"),
+            "{}",
+            queries[0].sql
+        );
+        // The personal miss falls through to the public Bot index, exactly
+        // like the recorded lane (`idx:personal` then `idx:public`).
+        assert!(
+            queries[1]
+                .sql
+                .contains("WHERE kinds.user_id = 0 AND kinds.kind = ?"),
+            "{}",
+            queries[1].sql
+        );
+    }
+
+    /// A public team (`team.user_id == 0`) skips the personal index and
+    /// resolves the member bot through the public fallback, exactly like the
+    /// recorded `kind:v2:idx:public:Bot:default:wegent-chat` lane of the
+    /// public-team status cases.
+    #[tokio::test]
+    async fn public_team_member_bot_lookup_falls_back_to_the_public_index() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let kinds: KindStore<'_, _, brz_redis::RedisService> = KindStore {
+            mysql: &mysql,
+            redis: None,
+        };
+        convert_team_dict(
+            &kinds,
+            &team_record(0, "default", "wegent-chat", "default"),
+            457,
+        )
+        .await
+        .expect("conversion succeeds");
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1, "{queries:?}");
+        assert!(
+            queries[0]
+                .sql
+                .contains("WHERE kinds.user_id = 0 AND kinds.kind = ? AND kinds.namespace = ?"),
+            "{}",
+            queries[0].sql
+        );
+    }
+
+    /// A group team resolves its member bot by name and namespace
+    /// (`kindReader.get_group`) regardless of the group owner.
+    #[tokio::test]
+    async fn group_team_member_bot_lookup_is_namespace_scoped() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let kinds: KindStore<'_, _, brz_redis::RedisService> = KindStore {
+            mysql: &mysql,
+            redis: None,
+        };
+        convert_team_dict(
+            &kinds,
+            &team_record(0, "Feed-Monitor", "接口请求分析助手-bot", "Feed-Monitor"),
+            457,
+        )
+        .await
+        .expect("conversion succeeds");
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1, "{queries:?}");
+        assert!(
+            !queries[0].sql.contains("WHERE kinds.user_id"),
+            "{}",
+            queries[0].sql
+        );
+        assert!(
+            queries[0]
+                .sql
+                .contains("WHERE kinds.kind = ? AND kinds.namespace = ?"),
+            "{}",
+            queries[0].sql
+        );
+    }
 }

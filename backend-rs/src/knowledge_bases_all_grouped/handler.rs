@@ -10,13 +10,13 @@ use std::collections::{HashMap, HashSet};
 use brz_http_server::StatusCode;
 use brz_mysql::{Mysql, MysqlResult};
 
-use crate::auth::{AuthFailure, get_current_user};
+use crate::auth::SessionUser;
 use crate::permissions::EntityResolvers;
 use crate::state::AppState;
 
 use super::membership::{
     collect_entity_authorized_kbs, effective_role_in_group, effective_roles, entity_kbs,
-    user_group_role_map,
+    external_editable_kb_ids, user_group_role_map, user_groups,
 };
 use super::py_order::PySetOrder;
 use super::queries::{
@@ -39,20 +39,16 @@ use super::{
 #[brz_http_server::get("/api/knowledge-bases/all-grouped")]
 async fn get_all_knowledge_bases_grouped(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] user: SessionUser,
 ) -> Result<AllGroupedKnowledgeResponse, crate::http_compat::FastApiError> {
-    all_knowledge_bases_grouped(state, authorization).await
+    all_knowledge_bases_grouped(state, user).await
 }
 
 /// Handler body for `GET /api/knowledge-bases/all-grouped`.
 async fn all_knowledge_bases_grouped(
     state: &AppState,
-    authorization: Option<&str>,
+    user: SessionUser,
 ) -> Result<AllGroupedKnowledgeResponse, crate::http_compat::FastApiError> {
-    let user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
-
     let redis = state.redis.as_ref();
 
     let result = all_grouped(
@@ -73,17 +69,6 @@ async fn all_knowledge_bases_grouped(
     })
 }
 
-fn auth_error(error: AuthFailure) -> crate::http_compat::FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            crate::http_compat::FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => {
-            crate::http_compat::FastApiError::unauthorized("User not activated")
-        }
-    }
-}
-
 /// `KnowledgeService.get_all_knowledge_bases_grouped`.
 async fn all_grouped<M, R: brz_redis::Redis>(
     mysql: &M,
@@ -100,25 +85,22 @@ where
         .await?
         .unwrap_or((user_id, user_role.to_string()));
 
-    // `get_user_groups` -> `get_user_group_roles`: active namespace names,
-    // then the first membership batch.
-    let _active_names = active_namespace_names(mysql).await?;
+    // `get_user_groups` -> `get_user_group_roles`: every active namespace
+    // name, then the first membership batch.
+    let active_names = active_namespace_names(mysql).await?;
     let role_map = user_group_role_map(mysql, redis, resolvers, user_id).await?;
-    let group_names: Vec<String> = {
-        let mut names: Vec<String> = role_map.iter().map(|(name, _)| name.clone()).collect();
-        names.sort();
-        names
-    };
+    let group_names = user_groups(&role_map, &active_names);
     let organization_names = organization_namespace_names(mysql).await?;
     // `group_roles = get_effective_roles_in_groups(...)`: the second
     // membership batch (`iter_user_groups_with_roles` again). The source
-    // returns early for an empty group list without running the batch.
+    // passes the non-organization groups and returns early for an empty
+    // list without running the batch.
     let non_org_groups: Vec<String> = group_names
         .iter()
         .filter(|name| !organization_names.contains(name))
         .cloned()
         .collect();
-    let group_roles = if group_names.is_empty() {
+    let group_roles = if non_org_groups.is_empty() {
         HashMap::new()
     } else {
         let batch = user_group_role_map(mysql, redis, resolvers, user_id).await?;
@@ -138,6 +120,9 @@ where
     // then the direct member rows.
     let entity =
         collect_entity_authorized_kbs(mysql, redis, resolvers, user_id, &group_names).await?;
+    // `apply_direct_access_filter`'s `external_editable_ids`: the
+    // entity-authorized KB ids whose collected roles include an editable one.
+    let external_editable_ids = external_editable_kb_ids(&entity);
     let accessible_ns_ids = accessible_namespace_ids(mysql, &group_names).await?;
     let direct_members = direct_kb_members(mysql, user_id).await?;
 
@@ -158,6 +143,7 @@ where
             .collect::<Vec<_>>(),
         user_id,
         &accessible_ns_ids,
+        &external_editable_ids,
         &group_role_order,
         &group_roles,
         &organization_names,
@@ -216,6 +202,7 @@ where
             &shared_kbs.iter().map(|kb| kb.kinds_id).collect::<Vec<_>>(),
             user_id,
             &accessible_ns_ids,
+            &external_editable_ids,
             &group_role_order,
             &group_roles,
             &organization_names,
@@ -336,6 +323,7 @@ where
             &group_kbs.iter().map(|kb| kb.kinds_id).collect::<Vec<_>>(),
             user_id,
             &accessible_ns_ids,
+            &external_editable_ids,
             &group_role_order,
             &group_roles,
             &organization_names,
@@ -397,6 +385,7 @@ where
             .collect::<Vec<_>>(),
         user_id,
         &accessible_ns_ids,
+        &external_editable_ids,
         &group_role_order,
         &group_roles,
         &organization_names,
@@ -415,6 +404,7 @@ where
             .collect::<Vec<_>>(),
         user_id,
         &accessible_ns_ids,
+        &external_editable_ids,
         &group_role_order,
         &group_roles,
         &organization_names,
@@ -446,6 +436,7 @@ where
         &org_kbs.iter().map(|kb| kb.kinds_id).collect::<Vec<_>>(),
         user_id,
         &accessible_ns_ids,
+        &external_editable_ids,
         &group_role_order,
         &group_roles,
         &organization_names,

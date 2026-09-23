@@ -15,6 +15,7 @@ let trayActionPollingInstalled = false
 let latestTrayTaskGroups = EMPTY_TRAY_MENU_TASK_GROUPS
 let latestUsageTitle: string | null = null
 let latestUsageTooltip: string | null = null
+let latestNotificationUnreadCount = 0
 
 function getTrayLanguage(language?: string): string {
   return language?.toLowerCase().startsWith('en') ? 'en' : 'zh-CN'
@@ -26,7 +27,14 @@ function getTrayMenuState(language = i18n.resolvedLanguage || i18n.language) {
     usageTitle: latestUsageTitle,
     usageTooltip: latestUsageTooltip,
     ...latestTrayTaskGroups,
+    unreadCount: latestNotificationUnreadCount,
   }
+}
+
+export function syncNotificationUnreadCount(count: number) {
+  if (latestNotificationUnreadCount === count) return
+  latestNotificationUnreadCount = count
+  syncTrayMenuState()
 }
 
 export function syncTrayMenuState(
