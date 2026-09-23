@@ -1001,17 +1001,34 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     let cancelled = false
     const target = routeProjectLocation(activeProject, props.focusedItemId ?? null)
     if (target) {
-      queueMicrotask(() => {
-        if (cancelled) return
-        setLocation(current =>
-          String(current.projectId ?? '') === target.projectId &&
-          current.issueId === target.issueId &&
-          current.workspaceView === target.workspaceView &&
-          current.projectView === target.projectView
-            ? current
-            : { ...current, ...target, projectSettingsSection: null }
-        )
-      })
+      const routedFocus = props.focusedItemId ?? null
+      const projectAlreadyOnScreen = String(location.projectId ?? '') === target.projectId
+      // The route names a project, and only sometimes the Issue to open. Once
+      // that project is on screen the Issue the reader opened inside it — or
+      // the one the platform opened itself — stands, so only a routed focus
+      // moves the location.
+      if (!projectAlreadyOnScreen || (routedFocus !== null && location.issueId !== routedFocus)) {
+        queueMicrotask(() => {
+          if (cancelled) return
+          setLocation(current => {
+            const movingProject = String(current.projectId ?? '') !== target.projectId
+            const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
+            if (
+              !movingProject &&
+              current.issueId === issueId &&
+              current.workspaceView === target.workspaceView &&
+              current.projectView === target.projectView
+            )
+              return current
+            return {
+              ...current,
+              ...target,
+              issueId,
+              projectSettingsSection: null,
+            }
+          })
+        })
+      }
     }
 
     // The workspace the board belongs to is the one thing the route cannot name,
