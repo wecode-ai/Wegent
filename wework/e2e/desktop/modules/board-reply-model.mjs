@@ -191,22 +191,21 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
   const badge = scope(`[data-testid="cloud-task-activity-execution-badge-${run.messageId}"]`)
   await control.command('waitFor', badge, { timeoutMs })
   await control.command('click', badge)
-  await control.command('waitFor', '[data-testid="runtime-execution-detail-body"]', {
+  const conversation = scope('[data-testid="ai-chat-modal"]')
+  await control.command('waitFor', conversation, {
     text: expectedText,
     timeoutMs,
   })
-  await control.command('waitFor', '[data-testid="runtime-execution-detail-status"]', {
-    text: '执行成功',
-    timeoutMs,
-  })
-  const completedDialog = JSON.parse(
-    await control.command('snapshot', '[data-testid="runtime-execution-detail-overlay"]')
+  const completedDialog = JSON.parse(await control.command('snapshot', conversation))
+  assert.ok(
+    completedDialog.testIds.includes('ai-chat-open-runtime-task'),
+    'The execution must open its full task in the right conversation drawer'
   )
   assert.ok(
-    !completedDialog.testIds.includes('runtime-execution-detail-stop'),
-    'An execution confirmed as finished must not offer a stop action'
+    !completedDialog.testIds.includes('runtime-execution-detail-overlay'),
+    'The removed execution overlay must not open from Collaboration'
   )
-  await control.command('click', '[data-testid="runtime-execution-detail-close"]')
+  await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   await control.command('waitFor', `${badge}[data-status="succeeded"]`, { timeoutMs })
   return badge
 }
@@ -346,6 +345,10 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         const rootId = original.runtime_handle.origin.rootCommentId
         assert.ok(rootId, 'The runtime task has no owning comment')
         assert.equal(rootId, initialRun.triggerMessageId)
+        await control.command(
+          'click',
+          `${activity} [data-testid="cloud-task-activity-reply-toggle-${rootId}"]`
+        )
         const reply = `${activity} [data-testid="cloud-task-activity-card-composer-${rootId}"]`
         await control.command('fill', reply, { value: REPLY })
         await control.command('press', reply, { key: 'Enter' })
