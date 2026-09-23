@@ -365,11 +365,21 @@
 }
 
 .collaboration-project-create-field input,
+.collaboration-project-create-field select,
 .collaboration-project-create-field textarea {
   width: 100%;
   box-sizing: border-box;
   font-size: 13px;
   font-weight: 400;
+}
+
+.collaboration-project-create-field select {
+  height: 40px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 0 12px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
 }
 
 .collaboration-project-create-dialog input:focus,
@@ -590,6 +600,842 @@
 
 .collaboration-project-create-collaborator-menu > p {
   padding: 8px;
+}
+
+.collaboration-project-create-group-recommendation {
+  display: flex;
+  gap: 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  padding: 12px;
+  background: rgb(var(--color-bg-hover) / 0.55);
+}
+
+.collaboration-project-create-group-recommendation > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: rgb(var(--color-accent, 59 130 246));
+}
+
+.collaboration-project-create-group-recommendation > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-recommendation strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-group-recommendation p {
+  margin: 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.collaboration-project-create-generation-model {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-project-create-generation-model > span {
+  color: rgb(var(--color-text-secondary));
+  font-size: 12px;
+}
+
+.collaboration-project-create-generation-model select {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 0 8px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font-size: 12px;
+  outline: none;
+}
+
+.collaboration-project-create-generation-model select:focus {
+  border-color: rgb(var(--color-accent, 59 130 246));
+}
+
+.collaboration-project-create-group-recommendation > div > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collaboration-project-create-group-recommendation button,
+.collaboration-project-create-group-editor footer button,
+.collaboration-project-create-group-summary-header button,
+.collaboration-project-create-group-remove {
+  min-height: 30px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: rgb(var(--color-text-secondary));
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collaboration-project-create-group-recommendation button:hover,
+.collaboration-project-create-group-editor footer button:hover,
+.collaboration-project-create-group-summary-header button:hover,
+.collaboration-project-create-group-remove:hover {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-project-create-group-recommendation
+  button.collaboration-primary-button,
+.collaboration-project-create-group-editor
+  footer
+  button.collaboration-primary-button {
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
+}
+
+.collaboration-project-create-inline-error {
+  margin: 0;
+  color: rgb(var(--color-danger, 220 38 38));
+  font-size: 12px;
+}
+
+.collaboration-project-create-group-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  padding: 12px;
+  background: rgb(var(--color-bg-hover) / 0.35);
+}
+
+.collaboration-project-create-group-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.collaboration-project-create-group-summary-header > span,
+.collaboration-project-create-group-summary-header > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-summary-header svg {
+  width: 16px;
+  height: 16px;
+}
+
+.collaboration-project-create-group-summary-header strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-group-members {
+  display: grid;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-members > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.collaboration-project-create-group-members > span.is-leader {
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-project-create-group-members > span > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-project-create-group-members > span > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.collaboration-project-create-group-members strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-group-members small {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-project-create-group-remove {
+  justify-self: start;
+  padding: 0;
+}
+
+.collaboration-project-create-group-principles {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid rgb(var(--color-border));
+  padding-top: 8px;
+}
+
+.collaboration-project-create-group-principles small {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-project-create-group-principles p {
+  margin: 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.collaboration-project-create-group-editor {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgb(var(--color-border-heavy, var(--color-border)));
+  border-radius: 16px;
+  padding: 16px;
+  background: rgb(var(--color-bg-base));
+  box-shadow: 0 4px 8px -2px rgb(0 0 0 / 0.1);
+}
+
+.collaboration-project-create-group-editor.is-generator {
+  border: 0;
+  border-top: 1px solid rgb(var(--color-border));
+  border-radius: 0;
+  padding: 16px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.collaboration-project-create-group-dialog-backdrop {
+  display: grid;
+  position: fixed;
+  inset: 0;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.28);
+}
+
+.collaboration-project-create-group-editor.is-generator.is-dialog {
+  width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 18px;
+  padding: 20px;
+  background: rgb(var(--color-bg-base));
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.18);
+}
+
+.collaboration-project-create-group-editor > header,
+.collaboration-project-create-group-editor > header > span,
+.collaboration-project-create-group-editor > header > button {
+  display: flex;
+  align-items: center;
+}
+
+.collaboration-project-create-group-editor > header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.collaboration-project-create-group-editor > header > span {
+  gap: 8px;
+}
+
+.collaboration-project-create-group-editor > header svg {
+  width: 16px;
+  height: 16px;
+}
+
+.collaboration-project-create-group-editor > header > span > svg {
+  color: rgb(var(--color-accent, 59 130 246));
+}
+
+.collaboration-project-create-group-editor > header > button {
+  width: 28px;
+  height: 28px;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  cursor: pointer;
+}
+
+.collaboration-project-create-group-workflow {
+  display: grid;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-workflow > small {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-project-create-group-workflow > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-workflow > div > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collaboration-project-create-group-workflow strong {
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: rgb(var(--color-bg-hover));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-group-workflow svg {
+  width: 14px;
+  height: 14px;
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-project-create-generation-progress {
+  display: grid;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 12px;
+  background: rgb(var(--color-bg-hover) / 0.55);
+}
+
+.collaboration-project-create-generation-progress > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-project-create-generation-progress > header > svg {
+  width: 16px;
+  height: 16px;
+  color: rgb(var(--color-accent, 59 130 246));
+}
+
+.collaboration-project-create-generation-progress > header > span {
+  display: grid;
+  gap: 1px;
+}
+
+.collaboration-project-create-generation-progress strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-generation-progress small {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-project-create-generation-progress.is-complete {
+  background: rgb(var(--color-bg-base));
+  box-shadow: inset 0 0 0 1px rgb(var(--color-border));
+}
+
+.collaboration-project-create-squad-formation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
+  gap: 8px;
+}
+
+.collaboration-project-create-squad-formation
+  > .collaboration-project-create-assignment-queue,
+.collaboration-project-create-squad-formation > div.is-squad {
+  display: grid;
+  min-height: 68px;
+  align-content: start;
+  gap: 6px;
+  border: 1px dashed rgb(var(--color-border-heavy, var(--color-border)));
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.collaboration-project-create-assignment-queue {
+  cursor: default;
+  user-select: none;
+}
+
+.collaboration-project-create-assignment-queue > header {
+  display: grid;
+  gap: 3px;
+}
+
+.collaboration-project-create-assignment-queue > header > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-project-create-assignment-queue > header svg {
+  width: 14px;
+  height: 14px;
+  color: rgb(var(--color-accent, 59 130 246));
+}
+
+.collaboration-project-create-assignment-queue > header strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-assignment-queue > header small {
+  max-width: 620px;
+  color: rgb(var(--color-text-muted));
+  line-height: 18px;
+}
+
+.collaboration-project-create-squad-formation > div.is-squad {
+  border-style: solid;
+  background: rgb(var(--color-bg-base));
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster {
+  gap: 8px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item {
+  display: flex;
+  position: relative;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-identity {
+  gap: 5px;
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-hover));
+  white-space: nowrap;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-identity
+  > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-identity
+  > strong {
+  font-size: 12px;
+}
+
+.collaboration-project-create-squad-formation > div > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.collaboration-project-create-squad-formation > div > span > span {
+  display: flex;
+  position: relative;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-project-create-member-token {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-hover));
+  white-space: nowrap;
+}
+
+.collaboration-project-create-member-token > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.collaboration-project-create-member-token > strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-duty-bubble {
+  position: relative;
+  max-width: min(420px, calc(100% - 120px));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  padding: 6px 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-base));
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.collaboration-project-create-duty-bubble:focus-within {
+  border-color: rgb(var(--color-text-primary) / 0.42);
+  box-shadow: 0 0 0 2px rgb(var(--color-text-primary) / 0.06);
+}
+
+.collaboration-project-create-duty-bubble::before {
+  position: absolute;
+  top: 9px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  border-bottom: 1px solid rgb(var(--color-border));
+  border-left: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-base));
+  content: "";
+  transform: rotate(45deg);
+}
+
+.collaboration-project-create-hover-editable {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.collaboration-project-create-hover-editable > span {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.collaboration-project-create-hover-editable > span.is-placeholder {
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-project-create-hover-editable > span.is-clickable {
+  cursor: text;
+}
+
+.collaboration-project-create-hover-editable > button,
+.collaboration-project-create-set-leader {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.collaboration-project-create-hover-editable.is-edit-affordance-visible
+  > button {
+  opacity: 1;
+}
+
+.collaboration-project-create-hover-editable > button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.collaboration-project-create-hover-editable > button > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.collaboration-project-create-set-leader {
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.collaboration-project-create-duty-bubble:hover
+  .collaboration-project-create-hover-editable
+  > button,
+.collaboration-project-create-hover-editable:focus-within > button,
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item:hover
+  .collaboration-project-create-set-leader,
+.collaboration-project-create-set-leader:focus-visible {
+  opacity: 1;
+}
+
+.collaboration-project-create-hover-editable > input,
+.collaboration-project-create-hover-editable > textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid rgb(var(--color-accent, 59 130 246));
+  border-radius: 7px;
+  padding: 6px 8px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  resize: vertical;
+}
+
+.collaboration-project-create-duty-bubble
+  .collaboration-project-create-inline-textarea {
+  min-height: 36px;
+  max-height: 126px;
+  overflow-y: auto;
+  field-sizing: content;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  resize: none;
+}
+
+.collaboration-project-create-dialog
+  .collaboration-project-create-duty-bubble
+  .collaboration-project-create-inline-textarea:focus {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.collaboration-project-create-generated-details {
+  display: grid;
+  gap: 12px;
+}
+
+.collaboration-project-create-generated-principles {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid rgb(var(--color-border));
+  padding-top: 10px;
+  color: rgb(var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.collaboration-project-create-generated-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgb(var(--color-border));
+  padding-top: 10px;
+}
+
+.collaboration-project-create-generated-footer > small {
+  max-width: 480px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item.is-assigned {
+  animation: collaboration-squad-member-enter 520ms
+    cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item.is-assigned.is-excited
+  .collaboration-group-roster-identity {
+  animation: collaboration-squad-member-excited 960ms ease-in-out 280ms infinite;
+  transform-origin: center bottom;
+}
+
+.collaboration-project-create-squad-formation
+  > div:not(.is-squad)
+  > span
+  > span.is-waiting {
+  animation: collaboration-squad-member-anxious 760ms ease-in-out infinite;
+  transform-origin: center bottom;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item[data-leader="true"] {
+  color: rgb(var(--color-text-primary));
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-item[data-leader="true"]
+  .collaboration-group-roster-identity {
+  box-shadow: inset 0 0 0 1px rgb(var(--color-text-primary) / 0.18);
+}
+
+.collaboration-project-create-live-output {
+  display: grid;
+  gap: 12px;
+}
+
+.collaboration-project-create-live-output > section {
+  display: grid;
+  gap: 6px;
+}
+
+.collaboration-project-create-live-output > section > span,
+.collaboration-project-create-live-output > section ul {
+  margin: 0;
+  border-radius: 8px;
+  padding: 8px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-base));
+}
+
+.collaboration-project-create-live-output > section ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 28px;
+}
+
+.collaboration-project-create-workflow-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+}
+
+.collaboration-project-create-workflow-pending > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.collaboration-project-create-group-workflow.is-generating
+  > div
+  > span:last-child
+  > strong {
+  animation: collaboration-workflow-stage-enter 360ms
+    cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes collaboration-squad-member-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.96);
+  }
+
+  72% {
+    opacity: 1;
+    transform: translateY(2px) scale(1);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes collaboration-workflow-stage-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes collaboration-squad-member-anxious {
+  0%,
+  38%,
+  62%,
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+
+  18% {
+    transform: translate(-2px, -3px) rotate(-2deg);
+  }
+
+  82% {
+    transform: translate(2px, -3px) rotate(2deg);
+  }
+}
+
+@keyframes collaboration-squad-member-excited {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  48% {
+    transform: translateY(-2px);
+  }
+
+  66% {
+    transform: translateY(-0.5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collaboration-project-create-squad-formation > div > span > span.is-waiting,
+  .collaboration-project-create-squad-formation
+    > div.is-squad
+    .collaboration-group-roster-item.is-assigned,
+  .collaboration-project-create-squad-formation
+    > div.is-squad
+    .collaboration-group-roster-item.is-assigned
+    .collaboration-group-roster-identity,
+  .collaboration-project-create-group-workflow.is-generating
+    > div
+    > span:last-child
+    > strong {
+    animation: none;
+  }
+}
+
+.collaboration-spin {
+  animation: collaboration-spin 900ms linear infinite;
+}
+
+@keyframes collaboration-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .collaboration-project-create-provider-config {

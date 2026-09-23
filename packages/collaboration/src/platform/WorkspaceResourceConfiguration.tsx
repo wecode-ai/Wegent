@@ -110,7 +110,6 @@ export interface WorkspaceResourceCommands {
 }
 
 export interface CollaborationGroupAgentActions {
-  createDefault?(): Promise<CollaborationAgent>;
   renderCreator?(props: {
     onClose(): void;
     onCreated(agent: CollaborationAgent): Promise<void>;
@@ -169,8 +168,6 @@ const copy = {
     deleting: "删除中…",
     memberHint: "统一管理空间成员，方便空间内项目复用；项目仍可独立管理成员。",
     operationFailed: "操作失败，请稍后重试",
-    createDefaultAgent: "创建默认智能体",
-    createDefaultAgentHint: "使用当前设备的模型、技能和工具",
     createAgent: "新建智能体",
     createAgentHint: "配置一个仅属于当前协作小组的智能体",
     copyAgent: "复制其他小组的智能体",
@@ -232,8 +229,6 @@ const copy = {
     memberHint:
       "Manage shared space members for reuse. Projects can still manage members independently.",
     operationFailed: "Operation failed. Please try again.",
-    createDefaultAgent: "Create default agent",
-    createDefaultAgentHint: "Use models, skills, and tools on this device",
     createAgent: "Create agent",
     createAgentHint: "Configure an agent owned only by this group",
     copyAgent: "Copy agent from another group",
@@ -645,23 +640,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
   };
 
   const groupAgentActions: GroupAgentAction[] = [
-    ...(agentActions?.createDefault
-      ? [
-          {
-            id: "create-default" as const,
-            label: messages.createDefaultAgent,
-            description: messages.createDefaultAgentHint,
-            onSelect: () => {
-              setAgentActionBusy(true);
-              setError(null);
-              void agentActions.createDefault!()
-                .then(addCreatedAgent)
-                .catch(() => setError(messages.operationFailed))
-                .finally(() => setAgentActionBusy(false));
-            },
-          },
-        ]
-      : []),
     ...(agentActions?.renderCreator
       ? [
           {
@@ -1573,29 +1551,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
                               (item) => item.value === leader,
                             );
                             setCreateMembers((current) => {
-                              const next = current.filter(
-                                (member) =>
-                                  `${member.kind}:${member.id}` !==
-                                  candidate.value,
-                              );
-                              if (
-                                !previous ||
-                                next.some(
-                                  (member) =>
-                                    `${member.kind}:${member.id}` ===
-                                    previous.value,
-                                )
-                              ) {
-                                return next;
+                              const next = [...current];
+                              for (const participant of [previous, candidate]) {
+                                if (
+                                  participant &&
+                                  !next.some(
+                                    (member) =>
+                                      `${member.kind}:${member.id}` ===
+                                      participant.value,
+                                  )
+                                ) {
+                                  next.push({
+                                    kind: participant.kind,
+                                    id: participant.id,
+                                    responsibility: "",
+                                  });
+                                }
                               }
-                              return [
-                                ...next,
-                                {
-                                  kind: previous.kind,
-                                  id: previous.id,
-                                  responsibility: "",
-                                },
-                              ];
+                              return next;
                             });
                             setLeader(candidate.value);
                           }}

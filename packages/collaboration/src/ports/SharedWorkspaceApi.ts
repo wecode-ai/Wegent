@@ -37,6 +37,7 @@ export interface WorkspaceProjectCreateInput {
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
   visibility?: 'private' | 'public'
   providerConfig?: Record<string, unknown>
+  includeDefaultAgent?: boolean
 }
 
 export interface WorkspaceProjectUpdateInput {

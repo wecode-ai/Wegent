@@ -3687,27 +3687,21 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }
     },
   }
-  const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
-    async generateBranchName(data) {
+  const textGenerationApi: NonNullable<WorkbenchServices['textGenerationApi']> = {
+    async generateText(data) {
       const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+      data.onProgress?.('preparing')
       if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const sourceText = data.sourceText.trim()
-      if (!sourceText) {
-        throw new Error(i18n.t('workbench.environment_branch_generate_source_required'))
-      }
+      const prompt = data.prompt.trim()
+      if (!prompt) throw new Error('Text generation prompt is required')
+      const generationTaskId = `text-generation-${createRuntimeTurnSeed()}`
       const executionRequest = await buildLocalRuntimeExecutionRequest({
-        taskId: `branch-name-${createRuntimeTurnSeed()}`,
+        taskId: generationTaskId,
         runtime: 'codex',
-        title: 'Generate Git branch name',
-        message: [
-          'Generate a concise Git branch name for the work described below.',
-          'Output only the branch name. Use lowercase ASCII letters, digits, hyphens, and one conventional prefix such as feature/, fix/, refactor/, docs/, test/, or chore/.',
-          'Do not use spaces, quotes, punctuation, explanations, or Markdown. Keep it under 48 characters.',
-          '',
-          `Work: ${sourceText}`,
-        ].join('\n'),
+        title: data.title?.trim() || 'Generate text',
+        message: prompt,
         turnSeed: createRuntimeTurnSeed(),
         modelId: data.modelId,
         modelType: data.modelType,
@@ -3723,10 +3717,91 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       })
       executionRequest.enable_tools = false
       executionRequest.enable_deep_thinking = false
-      const response = await request<{ content?: string }>('runtime.text.generate', {
-        executionRequest,
+      if (data.outputSchema) {
+        executionRequest.output_schema = data.outputSchema
+      }
+      data.onProgress?.('generating')
+      let receivedDelta = false
+      let deltaCount = 0
+      let deltaCharacters = 0
+      console.debug('[Wework] Text generation stream', {
+        event: 'subscribing',
+        taskId: generationTaskId,
       })
-      return response.content?.trim() ?? ''
+      const unlisten = data.onDelta
+        ? await subscribe(event => {
+            if (
+              event.event !== 'response.output_text.delta' ||
+              String(event.payload.taskId ?? '') !== generationTaskId
+            ) {
+              return
+            }
+            const eventData = event.payload.data
+            if (!eventData || typeof eventData !== 'object' || Array.isArray(eventData)) return
+            const delta = (eventData as Record<string, unknown>).delta
+            if (typeof delta === 'string' && delta) {
+              receivedDelta = true
+              deltaCount += 1
+              deltaCharacters += delta.length
+              console.debug('[Wework] Text generation stream', {
+                event: 'delta',
+                taskId: generationTaskId,
+                deltaCount,
+                deltaLength: delta.length,
+                totalCharacters: deltaCharacters,
+                sequence: event.sequence,
+              })
+              data.onDelta?.(delta)
+            }
+          })
+        : undefined
+      try {
+        const response = await request<{ content?: string }>('runtime.text.generate', {
+          executionRequest,
+        })
+        const content = response.content?.trim() ?? ''
+        if (data.onDelta && content && !receivedDelta) {
+          console.debug('[Wework] Text generation stream', {
+            event: 'final-content-fallback',
+            taskId: generationTaskId,
+            contentLength: content.length,
+          })
+          data.onDelta(content)
+        } else {
+          console.debug('[Wework] Text generation stream', {
+            event: 'completed',
+            taskId: generationTaskId,
+            deltaCount,
+            totalCharacters: deltaCharacters,
+            contentLength: content.length,
+          })
+        }
+        return content
+      } finally {
+        unlisten?.()
+      }
+    },
+  }
+  const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
+    async generateBranchName(data) {
+      const sourceText = data.sourceText.trim()
+      if (!sourceText) {
+        throw new Error(i18n.t('workbench.environment_branch_generate_source_required'))
+      }
+      return textGenerationApi.generateText({
+        title: 'Generate Git branch name',
+        prompt: [
+          'Generate a concise Git branch name for the work described below.',
+          'Output only the branch name. Use lowercase ASCII letters, digits, hyphens, and one conventional prefix such as feature/, fix/, refactor/, docs/, test/, or chore/.',
+          'Do not use spaces, quotes, punctuation, explanations, or Markdown. Keep it under 48 characters.',
+          '',
+          `Work: ${sourceText}`,
+        ].join('\n'),
+        deviceId: data.deviceId,
+        modelId: data.modelId,
+        modelType: data.modelType,
+        modelOptions: data.modelOptions,
+      })
     },
   }
 
@@ -3831,6 +3906,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     ),
     pluginApi: projectPluginApi,
     branchNameApi,
+    textGenerationApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

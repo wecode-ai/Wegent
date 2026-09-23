@@ -322,6 +322,7 @@ export interface CollaborationUser {
 export interface CollaborationAgent {
   createdByUserId?: number | null
   createdByUserName?: string | null
+  deletable?: boolean
   runtime?: string
   status?: string
   systemPrompt?: string
