@@ -1181,7 +1181,8 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
-        databasePath: cloudEnvironment.databasePath,
+        executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),

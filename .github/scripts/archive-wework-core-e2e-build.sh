@@ -9,6 +9,7 @@ codex_target="x86_64-unknown-linux-gnu"
 electron_package="${WEWORK_E2E_ELECTRON_PACKAGE_DIR:-wework/electron/release/WeWork-linux-x64}"
 app_binary="$electron_package/WeWork"
 executor_binary="$electron_package/resources/bin/wegent-executor"
+backend_rs_binary="${WEWORK_E2E_BACKEND_RS_BUILD_BIN:-.ci-artifacts/wegent-backend-rs}"
 component_manifest="$electron_package/resources/components.json"
 core_plugins="$electron_package/resources/wework-core-plugins"
 core_dsh="$electron_package/resources/harness-runtime"
@@ -18,6 +19,7 @@ codex_root="wework/resources/binaries/codex/$codex_target"
 test -d "$electron_package"
 test -x "$app_binary"
 test -x "$executor_binary"
+test -x "$backend_rs_binary"
 test -f "$component_manifest"
 test -d "$core_plugins"
 test -d "$core_dsh"
@@ -29,15 +31,19 @@ rm -rf "$staging_dir"
 mkdir -p "$staging_dir/codex"
 cp -a "$electron_package" "$staging_dir/electron-app"
 cp -R "$codex_root" "$staging_dir/codex/$codex_target"
+mkdir -p "$staging_dir/backend-rs"
+cp "$backend_rs_binary" "$staging_dir/backend-rs/wegent-backend-rs"
 node wework/scripts/build-desktop-e2e-client.mjs "$staging_dir/e2e-client"
 chmod 0755 \
   "$staging_dir/electron-app/WeWork" \
-  "$staging_dir/electron-app/resources/bin/wegent-executor"
+  "$staging_dir/electron-app/resources/bin/wegent-executor" \
+  "$staging_dir/backend-rs/wegent-backend-rs"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   strip --strip-debug \
     "$staging_dir/electron-app/WeWork" \
-    "$staging_dir/electron-app/resources/bin/wegent-executor"
+    "$staging_dir/electron-app/resources/bin/wegent-executor" \
+    "$staging_dir/backend-rs/wegent-backend-rs"
 fi
 
 tar -I 'zstd -T0 -3' -cf "$archive" -C "$artifact_dir" wework-core-e2e-build
