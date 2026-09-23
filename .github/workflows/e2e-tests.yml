@@ -87,7 +87,6 @@ jobs:
       - name: Build frontend for E2E
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
@@ -546,7 +545,6 @@ jobs:
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
@@ -973,7 +971,6 @@ jobs:
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
