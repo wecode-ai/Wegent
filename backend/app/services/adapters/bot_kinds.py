@@ -374,9 +374,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     db, public_model.json, user_id
                 ):
                     logger.info(
-                        "[DEBUG] _get_model_by_name_and_type: public model %s "
-                        "restricted, treating as unselected",
-                        model_name,
+                        f"[DEBUG] _get_model_by_name_and_type: public model {model_name} "
+                        "restricted, treating as unselected"
                     )
                     return None
                 logger.info(
@@ -423,9 +422,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     db, public_model.json, user_id
                 ):
                     logger.info(
-                        "[DEBUG] _get_model_by_name_and_type: public model %s "
-                        "restricted, treating as unselected (auto-detect)",
-                        model_name,
+                        f"[DEBUG] _get_model_by_name_and_type: public model {model_name} "
+                        "restricted, treating as unselected (auto-detect)"
                     )
                     return None
                 logger.info(
