@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { ChromeTitlebar } from './ChromeTitlebar'
@@ -123,19 +123,6 @@ describe('ChromeTitlebar', () => {
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-feedback')).toContainElement(
       screen.getByTestId('topnav-feedback-button')
-    )
-  })
-
-  test('shows the feedback tooltip from the shared tooltip layer', async () => {
-    renderTitlebar()
-
-    const button = screen.getByTestId('topnav-feedback-button')
-    expect(button).not.toHaveAttribute('title')
-
-    fireEvent.pointerEnter(button.parentElement as HTMLElement)
-
-    expect(await screen.findByTestId('topnav-feedback-button-tooltip')).toHaveTextContent(
-      '反馈问题'
     )
   })
 

@@ -382,24 +382,31 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               {t('workbench.open_workspace_location')}
             </span>
           </button>
-          <LocalWorkspaceOpenerPicker
-            ariaLabel={t('workbench.choose_project_ide')}
-            buttonTestId="open-local-workspace-picker-button"
-            menuTestId="open-local-workspace-picker-menu"
-            optionTestIdPrefix="open-local-workspace-option"
-            disabled={ideLoading}
-            buttonClassName={cn(
-              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
-              ideLoading && 'cursor-wait opacity-70'
-            )}
-            availability={
-              (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
-            }
-            labels={openerLabels}
-            onChooseOther={handleChooseOther}
-            onOpen={refreshLocalWorkspaceOpeners}
-            onSelect={handleOpenLocalWorkspace}
-          />
+          <Tooltip
+            label={t('workbench.choose_project_ide')}
+            side="bottom"
+            align="end"
+            testId="open-local-workspace-picker-button-tooltip"
+          >
+            <LocalWorkspaceOpenerPicker
+              ariaLabel={t('workbench.choose_project_ide')}
+              buttonTestId="open-local-workspace-picker-button"
+              menuTestId="open-local-workspace-picker-menu"
+              optionTestIdPrefix="open-local-workspace-option"
+              disabled={ideLoading}
+              buttonClassName={cn(
+                'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
+                ideLoading && 'cursor-wait opacity-70'
+              )}
+              availability={
+                (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
+              }
+              labels={openerLabels}
+              onChooseOther={handleChooseOther}
+              onOpen={refreshLocalWorkspaceOpeners}
+              onSelect={handleOpenLocalWorkspace}
+            />
+          </Tooltip>
         </div>
       )}
       {showPrimaryTarget && canOpenCodeServer && !localWorkspaceEnabled && (
