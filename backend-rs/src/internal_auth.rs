@@ -7,9 +7,71 @@
 //!
 //! Endpoints fail closed when the token is not configured.
 
+pub struct InternalService;
+
+const INTERNAL_NOT_CONFIGURED: &str = "Wegent-Internal-Not-Configured";
+const INTERNAL_MISSING: &str = "Wegent-Internal-Missing";
+
+impl brz_http_server::Authenticator<InternalService> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<InternalService, brz_http_server::AuthFailure> {
+        let Some(expected) = self
+            .state()
+            .internal_chat
+            .internal_service_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        else {
+            return Err(brz_http_server::AuthFailure::invalid_credentials(
+                INTERNAL_NOT_CONFIGURED,
+            ));
+        };
+        let Some(header) = request
+            .header("authorization")
+            .and_then(|value| std::str::from_utf8(value).ok())
+        else {
+            return Err(brz_http_server::AuthFailure::missing_credentials(
+                INTERNAL_MISSING,
+            ));
+        };
+        let Some(provided) = header.strip_prefix("Bearer ").map(str::trim) else {
+            return Err(brz_http_server::AuthFailure::missing_credentials(
+                INTERNAL_MISSING,
+            ));
+        };
+        if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+            return Err(brz_http_server::AuthFailure::invalid_credentials("Bearer"));
+        }
+        Ok(InternalService)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        let detail = match failure {
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: INTERNAL_NOT_CONFIGURED,
+            } => "Internal service token is not configured",
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: INTERNAL_MISSING,
+            } => "Missing authentication token",
+            _ => "Invalid authentication token",
+        };
+        crate::http_compat::FastApiError::unauthorized(detail).into_http_error(arena)
+    }
+}
+
 /// Verify the `Authorization: Bearer <token>` header against the configured
 /// internal service token (`verify_internal_service_token`).
 #[allow(clippy::result_large_err)]
+#[cfg(test)]
 pub fn verify_internal_service_token(
     expected_token: &Option<String>,
     authorization: Option<&str>,

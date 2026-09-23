@@ -46,6 +46,66 @@ pub struct UserRow {
     pub role: String,
 }
 
+pub struct InstalledPluginsUser(pub UserRow);
+
+impl std::ops::Deref for InstalledPluginsUser {
+    type Target = UserRow;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl brz_http_server::Authenticator<InstalledPluginsUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<InstalledPluginsUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
+        authenticate(
+            &self.state().mysql,
+            &headers.view(),
+            &self.state().jwt_secret_keys,
+            &self.state().jwt_algorithm,
+        )
+        .await
+        .map(InstalledPluginsUser)
+        .map_err(|(status, _)| {
+            if status == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                brz_http_server::AuthFailure::Internal
+            } else {
+                brz_http_server::AuthFailure::invalid_credentials("Bearer")
+            }
+        })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a InstalledPluginsUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::internal()
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 pub async fn find_user_by_name<M>(mysql: &M, user_name: &str) -> MysqlResult<Option<UserRow>>
 where
     M: Mysql,

@@ -23,7 +23,7 @@ use crate::json_compat::{JsonProjection, OpaqueJson, raw_null};
 use serde_json::Value;
 use serde_json::value::RawValue;
 
-use super::super::auth::get_current_user;
+use super::super::auth::TeamsUser;
 use super::super::http_error::HttpError;
 use super::repository as repo;
 use crate::state::AppState;
@@ -107,19 +107,17 @@ fn quick_access_team(
 #[brz_http_server::get("/api/users/quick-access")]
 async fn get_user_quick_access(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: TeamsUser,
 ) -> Result<QuickAccessResponse, HttpError> {
-    quick_access(state, authorization).await
+    quick_access(state, current_user).await
 }
 
 /// Handler body for `GET /api/users/quick-access`.
 async fn quick_access(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: TeamsUser,
 ) -> Result<QuickAccessResponse, HttpError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
-    quick_access_response(state, current_user.users_preferences.as_str()).await
+    quick_access_response(state, current_user.0.users_preferences.as_str()).await
 }
 
 /// Build the `QuickAccessResponse` body.

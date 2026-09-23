@@ -107,12 +107,12 @@ from app.services.loop_item_status_history import (
     write_status_change,
 )
 from app.services.loop_item_unread import advance_content_revision
-from app.services.loop_items import MY_WORK_ITEM_LIMIT, loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.loop_items.service import MY_WORK_ITEM_LIMIT, loop_item_service
 from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import (

@@ -18,17 +18,16 @@ use super::service;
 #[brz_http_server::get("/api/connector-runtime/tools")]
 async fn list_connector_tools(
     #[inject(state)] state: &Arc<AppState>,
-    #[header] authorization: Option<&str>,
+    #[auth] user: super::auth::ConnectorUser,
 ) -> Result<ConnectorToolListResponse, FastApiError> {
-    connector_tools(state, authorization).await
+    connector_tools(state, &user).await
 }
 
 /// Handler body for `GET /api/connector-runtime/tools`.
 async fn connector_tools(
     state: &Arc<AppState>,
-    authorization: Option<&str>,
+    user: &super::auth::ConnectorUser,
 ) -> Result<ConnectorToolListResponse, FastApiError> {
-    let user = super::auth::authenticate(state, authorization).await?;
     let rows = db::list_connector_app_kinds(&state.mysql)
         .await
         .map_err(|error| {
@@ -36,7 +35,7 @@ async fn connector_tools(
             FastApiError::internal()
         })?;
     let catalog: Vec<apps::ConnectorApp> = rows.iter().map(apps::row_to_app).collect();
-    let tools = service::list_tools(&catalog, &user).await;
+    let tools = service::list_tools(&catalog, user).await;
     Ok(ConnectorToolListResponse { tools })
 }
 

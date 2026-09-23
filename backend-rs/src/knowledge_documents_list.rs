@@ -208,10 +208,7 @@ async fn list_documents_route(
     sort_order: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
-    #[header("wegent-source")] wegent_source: Option<&str>,
-    #[header("wegent-username")] wegent_username: Option<&str>,
+    #[auth] user: auth::KnowledgeUser,
 ) -> Result<HttpResponse<Binary>, KnowledgeListError> {
     list_documents_handler(
         state,
@@ -223,10 +220,7 @@ async fn list_documents_route(
         sort_order.as_deref(),
         limit.as_deref(),
         offset.as_deref(),
-        authorization,
-        x_api_key,
-        wegent_source,
-        wegent_username,
+        &user,
     )
     .await
 }
@@ -435,10 +429,7 @@ async fn list_documents_handler(
     sort_order: Option<&str>,
     limit: Option<&str>,
     offset: Option<&str>,
-    authorization: Option<&str>,
-    x_api_key: Option<&str>,
-    wegent_source: Option<&str>,
-    wegent_username: Option<&str>,
+    user: &auth::KnowledgeUser,
 ) -> Result<HttpResponse<Binary>, KnowledgeListError> {
     // FastAPI validates the query parameters before the endpoint body runs.
     let params = parse_params(
@@ -451,16 +442,6 @@ async fn list_documents_handler(
         limit,
         offset,
     )?;
-
-    // `get_auth_context` (API key, service key with `wegent-username`, or
-    // JWT Bearer fallback).
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-        ("wegent-source", wegent_source),
-        ("wegent-username", wegent_username),
-    ]);
-    let user = auth::get_auth_context(state, &headers.view()).await?;
 
     let response = list_documents(state, i64::from(user.id), &params).await?;
 

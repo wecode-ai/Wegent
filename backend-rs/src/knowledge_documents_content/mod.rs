@@ -63,6 +63,14 @@ pub struct ApiFailure {
 }
 
 impl ApiFailure {
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub(crate) fn detail(&self) -> &str {
+        &self.detail
+    }
+
     pub fn new(status: StatusCode, detail: impl Into<String>) -> Self {
         Self {
             status,
@@ -197,20 +205,14 @@ async fn get_document_content(
     document_id: &str,
     offset: Option<String>,
     limit: Option<String>,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
-    #[header("wegent-source")] wegent_source: Option<&str>,
-    #[header("wegent-username")] wegent_username: Option<&str>,
+    #[auth] user: auth::KnowledgeUser,
 ) -> Result<HttpResponse<Binary>, KnowledgeError> {
     document_content(
         state,
         document_id,
         offset.as_deref(),
         limit.as_deref(),
-        authorization,
-        x_api_key,
-        wegent_source,
-        wegent_username,
+        &user,
     )
     .await
 }
@@ -250,10 +252,7 @@ async fn document_content(
     document_id: &str,
     offset_raw: Option<&str>,
     limit_raw: Option<&str>,
-    authorization: Option<&str>,
-    x_api_key: Option<&str>,
-    wegent_source: Option<&str>,
-    wegent_username: Option<&str>,
+    user: &auth::KnowledgeUser,
 ) -> Result<HttpResponse<Binary>, KnowledgeError> {
     // FastAPI validates the path and query parameters before the endpoint
     // body runs; invalid values surface as 422 without dependency traffic.
@@ -268,15 +267,6 @@ async fn document_content(
     };
     let (offset, limit) = parse_paging(offset_raw, limit_raw)?;
 
-    // `get_auth_context` (API key, service key with `wegent-username`, or
-    // JWT Bearer fallback).
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-        ("wegent-source", wegent_source),
-        ("wegent-username", wegent_username),
-    ]);
-    let user = auth::get_auth_context(state, &headers.view()).await?;
     let response =
         read_document_content(state, i64::from(user.id), document_id, offset, limit).await?;
     Ok(HttpResponse::new(Binary::new(

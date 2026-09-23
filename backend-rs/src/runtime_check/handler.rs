@@ -16,7 +16,6 @@ use anyhow::Result;
 use brz_mysql::Mysql;
 use serde::Serialize;
 
-use super::auth::token::get_current_user;
 use super::state::AppState;
 use super::tasks::{self, TaskResourceRow};
 use crate::crd::CrdDocument;
@@ -65,9 +64,9 @@ impl EndpointError {
 async fn get_task_runtime_check(
     #[inject(rc)] state: &crate::startup::RuntimeCheckState,
     task_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<TaskRuntimeCheck, crate::http_compat::FastApiError> {
-    runtime_check(state, task_id, authorization)
+    runtime_check(state, task_id, i64::from(current_user.id))
         .await
         .map_err(error_response)
 }
@@ -85,19 +84,15 @@ fn error_response(error: EndpointError) -> crate::http_compat::FastApiError {
 pub(crate) async fn runtime_check(
     state: &AppState<impl Mysql, impl brz_redis::Redis>,
     task_id: i64,
-    authorization: Option<&str>,
+    user_id: i64,
 ) -> Result<TaskRuntimeCheck, EndpointError> {
-    let user = get_current_user(state, authorization)
-        .await
-        .map_err(|(status, detail)| EndpointError { status, detail })?;
-
     // task_kinds_service.get_task_by_id -> 404 when absent.
     let task = tasks::get_active_non_deleted_task(&state.mysql, state.task_policy, task_id)
         .await
         .map_err(internal_error)?;
     let task = task.ok_or_else(EndpointError::not_found)?;
     // task_access_store.is_member -> 404 when not a member.
-    if !tasks::is_task_member(&state.mysql, state.task_policy, task_id, user.id)
+    if !tasks::is_task_member(&state.mysql, state.task_policy, task_id, user_id)
         .await
         .map_err(internal_error)?
     {

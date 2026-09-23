@@ -17,6 +17,7 @@ use std::{sync::Arc, time::Duration};
 
 pub async fn build<M: Mysql>(
     mysql: M,
+    task_policy: crate::task_routing::TaskPolicy,
     erp: std::sync::Arc<
         dyn crate::erp_provider::ErpProvider<brz_redis::RedisService> + Send + Sync,
     >,
@@ -57,5 +58,13 @@ pub async fn build<M: Mysql>(
         }
     };
 
-    Ok(build_deps(config, mysql, http, redis, kinds_redis, erp))
+    Ok(build_deps(
+        config,
+        mysql,
+        task_policy,
+        http,
+        redis,
+        kinds_redis,
+        erp,
+    ))
 }

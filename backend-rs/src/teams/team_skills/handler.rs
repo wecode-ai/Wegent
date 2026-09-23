@@ -24,7 +24,6 @@ use brz_mysql::Json;
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::super::auth::get_current_user;
 use super::super::group_membership::{
     ErpContext, ResolvedMemberships, effective_roles, user_group_memberships,
 };
@@ -103,19 +102,17 @@ struct GhostSpec {
 async fn get_team_skills(
     #[inject(state)] state: &AppState,
     team_id: i64,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::teams::auth::TeamsUser,
 ) -> Result<TeamSkillsResponse, HttpError> {
-    team_skills(state, team_id, authorization).await
+    team_skills(state, team_id, &current_user).await
 }
 
 /// Handler body for `GET /api/teams/{team_id}/skills`.
 async fn team_skills(
     state: &AppState,
     team_id: i64,
-    authorization: Option<&str>,
+    current_user: &crate::teams::auth::TeamsUser,
 ) -> Result<TeamSkillsResponse, HttpError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
     let user_id = i64::from(current_user.users_id);
 
     let kinds: KindStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> = KindStore {

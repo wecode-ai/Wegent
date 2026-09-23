@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use super::auth_error::AuthError;
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
+use crate::headers::Headers as _;
 use crate::user_reader::{UserByIdReader, UserRecord};
 
 /// API key prefix (`app.core.auth_utils.API_KEY_PREFIX`).
@@ -40,6 +41,177 @@ pub struct CurrentUser {
     pub id: i32,
     #[allow(dead_code)]
     pub user_name: String,
+}
+
+pub struct ResponsesUser {
+    pub user: CurrentUser,
+    pub rate_limit_key: Option<String>,
+}
+
+impl std::ops::Deref for ResponsesUser {
+    type Target = CurrentUser;
+
+    fn deref(&self) -> &Self::Target {
+        &self.user
+    }
+}
+
+const RESPONSE_API_KEY_REQUIRED: &str = "Wegent-Response-Api-Key-Required";
+const RESPONSE_INVALID_API_KEY: &str = "Wegent-Response-Invalid-Api-Key";
+const RESPONSE_API_KEY_EXPIRED: &str = "Wegent-Response-Api-Key-Expired";
+const RESPONSE_USER_NOT_FOUND: &str = "Wegent-Response-User-Not-Found";
+const RESPONSE_USERNAME_REQUIRED: &str = "Wegent-Response-Username-Required";
+const RESPONSE_INVALID_USERNAME: &str = "Wegent-Response-Invalid-Username";
+const RESPONSE_USER_INACTIVE: &str = "Wegent-Response-User-Inactive";
+const RESPONSE_INVALID_AUTH: &str = "Wegent-Response-Invalid-Auth";
+const RESPONSE_UNVERIFIABLE_AUTH: &str = "Wegent-Response-Unverifiable-Auth";
+
+impl brz_http_server::Authenticator<ResponsesUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<ResponsesUser, brz_http_server::AuthFailure> {
+        let value = |name| {
+            request
+                .header(name)
+                .and_then(|v| std::str::from_utf8(v).ok())
+        };
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", value("authorization")),
+            ("x-api-key", value("x-api-key")),
+            ("wegent-source", value("wegent-source")),
+            ("wegent-username", value("wegent-username")),
+        ]);
+        let rate_limit_key = super::rate_limit::limit_key(&headers.view(), "");
+        let rate_limit_key = rate_limit_key
+            .starts_with("apikey:")
+            .then_some(rate_limit_key);
+        get_current_user_flexible(
+            &self.state().auth,
+            self.state().user_reader.as_ref(),
+            &self.state().mysql,
+            &headers.view(),
+        )
+        .await
+        .map(|user| ResponsesUser {
+            user,
+            rate_limit_key,
+        })
+        .map_err(|error| match error {
+            AuthError::ApiKeyRequired => {
+                brz_http_server::AuthFailure::missing_credentials(RESPONSE_API_KEY_REQUIRED)
+            }
+            AuthError::InvalidApiKey => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_INVALID_API_KEY)
+            }
+            AuthError::ApiKeyExpired => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_API_KEY_EXPIRED)
+            }
+            AuthError::UserNotFoundOrInactive => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_USER_NOT_FOUND)
+            }
+            AuthError::UsernameRequired => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_USERNAME_REQUIRED)
+            }
+            AuthError::InvalidUsernameFormat => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_INVALID_USERNAME)
+            }
+            AuthError::UserInactive(_) => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_USER_INACTIVE)
+            }
+            AuthError::InvalidAuthenticationCredentials => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_INVALID_AUTH)
+            }
+            AuthError::CouldNotValidateCredentials => {
+                brz_http_server::AuthFailure::invalid_credentials(RESPONSE_UNVERIFIABLE_AUTH)
+            }
+            AuthError::Dependency(_) => brz_http_server::AuthFailure::Internal,
+        })
+    }
+
+    fn api_log_id<'a>(&'a self, principal: &'a ResponsesUser) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.user.user_name)
+    }
+
+    fn reject(
+        &self,
+        request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        let error = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: RESPONSE_API_KEY_REQUIRED,
+            } => crate::http_compat::FastApiError::unauthorized("API key is required"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_INVALID_API_KEY,
+            } => crate::http_compat::FastApiError::unauthorized("Invalid API key"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_API_KEY_EXPIRED,
+            } => crate::http_compat::FastApiError::unauthorized("API key has expired"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_USER_NOT_FOUND,
+            } => crate::http_compat::FastApiError::unauthorized("User not found or inactive"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_USERNAME_REQUIRED,
+            } => crate::http_compat::FastApiError::detail(
+                brz_http_server::StatusCode::BAD_REQUEST,
+                "Username is required for service key authentication (use wegent-username header)",
+            ),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_INVALID_USERNAME,
+            } => crate::http_compat::FastApiError::detail(
+                brz_http_server::StatusCode::BAD_REQUEST,
+                "Username can only contain letters, numbers, underscores, and hyphens",
+            ),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_USER_INACTIVE,
+            } => {
+                let username = response_username(request).unwrap_or_default();
+                crate::http_compat::FastApiError::unauthorized(format!(
+                    "User '{username}' is inactive"
+                ))
+            }
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error",
+                )
+            }
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: RESPONSE_UNVERIFIABLE_AUTH,
+            } => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+            _ => {
+                crate::http_compat::FastApiError::unauthorized("Invalid authentication credentials")
+            }
+        };
+        error.into_http_error(arena)
+    }
+}
+
+fn response_username(request: brz_http_server::AuthRequest<'_>) -> Option<String> {
+    let value = |name| {
+        request
+            .header(name)
+            .and_then(|value| std::str::from_utf8(value).ok())
+    };
+    let headers = crate::headers::OwnedHeaders::from_pairs([
+        ("authorization", value("authorization")),
+        ("x-api-key", value("x-api-key")),
+        ("wegent-source", value("wegent-source")),
+        ("wegent-username", value("wegent-username")),
+    ]);
+    let headers = headers.view();
+    let username_from_key =
+        api_key_from_headers(&headers).and_then(|key| split_key_with_username(&key).1);
+    username_from_key.or_else(|| {
+        headers
+            .header("wegent-username")
+            .map(str::trim)
+            .filter(|username| !username.is_empty())
+            .map(str::to_owned)
+    })
 }
 
 /// The reader's user id narrowed to the auth id type (`users.id` is INT).
@@ -467,13 +639,7 @@ pub async fn get_current_user_flexible(
             .map_err(AuthError::dependency)?;
         let created = created
             .as_ref()
-            .map(|row| {
-                Ok(UserRecord {
-                    id: row.get_required::<i64>("users_id")?,
-                    user_name: row.get_required::<String>("users_user_name")?,
-                    is_active: row.get_required::<i8>("users_is_active")? != 0,
-                })
-            })
+            .map(UserRecord::from_mysql_row)
             .transpose()
             .map_err(AuthError::dependency)?;
         return match created {

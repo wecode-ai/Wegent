@@ -104,6 +104,11 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
+vi.mock('@/features/notifications/NotificationTaskSource', () => ({
+  NotificationTaskSourceBridge: () => null,
+  NotificationTaskSourceProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: ({
     routeActive,

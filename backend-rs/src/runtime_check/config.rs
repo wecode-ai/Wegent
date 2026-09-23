@@ -14,6 +14,10 @@ use std::{collections::HashMap, path::Path};
 use anyhow::{Context as _, Result};
 
 #[derive(Debug, Clone)]
+#[allow(
+    dead_code,
+    reason = "JWT fields are retained for source-compatible startup config"
+)]
 pub struct Config {
     /// Redis URL like `redis://:pass@host:port/0`.
     pub redis_url: String,
@@ -47,6 +51,10 @@ impl Config {
 
     /// Decode-only JWT keys: the active key followed by unique legacy keys,
     /// mirroring `app/core/jwt_compat.py:get_jwt_decode_secret_keys`.
+    #[allow(
+        dead_code,
+        reason = "route authentication now runs through AppAuthenticator"
+    )]
     pub fn jwt_decode_keys(&self) -> Vec<String> {
         let mut keys = vec![self.jwt_key.clone()];
         for key in self.jwt_legacy_keys.split(',') {

@@ -42,6 +42,86 @@ pub struct CurrentUser {
     pub user_name: String,
 }
 
+pub struct AuthenticatedUser(pub CurrentUser);
+
+impl std::ops::Deref for AuthenticatedUser {
+    type Target = CurrentUser;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const TASK_SKILLS_MISSING: &str = "Wegent-Task-Skills-Missing";
+const TASK_SKILLS_INVALID_API_KEY: &str = "Wegent-Task-Skills-Invalid-Api-Key";
+
+impl brz_http_server::Authenticator<AuthenticatedUser> for crate::auth::AppAuthenticator {
+    async fn authenticate<'a>(
+        &'a self,
+        request: brz_http_server::AuthRequest<'a>,
+    ) -> Result<AuthenticatedUser, brz_http_server::AuthFailure> {
+        let authorization = request
+            .header("authorization")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let x_api_key = request
+            .header("x-api-key")
+            .and_then(|v| std::str::from_utf8(v).ok());
+        let headers = crate::headers::OwnedHeaders::from_pairs([
+            ("authorization", authorization),
+            ("x-api-key", x_api_key),
+        ]);
+        get_current_user(&self.state().auth, &self.state().mysql, &headers.view())
+            .await
+            .map(AuthenticatedUser)
+            .map_err(|error| {
+                if error.status() == brz_http_server::StatusCode::INTERNAL_SERVER_ERROR {
+                    brz_http_server::AuthFailure::Internal
+                } else if error.detail() == "Missing authentication credentials" {
+                    brz_http_server::AuthFailure::missing_credentials(TASK_SKILLS_MISSING)
+                } else if error.detail() == "Invalid or expired API key" {
+                    brz_http_server::AuthFailure::invalid_credentials(TASK_SKILLS_INVALID_API_KEY)
+                } else {
+                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
+                }
+            })
+    }
+
+    fn api_log_id<'a>(
+        &'a self,
+        principal: &'a AuthenticatedUser,
+    ) -> Option<&'a dyn std::fmt::Display> {
+        Some(&principal.0.user_name)
+    }
+
+    fn reject(
+        &self,
+        _request: brz_http_server::AuthRequest<'_>,
+        failure: brz_http_server::AuthFailure,
+        arena: &brz_http_server::EphemeralBytesArena,
+    ) -> brz_http_server::Response {
+        use brz_http_server::IntoHttpError as _;
+        match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: TASK_SKILLS_MISSING,
+            } => crate::http_compat::FastApiError::detail(
+                brz_http_server::StatusCode::UNAUTHORIZED,
+                "Missing authentication credentials",
+            ),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: TASK_SKILLS_INVALID_API_KEY,
+            } => crate::http_compat::FastApiError::unauthorized("Invalid or expired API key"),
+            brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
+                crate::http_compat::FastApiError::detail(
+                    brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error",
+                )
+            }
+            _ => crate::http_compat::FastApiError::unauthorized("Could not validate credentials"),
+        }
+        .into_http_error(arena)
+    }
+}
+
 /// `users` row loaded from MySQL. The projection mirrors the full source
 /// `db.query(User)` rendering; the columns the endpoint does not read carry
 /// `#[allow(dead_code)]`.

@@ -33,7 +33,7 @@ use chrono::NaiveDateTime;
 use serde_json::json;
 use serde_json::{Value, value::RawValue};
 
-use crate::auth::{AuthFailure, get_current_user};
+use crate::auth::{SessionUser, UserRow};
 use crate::board_snapshot;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
@@ -539,20 +539,16 @@ pub(crate) fn project_response(
 #[brz_http_server::get("/api/v1/cloud-projects")]
 async fn list_cloud_projects(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
 ) -> Result<ProjectListResponse, FastApiError> {
-    cloud_projects(state, authorization).await
+    cloud_projects(state, current_user.0).await
 }
 
 /// Handler body for `GET /api/v1/cloud-projects`.
 async fn cloud_projects(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: UserRow,
 ) -> Result<ProjectListResponse, FastApiError> {
-    let current_user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
-
     let projects = list_accessible(&state.mysql, current_user.id)
         .await
         .map_err(internal_error)?;
@@ -685,15 +681,6 @@ pub(crate) async fn project_role<M: Mysql>(
     Ok("RestrictedAnalyst".to_string())
 }
 
-pub(crate) fn auth_error(error: AuthFailure) -> FastApiError {
-    match error {
-        AuthFailure::InvalidCredentials => {
-            FastApiError::unauthorized("Could not validate credentials")
-        }
-        AuthFailure::UserNotActivated => FastApiError::unauthorized("User not activated"),
-    }
-}
-
 pub(crate) fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "cloud-projects dependency failure");
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
@@ -705,9 +692,9 @@ pub(crate) fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {
 async fn list_project_chat_agents(
     #[inject(state)] state: &AppState,
     project_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: SessionUser,
 ) -> Result<Vec<board_snapshot::handler::AgentView>, FastApiError> {
-    project_chat_agents(state, project_id, authorization).await
+    project_chat_agents(state, project_id, current_user.0).await
 }
 
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}/chat-agents`.
@@ -732,12 +719,8 @@ async fn list_project_chat_agents(
 async fn project_chat_agents(
     state: &AppState,
     project_id: &str,
-    authorization: Option<&str>,
+    current_user: UserRow,
 ) -> Result<Vec<board_snapshot::handler::AgentView>, FastApiError> {
-    let current_user = get_current_user(&state.auth, &state.mysql, authorization)
-        .await
-        .map_err(auth_error)?;
-
     // `require_cloud_project_role`: re-read the active project row plus the
     // approved membership row for non-creators. The source passes
     // `project_id=str(project_id)` (a string) to `list_agents`, which forwards

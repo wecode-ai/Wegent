@@ -245,9 +245,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f68a1770f2d651f41ddf20a727151d34c315705d850448679bbd42835382da5e"
+checksum = "ae3edadb7f88f4ca01d690e15ab14808239fac0e071a0b73754f2de4c95b0aec"
 dependencies = [
  "brz-metrics",
  "bytes",
@@ -288,9 +288,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server"
-version = "0.0.15"
+version = "0.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50cfe4c33a994a1dad6dc76ab0c678ed6724f30c880d297a9654d041256c9383"
+checksum = "581e33b04a1a72c3f6c089eef12ece73cbc2fdf83e0417248dd2be1ff6d34316"
 dependencies = [
  "brz-ds",
  "brz-http-server-macros",
@@ -316,9 +316,9 @@ dependencies = [
 
 [[package]]
 name = "brz-http-server-macros"
-version = "0.0.15"
+version = "0.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "818e0c9bf766005c2c833072aa1431d1201323c83996e3e20b4e687928d3802e"
+checksum = "8c7ddb9228c9a53a36d8dfc4f1dd509fccf681f4df13fc7849f57fb43fe178df"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -350,9 +350,9 @@ dependencies = [
 
 [[package]]
 name = "brz-logs"
-version = "0.0.8"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1d1b9e7d00d3066f1d19b598cd3364ee9d6573db5629c6d1511343cab8752ac"
+checksum = "3d2e4236a20916801278a88a2471767b42e2c8429628bb0c7bf643d782edb721"
 dependencies = [
  "brz-ds",
  "brz-metrics",
@@ -364,9 +364,9 @@ dependencies = [
 
 [[package]]
 name = "brz-metrics"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eeb1162949f8ed979de2918bc9be7365794b07be556f3d27e3c194833f35a3a"
+checksum = "d6df4b5e9065aeb2d33e7568cbce6b356acb569f6904601097c327024ff94278"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -376,9 +376,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql"
-version = "0.0.11"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b673f825c1c3ed8bd91cc1c6bf910fc69aaa7772937b030155b78b309ad41860"
+checksum = "565c460e9a4663d9ef9b46df4cee263287a1591e27d57e7f26620b5fc21a2a9a"
 dependencies = [
  "async-stream",
  "brz-metrics",
@@ -397,9 +397,9 @@ dependencies = [
 
 [[package]]
 name = "brz-mysql-derive"
-version = "0.0.11"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a925acdb730ee911c0a7fc3738f254b38db21c6fc87e8334a175ade931d9313d"
+checksum = "e0ca4b1b0a473df740cba885a4ed5e2e5c7280493ae799247561b8b0d6ed4202"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -424,9 +424,9 @@ dependencies = [
 
 [[package]]
 name = "brz-redis"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a1405a8cfd95c5fde429ebd1975544a71bd1432469538673ba1b3cee1c3ef4d"
+checksum = "ab8b3f84f6a2cfe468fe1347830ca4d58b14b822210bb760e0a89ef81e8885ad"
 dependencies = [
  "arc-swap",
  "brz-metrics",

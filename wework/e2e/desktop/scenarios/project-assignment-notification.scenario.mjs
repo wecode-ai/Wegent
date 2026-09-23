@@ -551,6 +551,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('click', '[data-testid="wework-notifications-category-general"]')
       await control.command('waitFor', `[data-testid="wework-notification-${general.id}"]`, {
         text: '你好',
         timeoutMs: uiTimeoutMs,
@@ -590,6 +591,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('waitFor', composer)
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('click', '[data-testid="wework-notifications-category-general"]')
       await control.command('waitFor', `[data-testid="wework-notification-${clickable.id}"]`)
       await control.command('click', `[data-testid="wework-notification-${clickable.id}"]`)
       await control.command(
@@ -650,6 +652,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       assert.equal(saved.read_at, null)
       await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', `[data-testid="wework-notification-${saved.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -979,6 +982,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command(
         'waitFor',
         `[data-testid="wework-notification-${acceptedNotification.id}"]`,
@@ -1145,10 +1149,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       })
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('click', '[data-testid="wework-notifications-category-general"]')
       await control.command('waitFor', `[data-testid="wework-notification-${custom.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'wework-notifications-inbox.png')
+      await control.command('click', '[data-testid="wework-notifications-back"]')
       await control.command('click', '[data-testid="wework-notifications-read-all"]')
       await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
         timeoutMs: uiTimeoutMs,
