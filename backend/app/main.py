@@ -75,6 +75,7 @@ SENSITIVE_QUERY_PARAM_NAMES = {"access_token", "api_key", "signature", "token"}
 SENSITIVE_HTTP_BODY_PATHS = {
     f"{settings.API_PREFIX}/external/oauth/revoke",
     f"{settings.API_PREFIX}/external/oauth/token",
+    f"{settings.API_PREFIX}/external/mcp/token",
 }
 
 # Initialize logging at module level for use in lifespan

@@ -375,6 +375,7 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     request.auth_token = None;
     request.runtime_auth_token = None;
     request.skill_identity_token = None;
+    request.mcp_token = None;
     set_runtime_task_title(&mut request, &link.title);
     restore_cloud_project_id(&mut request, &link.runtime_handle);
     restore_origin(&mut request, &link.runtime_handle);
@@ -421,6 +422,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
     persisted.auth_token = None;
     persisted.runtime_auth_token = None;
     persisted.skill_identity_token = None;
+    persisted.mcp_token = None;
     redact_execution_profile_secrets(&mut persisted.bot);
     redact_execution_profile_secrets(&mut persisted.model_config);
     for server in &mut persisted.mcp_servers {

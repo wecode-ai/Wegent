@@ -350,6 +350,7 @@ def _summarize_metadata_for_log(metadata: Optional[dict]) -> dict[str, object]:
         "knowledge_base_scope_count": len(knowledge_base_scopes),
         "has_auth_token": bool(metadata.get("auth_token")),
         "has_skill_identity_token": bool(metadata.get("skill_identity_token")),
+        "has_mcp_token": bool(metadata.get("mcp_token")),
         "has_task_data": bool(metadata.get("task_data")),
     }
 

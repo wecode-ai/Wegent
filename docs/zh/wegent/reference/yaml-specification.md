@@ -90,6 +90,19 @@ spec:
 校验并获取当前用户基本信息（`id`、`user_name`、`email`）；接口不会返回
 git 凭据。
 
+业务方也可以改用 MCP 访问令牌（简化版 OAuth），把占位符换成
+`${{mcp_token}}`：
+
+```yaml
+      headers:
+        Authorization: "Bearer ${{mcp_token}}"
+```
+
+MCP 访问令牌固定 60 分钟、受众为 `wegent-mcp`、仅含 `mcp:userinfo.read`
+scope。业务方可用 `POST /api/external/mcp/introspect` 校验令牌，或用
+`GET /api/external/mcp/userinfo` 解析调用用户；详见
+[MCP 访问令牌](../developer-guide/mcp-token.md)。
+
 ---
 
 ## ✨ Skill

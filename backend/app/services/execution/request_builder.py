@@ -26,7 +26,7 @@ from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
-from app.services.auth import create_skill_identity_token
+from app.services.auth import create_mcp_token, create_skill_identity_token
 from app.services.execution.git_credentials import (
     build_execution_git_user_info,
     classify_git_auth_transport,
@@ -385,6 +385,7 @@ class TaskRequestBuilder:
         # Generate task-scoped identities before finalizing MCP capabilities.
         auth_token = self._generate_auth_token(task, subtask, user)
         skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
+        mcp_token = self._generate_mcp_token(task, subtask, user)
 
         managed_mcp_config: dict[str, dict] = {}
         if include_wework_space_mcp:
@@ -563,6 +564,7 @@ class TaskRequestBuilder:
             task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
+            mcp_token=mcp_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -3073,4 +3075,15 @@ Response template:
             user_name=user.user_name,
             runtime_type=runtime_type,
             runtime_name=runtime_name,
+        )
+
+    def _generate_mcp_token(
+        self, task: TaskResource, subtask: Subtask, user: User
+    ) -> str:
+        """Generate a dedicated MCP token for business MCP server calls."""
+        return create_mcp_token(
+            user_id=user.id,
+            user_name=user.user_name,
+            task_id=task.id,
+            subtask_id=subtask.id,
         )

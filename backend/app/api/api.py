@@ -33,6 +33,7 @@ from app.api.endpoints import (
     loop_item_executions,
     mcp_identity,
     mcp_providers,
+    mcp_token,
     oauth_clients,
     oauth_provider,
     oidc,
@@ -393,6 +394,7 @@ api_router.include_router(
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
 api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
+api_router.include_router(mcp_token.router, tags=["mcp-token"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",

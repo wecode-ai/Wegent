@@ -88,6 +88,16 @@ def test_round_trip_preserves_git_auth_transport():
     assert converted.git_auth_transport == GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
 
 
+def test_round_trip_preserves_mcp_token():
+    request = ExecutionRequest(mcp_token="mcp-token")
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["mcp_token"] == "mcp-token"
+    assert converted.mcp_token == "mcp-token"
+
+
 def test_round_trip_preserves_selected_knowledge_context():
     request = ExecutionRequest(
         selected_knowledge_prompt="<selected_knowledge_sources />",

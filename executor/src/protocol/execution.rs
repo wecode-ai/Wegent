@@ -69,6 +69,7 @@ pub struct ExecutionRequest {
     pub auth_token: Option<String>,
     pub runtime_auth_token: Option<String>,
     pub skill_identity_token: Option<String>,
+    pub mcp_token: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -122,6 +123,7 @@ impl Default for ExecutionRequest {
             auth_token: None,
             runtime_auth_token: None,
             skill_identity_token: None,
+            mcp_token: None,
             extra: Map::new(),
         }
     }
@@ -172,6 +174,9 @@ impl ExecutionRequest {
         }
         if let Some(auth_token) = &self.auth_token {
             object.insert("task_token".to_owned(), Value::String(auth_token.clone()));
+        }
+        if let Some(mcp_token) = &self.mcp_token {
+            object.insert("mcp_token".to_owned(), Value::String(mcp_token.clone()));
         }
         value
     }
@@ -243,5 +248,21 @@ mod tests {
 
         assert_eq!(request.task_id, "task-123");
         assert_eq!(request.subtask_id, "subtask-456");
+    }
+
+    #[test]
+    fn variable_context_exposes_the_mcp_token() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": "task-123",
+            "subtask_id": "subtask-456",
+            "auth_token": "task-jwt",
+            "mcp_token": "mcp-jwt"
+        }))
+        .expect("execution request should deserialize");
+
+        let context = request.variable_context();
+
+        assert_eq!(context.get("task_token"), Some(&json!("task-jwt")));
+        assert_eq!(context.get("mcp_token"), Some(&json!("mcp-jwt")));
     }
 }

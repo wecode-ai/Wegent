@@ -29,6 +29,7 @@ Welcome to the Wegent Developer Guide! This guide will help you understand how t
 - [MCP Refactoring Guide](./mcp-refactoring-guide.md) - Knowledge MCP tool refactoring architecture
 - [External Knowledge MCP](./external-knowledge-mcp.md) - Knowledge MCP integration for trusted external systems
 - [External OAuth 2.0 Integration](./external-oauth-integration.md) - Authorization Code, PKCE, userinfo, refresh, and revocation
+- [MCP Access Tokens](./mcp-token.md) - Simplified OAuth: issue, validate, and resolve userinfo
 
 ### 💬 Chat Shell
 
