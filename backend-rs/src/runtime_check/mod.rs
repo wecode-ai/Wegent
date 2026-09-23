@@ -4,6 +4,10 @@
 
 //! `GET /api/tasks/{task_id}/runtime-check`.
 
+#[allow(
+    dead_code,
+    reason = "route authentication now runs through AppAuthenticator"
+)]
 pub mod auth;
 pub mod config;
 pub mod state;

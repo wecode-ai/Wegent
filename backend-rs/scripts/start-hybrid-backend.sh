@@ -15,6 +15,7 @@ REPOSITORY_ROOT=${WEGENT_REPOSITORY_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}
 BACKEND_DIR="$REPOSITORY_ROOT/backend"
 BACKEND_RS_DIR=${WEGENT_RS_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
 RS_BINARY_NAME=${WEGENT_RS_BINARY_NAME:-wegent-backend-rs}
+RS_BINARY_PATH=${WEGENT_RS_BINARY_PATH:-}
 
 PUBLIC_HOST=${WEGENT_RS_LISTEN_HOST:-0.0.0.0}
 PUBLIC_PORT=${WEGENT_RS_LISTEN_PORT:-8000}
@@ -57,6 +58,7 @@ Environment:
   WEGENT_RS_ROUTES_FILE        TOML route selection file
   WEGENT_RS_PROJECT_DIR        Rust Backend project directory
   WEGENT_RS_BINARY_NAME        Rust Backend binary name
+  WEGENT_RS_BINARY_PATH        Prebuilt Rust Backend binary; skips Cargo build
   WEGENT_RS_TARGET_DIR         Cargo target directory
   WEGENT_BACKEND_RS_ENV_FILE   Dotenv file for the Rust gateway
                                (default: the Backend's .env, else .env.example)
@@ -109,8 +111,12 @@ if [ "$PUBLIC_PORT" = "$PYTHON_UPSTREAM_PORT" ]; then
     exit 2
 fi
 
-if ! command -v cargo >/dev/null 2>&1; then
+if [ -z "$RS_BINARY_PATH" ] && ! command -v cargo >/dev/null 2>&1; then
     echo "Error: cargo is required for hybrid Backend mode" >&2
+    exit 1
+fi
+if [ -n "$RS_BINARY_PATH" ] && [ ! -x "$RS_BINARY_PATH" ]; then
+    echo "Error: prebuilt Rust Backend binary is not executable: $RS_BINARY_PATH" >&2
     exit 1
 fi
 if [ ! -x "$PYTHON_UVICORN" ]; then
@@ -189,26 +195,31 @@ trap cleanup EXIT
 
 write_state
 
-RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
-echo "Building Wegent Rust gateway (release)..."
-# Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
-env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
-    CARGO_PROFILE_RELEASE_STRIP=false \
-    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
-    CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
-    --release \
-    --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
-    --bin "$RS_BINARY_NAME" &
-BUILD_PID=$!
-write_state
-if wait "$BUILD_PID"; then
-    BUILD_PID=""
-    write_state
+if [ -n "$RS_BINARY_PATH" ]; then
+    RS_BINARY="$RS_BINARY_PATH"
+    echo "Using prebuilt Wegent Rust gateway: $RS_BINARY"
 else
-    BUILD_STATUS=$?
-    BUILD_PID=""
+    RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
+    echo "Building Wegent Rust gateway (release)..."
+    # Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
+    env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+        CARGO_PROFILE_RELEASE_STRIP=false \
+        CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
+        CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
+        --release \
+        --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
+        --bin "$RS_BINARY_NAME" &
+    BUILD_PID=$!
     write_state
-    exit "$BUILD_STATUS"
+    if wait "$BUILD_PID"; then
+        BUILD_PID=""
+        write_state
+    else
+        BUILD_STATUS=$?
+        BUILD_PID=""
+        write_state
+        exit "$BUILD_STATUS"
+    fi
 fi
 
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"

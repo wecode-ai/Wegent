@@ -17,7 +17,7 @@ use super::assembly::{
 };
 use super::models::{
     BotSummaryResponse, ContextBriefResponse, SubtaskBotResponse, SubtaskResponse, TeamBotResponse,
-    TeamInputPlaceholder, TeamResponse, TeamWorkflowResponse,
+    TeamDisplayConfig, TeamInputPlaceholder, TeamResponse, TeamWorkflowResponse,
 };
 use super::repository::{ContextRow, SubtaskRow};
 use crate::remote_workspace_tree::kinds::KindStore;
@@ -75,82 +75,31 @@ pub(crate) struct GitAccountEntry {
     pub(crate) user_name: Option<String>,
 }
 
-/// `user:v2:data:{user_id}` cache read with the MySQL fallback
-/// (`CachedUserReader.get_by_id`): the Redis document first, then the
-/// SQLAlchemy user query on a miss (failures degrade to misses).
+/// `CachedUserReader.get_by_id`: the `user:v2:data:{user_id}` document, the
+/// public SQL reader on a miss, and the `SETEX` write-back that warms the
+/// key. A document that no longer decodes into the projection is not found,
+/// like the source's `_to_model`.
 pub(crate) async fn cached_user(
     state: &AppState,
     user_id: i64,
 ) -> anyhow::Result<Option<CachedUserResponse>> {
-    use brz_redis::Redis;
-    let cached: Option<brz_redis::RedisBytes> = match state.redis.as_ref() {
-        Some(redis) => redis
-            .get(format!("user:v2:data:{user_id}").as_str())
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, %user_id, "[task_detail] user cache read failed");
-                error
-            })
-            .ok()
-            .flatten(),
-        None => None,
-    };
-    if let Some(bytes) = cached
-        && let Ok(document) =
-            serde_json::from_str::<UserCacheDocument>(&String::from_utf8_lossy(bytes.as_ref()))
-    {
-        let extra = state
-            .user_profile
-            .cached_user_ext(document.preferences.as_deref());
-        return Ok(Some(render_cached_user(document, extra)));
-    }
-    // `UserReader.get_by_id`: the same labeled projection the auth path
-    // renders (`db.query(User)`).
-    let row: Option<brz_mysql::MysqlRow> = brz_mysql::Mysql::fetch_optional(
+    let Some(raw) = crate::remote_workspace_tree::user_cache::load_document(
         &state.mysql,
-        &format!(
-            "SELECT users.id AS users_id, users.user_name AS users_user_name, \
-             users.password_hash AS users_password_hash, users.email AS users_email, \
-             users.git_info AS users_git_info, users.is_active AS users_is_active, \
-             users.`role` AS users_role, users.auth_source AS users_auth_source, \
-             users.preferences AS users_preferences, users.created_at AS users_created_at, \
-             users.updated_at AS users_updated_at \nFROM users \n\
-             WHERE users.id = {user_id} \n LIMIT 1"
-        ),
-        (),
+        state.redis.as_ref(),
+        user_id,
     )
-    .await?;
-    Ok(row.as_ref().and_then(|row| {
-        let git_info = row
-            .get::<brz_mysql::Json<Value>>("users_git_info")
-            .ok()?
-            .map(|json| serde_json::from_value(json.0).ok())??;
-        let document = UserCacheDocument {
-            id: row.get_required::<i64>("users_id").ok()?,
-            user_name: row.get_required::<String>("users_user_name").ok()?,
-            _password_hash: String::new(),
-            email: row.get::<String>("users_email").ok()?,
-            git_info: Some(git_info),
-            is_active: row.get_required::<i64>("users_is_active").ok()? != 0,
-            role: row.get_required::<String>("users_role").ok()?,
-            auth_source: row.get_required::<String>("users_auth_source").ok()?,
-            preferences: row.get::<String>("users_preferences").ok()?,
-            created_at: Some(
-                row.get::<chrono::NaiveDateTime>("users_created_at")
-                    .ok()?
-                    .map(iso_timestamp)?,
-            ),
-            updated_at: Some(
-                row.get::<chrono::NaiveDateTime>("users_updated_at")
-                    .ok()?
-                    .map(iso_timestamp)?,
-            ),
-        };
-        let extra = state
-            .user_profile
-            .cached_user_ext(document.preferences.as_deref());
-        Some(render_cached_user(document, extra))
-    }))
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?
+    else {
+        return Ok(None);
+    };
+    let Ok(document) = serde_json::from_str::<UserCacheDocument>(&raw) else {
+        return Ok(None);
+    };
+    let extra = state
+        .user_profile
+        .cached_user_ext(document.preferences.as_deref());
+    Ok(Some(render_cached_user(document, extra)))
 }
 
 /// Typed public projection of a cached user document. The password hash is
@@ -187,6 +136,7 @@ struct CachedPreferencesInput {
     tool_output_guard_enabled: Option<OpaqueJson>,
     mcp_provider_keys: Option<OpaqueJson>,
     quick_access: Option<OpaqueJson>,
+    composer_quick_phrases: Option<OpaqueJson>,
     default_execution_target: Option<OpaqueJson>,
     wework_new_chat_model_selection: Option<OpaqueJson>,
     wework_project_execution_mode: Option<OpaqueJson>,
@@ -194,12 +144,75 @@ struct CachedPreferencesInput {
     runtime_configs: Option<OpaqueJson>,
 }
 
+/// `QuickAccessPreference`: the source parses the persisted object with the
+/// schema and re-serializes it, so `version` and `teams` always appear (with
+/// their schema defaults) and unknown keys are dropped.
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+struct QuickAccessView {
+    version: Option<i64>,
+    teams: Vec<i64>,
+}
+
+/// `ComposerQuickPhrase`: same re-serialization contract as
+/// `QuickAccessView`; the six schema fields keep their stored values and
+/// unknown keys are dropped.
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+struct ComposerQuickPhraseView {
+    id: Option<OpaqueJson>,
+    title: Option<OpaqueJson>,
+    content: Option<OpaqueJson>,
+    mode: Option<OpaqueJson>,
+    #[serde(rename = "attachmentPaths")]
+    attachment_paths: Option<OpaqueJson>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<OpaqueJson>,
+}
+
+/// `UserPreferences.quick_access`: absent or stored `null` stays `null`;
+/// otherwise the object is re-rendered through `QuickAccessView`.
+fn normalize_quick_access(field: Option<OpaqueJson>) -> Option<QuickAccessView> {
+    let field = field?;
+    if field.is_null() {
+        return None;
+    }
+    field.project::<QuickAccessView>()
+}
+
+/// `UserPreferences.composer_quick_phrases`: absent or stored `null` stays
+/// `null`; otherwise every phrase is re-rendered through
+/// `ComposerQuickPhraseView`.
+fn normalize_composer_quick_phrases(
+    field: Option<OpaqueJson>,
+) -> Option<Vec<ComposerQuickPhraseView>> {
+    let field = field?;
+    if field.is_null() {
+        return None;
+    }
+    field.project::<Vec<ComposerQuickPhraseView>>()
+}
+
+/// The stored preferences document, read like the source's
+/// `UserInDB.parse_preferences` (`backend/app/schemas/user.py:210-227`): a
+/// stored value keeps its preferences only when it parses to a non-empty JSON
+/// object. `null`, an empty string, the literal `"null"`, the empty object
+/// `{}`, and every non-mapping document all render `null`.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum CachedPreferencesDocument {
+    /// `{}` — the source's `if not parsed: return None`. Declared ahead of
+    /// [`Self::Object`] so an empty mapping is not read as a stored
+    /// preference set.
+    Empty(EmptyPreferences),
+    /// A mapping with at least one key — `UserPreferences(**parsed)`.
     Object(Box<CachedPreferencesInput>),
-    Other(serde::de::IgnoredAny),
 }
+
+/// Matches the empty document `{}` and nothing else.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyPreferences {}
 
 #[derive(serde::Serialize)]
 struct CachedPreferencesResponse {
@@ -211,7 +224,8 @@ struct CachedPreferencesResponse {
     chat_status_items: Option<OpaqueJson>,
     tool_output_guard_enabled: Option<OpaqueJson>,
     mcp_provider_keys: Option<OpaqueJson>,
-    quick_access: Option<OpaqueJson>,
+    quick_access: Option<QuickAccessView>,
+    composer_quick_phrases: Option<Vec<ComposerQuickPhraseView>>,
     default_execution_target: Option<OpaqueJson>,
     wework_new_chat_model_selection: Option<OpaqueJson>,
     wework_project_execution_mode: Option<OpaqueJson>,
@@ -247,9 +261,10 @@ fn cached_preferences(
     extra: crate::user_profile::ErasedFields,
 ) -> Option<CachedPreferencesResponse> {
     let raw = raw.filter(|raw| !raw.is_empty() && *raw != "null")?;
-    let mut input = match serde_json::from_str::<CachedPreferencesDocument>(raw).ok()? {
-        CachedPreferencesDocument::Object(input) => *input,
-        CachedPreferencesDocument::Other(_) => CachedPreferencesInput::default(),
+    let CachedPreferencesDocument::Object(mut input) =
+        serde_json::from_str::<CachedPreferencesDocument>(raw).ok()?
+    else {
+        return None;
     };
     input.send_key.get_or_insert_with(|| json!("enter").into());
     input
@@ -282,7 +297,8 @@ fn cached_preferences(
         chat_status_items: input.chat_status_items,
         tool_output_guard_enabled: input.tool_output_guard_enabled,
         mcp_provider_keys: input.mcp_provider_keys,
-        quick_access: input.quick_access,
+        quick_access: normalize_quick_access(input.quick_access),
+        composer_quick_phrases: normalize_composer_quick_phrases(input.composer_quick_phrases),
         default_execution_target: input.default_execution_target,
         wework_new_chat_model_selection: input.wework_new_chat_model_selection,
         wework_project_execution_mode: input.wework_project_execution_mode,
@@ -454,8 +470,15 @@ fn team_response(
         } else {
             "chat"
         };
-    // `dump_team_display_config(None)` -> the `TeamDisplayConfig` model
-    // defaults serialize as `{"show_final_answer_only": null}`.
+    // `dump_team_display_config` compacts the stored `displayConfig` to its
+    // non-null keys, and the response model re-serializes the result as
+    // `TeamDisplayConfig`, so `show_final_answer_only` is always emitted
+    // (null when unset, including a config that is missing or empty).
+    let display_config = spec
+        .display_config
+        .as_ref()
+        .and_then(OpaqueJson::project::<TeamDisplayConfig>)
+        .unwrap_or_default();
     TeamResponse {
         quick_phrases: quick_phrases(spec),
         name: team.name.clone(),
@@ -473,9 +496,7 @@ fn team_response(
         mode_spec: spec.mode_spec.raw_or(()),
         is_active: team.is_active != 0,
         icon: spec.icon.raw_or(()),
-        display_config: spec
-            .display_config
-            .raw_or(serde_json::json!({"show_final_answer_only": null})),
+        display_config,
         input_placeholder: spec
             .input_placeholder
             .as_ref()
@@ -690,6 +711,15 @@ fn context_field(field: &Option<OpaqueJson>, enabled: bool) -> Box<RawValue> {
     }
 }
 
+/// `build_context_display_fields` for `selected_documents`:
+/// `len(document_ids) if isinstance(document_ids, list) else 0`.
+fn selected_document_count(document_ids: &Option<OpaqueJson>) -> i64 {
+    document_ids
+        .as_ref()
+        .and_then(|value| value.project::<Vec<serde::de::IgnoredAny>>())
+        .map_or(0, |ids| ids.len() as i64)
+}
+
 /// `SubtaskContextBrief.from_model` + `build_context_display_fields`.
 pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
     let data = context
@@ -701,6 +731,10 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
     let attachment = context_type == "attachment";
     let knowledge = context_type == "knowledge_base";
     let external = context_type == "external_knowledge";
+    // `build_context_display_fields` renders `selected_documents` as the
+    // stored document-id count (`len(document_ids)` when it is a list, else
+    // `0`), and leaves every other display field at its schema default.
+    let selected_documents = context_type == "selected_documents";
 
     ContextBriefResponse {
         id: context.subtask_contexts_id,
@@ -711,7 +745,12 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
         file_size: context_field(&data.file_size, attachment),
         mime_type: context_field(&data.mime_type, attachment),
         knowledge_id: context_field(&data.knowledge_id, knowledge),
-        document_count: context_field(&data.document_count, knowledge),
+        document_count: if selected_documents {
+            OpaqueJson::from_serializable(selected_document_count(&data.document_ids))
+                .to_raw_value()
+        } else {
+            context_field(&data.document_count, knowledge)
+        },
         document_ids: context_field(&data.document_ids, knowledge),
         folder_ids: context_field(&data.folder_ids, knowledge),
         folder_names: context_field(&data.folder_names, knowledge),
@@ -738,111 +777,7 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The stored team placeholder (`model_dump(exclude_none=True)`) has no
-    /// entry for an unset locale; the response model re-serializes every
-    /// locale and device override, so they become explicit nulls.
-    #[test]
-    fn team_placeholder_serializes_unset_locales_as_null() {
-        let placeholder = OpaqueJson::from(json!({"zh": "提示"}))
-            .project::<TeamInputPlaceholder>()
-            .expect("stored placeholder projects");
-        assert_eq!(
-            serde_json::to_value(placeholder).unwrap(),
-            json!({"en": null, "zh": "提示", "mobile": null, "desktop": null})
-        );
-    }
-
-    /// A device override is a nested locale pair that serializes both keys.
-    #[test]
-    fn team_placeholder_keeps_device_overrides() {
-        let placeholder = OpaqueJson::from(json!({"mobile": {"zh": "手机"}, "desktop": {}}))
-            .project::<TeamInputPlaceholder>()
-            .expect("stored placeholder projects");
-        assert_eq!(
-            serde_json::to_value(placeholder).unwrap(),
-            json!({
-                "en": null,
-                "zh": null,
-                "mobile": {"en": null, "zh": "手机"},
-                "desktop": {"en": null, "zh": null},
-            })
-        );
-    }
-
-    /// A team without a stored placeholder serializes the field as null.
-    #[test]
-    fn missing_team_placeholder_serializes_null() {
-        assert_eq!(
-            serde_json::to_value(Option::<TeamInputPlaceholder>::None).unwrap(),
-            Value::Null
-        );
-    }
-
-    fn cached_with_preferences(raw: &str) -> Value {
-        serde_json::to_value(render_cached_user(
-            UserCacheDocument {
-                id: 1,
-                user_name: "user".into(),
-                _password_hash: String::new(),
-                email: None,
-                git_info: None,
-                is_active: true,
-                role: "user".into(),
-                auth_source: "test".into(),
-                preferences: Some(raw.into()),
-                created_at: None,
-                updated_at: None,
-            },
-            crate::user_profile::UserViewExt::empty(),
-        ))
-        .unwrap()
-    }
-
-    #[test]
-    fn cached_user_response_materializes_git_info_defaults() {
-        let document = serde_json::from_value::<UserCacheDocument>(json!({
-            "id": 1001,
-            "user_name": "lucy",
-            "email": "lucy@example.invalid",
-            "git_info": [{"git_domain": "git.example.invalid", "git_token": "t", "type": "gitlab"}],
-            "is_active": true,
-            "role": "user",
-            "auth_source": "oidc",
-            "preferences": "{}",
-            "created_at": "2025-12-10T10:43:00",
-            "updated_at": "2026-07-02T10:24:25"
-        }))
-        .unwrap();
-        let view = serde_json::to_value(render_cached_user(
-            document,
-            crate::user_profile::UserViewExt::empty(),
-        ))
-        .unwrap();
-        let entry = &view["git_info"][0];
-        assert!(entry["auth_type"].is_null());
-        assert!(entry["user_name"].is_null());
-        assert_eq!(entry["git_login"], Value::Null);
-    }
-
-    #[test]
-    fn cached_preferences_keep_legacy_non_object_fallback() {
-        for raw in ["[]", "false", "0", "\"text\"", " null "] {
-            assert!(
-                cached_with_preferences(raw)["preferences"].is_object(),
-                "{raw}"
-            );
-        }
-        for raw in ["", "null", "not json"] {
-            assert!(
-                cached_with_preferences(raw)["preferences"].is_null(),
-                "{raw}"
-            );
-        }
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod json_contract_tests {

@@ -324,7 +324,10 @@ fn union_body(query: &AccessibleTeamsQuery<'_>) -> Option<UnionBody> {
             args.extend(query.group_namespaces.iter().cloned().map(BindingArg::Str));
         }
         // The source joins `namespace` so the label can compare
-        // `namespace.name` and the filter can require an active namespace.
+        // `namespace.name` and the filter can require an active namespace. It
+        // compares the ids as integers
+        // (`ResourceMember.entity_id.cast(Integer) == Namespace.id`) so the
+        // string column never inherits the connection collation.
         branches.push((
             format!(
                 "SELECT kinds.id AS team_id, kinds.user_id AS team_user_id, \
@@ -337,7 +340,7 @@ fn union_body(query: &AccessibleTeamsQuery<'_>) -> Option<UnionBody> {
                  ON resource_members.resource_id = kinds.id \
                  AND resource_members.resource_type IN ('Team', 'TEAM') \
                  INNER JOIN namespace \
-                 ON resource_members.entity_id = CAST(namespace.id AS CHAR) \
+                 ON CAST(resource_members.entity_id AS SIGNED INTEGER) = namespace.id \
                  WHERE resource_members.entity_type = 'namespace' \
                  AND resource_members.entity_id IN ({entity_list}) \
                  AND resource_members.status IN ('approved', 'APPROVED') \
@@ -643,8 +646,11 @@ mod tests {
         assert!(page.contains("combined_teams.restricted_guest_access DESC"));
         assert!(page.contains("anon_1.restricted_guest_access AS anon_1_restricted_guest_access"));
         assert!(page.contains(
-            "INNER JOIN namespace ON resource_members.entity_id = CAST(namespace.id AS CHAR)"
+            "INNER JOIN namespace ON CAST(resource_members.entity_id AS SIGNED INTEGER) = namespace.id"
         ));
+        // The ids compare as integers, so `namespace.id` is never cast to a
+        // string and the join cannot inherit the connection collation.
+        assert!(!page.contains("CAST(namespace.id AS CHAR)"));
         assert!(page.contains("namespace.is_active IS true"));
         assert!(
             page.find("0 AS restricted_guest_access").unwrap()
@@ -724,5 +730,38 @@ mod tests {
     fn group_scope_without_namespaces_builds_no_query() {
         let filters: Vec<TeamListFilter> = Vec::new();
         assert!(union_body(&query("group", &[], &[], &[], &filters)).is_none());
+    }
+
+    /// The namespace-authorization branch only appears for users with
+    /// namespace grants, so a wrong JOIN expression there is invisible to the
+    /// other scope shapes. Pin the source rendering
+    /// (`ResourceMember.entity_id.cast(Integer) == Namespace.id`) exactly.
+    #[test]
+    fn authorization_branch_compares_namespace_ids_as_integers() {
+        let groups = vec![
+            "PM_agent".to_string(),
+            "test-dev".to_string(),
+            "tqt-analyze-group".to_string(),
+            "tqt-server".to_string(),
+        ];
+        let authorized = vec![569, 557, 746, 613];
+        let query = query("all", &groups, &authorized, &[], &[]);
+        let page = page_sql(&query);
+        assert!(page.contains(
+            "INNER JOIN namespace ON CAST(resource_members.entity_id AS SIGNED INTEGER) = namespace.id"
+        ));
+        assert!(!page.contains("CAST(namespace.id AS CHAR)"));
+        // `namespace.is_active.is_(True)` keeps `IS true`, and the branch
+        // excludes the group namespaces already covered above.
+        assert!(page.contains(
+            "INNER JOIN namespace ON CAST(resource_members.entity_id AS SIGNED INTEGER) = \
+             namespace.id WHERE resource_members.entity_type = 'namespace' \
+             AND resource_members.entity_id IN (?, ?, ?, ?) \
+             AND resource_members.status IN ('approved', 'APPROVED') \
+             AND namespace.is_active IS true AND kinds.kind = 'Team' \
+             AND kinds.is_active IS true AND (kinds.namespace NOT IN (?, ?, ?, ?))"
+        ));
+        // The same statement backs the count form.
+        assert!(count_sql(&query).contains("CAST(resource_members.entity_id AS SIGNED INTEGER)"));
     }
 }

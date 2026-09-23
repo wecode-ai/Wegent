@@ -35,8 +35,6 @@ use serde_json::Value;
 
 use crate::cloud_projects::{ProjectListRow, access_project, membership_role};
 use crate::http_compat::FastApiError;
-use crate::loop_tasks::auth as multi_auth;
-use crate::loop_tasks::auth_error::AuthError;
 use crate::state::AppState;
 
 /// One `CloudProjectMemberResponse` row.
@@ -173,16 +171,8 @@ async fn creator_row<M: Mysql>(mysql: &M, user_id: i32) -> MysqlResult<Option<Cr
 async fn list_cloud_project_members(
     #[inject(state)] state: &AppState,
     project_id: &str,
-    #[header] authorization: Option<&str>,
-    #[header("x-api-key")] x_api_key: Option<&str>,
+    #[auth] user: crate::loop_tasks::auth::FlexibleUser,
 ) -> Result<Vec<CloudProjectMemberResponse>, FastApiError> {
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-    ]);
-    let user = multi_auth::get_current_user(&state.auth, &state.mysql, &headers.view())
-        .await
-        .map_err(map_auth_error)?;
     list_members(state, project_id, user.id).await
 }
 
@@ -302,11 +292,6 @@ fn has_permission(user_role: &str, required_role: &str) -> bool {
         }
     }
     level(user_role) <= level(required_role)
-}
-
-/// Map the multi-auth `AuthError` onto the source-compatible `FastApiError`.
-fn map_auth_error(error: AuthError) -> FastApiError {
-    FastApiError::detail(error.status(), error.detail())
 }
 
 fn internal_error(error: brz_mysql::MysqlError) -> FastApiError {

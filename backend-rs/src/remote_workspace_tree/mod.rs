@@ -14,6 +14,8 @@ pub mod kind_refs;
 pub mod kinds;
 pub mod py_set_order;
 pub mod task_detail;
+pub mod task_store;
+pub mod user_cache;
 
 mod handler;
 

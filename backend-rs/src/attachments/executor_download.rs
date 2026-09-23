@@ -92,22 +92,8 @@ fn percent_encode(value: &str) -> String {
 pub(super) async fn executor_download(
     state: &Arc<AppState>,
     attachment_id: i64,
-    authorization: Option<&str>,
-    x_api_key: Option<&str>,
+    user: &crate::attachments_task_all::auth::AuthenticatedUser,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
-    // `security.get_current_user_jwt_apikey_tasktoken`.
-    let headers = crate::headers::OwnedHeaders::from_pairs([
-        ("authorization", authorization),
-        ("x-api-key", x_api_key),
-    ]);
-    let user = crate::attachments_task_all::auth::get_current_user(
-        &state.auth,
-        &state.mysql,
-        &headers.view(),
-    )
-    .await
-    .map_err(FastApiError::from)?;
-
     // `get_context_optional(user_id=...)`: ownership-checked lookup.
     let context =
         match context_store::get_context_optional_with_user(&state.mysql, attachment_id, user.id)

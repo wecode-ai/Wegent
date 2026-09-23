@@ -7,7 +7,16 @@
 import type { ReactNode } from 'react'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
-import { Activity, ArrowLeft, House, Inbox, UserRound } from 'lucide-react'
+import {
+  Activity,
+  ArrowLeft,
+  Bot,
+  House,
+  Inbox,
+  Monitor,
+  UserRound,
+  UsersRound,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
@@ -19,6 +28,24 @@ const navigation = [
     labelKey: 'collaboration_sidebar.home',
     icon: House,
     testId: 'collaboration-nav-home',
+  },
+  {
+    href: '/collaboration/agents',
+    labelKey: 'collaboration_sidebar.agents',
+    icon: Bot,
+    testId: 'collaboration-nav-agents',
+  },
+  {
+    href: '/collaboration/teams',
+    labelKey: 'collaboration_sidebar.teams',
+    icon: UsersRound,
+    testId: 'collaboration-nav-teams',
+  },
+  {
+    href: '/collaboration/devices',
+    labelKey: 'collaboration_sidebar.devices',
+    icon: Monitor,
+    testId: 'collaboration-nav-devices',
   },
   {
     href: '/collaboration/my-work',

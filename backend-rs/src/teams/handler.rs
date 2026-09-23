@@ -13,7 +13,6 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::auth::get_current_user;
 use super::group_membership::{
     ErpContext, accessible_authorization_namespaces, effective_roles, user_group_memberships,
 };
@@ -123,16 +122,16 @@ fn validate_literal(
 #[brz_http_server::get("/api/teams")]
 async fn list_teams(
     #[inject(state)] state: &AppState,
-    #[header] authorization: Option<&str>,
+    #[auth] current_user: crate::teams::auth::TeamsUser,
     query: brz_http_server::Query<ListTeamsQuery>,
 ) -> Result<TeamsResponse, super::http_error::HttpError> {
-    teams_list(state, authorization, &query).await
+    teams_list(state, &current_user, &query).await
 }
 
 /// Handler body for `GET /api/teams`.
 async fn teams_list(
     state: &AppState,
-    authorization: Option<&str>,
+    current_user: &crate::teams::auth::TeamsUser,
     query: &ListTeamsQuery,
 ) -> Result<TeamsResponse, HttpError> {
     let params = ListTeamsQuery {
@@ -144,9 +143,6 @@ async fn teams_list(
         mode: query.mode.clone(),
     }
     .validate()?;
-
-    let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-    let current_user = get_current_user(&state.auth, &state.mysql, &headers.view()).await?;
 
     list_user_teams(state, current_user.users_id as i64, &params).await
 }

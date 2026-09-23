@@ -7,6 +7,7 @@
 pub mod aggregation;
 pub mod auth;
 pub mod config;
+pub mod generation_config;
 pub mod models;
 pub mod mysql;
 pub mod state;

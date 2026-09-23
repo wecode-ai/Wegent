@@ -212,6 +212,44 @@ def test_inbox_api_is_private_and_read_state_persists(
     assert test_db.get(WeworkNotification, other.id).read_at is None
 
 
+def test_inbox_categories_have_independent_pagination_and_unread_counts(
+    test_client, test_db, test_user, test_token
+):
+    rows = [
+        create_notification(
+            test_db,
+            user_id=test_user.id,
+            actor_user_id=test_user.id,
+            title=kind,
+            body=kind,
+            kind=kind,
+        )
+        for kind in ("message", "assignment", "human_work", "new_kind")
+    ]
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = "/api/v1/wework-notifications"
+
+    collaboration = test_client.get(
+        f"{path}?category=collaboration&limit=1", headers=headers
+    ).json()
+    assert collaboration["unread_count"] == 2
+    assert collaboration["next_offset"] == 1
+    next_page = test_client.get(
+        f"{path}?category=collaboration&limit=1&offset=1", headers=headers
+    ).json()
+    assert {collaboration["items"][0]["id"], next_page["items"][0]["id"]} == {
+        rows[1].id,
+        rows[2].id,
+    }
+    general = test_client.get(f"{path}?category=general", headers=headers).json()
+    assert {item["id"] for item in general["items"]} == {rows[0].id, rows[3].id}
+    assert general["unread_count"] == 2
+    assert (
+        test_client.get(f"{path}?category=unknown", headers=headers).status_code == 422
+    )
+
+
 def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
     project = _make_project(test_db, test_user)
     other = _make_project(test_db, test_user)

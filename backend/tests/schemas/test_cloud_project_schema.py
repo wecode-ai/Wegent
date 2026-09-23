@@ -34,3 +34,25 @@ def test_aitable_project_rejects_access_tokens() -> None:
                 "token": "must-not-be-stored",
             },
         )
+
+
+@pytest.mark.parametrize("task_provider", ["github", "gitlab", "dingtalk_aitable"])
+def test_related_task_visibility_rejects_external_providers(
+    task_provider: str,
+) -> None:
+    provider_config: dict[str, object]
+    if task_provider == "dingtalk_aitable":
+        provider_config = {"base_id": "base-1", "table_id": "table-1"}
+    else:
+        provider_config = {"repository": "owner/repository"}
+
+    with pytest.raises(
+        ValidationError,
+        match="only available for built-in tasks",
+    ):
+        CloudProjectCreate(
+            name="External restricted project",
+            task_provider=task_provider,
+            provider_config=provider_config,
+            visibility="public_restricted",
+        )

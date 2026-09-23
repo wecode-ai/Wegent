@@ -31,7 +31,22 @@ enum ErrorBody {
     Custom(Box<serde_json::value::RawValue>),
 }
 
+/// The body of the application's `Exception` handler
+/// (`app/core/exceptions.py:python_exception_handler`).
+#[derive(Debug, serde::Serialize)]
+struct UnhandledErrorBody {
+    error_code: u16,
+    detail: &'static str,
+}
+
 impl FastApiError {
+    pub(crate) fn detail_message(&self) -> Option<&str> {
+        match &self.body {
+            ErrorBody::Detail { detail } => Some(detail),
+            ErrorBody::Validation { .. } | ErrorBody::Custom(_) => None,
+        }
+    }
+
     /// `<status> {"detail": <message>}` — the default FastAPI error body.
     #[must_use]
     pub fn detail(status: StatusCode, message: impl Into<String>) -> Self {
@@ -99,6 +114,22 @@ impl FastApiError {
         Self::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
     }
 
+    /// `500 {"error_code": 500, "detail": "Internal server error"}` — the
+    /// application's `python_exception_handler` body (`app/core/exceptions.py`),
+    /// installed as the app's `Exception` handler. Every failure a route does
+    /// not convert into an `HTTPException` renders this shape instead of
+    /// [`Self::internal`].
+    #[must_use]
+    pub fn unhandled() -> Self {
+        Self::json_body(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            UnhandledErrorBody {
+                error_code: 500,
+                detail: "Internal server error",
+            },
+        )
+    }
+
     /// A body that is already a JSON value (custom payload shapes).
     #[must_use]
     pub fn json_body(status: StatusCode, body: impl serde::Serialize) -> Self {
@@ -115,6 +146,18 @@ impl FastApiError {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         self.status
+    }
+
+    /// Whether this error carries a `WWW-Authenticate` challenge header.
+    ///
+    /// Endpoint error-mapping tests use this to assert the source's 401
+    /// challenge without rendering a response.
+    #[cfg(test)]
+    #[must_use]
+    pub fn carries_challenge(&self) -> bool {
+        self.headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("www-authenticate"))
     }
 
     /// The serialized validation-error `detail` array (422 responses).
@@ -173,6 +216,16 @@ mod tests {
         assert_eq!(
             crate::json_contract_tests::serialized(error.body).unwrap(),
             serde_json::json!({"detail": "Skill not found"})
+        );
+    }
+
+    #[test]
+    fn unhandled_body_matches_the_application_exception_handler() {
+        let error = FastApiError::unhandled();
+        assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            crate::json_contract_tests::serialized(error.body).unwrap(),
+            serde_json::json!({"error_code": 500, "detail": "Internal server error"})
         );
     }
 

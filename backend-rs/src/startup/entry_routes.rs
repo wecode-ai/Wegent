@@ -35,14 +35,16 @@ const ROOT_BODY: &[u8] = br#"{"name":"Task Manager Backend","version":"1.0.0","a
 
 /// GET /. Mirrors `root` in source app/main.py: the app-information endpoint,
 /// registered on the FastAPI app rather than under the API prefix.
-#[brz_http_server::get("/", api_log = false)]
+#[brz_http_server::get("/", api_log = false, access = public)]
 async fn root() -> brz_http_server::Response {
     brz_http_server::Response::static_bytes(brz_http_server::StatusCode::OK, ROOT_BODY)
         .content_type("application/json")
 }
 
-/// GET /api/startup.
-#[brz_http_server::get("/api/startup")]
+/// GET /api/startup. The readiness probe path (the migration image and the
+/// traffic harness poll it every second), so its requests stay out of the
+/// access log the same way `/` does.
+#[brz_http_server::get("/api/startup", api_log = false, access = public)]
 async fn startup() -> StartupStatus {
     StartupStatus { status: "started" }
 }
@@ -51,7 +53,7 @@ async fn startup() -> StartupStatus {
 /// app/api/endpoints/health.py: 200 with `{"is_shutting_down": false}`
 /// while running; 503 with a shutdown payload once graceful shutdown has
 /// been initiated.
-#[brz_http_server::get("/api/shutdown/status")]
+#[brz_http_server::get("/api/shutdown/status", access = public)]
 async fn shutdown_status(
     #[inject(state)] state: &AppState,
 ) -> Result<ShutdownRunning, FastApiError> {
@@ -69,14 +71,14 @@ async fn shutdown_status(
 async fn chat_history(
     #[inject(state)] state: &AppState,
     session_id: &str,
-    #[header] authorization: Option<&str>,
+    #[auth] _service: crate::internal_auth::InternalService,
     query: brz_http_server::Query<chat_history::HistoryQuery>,
 ) -> Result<chat_history::HistoryResponse, FastApiError> {
-    chat_history::get_chat_history_value(state, session_id, authorization, &query).await
+    chat_history::get_chat_history_value(state, session_id, &query).await
 }
 
 /// GET /api/auth/oidc/callback.
-#[brz_http_server::get("/api/auth/oidc/callback")]
+#[brz_http_server::get("/api/auth/oidc/callback", access = public)]
 async fn oidc_callback(
     #[inject(state)] state: &AppState,
     code: Option<String>,

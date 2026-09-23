@@ -372,7 +372,12 @@ const sharedMessages: Record<
     "todo.member_search_placeholder": "添加成员：搜索用户名或邮箱",
     "todo.adding": "添加中…",
     "todo.private_project": "私有项目",
+    "todo.private_project_description": "仅项目成员可以进入。",
+    "todo.related_tasks_project": "仅看相关任务",
+    "todo.related_tasks_project_description":
+      "所有人可进入；普通用户只能看到自己创建、负责、参与或关联的任务，以及自己创建机器人负责的任务。",
     "todo.public_project": "公开项目",
+    "todo.public_project_description": "所有登录用户都可以进入并查看全部任务。",
     "todo.project_tags": "标签",
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
@@ -831,7 +836,13 @@ const sharedMessages: Record<
     "todo.member_search_placeholder": "Add members by name or email",
     "todo.adding": "Adding…",
     "todo.private_project": "Private project",
+    "todo.private_project_description": "Only project members can enter.",
+    "todo.related_tasks_project": "Related tasks only",
+    "todo.related_tasks_project_description":
+      "Everyone can enter; regular users only see tasks they created, own, participate in, are linked to, or that are assigned to robots they created.",
     "todo.public_project": "Public project",
+    "todo.public_project_description":
+      "All signed-in users can enter and view every task.",
     "todo.project_tags": "Tags",
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
