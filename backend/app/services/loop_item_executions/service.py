@@ -1348,11 +1348,8 @@ class LoopItemExecutionService:
             activity.status = "streaming"
             metadata = dict(activity.metadata_json or {})
             activity.metadata_json = {**metadata, "run_status": "running"}
-        notify_execution_lifecycle(
-            db,
-            execution=running,
-            status=STATUS_RUNNING,
-        )
+        # The queued notice already told the assignee the run started; the
+        # pipeline accepting it is the same moment, not a second one.
         db.commit()
         db.expire_all()
         row = db.get(LoopItemExecution, execution_id)

@@ -7486,3 +7486,61 @@ def test_enqueue_notifies_the_runtime_wait_when_approval_also_waits(
     assert notification.kind == "execution"
     assert notification.payload["status"] == "waiting_runtime"
     assert "需要选择运行设备" in notification.title
+
+
+def _execution_notification_ids(db: Session, user_id: int) -> list[str]:
+    return [
+        row.id
+        for row in db.query(WeworkNotification)
+        .filter(
+            WeworkNotification.user_id == user_id,
+            WeworkNotification.kind == "execution",
+        )
+        .order_by(WeworkNotification.created_at)
+        .all()
+    ]
+
+
+def test_managed_team_run_announces_its_start_once(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pipeline accepting a queued team run is not a second start notice."""
+
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    monkeypatch.setattr(
+        type(loop_item_execution_service),
+        "_push_activity",
+        lambda *args, **kwargs: None,
+    )
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.assignee_user_id = test_user.id
+    team = Kind(
+        kind="Team",
+        name="board-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {}},
+    )
+    test_db.add(team)
+    test_db.commit()
+
+    execution = loop_item_execution_service.create_for_team_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        team=team,
+        assigner_user_id=test_user.id,
+        priority="medium",
+    )
+    test_db.commit()
+    queued = _execution_notification_ids(test_db, test_user.id)
+    assert len(queued) == 1
+    assert test_db.get(WeworkNotification, queued[0]).payload["status"] == "queued"
+
+    loop_item_execution_service.mark_managed_running(
+        test_db, execution_id=execution.id, backend_task_id=61
+    )
+
+    assert _execution_notification_ids(test_db, test_user.id) == queued
