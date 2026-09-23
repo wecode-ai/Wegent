@@ -10,6 +10,12 @@ Publish the template for the robot's DingTalk application. Bind the same Markdow
 
 Deploy the complete backend first and wait until all instances are upgraded, then deploy the administration frontend and configure the chat template. Deploying only the backend is also supported: channels without `chat_card` keep their existing replies. Before enabling it broadly, verify streaming output, answer completion, and card follow-ups on a test channel.
 
+## Markdown rendering
+
+Card content uses DingTalk's Markdown renderer, which is narrower than the web UI: GFM tables are unsupported and would appear as raw pipe-delimited lines. Before writing to the card (one shared path for streaming updates and final answers), the backend converts every complete table block into an aligned monospaced plain-text table inside a fenced code block. Tables still streaming without their separator row stay untouched until complete, and tables already inside fenced code blocks are preserved. All other syntax (headings, emphasis, lists, quotes, links) passes through unchanged.
+
+Card colors and layout are controlled by the DingTalk client and the card template. Card width is a template-level setting: in the DingTalk card designer, select the template's root card node and set the width mode (protocol field `cardSizeWidthMode`) to adaptive, then republish the template. The card then stretches proportionally with the chat area instead of staying at a fixed width. DingTalk's official AI reply template (智能回复) uses exactly this setting. The create-instance API has no width parameter, so the server cannot adjust it per message. Channels without `chat_card` use DingTalk's built-in AI card template, whose width cannot be modified; switch to a custom template when adaptive width is required.
+
 ## Configuration
 
 Entering only the template ID uses the defaults below. Advanced settings allow different field names and disabling follow-ups.

@@ -13,6 +13,7 @@ from app.services.channels.dingtalk.card_transport import (
     DingTalkCardTransport,
     card_delivery_data,
 )
+from app.services.channels.dingtalk.markdown_compat import render_for_dingtalk
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 
 
@@ -234,5 +235,46 @@ def create_card_adapter(
     card_id: str | None = None,
 ) -> ChatCardAdapter:
     if config is None:
-        return BuiltinChatCardAdapter(client, message, card_id)
-    return TemplateChatCardAdapter(client, message, config, channel_id, card_id)
+        adapter: ChatCardAdapter = BuiltinChatCardAdapter(client, message, card_id)
+    else:
+        adapter = TemplateChatCardAdapter(client, message, config, channel_id, card_id)
+    return _MarkdownCompatAdapter(adapter)
+
+
+class _MarkdownCompatAdapter:
+    """Rewrite card content into DingTalk-renderable Markdown before sending.
+
+    DingTalk card Markdown does not render GFM tables; the conversion is
+    applied here so streaming updates and terminal answers share one path.
+    """
+
+    def __init__(self, inner: ChatCardAdapter):
+        self._inner = inner
+
+    @property
+    def card_instance_id(self) -> str | None:
+        return self._inner.card_instance_id
+
+    @property
+    def out_track_id(self) -> str | None:
+        return self._inner.out_track_id
+
+    async def start(self) -> None:
+        await self._inner.start()
+
+    async def update(self, content: str) -> None:
+        await self._inner.update(render_for_dingtalk(content))
+
+    async def finish(self, content: str) -> None:
+        await self._inner.finish(render_for_dingtalk(content))
+
+    async def fail(self, error: str) -> None:
+        await self._inner.fail(render_for_dingtalk(error))
+
+    async def set_follow_up_status(self, status: str) -> None:
+        setter = getattr(self._inner, "set_follow_up_status", None)
+        if setter is not None:
+            await setter(status)
+
+    async def close(self) -> None:
+        await self._inner.close()

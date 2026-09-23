@@ -199,7 +199,55 @@ async def test_optional_adapter_selection(config, binding, custom, enabled, expe
     if expected is None:
         assert emitter is None
     else:
-        assert isinstance(emitter._card, expected)
+        # create_card_adapter wraps the concrete adapter with Markdown
+        # compatibility rendering; assert on the wrapped inner adapter.
+        assert isinstance(emitter._card._inner, expected)
+
+
+@pytest.mark.asyncio
+async def test_adapter_rewrites_tables_before_streaming():
+    from app.services.channels.dingtalk.card_adapter import (
+        _MarkdownCompatAdapter,
+        create_card_adapter,
+    )
+
+    inner = Mock()
+    inner.card_instance_id = "card-1"
+    inner.out_track_id = "card-1"
+    inner.start = AsyncMock()
+    inner.update = AsyncMock()
+    inner.finish = AsyncMock()
+    inner.fail = AsyncMock()
+    inner.close = AsyncMock()
+
+    adapter = _MarkdownCompatAdapter(inner)
+    assert adapter.card_instance_id == "card-1"
+    assert adapter.out_track_id == "card-1"
+
+    await adapter.update("| 学生 | 年龄 |\n| --- | --- |\n| 张伟 | 18 |")
+    streamed = inner.update.call_args.args[0]
+    assert streamed.startswith("```\n")
+    assert "学生 | 年龄" in streamed
+    assert "张伟 | 18" in streamed
+
+    await adapter.finish("纯文本结论")
+    assert inner.finish.call_args.args[0] == "纯文本结论"
+
+    await adapter.close()
+    inner.close.assert_awaited_once()
+
+
+def test_create_card_adapter_always_wraps():
+    from app.services.channels.dingtalk.card_adapter import (
+        _MarkdownCompatAdapter,
+        create_card_adapter,
+    )
+
+    message = SimpleNamespace(conversation_type="1", sender_staff_id="staff-a")
+    client = Mock()
+    wrapped = create_card_adapter(client, message, None)
+    assert isinstance(wrapped, _MarkdownCompatAdapter)
+    assert isinstance(wrapped._inner, BuiltinChatCardAdapter)
 
 
 @pytest.mark.asyncio
