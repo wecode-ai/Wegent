@@ -16,7 +16,8 @@ import re
 import unicodedata
 
 _SEPARATOR_CELL = re.compile(r"^:?-+:?$")
-_FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+_UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 
 
 def _display_width(text: str) -> int:
@@ -34,9 +35,10 @@ def _split_row(line: str) -> list[str]:
     body = line.strip()
     if body.startswith("|"):
         body = body[1:]
-    if body.endswith("|"):
+    if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
-    return [cell.strip() for cell in body.split("|")]
+    # Split on unescaped pipes only; "\|" is a literal pipe inside a cell.
+    return [cell.strip().replace("\\|", "|") for cell in _UNESCAPED_PIPE.split(body)]
 
 
 def _looks_like_row(line: str) -> bool:
@@ -84,17 +86,27 @@ def render_for_dingtalk(content: str) -> str:
         return content
     lines = content.split("\n")
     out: list[str] = []
-    in_fence = False
+    fence_char: str | None = None
+    fence_len = 0
     i = 0
     while i < len(lines):
         line = lines[i]
-        if _FENCE.match(line.strip()):
-            in_fence = not in_fence
+        fence = _FENCE.match(line.strip())
+        if fence:
+            marker = fence.group(1)
+            if fence_char is None:
+                fence_char, fence_len = marker[0], len(marker)
+            elif (
+                marker[0] == fence_char
+                and len(marker) >= fence_len
+                and not fence.group(2).strip()
+            ):
+                fence_char = None
             out.append(line)
             i += 1
             continue
         if (
-            not in_fence
+            fence_char is None
             and i + 1 < len(lines)
             and _looks_like_row(line)
             and _is_separator_row(lines[i + 1])

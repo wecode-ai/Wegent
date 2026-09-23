@@ -70,3 +70,26 @@ class TestTableConversion:
     def test_no_pipe_fast_path(self):
         content = "没有任何表格的纯文本" * 100
         assert render_for_dingtalk(content) == content
+
+    def test_escaped_pipe_stays_in_cell(self):
+        content = "| a | b |\n| --- | --- |\n| x \\| y | 2 |"
+        result = render_for_dingtalk(content)
+        row = [line for line in result.split("\n") if "x" in line][0]
+        # The escaped pipe remains a literal cell value, not a delimiter
+        assert "x | y" in row
+        assert row.count("|") == 2  # two column separators only
+
+    def test_nested_shorter_fence_does_not_close(self):
+        content = (
+            "````\n"
+            "```\n"  # nested shorter fence must not end the block
+            "| a | b |\n"
+            "| --- | --- |\n"
+            "| 1 | 2 |\n"
+            "````\n"
+        )
+        assert render_for_dingtalk(content) == content
+
+    def test_tilde_fence_not_closed_by_backticks(self):
+        content = "~~~\n```\n| a |\n| - |\n| 1 |\n~~~\n"
+        assert render_for_dingtalk(content) == content
