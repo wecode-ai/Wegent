@@ -3117,7 +3117,17 @@ fn spawn_codex_app_server(
     let resolved_binary = resolve_codex_binary(binary);
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
-    let mut command = Command::new(&resolved_binary);
+    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+        .spawn()
+        .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn codex_app_server_command(
+    resolved_binary: &str,
+    codex_home: &Path,
+    launch_config: &CodexLaunchConfig,
+) -> Command {
+    let mut command = Command::new(resolved_binary);
     for key in EXECUTOR_INTERNAL_ENV_KEYS
         .iter()
         .chain(TASK_SCOPED_ENV_KEYS.iter())
@@ -3132,6 +3142,7 @@ fn spawn_codex_app_server(
         command.env(key, value);
     }
     command.env(CODEX_HOME_ENV, &codex_home);
+    command.current_dir(codex_home);
     command.env(
         "PATH",
         process_environment::normalized_process_path(
@@ -3144,9 +3155,8 @@ fn spawn_codex_app_server(
         .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .stderr(Stdio::inherit());
+    command
 }
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
