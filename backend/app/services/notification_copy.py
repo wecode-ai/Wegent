@@ -17,6 +17,17 @@ COMMENT_PREVIEW_MAX_CHARS = 200
 WEWORK_LINK_LABEL = "在 Wework 打开"
 WEB_LINK_LABEL = "在浏览器打开"
 
+# The kinds the desktop bell files under its collaboration category: board work
+# a member is pulled into — assigned, mentioned or run — rather than a message
+# someone sent them directly. A new kind declares its bucket here, next to the
+# copy it lands with.
+COLLABORATION_NOTIFICATION_KINDS = (
+    "assignment",
+    "mention",
+    "execution",
+    "human_work",
+)
+
 
 def comment_preview(content: str, limit: int = COMMENT_PREVIEW_MAX_CHARS) -> str:
     """Collapse a comment into the one-line excerpt a notification shows."""

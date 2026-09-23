@@ -209,12 +209,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      // A mention is board work, so the bell files it under collaboration.
+      await control.command(
+        'click',
+        '[data-testid="wework-notifications-category-collaboration"]'
+      )
       await control.command('waitFor', `[data-testid="wework-notification-${saved.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       const summary = await control.command(
         'getText',
-        `[data-testid="wework-notification-summary-${saved.id}"]`
+        `[data-testid="wework-notification-${saved.id}-summary"]`
       )
       assert.ok(summary.includes(PROJECT_NAME), `The inbox row must name its board: ${summary}`)
       await captureScreenshot(control, 'comment-notification-01-inbox.png')

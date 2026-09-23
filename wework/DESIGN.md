@@ -1786,3 +1786,58 @@ For each material UI change, review:
 When a screenshot feels wrong, compare it in this order: composition, surface
 hierarchy, typography, spacing, control sizing, radii, elevation, then color.
 Do not try to rescue incorrect composition by adding accent color or decoration.
+
+## 14. Notification inbox and unread contract
+
+The title-bar bell is the product's single notification inbox. Its badge is the
+sum of unread items from every registered source. The macOS Dock badge mirrors
+that sum; it does not count tray-menu rows. A tray preference may hide the
+unread-task section in the tray, but must never change the bell or Dock total.
+
+```mermaid
+flowchart LR
+  Runtime[Visible runtime tasks and lifecycle read state] --> Tasks[Task updates]
+  Cloud[Persistent cloud inbox and server read state] --> Collaboration[Collaboration]
+  Cloud --> General[Other notifications]
+  Tasks --> Bell[Category popover and total badge]
+  Collaboration --> Bell
+  General --> Bell
+  Bell --> Dock[macOS Dock count]
+  Runtime --> Tray[Optional unread-task tray section]
+```
+
+- Count one unread item per source identity. Runtime tasks use the device and
+  task address; persistent notifications use their server ID. If a future
+  producer represents the same event in both sources, it must declare a shared
+  event identity and deduplicate before aggregation.
+- Only visible runtime tasks count. A stored lifecycle key whose task has been
+  removed from the runtime work list must not produce a notification or badge.
+- The bell opens a compact category index, inspired by message inboxes. Show
+  Task updates, Collaboration, and Other notifications as separate rows with
+  each category's unread count and latest title. Selecting a row opens only
+  that category's entries; never interleave unrelated events in one list.
+  Keep the popover approximately 374px wide, with one 48px header and compact
+  two-line category rows. Use a neutral 32px icon surface, short timestamps,
+  and a count on the trailing edge. Do not add a second title bar, an overview
+  dashboard, or an explanatory footer inside the popover. In category details,
+  place each unread indicator in the same layout row as its title so the dot
+  stays vertically centered as text and row height change.
+  Sort entries within each category by event time, newest first. Cloud category
+  counts and pagination must be computed by the server, not inferred from the
+  first page. Cloud `assignment`, `mention`, `execution` and `human_work` events
+  belong to Collaboration; every other cloud kind belongs to Other notifications
+  until given an explicit category in the product contract.
+- Keep source-specific navigation and
+  read operations: opening a task marks its lifecycle state read; opening a
+  cloud entry acknowledges its server record. Opening the popover alone does not
+  mark anything read. “Mark all read” acknowledges every available source.
+- Preserve the current local task list and read actions while disconnected.
+  Show cloud unavailability in the popover rather than disabling the whole bell.
+  Never discard already loaded cloud items because a refresh fails.
+- Keep the compact, neutral title-bar bell and row design. Unread rows have a
+  quiet neutral fill; read rows have no fill. Cap the visual count at `99+`,
+  keep its exact numeric value for the Dock, and give every action a stable
+  test ID and accessible name.
+- A new notification source must provide stable event identity, timestamp,
+  title/body, destination, unread state, read-one and read-all operations, plus
+  an account scope. Register it with the feed before adding another badge.
