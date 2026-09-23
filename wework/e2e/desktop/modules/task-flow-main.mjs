@@ -1336,10 +1336,14 @@ async function main() {
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })
+    const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
+    if (desktopScenario?.launchWorkingDirectory) {
+      await mkdir(launchWorkingDirectory, { recursive: true })
+    }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
-        cwd: weworkDir,
+        cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
