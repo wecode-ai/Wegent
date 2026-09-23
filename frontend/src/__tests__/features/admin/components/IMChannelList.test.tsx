@@ -7,7 +7,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import { teamApis } from '@/apis/team'
-import { BUILTIN_AI_CARD_TEMPLATE_ID } from '@/features/admin/components/DingTalkNotificationCardFields'
 import IMChannelList from '@/features/admin/components/IMChannelList'
 
 const mockToast = jest.fn()
@@ -422,12 +421,9 @@ describe('IMChannelList channel config', () => {
     fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
       target: { value: 'ding-client-id' },
     })
-    fireEvent.change(
-      screen.getByLabelText('admin:im_channels.form.client_secret *'),
-      {
-        target: { value: 'ding-client-secret' },
-      }
-    )
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_secret *'), {
+      target: { value: 'ding-client-secret' },
+    })
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '10' } })
     fireEvent.change(screen.getAllByRole('combobox')[4], { target: { value: '20' } })
     fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
@@ -437,12 +433,10 @@ describe('IMChannelList channel config', () => {
     })
 
     const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
-    expect(payload.config).toEqual(
-      expect.objectContaining({ notification_card: null })
-    )
+    expect(payload.config).toEqual(expect.objectContaining({ notification_card: null }))
   })
 
-  test('creates a DingTalk channel that pushes notifications as AI cards', async () => {
+  test('creates a DingTalk channel that pushes notifications as cards', async () => {
     render(<IMChannelList />)
 
     await waitFor(() => {
@@ -455,12 +449,9 @@ describe('IMChannelList channel config', () => {
     fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
       target: { value: 'ding-client-id' },
     })
-    fireEvent.change(
-      screen.getByLabelText('admin:im_channels.form.client_secret *'),
-      {
-        target: { value: 'ding-client-secret' },
-      }
-    )
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_secret *'), {
+      target: { value: 'ding-client-secret' },
+    })
     fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '10' } })
     fireEvent.change(screen.getAllByRole('combobox')[4], { target: { value: '20' } })
     fireEvent.click(screen.getByTestId('create-im-notification-card-enabled'))
@@ -471,9 +462,43 @@ describe('IMChannelList channel config', () => {
     })
 
     const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
+    // An empty template field leaves the card to the backend, which pushes
+    // DingTalk's built-in markdown card instead of an AI card template.
+    expect(payload.config).toEqual(expect.objectContaining({ notification_card: {} }))
+  })
+
+  test('creates a DingTalk channel that pushes notifications as its own card', async () => {
+    render(<IMChannelList />)
+
+    await waitFor(() => {
+      expect(mockedTeamApis.getAllTeams).toHaveBeenCalledWith('all')
+    })
+    fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.name *'), {
+      target: { value: 'dingtalk-own-card' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
+      target: { value: 'ding-client-id' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_secret *'), {
+      target: { value: 'ding-client-secret' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: '10' } })
+    fireEvent.change(screen.getAllByRole('combobox')[4], { target: { value: '20' } })
+    fireEvent.click(screen.getByTestId('create-im-notification-card-enabled'))
+    fireEvent.change(screen.getByTestId('create-im-notification-card-template'), {
+      target: { value: 'custom-notification-card.schema' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createIMChannel).toHaveBeenCalled()
+    })
+
+    const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
     expect(payload.config).toEqual(
       expect.objectContaining({
-        notification_card: { template_id: BUILTIN_AI_CARD_TEMPLATE_ID },
+        notification_card: { template_id: 'custom-notification-card.schema' },
       })
     )
   })

@@ -9,9 +9,6 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/hooks/useTranslation'
 
-/** DingTalk's own AI markdown card; a bot needs no template of its own to use it. */
-export const BUILTIN_AI_CARD_TEMPLATE_ID = '382e4302-551d-4880-bf29-a30acfab2e71.schema'
-
 export interface DingTalkNotificationCardConfig {
   enabled: boolean
   template_id: string
@@ -33,9 +30,12 @@ export function readNotificationCardConfig(value: unknown): DingTalkNotification
 
 export function serializeNotificationCardConfig(
   value: DingTalkNotificationCardConfig
-): { template_id: string } | null {
+): { template_id?: string } | null {
   if (!value.enabled) return null
-  return { template_id: value.template_id.trim() || BUILTIN_AI_CARD_TEMPLATE_ID }
+  const templateId = value.template_id.trim()
+  // An empty field leaves the template to the backend, which pushes DingTalk's
+  // built-in markdown card; naming one here would pin the AI card instead.
+  return templateId ? { template_id: templateId } : {}
 }
 
 export default function DingTalkNotificationCardFields({
@@ -77,7 +77,7 @@ export default function DingTalkNotificationCardFields({
             data-testid={`${idPrefix}-notification-card-template`}
             value={value.template_id}
             maxLength={128}
-            placeholder={BUILTIN_AI_CARD_TEMPLATE_ID}
+            placeholder={t(`${key}.template_placeholder`)}
             onChange={event => onChange({ ...value, template_id: event.target.value })}
           />
           <p className="text-xs text-text-muted">{t(`${key}.help`)}</p>
