@@ -626,6 +626,7 @@ fn apply_claude_header_environment(
     // gateway-forwarded session header be forced into custom headers below.
     let targets_gateway = default_headers
         .iter()
+        .chain(custom_headers.iter())
         .any(|(key, _)| headers_match(key, "X-Wegent-Model-Type"));
     if let Some(project_id) = project_id(request) {
         default_headers = merge_header_map(
