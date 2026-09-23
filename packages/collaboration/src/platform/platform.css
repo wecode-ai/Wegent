@@ -2902,12 +2902,26 @@
   color: rgb(var(--color-text-secondary));
 }
 
-.collaboration-group-roster-identity > strong {
+.collaboration-group-roster-identity > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.collaboration-group-roster-identity > span > strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
   font-weight: 500;
+}
+
+.collaboration-group-roster-identity > span > small {
+  overflow: hidden;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .collaboration-group-person-card > .collaboration-group-person-responsibility {

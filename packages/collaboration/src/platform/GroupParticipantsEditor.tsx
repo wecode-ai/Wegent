@@ -311,7 +311,7 @@ export function GroupParticipantsEditor({
                   <button
                     type="button"
                     className="collaboration-group-people-action collaboration-group-make-leader"
-                    aria-label={`${messages.makeLeader} ${candidate.name}`}
+                    aria-label={`${messages.makeLeader} ${messages[candidate.kind]} ${candidate.name}`}
                     title={messages.makeLeader}
                     data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
                     onClick={() => onLeaderChange(candidate)}
@@ -325,7 +325,7 @@ export function GroupParticipantsEditor({
                   <button
                     type="button"
                     className="collaboration-group-people-action"
-                    aria-label={`${messages.remove} ${candidate.name}`}
+                    aria-label={`${messages.remove} ${messages[candidate.kind]} ${candidate.name}`}
                     title={`${messages.remove} ${candidate.name}`}
                     data-testid={`collaboration-group-remove-member-${candidate.kind}-${candidate.id}`}
                     onClick={() => onMemberChange(candidate, false)}

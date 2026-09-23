@@ -1443,6 +1443,11 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   event.preventDefault();
                   if (!name.trim() || !leader) return;
                   const [leaderKind, leaderId] = leader.split(":");
+                  const leaderMember = createMembers.find(
+                    (member) => `${member.kind}:${member.id}` === leader,
+                  );
+                  const leaderResponsibility =
+                    leaderMember?.responsibility ?? "";
                   setSaving(true);
                   setError(null);
                   void commands
@@ -1452,13 +1457,13 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       leader: {
                         kind: leaderKind as "human" | "agent",
                         id: leaderId,
-                        responsibility: "",
+                        responsibility: leaderResponsibility,
                       },
                       members: [
                         {
                           kind: leaderKind as "human" | "agent",
                           id: leaderId,
-                          responsibility: "",
+                          responsibility: leaderResponsibility,
                         },
                         ...createMembers.filter(
                           (member) => `${member.kind}:${member.id}` !== leader,

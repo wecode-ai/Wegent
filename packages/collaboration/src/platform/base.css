@@ -1066,8 +1066,17 @@
 .collaboration-project-create-squad-formation
   > div.is-squad
   .collaboration-group-roster-identity
+  > span
   > strong {
   font-size: 12px;
+}
+
+.collaboration-project-create-squad-formation
+  > div.is-squad
+  .collaboration-group-roster-identity
+  > span
+  > small {
+  display: none;
 }
 
 .collaboration-project-create-squad-formation > div > span {

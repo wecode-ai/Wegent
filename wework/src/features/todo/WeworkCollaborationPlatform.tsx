@@ -1269,7 +1269,12 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                         localAgentApi,
                         String(importedProject.id),
                         locale
-                      )
+                      ).catch(error => {
+                        console.warn(
+                          `[Wework] Failed to ensure the default local Agent for imported project ${importedProject.id}`,
+                          error
+                        )
+                      })
                     }
                     await onImported({
                       ...importedProject,

@@ -129,14 +129,22 @@ export function createLocalWorkspaceApi(
     })) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async () => {
-    const listedAgents = (await projectAgentApi?.list(DEFAULT_WORK_ITEM_PROJECT_ID)) ?? []
+    const listedAgents = projectAgentApi
+      ? await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID).catch(error => {
+          console.warn('[Wework] Failed to list local Agents', error)
+          return []
+        })
+      : []
     const defaultAgent = projectAgentApi
       ? await ensureDefaultLocalAgent(
           projectAgentApi,
           DEFAULT_WORK_ITEM_PROJECT_ID,
           locale,
           listedAgents
-        )
+        ).catch(error => {
+          console.warn('[Wework] Failed to ensure the default local Agent', error)
+          return null
+        })
       : null
     const agents =
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
@@ -447,7 +455,12 @@ export function createLocalWorkspaceApi(
         const { includeDefaultAgent = true, ...projectInput } = input
         const project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
-          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale)
+          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
+            console.warn(
+              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+              error
+            )
+          })
         }
         return project
       },

@@ -37,6 +37,14 @@ export function CollaborationGroupRoster<
     <div className="collaboration-group-roster" data-testid={testId}>
       {ordered.map((participant) => {
         const Icon = participant.kind === "agent" ? Bot : UserRound;
+        const typeLabel =
+          participant.kind === "agent"
+            ? locale === "zh-CN"
+              ? "智能体"
+              : "Agent"
+            : locale === "zh-CN"
+              ? "成员"
+              : "Person";
         return (
           <div
             key={`${participant.kind}:${participant.id}`}
@@ -49,7 +57,10 @@ export function CollaborationGroupRoster<
             <div className="collaboration-group-roster-heading">
               <span className="collaboration-group-roster-identity">
                 <Icon aria-hidden="true" />
-                <strong>{participant.name}</strong>
+                <span>
+                  <strong>{participant.name}</strong>
+                  <small>{typeLabel}</small>
+                </span>
               </span>
               {participant.leader ? (
                 <span

@@ -541,13 +541,8 @@ describe('Wework collaboration workspace API', () => {
 
   it('resolves an imported runtime project to its local collaboration project', async () => {
     const localDeliveryApi = createLocalDeliveryApi()
-    const ensureDefault = vi.fn(async (projectId: string, input: Record<string, unknown>) => ({
-      id: `LA-${projectId}`,
-      projectId,
-      status: 'active',
-      version: 1,
-      ...input,
-    }))
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const ensureDefault = vi.fn().mockRejectedValue(new Error('agent unavailable'))
     render(
       createElement(WeworkCollaborationPlatform, {
         user: {
@@ -619,6 +614,11 @@ describe('Wework collaboration workspace API', () => {
         model: null,
       })
     )
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('imported project local-project'),
+      expect.any(Error)
+    )
+    warning.mockRestore()
   })
 
   it('resolves an imported project by workspace root when the runtime key is an alias', async () => {
@@ -2137,6 +2137,41 @@ describe('Wework collaboration workspace API', () => {
     expect(ensureDefault).not.toHaveBeenCalled()
   })
 
+  it('keeps a created local project when default-Agent provisioning fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const ensureDefault = vi.fn().mockRejectedValue(new Error('agent unavailable'))
+    const details = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn(async () => []),
+        ensureDefault,
+        create: vi.fn(),
+        update: vi.fn(),
+        archive: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(
+      {
+        ...createLocalDeliveryApi(),
+        createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
+      },
+      1,
+      'admin',
+      null,
+      details
+    )!
+
+    await expect(api.projects.create({ name: 'New local' })).resolves.toMatchObject({
+      id: 'new-local',
+      name: 'New local',
+    })
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('project new-local'),
+      expect.any(Error)
+    )
+    warning.mockRestore()
+  })
+
   it('exposes local project execution environments through the shared project contract', async () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),
@@ -2614,6 +2649,27 @@ describe('Wework collaboration workspace API', () => {
       })
     )
     expect(listModels).not.toHaveBeenCalled()
+  })
+
+  it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const detailServices = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn().mockRejectedValue(new Error('list unavailable')),
+        ensureDefault: vi.fn().mockRejectedValue(new Error('agent unavailable')),
+        create: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+
+    await expect(api.resources!.list()).resolves.toMatchObject({ agents: [] })
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local Agents', expect.any(Error))
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to ensure the default local Agent',
+      expect.any(Error)
+    )
+    warning.mockRestore()
   })
 
   it('shares one default-Agent bootstrap across concurrent local resource reads', async () => {

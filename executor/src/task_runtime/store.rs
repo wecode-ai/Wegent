@@ -820,16 +820,29 @@ impl LocalTaskStore {
     ) -> Result<Option<ChatAgent>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let initialized = transaction.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM loop_items
-                WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
-                  AND deleted_at IS NULL
-             )",
-            [project_id],
-            |row| row.get::<_, bool>(0),
-        )?;
-        if initialized {
+        let existing = transaction
+            .query_row(
+                "SELECT id, status FROM loop_items
+                 WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1
+                   AND name = ?2 AND deleted_at IS NULL
+                 ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END, created_at
+                 LIMIT 1",
+                params![project_id, &input.name],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if let Some((id, status)) = existing {
+            if status == "archived" {
+                transaction.execute(
+                    "UPDATE loop_items
+                     SET status = 'active', version = version + 1, updated_at = ?1
+                     WHERE id = ?2",
+                    params![now(), id],
+                )?;
+                transaction.commit()?;
+                drop(connection);
+                return self.get_chat_agent(project_id, &id).map(Some);
+            }
             transaction.commit()?;
             return Ok(None);
         }
@@ -5039,7 +5052,7 @@ mod tests {
     }
 
     #[test]
-    fn default_chat_agent_is_created_once_and_stays_deleted() {
+    fn default_chat_agent_is_created_once_and_reactivates_after_archive() {
         let (_directory, store, project) = chat_agent_store();
         let input = default_chat_agent_input();
 
@@ -5056,10 +5069,31 @@ mod tests {
             .archive_chat_agent(&project.id, &created.id, created.version)
             .unwrap();
         assert!(store.list_chat_agents(&project.id).unwrap().is_empty());
-        assert!(store
+        let reactivated = store
             .ensure_default_chat_agent(&project.id, input)
             .unwrap()
-            .is_none());
+            .expect("the archived default agent should be reactivated");
+        assert_eq!(reactivated.id, created.id);
+        assert_eq!(reactivated.status, "active");
+        assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn default_chat_agent_is_created_when_custom_agents_already_exist() {
+        let (_directory, store, project) = chat_agent_store();
+        let mut custom = default_chat_agent_input();
+        custom.name = "custom-agent".to_owned();
+        store.create_chat_agent(&project.id, custom).unwrap();
+        let default_input = default_chat_agent_input();
+        let default_name = default_input.name.clone();
+
+        let default_agent = store
+            .ensure_default_chat_agent(&project.id, default_input)
+            .unwrap()
+            .expect("a custom agent must not suppress the default agent");
+
+        assert_eq!(default_agent.name, default_name);
+        assert_eq!(store.list_chat_agents(&project.id).unwrap().len(), 2);
     }
 
     #[test]

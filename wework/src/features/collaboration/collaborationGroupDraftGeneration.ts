@@ -228,7 +228,12 @@ function createGenerationEventStreamParser(
       scan()
     },
     finish(finalEvents: ProjectCreateCollaborationGroupGenerationEvent[]) {
-      if (parseError) throw parseError
+      if (parseError) {
+        console.warn(
+          '[CollaborationGroupGeneration] streamed preview parse failed; using validated final response',
+          parseError
+        )
+      }
       finalEvents.slice(emittedEvents.length).forEach(event => onEvent?.(event))
     },
   }
@@ -438,6 +443,7 @@ export async function generateCollaborationGroupDraft(options: {
       : '从现有智能体中选择最适合协调且能直接执行工作的 leader。',
     '每个协作者都必须输出一次 participant_started，并紧接着输出其全部 participant_delta。',
     '生成 2 到 4 个阶段。',
+    '所有 name、delta、text 字段必须使用与“用户补充要求”相同的语言书写（Use the language of the user request for all generated text）。',
     '',
     `项目名称：${input.projectName || '未命名项目'}`,
     `项目说明：${input.projectDescription || '暂无说明，请按通用项目协作设计'}`,

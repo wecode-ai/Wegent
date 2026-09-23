@@ -152,6 +152,7 @@ describe('collaborationGroupDraftGeneration', () => {
     expect(generateText.mock.calls[0]?.[0].outputSchema.properties).not.toHaveProperty('result')
     expect(generateText.mock.calls[0]?.[0].prompt).toContain('负责人也可以直接执行工作')
     expect(generateText.mock.calls[0]?.[0].prompt).toContain('2 到 3 个 principle')
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain('Use the language of the user request')
     expect(generateText.mock.calls[0]?.[0].prompt).not.toContain('总计不超过')
     expect(generateText.mock.calls[0]?.[0].prompt).toContain(
       '设备智能体负责核心实现，设计智能体负责交互'
@@ -194,5 +195,27 @@ describe('collaborationGroupDraftGeneration', () => {
         textGenerationApi: { generateText },
       })
     ).rejects.toThrow('不在当前项目中的协作者事件')
+  })
+
+  it('uses a valid final response when a streamed preview is incomplete', async () => {
+    const onEvent = vi.fn()
+    const generateText = vi.fn(async options => {
+      options.onDelta?.('{"events":[{"type":"group","name":"截断')
+      return generated
+    })
+
+    await expect(
+      generateCollaborationGroupDraft({
+        input,
+        textGenerationApi: { generateText },
+        onEvent,
+      })
+    ).resolves.toMatchObject({ name: '发布协作小组' })
+    expect(onEvent).toHaveBeenCalledWith({
+      type: 'participant_started',
+      kind: 'agent',
+      id: 'device-agent',
+      leader: true,
+    })
   })
 })

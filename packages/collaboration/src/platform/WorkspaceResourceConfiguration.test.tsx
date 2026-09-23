@@ -235,8 +235,8 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "" },
-        members: [{ kind: "agent", id: "1", responsibility: "" }],
+        leader: { kind: "agent", id: "1", responsibility: "审查代码" },
+        members: [{ kind: "agent", id: "1", responsibility: "审查代码" }],
       }),
     );
   });

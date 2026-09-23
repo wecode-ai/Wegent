@@ -321,6 +321,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const groupGenerationAgentTimerRef = useRef<number | null>(null);
   const groupGenerationAgentSettlingRef = useRef(false);
   const groupGenerationStartedAtRef = useRef(0);
+  const groupGenerationRunRef = useRef(0);
   const [groupGenerationError, setGroupGenerationError] = useState<
     string | null
   >(null);
@@ -390,6 +391,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   }, [groupGenerating]);
   useEffect(
     () => () => {
+      groupGenerationRunRef.current += 1;
       if (groupGenerationAgentTimerRef.current !== null) {
         window.clearTimeout(groupGenerationAgentTimerRef.current);
       }
@@ -647,6 +649,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       setGroupGenerationError(labels.generationModelRequired);
       return;
     }
+    const runId = ++groupGenerationRunRef.current;
     setCollaboratorPickerOpen(false);
     setGroupGenerating(true);
     setGroupGenerationPhase("preparing");
@@ -686,6 +689,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           },
         },
         (phase) => {
+          if (groupGenerationRunRef.current !== runId) return;
           console.debug("[CollaborationGroupGeneration]", {
             event: "phase-changed",
             phase,
@@ -695,8 +699,13 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           });
           setGroupGenerationPhase(phase);
         },
-        handleGroupGenerationEvent,
+        (event) => {
+          if (groupGenerationRunRef.current === runId) {
+            handleGroupGenerationEvent(event);
+          }
+        },
       );
+      if (groupGenerationRunRef.current !== runId) return;
       const draftParticipants = [draft.leader, ...draft.members];
       setGroupGenerationLeader({
         kind: draft.leader.kind,
@@ -734,6 +743,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       setRevealedGenerationAgentIds(selectedAgents.map((agent) => agent.id));
       setGroupEditorDraft(draft);
     } catch (cause) {
+      if (groupGenerationRunRef.current !== runId) return;
       setGroupGenerationError(
         host?.formatError?.(cause) ??
           (cause instanceof Error && cause.message
@@ -741,8 +751,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             : labels.createFailed),
       );
     } finally {
-      setGroupGenerating(false);
-      setGroupGenerationPhase(null);
+      if (groupGenerationRunRef.current === runId) {
+        setGroupGenerating(false);
+        setGroupGenerationPhase(null);
+      }
     }
   };
   const openGroupModelPicker = () => {
@@ -1040,9 +1052,18 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                     <button
                       type="button"
                       data-testid="collaboration-project-create-edit-group"
-                      onClick={() =>
-                        setGroupEditorDraft(state.collaborationGroupDraft)
-                      }
+                      onClick={() => {
+                        const agentIds = selectedAgents.map(
+                          (agent) => agent.id,
+                        );
+                        groupGenerationRevealedAgentIdsRef.current = new Set(
+                          agentIds,
+                        );
+                        setRevealedGenerationAgentIds(agentIds);
+                        setGroupGenerationError(null);
+                        setGroupEditorDraft(state.collaborationGroupDraft);
+                        setGroupModelPickerOpen(true);
+                      }}
                     >
                       <Pencil aria-hidden="true" />
                       {labels.editResponsibilities}
@@ -1074,7 +1095,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                             </strong>
                             <small>
                               {isLeader
-                                ? `${labels.leaderWorks} · ${participant.responsibility}`
+                                ? participant.responsibility
+                                  ? `${labels.leaderWorks} · ${participant.responsibility}`
+                                  : labels.leaderWorks
                                 : participant.responsibility ||
                                   labels.specialistWorks}
                             </small>
@@ -1288,8 +1311,20 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                         type="button"
                         aria-label={labels.cancel}
                         onClick={() => {
+                          groupGenerationRunRef.current += 1;
+                          if (groupGenerationAgentTimerRef.current !== null) {
+                            window.clearTimeout(
+                              groupGenerationAgentTimerRef.current,
+                            );
+                            groupGenerationAgentTimerRef.current = null;
+                          }
+                          groupGenerationAgentQueueRef.current = [];
+                          groupGenerationQueuedAgentIdsRef.current.clear();
+                          groupGenerationAgentSettlingRef.current = false;
                           setGroupModelPickerOpen(false);
                           setGroupEditorDraft(null);
+                          setGroupGenerating(false);
+                          setGroupGenerationPhase(null);
                         }}
                       >
                         <X aria-hidden="true" />

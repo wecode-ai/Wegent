@@ -4305,9 +4305,9 @@ describe("CollaborationPlatformApp real component flow", () => {
         '[data-testid="collaboration-workspace-member-invite"]',
       ),
     ).toBeNull();
-    expect(byTestId(`project-agent-row-${localAgent.id}`).textContent).toContain(
-      "当前设备智能体",
-    );
+    expect(
+      byTestId(`project-agent-row-${localAgent.id}`).textContent,
+    ).toContain("当前设备智能体");
     expect(
       container.querySelector(
         `[data-testid="project-agent-archive-${localAgent.id}"]`,
@@ -4465,6 +4465,28 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain(agent.name);
     expect(container.textContent).toContain(collaborationGroup.name);
     expect(container.textContent).toContain("负责人 · 协调并执行");
+    expect(container.textContent).not.toContain("undefined");
+    await click(byTestId("collaboration-project-create-edit-group"));
+    expect(
+      portalByTestId("collaboration-project-create-model-picker").textContent,
+    ).toContain(collaborationGroup.name);
+    expect(
+      portalByTestId("collaboration-project-create-group-roster").textContent,
+    ).toContain(agent.name);
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>('[aria-label="取消"]')!,
+    );
+    expect(
+      document.body.querySelector(
+        '[data-testid="collaboration-project-create-model-picker"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId<HTMLButtonElement>("collaboration-project-create-confirm")
+        .disabled,
+    ).toBe(false);
     await click(byTestId("collaboration-project-create-confirm"));
 
     expect(api.members.add).toHaveBeenCalledWith(
