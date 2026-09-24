@@ -226,6 +226,8 @@ must not implicitly broaden a remote execution scope.
 
 ### Context Compaction Results
 
+The executor live-item cache must retain compaction start/completion status. Persisting an interrupted turn must preserve the incomplete result of an unfinished compaction.
+
 Only a compaction completion event can mark `context_compaction` successful. When a turn ends or the user stops it, an unfinished compaction displays “Context compaction did not complete”; ordinary block settlement must not mark it `done`. A completed compaction stays successful even if its containing turn is subsequently stopped.
 
 Interrupted compaction has not reduced the context, so the next turn may compact again. History refresh must not turn an interrupted attempt into a success; Codex history may omit unfinished attempts. The desktop `context-compaction` checkpoint covers successful compaction, interruption, history refresh, and subsequent compaction recovery.

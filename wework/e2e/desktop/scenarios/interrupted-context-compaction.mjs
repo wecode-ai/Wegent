@@ -142,6 +142,10 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
           ),
         ])
         await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: SEED,
+          timeoutMs: uiTimeoutMs,
+        })
         await waitIdle(control)
         // A cancelled attempt may be absent from Codex history, but must never become a success.
         const texts = await control.command('getText', INDICATOR)
