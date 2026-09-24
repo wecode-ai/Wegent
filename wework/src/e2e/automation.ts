@@ -1933,8 +1933,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
-    case 'storeLocalProxyUrl':
-      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'storeLocalProxyUrl': {
+      const config = saveLocalProxyUrl(command.value?.trim() ?? '')
+      await flushDesktopLocalStoragePersistence()
+      return JSON.stringify(config)
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
