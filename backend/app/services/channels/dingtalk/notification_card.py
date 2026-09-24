@@ -2,20 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Render a task notification as a DingTalk markdown card with buttons.
-
-The card is built from DingTalk's built-in markdown template rather than the AI
-one: an AI card carries the assistant's own feedback row (thumbs up and down),
-which a task notification does not want, and it only surfaces once it reaches a
-terminal ``flowStatus``. The markdown template lands as soon as it is delivered
-and paints the headline in a header slot of its own, which is the only way it
-draws text larger than the body — a markdown heading is no bigger, and the
-template drops markdown's ``---`` and ``***`` instead of drawing a rule.
-"""
+"""Serialize notifications for the built-in and custom DingTalk card templates."""
 
 import json
 from collections.abc import Sequence
 
+from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 from app.services.channels.dingtalk.markdown import escape_markdown
 from app.services.notification_copy import NotificationLink, PushNotification
 
@@ -26,14 +18,44 @@ BUTTONS_KEY = "msgButtons"
 
 # One colour per destination: the first button is the primary way in.
 BUTTON_COLORS = ("blue", "gray")
+MAX_CARD_DETAIL_CHARS = 240
+
+KIND_PRESENTATION = {
+    "mention": ("评论提及", "info"),
+    "assignment": ("任务分配", "info"),
+}
+EXECUTION_PRESENTATION = {
+    "queued": ("已入队", "info"),
+    "claimed": ("准备执行", "info"),
+    "running": ("执行中", "info"),
+    "pending_approval": ("待审批", "attention"),
+    "waiting_user_input": ("待确认", "attention"),
+    "waiting_runtime": ("待选设备", "attention"),
+    "completed": ("已完成", "success"),
+    "failed": ("执行失败", "error"),
+    "cancelled": ("已取消", "neutral"),
+}
 
 
 def card_param_map(
     *,
     push: PushNotification,
     links: Sequence[NotificationLink] = (),
+    card_template_id: str = BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID,
 ) -> dict[str, str]:
-    """The ``cardParamMap`` of one finished notification card."""
+    """Use the variable contract declared by the selected DingTalk template."""
+
+    if card_template_id == BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID:
+        return _builtin_card_param_map(push=push, links=links)
+    return _custom_card_param_map(push=push, links=links)
+
+
+def _builtin_card_param_map(
+    *,
+    push: PushNotification,
+    links: Sequence[NotificationLink],
+) -> dict[str, str]:
+    """The DingTalk-provided markdown template keeps its original contract."""
 
     card_data = {
         # The header slot is plain text, so the headline goes in unescaped: an
@@ -48,6 +70,65 @@ def card_param_map(
             {BUTTONS_KEY: buttons}, ensure_ascii=False
         )
     return card_data
+
+
+def _custom_card_param_map(
+    *,
+    push: PushNotification,
+    links: Sequence[NotificationLink],
+) -> dict[str, str]:
+    """The Wegent template renders the action, item, context, and detail apart."""
+
+    kind_label, tone = _presentation(push)
+    primary = next(
+        (link for link in links if link.url.startswith(("https://", "http://"))),
+        None,
+    )
+    secondary = next((link for link in links if link.url.startswith("wework://")), None)
+    detail = _card_detail(push.detail)
+    return {
+        "kindLabel": kind_label,
+        "tone": tone,
+        "headline": push.headline,
+        "itemTitle": _payload_text(push, "itemTitle"),
+        "itemKey": _payload_text(push, "itemKey"),
+        "metaLine": _meta_line(push),
+        "detailLabel": push.detail_label,
+        "detail": detail,
+        "showDetail": "true" if detail else "false",
+        "primaryLabel": primary.label if primary else "",
+        "primaryUrl": primary.url if primary else "",
+        "secondaryLabel": secondary.label if secondary else "",
+        "secondaryUrl": secondary.url if secondary else "",
+    }
+
+
+def _presentation(push: PushNotification) -> tuple[str, str]:
+    if push.kind == "execution":
+        status = _payload_text(push, "status").lower()
+        return EXECUTION_PRESENTATION.get(status, ("任务进展", "info"))
+    return KIND_PRESENTATION.get(push.kind, ("任务通知", "neutral"))
+
+
+def _payload_text(push: PushNotification, key: str) -> str:
+    return str(push.payload.get(key) or "")
+
+
+def _card_detail(detail: str) -> str:
+    if len(detail) <= MAX_CARD_DETAIL_CHARS:
+        return detail
+    return f"{detail[: MAX_CARD_DETAIL_CHARS - 1]}…"
+
+
+def _meta_line(push: PushNotification) -> str:
+    parts = [
+        _payload_text(push, "projectName"),
+        _payload_text(push, "itemStatus"),
+    ]
+    assignee = _payload_text(push, "assigneeName")
+    if assignee:
+        parts.append(f"负责人：{assignee}")
+    return " · ".join(part for part in parts if part)
 
 
 def _body(push: PushNotification) -> str:

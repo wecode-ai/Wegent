@@ -414,7 +414,9 @@ class IMNotificationDispatcher:
         result = await sender.send_card(
             user_id=recipient_id,
             card_template_id=card_template_id,
-            card_param_map=card_param_map(push=push, links=links),
+            card_param_map=card_param_map(
+                push=push, links=links, card_template_id=card_template_id
+            ),
             preview=push.card_headline,
         )
         if not result.get("success"):

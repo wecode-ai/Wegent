@@ -4,9 +4,12 @@
 
 import json
 
+import pytest
+
 from app.services.channels.dingtalk.notification_card import (
     BUTTONS_KEY,
     MARKDOWN_KEY,
+    MAX_CARD_DETAIL_CHARS,
     TIPS_KEY,
     TITLE_KEY,
     card_param_map,
@@ -14,6 +17,7 @@ from app.services.channels.dingtalk.notification_card import (
 from app.services.notification_copy import (
     NotificationLink,
     NotificationTarget,
+    assignment_message,
     execution_message,
     mention_message,
     push_copy,
@@ -182,3 +186,120 @@ def test_card_quotes_every_line_of_a_multiline_result() -> None:
     assert params[MARKDOWN_KEY].endswith(
         "**失败原因**\n> 第 1 步失败\n> no space left on device"
     )
+
+
+def test_custom_card_exposes_a_mention_as_separate_plain_text_fields() -> None:
+    message = mention_message(
+        actor_name="hajimi",
+        preview="[点这里](https://tracker.example/login)",
+        comment_id="comment-1",
+        target=TARGET,
+    )
+
+    params = card_param_map(
+        push=push_copy(
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
+            payload=message.payload,
+        ),
+        links=LINKS,
+        card_template_id="wegent-custom-template",
+    )
+
+    assert params == {
+        "kindLabel": "评论提及",
+        "tone": "info",
+        "headline": "hajimi 在评论中提到了你",
+        "itemTitle": "修复登录",
+        "itemKey": "WEG-12",
+        "metaLine": "test-pro · 进行中 · 负责人：崔嘉琪",
+        "detailLabel": "评论内容",
+        "detail": "[点这里](https://tracker.example/login)",
+        "showDetail": "true",
+        "primaryLabel": "在浏览器打开",
+        "primaryUrl": "http://localhost:3000/collaboration/12/issues/ISSUE-1",
+        "secondaryLabel": "在 Wework 打开",
+        "secondaryUrl": "wework://boards/12/issues/ISSUE-1",
+    }
+
+
+def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
+    message = assignment_message(
+        assigner_name="admin",
+        target=NotificationTarget(project_id="12", project_name="test-pro"),
+    )
+
+    params = card_param_map(
+        push=push_copy(
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
+            payload=message.payload,
+        ),
+        card_template_id="wegent-custom-template",
+    )
+
+    assert params["kindLabel"] == "任务分配"
+    assert params["tone"] == "info"
+    assert params["headline"] == "admin 把任务分配给了你"
+    assert params["itemTitle"] == ""
+    assert params["itemKey"] == ""
+    assert params["metaLine"] == "test-pro"
+    assert params["detail"] == ""
+    assert params["showDetail"] == "false"
+    assert params["primaryUrl"] == ""
+    assert params["secondaryUrl"] == ""
+
+
+@pytest.mark.parametrize(
+    ("status", "kind_label", "tone"),
+    [
+        ("queued", "已入队", "info"),
+        ("claimed", "准备执行", "info"),
+        ("running", "执行中", "info"),
+        ("pending_approval", "待审批", "attention"),
+        ("waiting_user_input", "待确认", "attention"),
+        ("waiting_runtime", "待选设备", "attention"),
+        ("completed", "已完成", "success"),
+        ("failed", "执行失败", "error"),
+        ("FAILED", "执行失败", "error"),
+        ("cancelled", "已取消", "neutral"),
+    ],
+)
+def test_custom_card_presents_execution_state(
+    status: str, kind_label: str, tone: str
+) -> None:
+    message = execution_message(target=TARGET, status=status)
+
+    params = card_param_map(
+        push=push_copy(
+            kind=message.kind,
+            title=message.title,
+            body=message.body,
+            payload=message.payload,
+        ),
+        card_template_id="wegent-custom-template",
+    )
+
+    assert (params["kindLabel"], params["tone"]) == (kind_label, tone)
+    assert params["detail"]
+    assert params["showDetail"] == "true"
+
+
+def test_custom_card_limits_a_long_result_without_changing_the_push() -> None:
+    message = execution_message(
+        target=TARGET, status="completed", detail="结果" * MAX_CARD_DETAIL_CHARS
+    )
+    push = push_copy(
+        kind=message.kind,
+        title=message.title,
+        body=message.body,
+        payload=message.payload,
+    )
+
+    params = card_param_map(push=push, card_template_id="wegent-custom-template")
+
+    assert len(params["detail"]) == MAX_CARD_DETAIL_CHARS
+    assert params["detail"].endswith("…")
+    assert push.detail == "结果" * MAX_CARD_DETAIL_CHARS

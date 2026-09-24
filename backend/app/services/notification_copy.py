@@ -132,6 +132,8 @@ class PushNotification:
     facts: tuple[tuple[str, str], ...] = ()
     detail_label: str = ""
     detail: str = ""
+    kind: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
 
     def plain_text(self) -> str:
         """The body a plain push carries.
@@ -165,7 +167,7 @@ def push_copy(
     own gets a headline that stays readable there.
     """
 
-    data = payload or {}
+    data = dict(payload or {})
     facts = _push_facts(
         data,
         run_status=(
@@ -183,6 +185,8 @@ def push_copy(
             headline=headline,
             card_headline=headline,
             detail=detail,
+            kind=kind,
+            payload=data,
         )
     return PushNotification(
         headline=headline,
@@ -190,6 +194,8 @@ def push_copy(
         facts=tuple((label, str(value)) for label, value in facts),
         detail_label=_detail_label(kind, data),
         detail=detail,
+        kind=kind,
+        payload=data,
     )
 
 

@@ -671,7 +671,9 @@ async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
             card_param_map: dict[str, str],
             preview: str = "",
         ):
-            calls.append({"template_id": card_template_id})
+            calls.append(
+                {"template_id": card_template_id, "card_param_map": card_param_map}
+            )
             return {"success": False, "error": "Card.Instance.Write forbid"}
 
         async def send_markdown_message(self, user_ids, title, text):
@@ -699,7 +701,12 @@ async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
     )
 
     assert result["success"] is True
-    assert calls[0] == {"template_id": "card-template-1"}
+    assert calls[0]["template_id"] == "card-template-1"
+    assert calls[0]["card_param_map"]["kindLabel"] == "任务通知"
+    assert calls[0]["card_param_map"]["secondaryUrl"] == (
+        "wework://boards/12/issues/ISSUE-1"
+    )
+    assert "markdown" not in calls[0]["card_param_map"]
     assert calls[1] == {
         "user_ids": ["staff-2"],
         "title": "hajimi 在「修复登录」提到了你",
