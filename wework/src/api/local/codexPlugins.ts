@@ -131,6 +131,7 @@ export interface LocalCodexLocalConfig {
   codexHome: string
   configPath: string
   remoteAppsEnabled: boolean
+  enabledPluginKeys?: string[]
 }
 
 export interface LocalCodexLocalConfigPatch {
@@ -1285,9 +1286,20 @@ function toDiskPersonalMarketplaceItem(
  * a default marketplace path when the in-memory bundled path is missing.
  */
 export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMarketplaceItem[]> {
+  const listed = await readPersonalMarketplacePluginsFromDisk()
+  if (!listed) return []
+  return listed.plugins.map(plugin =>
+    toDiskPersonalMarketplaceItem(
+      plugin,
+      plugin.marketplacePath || listed.marketplacePath || WEWORK_PERSONAL_MARKETPLACE_ID
+    )
+  )
+}
+
+async function readPersonalMarketplacePluginsFromDisk(): Promise<PersonalMarketplaceListResult | null> {
   if (!isElectronRuntime()) {
     console.info('[Wework] personal marketplace disk list skipped', { reason: 'not-electron' })
-    return []
+    return null
   }
   const marketplacePath = getInitializedBundledPluginMarketplace()?.path?.trim() || ''
   const listed = await requestLocalExecutor<PersonalMarketplaceListResult>(
@@ -1297,27 +1309,22 @@ export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMa
     console.warn('[Wework] list personal marketplace from disk failed', error)
     return null
   })
-  if (!listed) return []
+  if (!listed || !Array.isArray(listed.plugins)) {
+    console.warn('[Wework] invalid personal marketplace disk list')
+    return null
+  }
   if (!listed.plugins.length) {
     console.info('[Wework] personal marketplace disk list empty', {
       marketplacePath: listed.marketplacePath || marketplacePath || null,
     })
-    return []
+    return listed
   }
   console.info('[Wework] personal marketplace disk list', {
     marketplacePath: listed.marketplacePath || marketplacePath || null,
     count: listed.plugins.length,
     names: listed.plugins.map(plugin => plugin.name),
   })
-  return listed.plugins.map(plugin =>
-    toDiskPersonalMarketplaceItem(
-      plugin,
-      plugin.marketplacePath ||
-        listed.marketplacePath ||
-        marketplacePath ||
-        WEWORK_PERSONAL_MARKETPLACE_ID
-    )
-  )
+  return listed
 }
 
 function catalogItemId(
@@ -1480,6 +1487,56 @@ export async function listWegentStorePluginsFromDisk(
     console.warn('[Wework] list wegent store plugins from disk failed', error)
     return []
   }
+}
+
+/** Reads installed local packages without starting either Codex online catalog. */
+export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlugin[]> {
+  if (!isElectronRuntime()) return []
+  const [personal, storePlugins, config] = await Promise.all([
+    readPersonalMarketplacePluginsFromDisk(),
+    listWegentStorePluginsFromDisk(true),
+    requestLocalExecutor<LocalCodexLocalConfig>('executor.codex_home.config.read'),
+  ])
+  const enabledKeys = new Set(config.enabledPluginKeys ?? [])
+  const marketplacePath = personal?.marketplacePath || WEWORK_PERSONAL_MARKETPLACE_ID
+  const personalInstalled = (personal?.plugins ?? [])
+    .filter(
+      plugin =>
+        enabledKeys.has(`${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`) ||
+        enabledKeys.has(`${plugin.name}@${CODEX_PERSONAL_MARKETPLACE_ID}`)
+    )
+    .map(plugin =>
+      toInstalledPlugin(
+        {
+          name: WEWORK_PERSONAL_MARKETPLACE_ID,
+          path: plugin.marketplacePath || marketplacePath,
+          interface: { displayName: WEWORK_PERSONAL_MARKETPLACE_ID },
+          plugins: [],
+        },
+        {
+          name: plugin.name,
+          id: `${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
+          source: { source: 'local', path: plugin.pluginPath },
+          installed: true,
+          enabled: true,
+          interface: {
+            displayName: plugin.displayName ?? plugin.name,
+            shortDescription: plugin.description ?? '',
+            logo: plugin.logo ?? null,
+            category: plugin.category ?? null,
+          },
+        }
+      )
+    )
+  const cloudLinks = personal?.marketplacePath
+    ? await readLocalPluginCloudLinks(personal.marketplacePath).catch(
+        () => [] as LocalPluginCloudLink[]
+      )
+    : []
+  return mergeLocalInstalledWithStorePackages(
+    applyPluginCloudLinks(personalInstalled, cloudLinks),
+    storePlugins
+  )
 }
 
 function filteredMarketplaces(

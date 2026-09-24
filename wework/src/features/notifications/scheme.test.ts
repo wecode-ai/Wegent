@@ -20,10 +20,26 @@ describe('Wework scheme routing', () => {
       '/runtime-tasks?deviceId=local-device&taskId=task-1'
     )
   })
+  it('carries the comment a notification points at into the board route', () => {
+    const destination = parseWeworkScheme('wework://boards/12/issues/WEG-12/comments/c-1')!
+    expect(destination).toEqual({
+      kind: 'board',
+      projectId: '12',
+      itemId: 'WEG-12',
+      commentId: 'c-1',
+    })
+    const route = new URL(weworkDestinationRoute(destination), 'https://local')
+    expect(route.pathname).toBe('/todo')
+    expect(route.searchParams.get('itemId')).toBe('WEG-12')
+    expect(route.searchParams.get('commentId')).toBe('c-1')
+  })
   it.each([
     'https://boards/12',
     'wework://boards/0',
     'wework://boards/12/issues/',
+    'wework://boards/12/issues/WEG-12/comments',
+    'wework://boards/12/comments/c-1',
+    'wework://boards/12/issues/WEG-12/notes/c-1',
     'wework://boards/12/issues/%00',
     'wework://boards/12/issues/%FF',
     'wework://user@boards/12',

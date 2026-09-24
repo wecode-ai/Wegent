@@ -1,6 +1,6 @@
 export type WeworkDestination =
   | { kind: 'boards' }
-  | { kind: 'board'; projectId: string; itemId?: string }
+  | { kind: 'board'; projectId: string; itemId?: string; commentId?: string }
   | { kind: 'task'; deviceId: string; taskId: string }
 
 function segment(value: string): string | null {
@@ -34,12 +34,20 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       return null
     if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
-    if (url.hostname === 'boards' && (parts.length === 1 || parts.length === 3)) {
+    if (
+      url.hostname === 'boards' &&
+      (parts.length === 1 || parts.length === 3 || parts.length === 5)
+    ) {
       const projectId = segment(parts[0])
       if (!projectId || !/^[1-9]\d*$/.test(projectId)) return null
       if (parts.length === 1) return { kind: 'board', projectId }
       const itemId = segment(parts[2])
-      return parts[1] === 'issues' && itemId ? { kind: 'board', projectId, itemId } : null
+      if (parts[1] !== 'issues' || !itemId) return null
+      if (parts.length === 3) return { kind: 'board', projectId, itemId }
+      const commentId = segment(parts[4])
+      return parts[3] === 'comments' && commentId
+        ? { kind: 'board', projectId, itemId, commentId }
+        : null
     }
     if (url.hostname === 'tasks' && parts.length === 2) {
       const deviceId = segment(parts[0])
@@ -59,5 +67,6 @@ export function weworkDestinationRoute(destination: WeworkDestination): string {
   }
   const params = new URLSearchParams({ projectStore: 'backend', projectId: destination.projectId })
   if (destination.itemId) params.set('itemId', destination.itemId)
+  if (destination.commentId) params.set('commentId', destination.commentId)
   return `/todo?${params}`
 }

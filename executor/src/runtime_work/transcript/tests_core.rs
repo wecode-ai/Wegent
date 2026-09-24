@@ -1245,3 +1245,18 @@ fn transcript_projects_collab_agent_calls_as_subagent_activity() {
     assert_eq!(blocks[0]["agent_status"], "done");
     assert_eq!(blocks[0]["children"][0]["content"], "hello");
 }
+
+#[test]
+fn context_compaction_history_keeps_provider_completion_after_turn_interruption() {
+    let messages = transcript_messages(
+        &json!({
+            "turns": [{
+                "id": "turn-1", "status": "interrupted",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        }),
+        "device-1",
+    );
+    assert_eq!(messages[0]["status"], "cancelled");
+    assert_eq!(messages[0]["blocks"][0]["status"], "done");
+}

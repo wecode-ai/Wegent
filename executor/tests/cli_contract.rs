@@ -99,7 +99,6 @@ fn app_sidecar_reserves_stdout_for_jsonl_before_backend_startup() {
         .env("WEGENT_AUTH_TOKEN", "test-token")
         .env("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1")
         .env("DEVICE_SESSION_GATEWAY_PORT", "0")
-        .env("DEVICE_PUBLIC_BASE_URL", "")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

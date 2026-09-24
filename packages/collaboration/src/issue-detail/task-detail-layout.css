@@ -1853,80 +1853,6 @@
   padding-bottom: 0;
 }
 
-.issue-comment-mention {
-  display: block;
-  position: relative;
-}
-
-.issue-comment-mention-popup {
-  position: absolute;
-  z-index: 20;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: min(260px, calc(100vw - 48px));
-  max-height: 280px;
-  overflow-y: auto;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 12px;
-  padding: 6px;
-  background: rgb(var(--color-popover));
-  box-shadow: 0 8px 16px -4px rgb(0 0 0 / 14%);
-}
-
-.issue-comment-mention-popup section + section {
-  margin-top: 6px;
-  border-top: 1px solid rgb(var(--color-border));
-  padding-top: 6px;
-}
-
-.issue-comment-mention-popup h4 {
-  margin: 0;
-  padding: 4px 8px;
-  color: rgb(var(--color-text-muted));
-  font-size: var(--text-xs);
-  font-weight: 500;
-}
-
-.issue-comment-mention-popup section > button {
-  display: flex;
-  width: 100%;
-  min-height: 34px;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: 8px;
-  padding: 4px 8px;
-  color: rgb(var(--color-text-primary));
-  background: transparent;
-  font-size: var(--text-sm);
-  text-align: left;
-}
-
-.issue-comment-mention-popup section > button:hover,
-.issue-comment-mention-popup section > button[data-active='true'] {
-  background: rgb(var(--color-bg-muted));
-}
-
-.issue-comment-mention-popup section > button > span {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: rgb(var(--color-text-secondary));
-  background: rgb(var(--color-bg-muted));
-  font-size: var(--text-xs);
-  font-weight: 500;
-}
-
-@media (max-width: 767px) {
-  .issue-comment-mention-popup section > button {
-    min-height: 44px;
-  }
-}
-
 .task-detail-comments-head {
   display: flex;
   align-items: center;
@@ -2155,6 +2081,7 @@
 }
 
 .task-detail-comment-card-composer {
+  position: relative;
   padding: 8px 16px;
   border-top: 1px solid rgb(var(--color-border));
 }
@@ -2199,6 +2126,28 @@
 .task-detail-thread-message {
   min-width: 0;
   padding: 16px;
+}
+
+/* A notification that lands on one comment flashes it so the reader can find it. */
+[data-flash="true"] {
+  border-radius: 10px;
+  animation: task-detail-comment-flash 2s ease-out 1;
+}
+
+@keyframes task-detail-comment-flash {
+  0% {
+    background: rgb(var(--color-primary) / 16%);
+    box-shadow: 0 0 0 2px rgb(var(--color-primary) / 45%);
+  }
+
+  70% {
+    background: rgb(var(--color-primary) / 8%);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
 }
 
 .task-detail-thread-message-header {
@@ -2368,6 +2317,7 @@
 }
 
 .task-detail-new-comment {
+  position: relative;
   width: 100%;
   padding: 12px;
   border: 1px solid rgb(var(--color-border));

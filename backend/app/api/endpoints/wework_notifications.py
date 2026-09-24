@@ -15,10 +15,10 @@ from app.schemas.wework_notification import (
     NotificationCreate,
     NotificationView,
 )
+from app.services.notification_copy import COLLABORATION_NOTIFICATION_KINDS
 from app.services.wework_notifications import send_wework_notification
 
 router = APIRouter()
-COLLABORATION_NOTIFICATION_KINDS = ("assignment", "human_work")
 
 
 @router.get("", response_model=InboxView)

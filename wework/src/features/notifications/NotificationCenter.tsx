@@ -1,11 +1,22 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Bell, CheckCircle2, ChevronRight, UsersRound } from 'lucide-react'
+import {
+  ArrowLeft,
+  AtSign,
+  Bell,
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  ClipboardCheck,
+  type LucideIcon,
+  UsersRound,
+} from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import {
   createNotificationsApi,
   type WeworkInbox,
   type WeworkNotification,
   type WeworkNotificationCategory,
+  type WeworkNotificationPayload,
 } from '@/api/notifications'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,23 +34,22 @@ import { openWeworkScheme } from './schemeEvents'
 type InboxCategory = 'tasks' | WeworkNotificationCategory
 const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
 
-function notificationTitle(notification: WeworkNotification, t: (key: string) => string): string {
-  return notification.kind === 'assignment'
-    ? t('notifications.assignment_title')
-    : notification.title
+/** The glyph that tells the kinds of notification apart at a glance. */
+const KIND_ICONS: Record<string, LucideIcon> = {
+  mention: AtSign,
+  assignment: ClipboardCheck,
+  execution: Bot,
 }
 
-function notificationBody(
-  notification: WeworkNotification,
-  t: (key: string, values?: Record<string, string>) => string
-): string {
-  return notification.kind === 'assignment'
-    ? t('notifications.assignment_body', {
-        assigner: notification.payload.assignerName,
-        project: notification.payload.projectName,
-        item: notification.payload.itemTitle,
-      })
-    : notification.body
+/**
+ * The preview line a category entry shows for its latest cloud notification.
+ *
+ * Every kind's copy is built by the backend, so this only picks the line that
+ * reads better in a compact row: the body when there is one — a comment, a run
+ * result — and the title otherwise, which is all a board state change has.
+ */
+function notificationPreview(notification: WeworkNotification): string {
+  return notification.body || notification.title
 }
 
 function formatNotificationTime(timestamp: number): string {
@@ -59,8 +69,11 @@ function formatNotificationTime(timestamp: number): string {
 
 function NotificationFeedRow({
   testId,
+  kind,
   title,
   body,
+  summary,
+  replyPreview,
   timestamp,
   unread,
   unreadLabel,
@@ -68,8 +81,14 @@ function NotificationFeedRow({
   onClick,
 }: {
   testId: string
+  /** Names the notification's glyph; a source without kinds shows none. */
+  kind?: string
   title: string
   body: string
+  /** The board, item and state the notification points at. */
+  summary?: string
+  /** The comment this notification answered, when it answered one. */
+  replyPreview?: string
   timestamp: number
   unread: boolean
   unreadLabel: string
@@ -77,10 +96,12 @@ function NotificationFeedRow({
   onClick: () => void
 }) {
   const time = formatNotificationTime(timestamp)
+  const KindIcon = kind ? (KIND_ICONS[kind] ?? Bell) : null
   return (
     <button
       type="button"
       data-testid={testId}
+      data-unread={unread ? 'true' : undefined}
       disabled={busy}
       className={cn(
         'block min-h-16 w-full border-b border-border/60 px-2 py-2 text-left last:border-b-0 hover:bg-muted disabled:opacity-50',
@@ -90,9 +111,12 @@ function NotificationFeedRow({
     >
       <span className="grid grid-cols-[6px_minmax(0,1fr)_auto] items-center gap-x-1.5">
         <span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', unread && 'bg-focus')} />
-        <span className="min-w-0 truncate text-sm font-medium">
+        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
           {unread && <span className="sr-only">{unreadLabel}：</span>}
-          {title}
+          {KindIcon && (
+            <KindIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+          )}
+          <span className="truncate">{title}</span>
         </span>
         {time && (
           <time className="text-xs text-text-tertiary" dateTime={new Date(timestamp).toISOString()}>
@@ -100,12 +124,31 @@ function NotificationFeedRow({
           </time>
         )}
       </span>
-      <span
-        className="ml-3 mt-0.5 line-clamp-2 whitespace-pre-wrap text-xs text-text-secondary"
-        title={body}
-      >
-        {body}
-      </span>
+      {summary && (
+        <span
+          data-testid={`${testId}-summary`}
+          className="ml-3 mt-0.5 block truncate text-xs text-text-secondary"
+        >
+          {summary}
+        </span>
+      )}
+      {body && (
+        <span
+          data-testid={`${testId}-body`}
+          className="ml-3 mt-0.5 line-clamp-2 whitespace-pre-wrap text-xs text-text-secondary"
+          title={body}
+        >
+          {body}
+        </span>
+      )}
+      {replyPreview && (
+        <span
+          data-testid={`${testId}-reply`}
+          className="ml-3 mt-1 block border-l-2 border-border pl-2 text-xs text-text-secondary"
+        >
+          {replyPreview}
+        </span>
+      )}
     </button>
   )
 }
@@ -274,6 +317,39 @@ function ConnectedNotificationCenter({
         close()
       }
     })
+
+  /** The board, item key, state and deadline a notification points at. */
+  function summaryParts(payload: WeworkNotificationPayload): string[] {
+    const parts: string[] = []
+    if (payload.projectName) parts.push(payload.projectName)
+    if (payload.itemKey) parts.push(payload.itemKey)
+    if (payload.itemStatus) parts.push(payload.itemStatus)
+    const priority = priorityLabel(payload.itemPriority)
+    if (priority) parts.push(priority)
+    const due = dueLabel(payload.itemDueAt)
+    if (due) parts.push(due)
+    return parts
+  }
+
+  function priorityLabel(priority?: string): string | null {
+    if (!priority || priority === 'none') return null
+    const keys: Record<string, string> = {
+      urgent: 'todo.priority_urgent',
+      high: 'todo.priority_high',
+      medium: 'todo.priority_normal',
+      low: 'todo.priority_low',
+    }
+    const key = keys[priority]
+    return key ? `${t('todo.priority')} ${t(key)}` : `${t('todo.priority')} ${priority}`
+  }
+
+  function dueLabel(dueAt?: string): string | null {
+    if (!dueAt) return null
+    const due = new Date(dueAt)
+    if (Number.isNaN(due.getTime())) return null
+    return `${t('todo.due_date')} ${due.toLocaleDateString()}`
+  }
+
   const openTask = (item: RuntimeTaskReminderItem) => {
     taskSource?.markRuntimeTaskRead(item.address)
     navigateTo(buildRuntimeTaskRoute(item.address))
@@ -330,7 +406,7 @@ function ConnectedNotificationCenter({
       id: 'collaboration' as const,
       title: t('notifications.category_collaboration'),
       preview: inboxes.collaboration?.items[0]
-        ? notificationBody(inboxes.collaboration.items[0], t)
+        ? notificationPreview(inboxes.collaboration.items[0])
         : api && !inboxes.collaboration && !error
           ? t('notifications.loading')
           : undefined,
@@ -344,7 +420,7 @@ function ConnectedNotificationCenter({
       id: 'general' as const,
       title: t('notifications.category_general'),
       preview: inboxes.general?.items[0]
-        ? notificationTitle(inboxes.general.items[0], t)
+        ? notificationPreview(inboxes.general.items[0])
         : api && !inboxes.general && !error
           ? t('notifications.loading')
           : undefined,
@@ -526,8 +602,17 @@ function ConnectedNotificationCenter({
                 <NotificationFeedRow
                   key={notification.id}
                   testId={'wework-notification-' + notification.id}
-                  title={notificationTitle(notification, t)}
-                  body={notificationBody(notification, t)}
+                  kind={notification.kind}
+                  title={notification.title}
+                  body={notification.body}
+                  summary={summaryParts(notification.payload).join(' · ')}
+                  replyPreview={
+                    notification.payload.replyPreview
+                      ? t('notifications.in_reply_to', {
+                          preview: notification.payload.replyPreview,
+                        })
+                      : undefined
+                  }
                   timestamp={cloudTimestamp(notification.created_at)}
                   unread={!notification.read_at}
                   unreadLabel={t('notifications.unread')}
