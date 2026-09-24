@@ -384,18 +384,18 @@ fn group_finishes_only_after_both_agent_stages() {
 }
 
 #[test]
-fn manager_without_a_plan_fails_without_completing_the_issue() {
+fn manager_without_a_plan_can_keep_the_configured_workflow() {
     let (_directory, store, project_id, task_id) = group_fixture("agent");
     let manager = claim(&store);
     let finished = store
-        .complete_execution(manager.id, Some("Tools unavailable"))
+        .complete_execution(manager.id, Some("The configured workflow is sufficient"))
         .unwrap()
         .unwrap();
-    assert_eq!(finished.status, "failed");
+    assert_eq!(finished.status, "completed");
     let issue = store.get_task(&project_id, &task_id).unwrap();
-    assert_eq!(issue.status.as_deref(), Some("in_progress"));
+    assert_eq!(issue.status.as_deref(), Some("inbox"));
     let comments = store.list_comments(&project_id, &task_id, 0).unwrap();
-    assert_eq!(comments[0].status, "failed");
+    assert_eq!(comments[0].status, "completed");
     assert_eq!(comments[0].metadata["automation_role"], "manager");
 }
 
@@ -446,17 +446,14 @@ fn manager_review_requires_a_decision_and_preserves_pending_review_history() {
             }
         );
         let issue = store.get_task(&project_id, &task_id).unwrap();
-        assert_eq!(
-            issue.status.as_deref(),
-            Some(decision.unwrap_or("in_progress"))
-        );
+        assert_eq!(issue.status.as_deref(), Some(decision.unwrap_or("inbox")));
         let history = issue.metadata["status_history"].as_array().unwrap();
         assert!(!history
             .iter()
             .any(|event| event["to_status"] == "completed"));
         assert_eq!(
             history.last().unwrap()["to_status"],
-            decision.unwrap_or("in_progress")
+            decision.unwrap_or("inbox")
         );
     }
 }

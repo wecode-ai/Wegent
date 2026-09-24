@@ -4034,6 +4034,13 @@ it('shows a manager assignment as an activity event and labels executor comments
       kind: 'project_automation_run',
       manager_type: 'project_robot',
       workflow_plan_run_id: 'plan-1',
+      workflow_plan_submitted: true,
+      workflow_assignments: [
+        {
+          assignee_id: 'member',
+          assignee_name: 'test',
+        },
+      ],
       run_status: 'completed',
     },
     status: 'completed',
@@ -4058,11 +4065,26 @@ it('shows a manager assignment as an activity event and labels executor comments
     content: 'Reviewing member reports',
     rootMessageId: null,
   }
+  const completedPlanningMessage: ProjectChatMessage = {
+    ...agentMessage,
+    messageId: 'manager-default-plan',
+    sequenceNumber: 5,
+    sender: { type: 'agent', id: 'local-leader', name: '当前设备智能体' },
+    metadata: {
+      workflow_node_id: 'manager',
+      automation_role: 'manager',
+      workflow_plan_submitted: false,
+      run_status: 'completed',
+    },
+    status: 'completed',
+    content: 'Default workflow is suitable',
+    rootMessageId: null,
+  }
   const client = {
     subscribe: vi.fn(async () => ({
       snapshot: {
-        messages: [managerMessage, memberMessage, localManagerMessage],
-        latestSequence: 4,
+        messages: [managerMessage, memberMessage, localManagerMessage, completedPlanningMessage],
+        latestSequence: 5,
         currentUserId: '1',
       },
       unsubscribe: vi.fn(),
@@ -4097,7 +4119,7 @@ it('shows a manager assignment as an activity event and labels executor comments
   )
 
   const assignment = await screen.findByTestId('cloud-task-assignment-event-manager-plan-1')
-  expect(assignment).toHaveTextContent('当前设备智能体 负责人 · 分配了任务')
+  expect(assignment).toHaveTextContent('当前设备智能体 负责人 · 分配给 test')
   expect(screen.queryByText(/Long manager planning transcript/)).not.toBeInTheDocument()
   expect(screen.queryByTestId('cloud-task-activity-card-manager-plan-1')).not.toBeInTheDocument()
   expect(screen.getByTestId('cloud-task-activity-role-member-result-1')).toHaveTextContent(
@@ -4108,6 +4130,10 @@ it('shows a manager assignment as an activity event and labels executor comments
     '正在验收成员结果'
   )
   expect(screen.queryByText('Reviewing member reports')).not.toBeInTheDocument()
+  expect(screen.getByTestId('cloud-task-manager-event-manager-default-plan')).toHaveTextContent(
+    '已完成任务规划'
+  )
+  expect(screen.queryByText('Default workflow is suitable')).not.toBeInTheDocument()
   expect(
     screen.queryByTestId('cloud-task-activity-reply-toggle-local-manager-review')
   ).not.toBeInTheDocument()

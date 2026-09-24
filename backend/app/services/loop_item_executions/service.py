@@ -3872,16 +3872,31 @@ class LoopItemExecutionService:
                     raise WeworkRuntimeConfigurationError(
                         "AI manager project or owner is unavailable"
                     )
+                manager_prompt = project_automation_execution._managed_prompt(
+                    db,
+                    owner=owner,
+                    project=project,
+                    rule=rule,
+                    run=run,
+                    context=origin_context,
+                )
+                configured_system_prompt = str(
+                    origin_context.get("system_prompt") or profile.system_prompt or ""
+                ).strip()
+                combined_system_prompt = "\n\n".join(
+                    part for part in (configured_system_prompt, manager_prompt) if part
+                )
+                origin_context = {
+                    **origin_context,
+                    "system_prompt": combined_system_prompt,
+                }
                 profile = replace(
                     profile,
-                    instruction=project_automation_execution._managed_prompt(
-                        db,
-                        owner=owner,
+                    instruction=project_automation_execution._managed_user_input(
                         project=project,
-                        rule=rule,
                         run=run,
-                        context=origin_context,
                     ),
+                    system_prompt=combined_system_prompt,
                     manager_mode=True,
                 )
             else:
@@ -3994,19 +4009,37 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 "Automation project or owner is unavailable"
             )
+        automation_context = self._automation_runtime_context(run, rule)
         manager_prompt = project_automation_execution._managed_prompt(
             db,
             owner=owner,
             project=project,
             rule=rule,
             run=run,
-            context=self._automation_runtime_context(run, rule),
+            context=automation_context,
+        )
+        configured_system_prompt = str(
+            automation_context.get("system_prompt") or ""
+        ).strip()
+        combined_system_prompt = "\n\n".join(
+            part for part in (configured_system_prompt, manager_prompt) if part
+        )
+        origin_context = self._selection_context(
+            execution,
+            {
+                **automation_context,
+                "system_prompt": combined_system_prompt,
+            },
         )
         return (
             WeworkExecutionProfile.for_automation_manager(
                 owner_user_id=owner_user_id,
                 display_name="自定义 AI 调度员",
-                instruction=manager_prompt,
+                instruction=project_automation_execution._managed_user_input(
+                    project=project,
+                    run=run,
+                ),
+                system_prompt=combined_system_prompt,
                 model=model,
                 model_type=(
                     selection.get("model_type") or profile_metadata.get("model_type")
@@ -4017,10 +4050,7 @@ class LoopItemExecutionService:
                     or {}
                 ),
             ),
-            self._selection_context(
-                execution,
-                self._automation_runtime_context(run, rule),
-            ),
+            origin_context,
         )
 
     @staticmethod

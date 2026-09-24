@@ -369,7 +369,10 @@ export function TaskActivityView({
   const [replyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
   const replyComposerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (replyTarget) replyComposerRef.current?.querySelector('textarea')?.focus()
+    if (!replyTarget) return
+    replyComposerRef.current
+      ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
+      ?.focus()
   }, [replyTarget])
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding

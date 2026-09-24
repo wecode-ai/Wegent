@@ -205,6 +205,16 @@ export async function createDesktopScenario({
       }
       const body = await readRequestBody(request)
       const serialized = JSON.stringify(body)
+      const userSerialized = JSON.stringify(
+        (body.input ?? body.messages ?? []).filter(item => item.role === 'user')
+      )
+      const developerSerialized = JSON.stringify({
+        instructions: body.instructions,
+        developerInstructions: body.developerInstructions,
+        messages: (body.input ?? body.messages ?? []).filter(item =>
+          ['developer', 'system'].includes(item.role)
+        ),
+      })
       if (!serialized.includes(RUN_MARKER)) return false
       assert.ok(serialized.includes(SKILL_NAME), 'The local Agent did not receive its Skill')
       const stagedSkill = await findStagedSkillFile(join(resultRoot, 'home'), SKILL_NAME)
@@ -354,7 +364,7 @@ export async function createDesktopScenario({
         writeEvents([assistantMessage(COMPLETION_MARKER)])
         return true
       }
-      if (serialized.includes('Review the executor results.')) {
+      if (serialized.includes('Review the executor results')) {
         const selection = mcpToolRequestEvents(body, {
           toolName: 'decide_workflow_review',
           argumentsValue: {
@@ -370,8 +380,12 @@ export async function createDesktopScenario({
         return true
       }
       assert.ok(
-        serialized.includes('You are the AI manager for this Issue.'),
-        'The collaboration group did not start with its AI manager'
+        developerSerialized.includes('You are the AI manager for this Issue.'),
+        'The AI manager instructions were not delivered as developer instructions'
+      )
+      assert.ok(
+        !userSerialized.includes('You are the AI manager for this Issue.'),
+        'The AI manager system instructions leaked into the user message'
       )
       const selection = mcpToolRequestEvents(body, {
         toolName: 'get_current_context',
@@ -565,6 +579,10 @@ export async function createDesktopScenario({
       }
       assert.ok(submittedPlan, 'The AI manager did not submit its child-task plan')
       assert.ok(verifiedRequest, 'The manager-generated prompt never reached the child Agent')
+      await control.command('waitFor', scoped('[data-testid^="cloud-task-assignment-event-"]'), {
+        text: `分配给 ${AGENT_NAME}`,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
         executorLog.includes(COMPLETION_MARKER),

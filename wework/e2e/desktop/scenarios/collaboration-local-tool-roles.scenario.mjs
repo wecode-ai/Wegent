@@ -41,7 +41,7 @@ export async function createDesktopScenario(options) {
       const serialized = JSON.stringify(
         (body.input ?? body.messages ?? []).filter(item => item.role === 'user')
       )
-      const role = serialized.includes('Review the executor results.')
+      const role = serialized.includes('Review the executor results')
         ? 'review-manager'
         : serialized.includes('LOCAL_MANAGER_GENERATED_EXECUTOR_PROMPT:')
           ? 'executor'

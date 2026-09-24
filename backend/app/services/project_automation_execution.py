@@ -76,7 +76,9 @@ from app.services.project_event_sources import supported_event_type
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
-MISSING_MANAGER_PLAN_ERROR = "AI manager finished without submitting a workflow plan."
+MISSING_MANAGER_REVIEW_ERROR = (
+    "AI manager finished without submitting a workflow review decision."
+)
 
 if TYPE_CHECKING:
     from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowPlanView
@@ -1102,7 +1104,9 @@ class ProjectAutomationExecution:
             if review
             else (
                 "你是看板的 AI 管家，只负责编排，不执行具体任务。"
-                "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+                "项目当前工作流是默认执行方案；先读取当前 Issue、项目工作流和候选执行者。"
+                "如果默认方案已经适合，可以不提交新方案并直接结束本轮规划。"
+                "只有需要替换默认方案时，才将工作拆成可独立验收的子任务，"
                 "为每个子任务编写面向执行者的具体 prompt，包含目标、边界和验收要求，"
                 "然后调用 submit_workflow_plan 提交结构化方案。"
                 "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
@@ -1126,6 +1130,19 @@ class ProjectAutomationExecution:
         if instruction:
             sections.append(instruction)
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _managed_user_input(
+        *,
+        project: CloudProject,
+        run: ProjectAutomationRun,
+    ) -> str:
+        return (
+            f"project_id: {project.id}\n"
+            f"task_id: {run.task_id or ''}\n"
+            f"automation_run_id: {run.id}\n\n"
+            "请读取当前 Issue 并完成本轮管理工作。"
+        )
 
     @staticmethod
     def _run_instruction(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
@@ -1448,7 +1465,7 @@ class ProjectAutomationExecution:
                         "assignee_id": item.assignee_id,
                         "assignee_name": item.assignee_name,
                     }
-                    for item in validated.items
+                    for item in view.items
                 ],
                 commit=False,
             )
@@ -1577,7 +1594,7 @@ class ProjectAutomationExecution:
         manager_action_recorded = (
             bool(activity_metadata.get("workflow_review_decision"))
             if review_run
-            else bool(workflow_plan_run_id or selected_agent_id or selected_user_id)
+            else True
         )
         if (selected_type or selected_id) and not (
             selected_agent_id or selected_user_id
@@ -1600,16 +1617,15 @@ class ProjectAutomationExecution:
                 )
         run_changed = False
         if manager_action_recorded:
-            if run.status not in TERMINAL_RUN_STATUSES or (
-                run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR
-            ):
+            if run.status not in TERMINAL_RUN_STATUSES or run.status == "failed":
                 run.status = "succeeded"
+                run.description = ""
                 run.completed_at = utcnow()
                 run.version += 1
                 run_changed = True
         elif run.status not in TERMINAL_RUN_STATUSES:
             run.status = "failed"
-            run.description = MISSING_MANAGER_PLAN_ERROR
+            run.description = MISSING_MANAGER_REVIEW_ERROR
             run.completed_at = utcnow()
             run.version += 1
             run_changed = True
@@ -1640,7 +1656,7 @@ class ProjectAutomationExecution:
                 else (
                     "AI 调度员已完成分派。"
                     if selected_agent_id or selected_user_id
-                    else "AI 管家未提交编排方案，本次运行已失败。"
+                    else "AI 管家已保留项目默认工作流。"
                 )
             )
             activity.metadata_json = {

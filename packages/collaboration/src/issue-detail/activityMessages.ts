@@ -82,6 +82,7 @@ export const activityMessages: Record<
     "activity.task_activity_manager_assigned": "分配了任务",
     "activity.task_activity_manager_assigned_to": "分配给 {{name}}",
     "activity.task_activity_manager_planning": "正在规划任务",
+    "activity.task_activity_manager_planned": "已完成任务规划",
     "activity.task_activity_manager_reviewing": "正在验收成员结果",
     "activity.task_activity_manager_failed": "处理失败，请查看执行详情",
     "activity.task_activity_manager_completed": "验收通过，完成 Issue",
@@ -196,6 +197,7 @@ export const activityMessages: Record<
     "activity.task_activity_manager_assigned": "assigned tasks",
     "activity.task_activity_manager_assigned_to": "Assigned to {{name}}",
     "activity.task_activity_manager_planning": "Planning tasks",
+    "activity.task_activity_manager_planned": "Finished planning tasks",
     "activity.task_activity_manager_reviewing": "Reviewing executor results",
     "activity.task_activity_manager_failed":
       "Action failed; view execution details",

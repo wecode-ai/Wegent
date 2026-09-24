@@ -2973,6 +2973,7 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
         owner_user_id=test_user.id,
         display_name="Managed AI",
         instruction="Run task",
+        system_prompt="Manage the Issue",
         model="test-model",
         local_project_id=code_project.id,
     )
@@ -5458,11 +5459,15 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
     assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
-        assert "submit_workflow_plan" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
-        assert "Handle the task" in payload["message"]
+        assert "AI 管家" not in payload["message"]
+        assert "submit_workflow_plan" not in payload["message"]
+        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in (
+            payload["projectInstructions"]
+        )
+        assert "submit_workflow_plan" in payload["projectInstructions"]
+        assert "Handle the task" in payload["projectInstructions"]
     if executor_type == "workflow_manager_robot":
         assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
         assert "submit_workflow_plan" in payload["message"]
@@ -6645,7 +6650,7 @@ def test_completed_manager_comment_repairs_stale_queued_rule_run(
     assert run.completed_at is not None
 
 
-def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
+def test_manager_can_keep_default_workflow_without_submitting_a_plan(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -6704,8 +6709,9 @@ def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
     test_db.refresh(activity)
     test_db.refresh(item)
     assert item.assignee_user_id == test_user.id
-    assert run.status == "failed"
-    assert activity.status == "failed"
+    assert run.status == "succeeded"
+    assert activity.status == "completed"
+    assert activity.content == 'Suggested assignment text: {"assignee_id": 1}'
     assert activity.metadata_json.get("selected_assignee_id") is None
 
 
@@ -6902,9 +6908,9 @@ def test_manager_completion_rejects_empty_trigger_created_workflow_run(
 
     test_db.refresh(run)
     test_db.refresh(activity)
-    assert run.status == "failed"
-    assert run.description == "AI manager finished without submitting a workflow plan."
-    assert activity.status == "failed"
+    assert run.status == "succeeded"
+    assert activity.status == "completed"
+    assert activity.content == "Prepared a draft but did not submit it."
 
 
 @pytest.mark.asyncio

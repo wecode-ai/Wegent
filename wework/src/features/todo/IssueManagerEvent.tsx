@@ -17,15 +17,14 @@ export function IssueManagerEvent({
 }) {
   const { i18n } = useTranslation('common')
   const t = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
-  const assigned =
-    typeof message.metadata.workflow_plan_run_id === 'string' ||
-    message.metadata.workflow_plan_submitted === true
-  const decision = message.metadata.workflow_review_decision
-  const status = resolveMessageRunStatus(task.ai_state, message)
-  const failed = Boolean(message.metadata.manager_action_error) || status === 'failed'
   const assignments = Array.isArray(message.metadata.workflow_assignments)
     ? (message.metadata.workflow_assignments as { assignee_id?: string; assignee_name?: string }[])
     : []
+  const assigned = message.metadata.workflow_plan_submitted === true || assignments.length > 0
+  const decision = message.metadata.workflow_review_decision
+  const status = resolveMessageRunStatus(task.ai_state, message)
+  const failed = Boolean(message.metadata.manager_action_error) || status === 'failed'
+  const completed = status === 'completed' || status === 'succeeded'
   const recipients = [
     ...new Set(assignments.map(item => item.assignee_name || item.assignee_id).filter(Boolean)),
   ].join('、')
@@ -41,7 +40,9 @@ export function IssueManagerEvent({
             ? 'assigned'
             : issueActivityRole(message, task) === 'manager_review'
               ? 'reviewing'
-              : 'planning'
+              : completed
+                ? 'planned'
+                : 'planning'
   return (
     <div
       data-testid={`cloud-task-${assigned ? 'assignment' : 'manager'}-event-${message.messageId}`}

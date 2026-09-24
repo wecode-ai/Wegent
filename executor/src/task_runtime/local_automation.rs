@@ -259,19 +259,23 @@ fn dispatch(
                     "automated collaboration requires an AI manager".into(),
                 ));
             }
-            let manager_prompt = format!(
-                "You are the AI manager for this Issue. Use get_current_context, get_board_item, and get_assignment_candidates to inspect the Issue and eligible members. Then call submit_workflow_plan with independently verifiable child tasks. Write a specific execution prompt for each assignee, including the goal, boundaries, and acceptance criteria. Do not execute the child tasks.\n\nIssue: {}",
-                task.title.as_deref().unwrap_or_default()
+            let manager_node_id = format!("{run_id}:manager");
+            let manager_instructions = format!(
+                "You are the AI manager for this Issue. Use the board management tools to inspect the Issue, eligible members and configured project workflow. The configured project workflow is the default. Only call submit_workflow_plan when you need to replace that default with a different set of child tasks. When assigning work, write a specific execution prompt for every assignee with the goal, boundaries and acceptance criteria. Do not execute child tasks yourself. You alone decide when the Issue status should change, using the board management tools.\n\nConfigured project workflow: {}\n\nCollaboration group instructions: {}\n\nAutomation instruction: {}",
+                project.metadata["workflow_definition"],
+                group,
+                text(rule, "prompt")
             );
-            let manager_prompt = format!(
-                "{manager_prompt}\n\nIssue description: {}\n\nConfigured project workflow (use its phases, constraints and acceptance rules to plan the work): {}\n\nCollaboration group instructions: {}\n\nAutomation instruction: {}",
-                task.description, project.metadata["workflow_definition"],
-                group, text(rule, "prompt")
+            let manager_message = format!(
+                "Issue: {}\n\nIssue description: {}",
+                task.title.as_deref().unwrap_or_default(),
+                task.description
             );
-            let nodes = vec![json!({
-                "id": format!("{run_id}:manager"),
+            let manager_node = json!({
+                "id": manager_node_id,
                 "name": group["name"],
-                "prompt": manager_prompt.trim(),
+                "prompt": manager_message.trim(),
+                "developer_instructions": manager_instructions.trim(),
                 "kind": "ai",
                 "execution_mode": "robot",
                 "required_assignee_type": "agent",
@@ -279,9 +283,67 @@ fn dispatch(
                 "depends_on": [],
                 "required": true,
                 "automation_role": "manager",
-            })];
-            let mut workflow = instantiate_local_workflow(&json!({"version":1,"nodes":nodes}))?;
+            });
+            let mut definitions = vec![manager_node];
+            let configured_nodes = project.metadata["workflow_definition"]["nodes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let start_ids = configured_nodes
+                .iter()
+                .filter(|node| text(node, "node_type") == "event" && text(node, "role") == "start")
+                .filter_map(|node| node["id"].as_str())
+                .map(ToOwned::to_owned)
+                .collect::<HashSet<_>>();
+            let configured_ids = configured_nodes
+                .iter()
+                .filter_map(|node| node["id"].as_str())
+                .map(ToOwned::to_owned)
+                .collect::<HashSet<_>>();
+            for mut node in configured_nodes {
+                let is_start =
+                    text(&node, "node_type") == "event" && text(&node, "role") == "start";
+                let dependencies = node["depends_on"].as_array_mut().ok_or_else(|| {
+                    TaskRuntimeError::Invalid(
+                        "configured workflow node requires dependencies".into(),
+                    )
+                })?;
+                if !is_start
+                    && dependencies.iter().all(|dependency| {
+                        dependency.as_str().is_some_and(|id| start_ids.contains(id))
+                    })
+                {
+                    dependencies.push(json!(manager_node_id));
+                }
+                node["workflow_source"] = json!("project");
+                definitions.push(node);
+            }
+            if !configured_ids.is_empty() {
+                let review_dependencies = configured_ids
+                    .difference(&start_ids)
+                    .cloned()
+                    .map(Value::String)
+                    .collect::<Vec<_>>();
+                definitions.push(json!({
+                    "id": format!("{run_id}:review:default"),
+                    "name": "负责人验收",
+                    "prompt": "Review the executor results for this Issue.",
+                    "developer_instructions": "You are the Issue manager. Review the executor evidence, then call decide_workflow_review with in_review, completed or needs_rework and explain the decision. Do not execute child tasks.",
+                    "kind": "ai",
+                    "execution_mode": "robot",
+                    "required_assignee_type": "agent",
+                    "required_assignee_id": leader["id"],
+                    "depends_on": review_dependencies,
+                    "required": true,
+                    "automation_role": "manager_review",
+                    "workflow_source": "project",
+                }));
+            }
+            let mut workflow =
+                instantiate_local_workflow(&json!({"version":1,"nodes":definitions}))?;
             workflow["automation_run_id"] = json!(run_id);
+            workflow["plan_source"] = json!("project");
+            workflow["plan_submitted"] = json!(false);
             enqueue_ready_local_workflow_stages(
                 connection,
                 task_id,
@@ -292,7 +354,10 @@ fn dispatch(
             let mut metadata = task.metadata;
             metadata["collaboration_group"] = group.clone();
             metadata["workflow"] = workflow;
-            connection.execute("UPDATE loop_items SET metadata=?1, status='in_progress', version=version+1, updated_at=?2 WHERE id=?3",params![metadata.to_string(),now(),task_id])?;
+            connection.execute(
+                "UPDATE loop_items SET metadata=?1, version=version+1, updated_at=?2 WHERE id=?3",
+                params![metadata.to_string(), now(), task_id],
+            )?;
         }
         _ => {
             return Err(TaskRuntimeError::Invalid(
@@ -420,6 +485,7 @@ impl LocalTaskStore {
             .get_mut("nodes")
             .and_then(Value::as_array_mut)
             .ok_or_else(|| TaskRuntimeError::Invalid("Issue workflow has no nodes".into()))?;
+        nodes.retain(|node| text(node, "automation_role") == "manager");
         let manager_node_id = nodes
             .iter()
             .rev()
@@ -466,7 +532,7 @@ impl LocalTaskStore {
                     "workflow assignee is not a member of the collaboration group".into(),
                 ));
             }
-            if assignee_type == "agent" {
+            let assignee_name = if assignee_type == "agent" {
                 let agent =
                     get_item_from(&transaction, assignee_id, "chat_agent")?.ok_or_else(|| {
                         TaskRuntimeError::Invalid("workflow Agent was not found".into())
@@ -478,7 +544,17 @@ impl LocalTaskStore {
                         "workflow Agent is not active in this project".into(),
                     ));
                 }
-            }
+                map_chat_agent(agent).display_name
+            } else {
+                participants
+                    .iter()
+                    .find(|member| {
+                        text(member, "kind") == "human" && text(member, "id") == assignee_id
+                    })
+                    .and_then(|member| member["name"].as_str())
+                    .unwrap_or("本地用户")
+                    .to_owned()
+            };
             let node_id = format!("{run_id}:plan:{round}:{index}:{client_key}");
             let prompt = text(item, "prompt").trim();
             if prompt.is_empty() {
@@ -499,7 +575,9 @@ impl LocalTaskStore {
                 "status": "blocked",
             }));
             previous = node_id;
-            planned.push(item.clone());
+            let mut planned_item = item.clone();
+            planned_item["assignee_name"] = json!(assignee_name);
+            planned.push(planned_item);
         }
         let reviewer_id = text(&group["leader"], "id");
         if text(&group["leader"], "kind") != "agent" || reviewer_id.is_empty() {
@@ -510,7 +588,8 @@ impl LocalTaskStore {
         nodes.push(json!({
             "id": format!("{run_id}:review:{round}"),
             "name": "负责人验收",
-            "prompt": "Review the executor results. Call decide_workflow_review with in_review, completed or needs_rework and explain your decision. Do not execute the child tasks.",
+            "prompt": "Review the executor results for this Issue.",
+            "developer_instructions": "You are the Issue manager. Review the executor evidence, then call decide_workflow_review with in_review, completed or needs_rework and explain the decision. Do not execute child tasks.",
             "kind": "ai",
             "execution_mode": "robot",
             "required_assignee_type": "agent",
@@ -521,6 +600,7 @@ impl LocalTaskStore {
             "automation_role": "manager_review",
         }));
         workflow.insert("plan_submitted".to_owned(), json!(true));
+        workflow.insert("plan_source".to_owned(), json!("manager"));
         workflow.remove("manager_decision");
         workflow.insert(
             "plan_summary".to_owned(),

@@ -638,7 +638,9 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "看板任务数据位于 cloud://projects/project-1/todos/task-1，"
         "请通过看板工具自行查看。\n\n"
         "你是看板的 AI 管家，只负责编排，不执行具体任务。"
-        "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+        "项目当前工作流是默认执行方案；先读取当前 Issue、项目工作流和候选执行者。"
+        "如果默认方案已经适合，可以不提交新方案并直接结束本轮规划。"
+        "只有需要替换默认方案时，才将工作拆成可独立验收的子任务，"
         "为每个子任务编写面向执行者的具体 prompt，包含目标、边界和验收要求，"
         "然后调用 submit_workflow_plan 提交结构化方案。"
         "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
@@ -646,6 +648,22 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "不要直接修改原 Issue 的负责人。\n\n"
         "Prefer domain ownership."
     )
+
+
+def test_manager_user_input_contains_only_issue_context():
+    prompt = ProjectAutomationExecution._managed_user_input(
+        project=SimpleNamespace(id="project-1"),
+        run=SimpleNamespace(id="run-1", task_id="task-1"),
+    )
+
+    assert prompt == (
+        "project_id: project-1\n"
+        "task_id: task-1\n"
+        "automation_run_id: run-1\n\n"
+        "请读取当前 Issue 并完成本轮管理工作。"
+    )
+    assert "AI 管家" not in prompt
+    assert "submit_workflow_plan" not in prompt
 
 
 def test_manager_prompt_prefers_run_instruction_override():

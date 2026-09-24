@@ -113,15 +113,14 @@ class IssueWorkflowPlanningService:
             raise ValueError("The active workflow run is not accepting a plan")
         stage_id = self._run_stage(run)
         self._validate_stage(workflow, stage_id)
-        items = [
-            item.model_copy(update={"stage_id": stage_id}) for item in values.items
-        ]
-        for item in items:
+        items: list[WorkflowPlanItemCreate] = []
+        for submitted_item in values.items:
+            item = submitted_item.model_copy(update={"stage_id": stage_id})
             if not item.prompt.strip():
                 raise ValueError(
                     "AI manager must provide an execution prompt for every child task"
                 )
-            self._validate_assignee(
+            assignee_name = self._validate_assignee(
                 db,
                 issue,
                 user_id,
@@ -129,6 +128,7 @@ class IssueWorkflowPlanningService:
                 workflow=workflow,
                 stage_id=stage_id,
             )
+            items.append(item.model_copy(update={"assignee_name": assignee_name}))
         self._supersede_items(db, run.id)
         for order, item in enumerate(items):
             db.add(
@@ -518,22 +518,13 @@ class IssueWorkflowPlanningService:
             return issue
         if all(task.status in {"in_review", "completed"} for task in tasks):
             next_status = "awaiting_review"
-            parent_status = "in_progress"
         else:
             next_status = "running"
-            parent_status = "in_progress"
         if run.status != next_status:
             run.status = next_status
             run.version += 1
         workflow["orchestration_status"] = next_status
         self._write_workflow(issue, workflow)
-        self._set_item_status(
-            db,
-            issue,
-            parent_status,
-            trigger="workflow_task_progress",
-            by_user_id=None,
-        )
         if commit:
             db.commit()
             db.refresh(issue)
@@ -797,7 +788,7 @@ class IssueWorkflowPlanningService:
         *,
         workflow: dict,
         stage_id: str,
-    ) -> None:
+    ) -> str:
         stage = next(
             (
                 node
@@ -821,8 +812,19 @@ class IssueWorkflowPlanningService:
                 int(str(issue.cloud_project_id)),
                 user_id,
             )
-            if item.assignee_id not in {str(member["user_id"]) for member in members}:
+            member = next(
+                (
+                    member
+                    for member in members
+                    if str(member["user_id"]) == item.assignee_id
+                ),
+                None,
+            )
+            if member is None:
                 raise ValueError("Workflow plan selected an unavailable member")
+            return str(
+                member.get("user_name") or member.get("email") or item.assignee_id
+            )
         elif item.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, item.assignee_id)
             if (
@@ -831,8 +833,23 @@ class IssueWorkflowPlanningService:
                 or agent.status != "active"
             ):
                 raise ValueError("Workflow plan selected an unavailable robot")
-        else:
-            runnable_wegent_team(db, user_id, int(item.assignee_id))
+            return str(agent.title or agent.name or item.assignee_id)
+        team = runnable_wegent_team(db, user_id, int(item.assignee_id))
+        team_json = team.json if isinstance(team.json, dict) else {}
+        team_metadata = (
+            team_json.get("metadata")
+            if isinstance(team_json.get("metadata"), dict)
+            else {}
+        )
+        team_spec = (
+            team_json.get("spec") if isinstance(team_json.get("spec"), dict) else {}
+        )
+        return str(
+            team_metadata.get("displayName")
+            or team_spec.get("displayName")
+            or team.name
+            or item.assignee_id
+        )
 
     @staticmethod
     def _active_run(

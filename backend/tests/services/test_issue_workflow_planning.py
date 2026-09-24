@@ -201,12 +201,14 @@ def test_submit_creates_and_preserves_active_run_snapshot(
     project = _project(test_db, test_user)
     robot = _robot(test_db, project, test_user)
     issue = _issue(test_db, project, test_user)
+    plan = _plan(robot)
+    plan.items[0].assignee_name = "Untrusted model label"
 
     view = issue_workflow_planning_service.submit(
         test_db,
         issue_id=issue.id,
         user_id=test_user.id,
-        values=_plan(robot),
+        values=plan,
     )
 
     test_db.refresh(issue)
@@ -214,6 +216,7 @@ def test_submit_creates_and_preserves_active_run_snapshot(
     assert workflow["active_run_id"] == view.run_id
     assert workflow["active_plan_version"] == view.plan_version
     assert workflow["orchestration_status"] == "awaiting_approval"
+    assert view.items[0].assignee_name == robot.name
     restored = issue_workflow_planning_service.get(
         test_db,
         issue_id=issue.id,
@@ -464,6 +467,8 @@ def test_child_outcome_projects_to_one_parent_review(
     )
     child_id = approved.items[0].task_id
     assert child_id is not None
+    issue.status = "pending"
+    test_db.commit()
 
     review = issue_workflow_planning_service.report_outcome(
         test_db,
@@ -479,7 +484,7 @@ def test_child_outcome_projects_to_one_parent_review(
     assert review.items[0].outcome_verdict == "passed"
     assert review.items[0].outcome_summary == "Implementation and tests passed."
     assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, issue.id).status == "in_progress"
+    assert test_db.get(LoopItem, issue.id).status == "pending"
 
     issue_workflow_planning_service.decide_review(
         test_db,
