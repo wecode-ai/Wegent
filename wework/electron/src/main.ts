@@ -1134,8 +1134,10 @@ async function reactivateMainWindow(): Promise<void> {
   if (keepE2EWindowInBackground) {
     e2eForegroundActivationAllowed = true
     app.setActivationPolicy('regular')
+    dockVisible = true
+  } else {
+    await setDockVisible(true)
   }
-  await setDockVisible(true)
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()

@@ -324,9 +324,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/Library/Caches/electron
-          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-app-v2-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
+            ${{ runner.os }}-wework-electron-app-v2-
             ${{ runner.os }}-wework-electron-app-v1-
 
       - name: Prepare bundled sidecars
@@ -338,12 +340,27 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
+          CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
+          WEWORK_EXECUTOR_PROFILE: release
         run: |
-          pnpm --filter wework ai:verify:electron:build
+          pnpm --filter wework ai:verify:electron:build &
+          wework_pid=$!
+          cargo build \
+            --locked \
+            --manifest-path backend-rs/Cargo.toml \
+            --bin wegent-backend-rs &
+          backend_pid=$!
+
+          status=0
+          wait "$wework_pid" || status=$?
+          wait "$backend_pid" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          test -x "$CARGO_TARGET_DIR/debug/wegent-backend-rs"
 
       - name: Warm macOS release executor compiler cache
         working-directory: ./executor
@@ -359,6 +376,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
@@ -456,6 +474,8 @@ jobs:
 
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
+        with:
+          save-cache: "true"
 
       - name: Restore bundled Codex cache
         id: bundled-codex-cache
@@ -472,9 +492,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v2-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
+            ${{ runner.os }}-wework-electron-e2e-v2-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
@@ -493,12 +515,30 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
+          CARGO_PROFILE_RELEASE_STRIP: "false"
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
+          CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
         run: |
-          pnpm --filter wework ai:verify:electron:build
+          pnpm --filter wework ai:verify:electron:build &
+          wework_pid=$!
+          cargo build \
+            --locked \
+            --release \
+            --manifest-path backend-rs/Cargo.toml \
+            --bin wegent-backend-rs &
+          backend_pid=$!
+
+          status=0
+          wait "$wework_pid" || status=$?
+          wait "$backend_pid" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
           test -x wework/electron/release/WeWork-linux-x64/WeWork
           test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
+          test -x "$CARGO_TARGET_DIR/release/wegent-backend-rs"
 
       - name: Save shared Wework Electron E2E build dependencies
         if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
@@ -508,6 +548,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/.cache/electron
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
 

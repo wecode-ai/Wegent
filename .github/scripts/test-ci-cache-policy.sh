@@ -278,10 +278,12 @@ if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'
   [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
   [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
   [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$macos_warmup_section" != *'wework-electron-app-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'wework-electron-app-v2-'* ]] ||
   [[ "$macos_warmup_section" != *'pnpm-store-v2-'* ]] ||
   [[ "$macos_warmup_section" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
   [[ "$macos_warmup_section" != *'executor/target'* ]] ||
+  [[ "$macos_warmup_section" != *'backend-rs/target'* ]] ||
+  [[ "$macos_warmup_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
   [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
   [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
   fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
@@ -499,7 +501,7 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-electron-e2e-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''backend-rs/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
+wework_target_key='wework-electron-e2e-v2-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''backend-rs/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
   fail "Wework E2E and warmup must share the Electron build cache"
@@ -516,6 +518,7 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
   [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
   [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
+  [[ "$desktop_warmup_section" != *'backend-rs/target'* ]] ||
   [[ "$desktop_warmup_section" != *'~/.cache/electron'* ]] ||
   [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
   [[ "$desktop_warmup_section" =~ dtolnay/rust-toolchain ]]; then

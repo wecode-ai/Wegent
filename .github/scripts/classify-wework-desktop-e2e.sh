@@ -117,49 +117,40 @@ cloud_segments=(
   plugin-account-auth
   plugin-workspace-publication
 )
-# Group checkpoints by observed Cloud CI duration so every serial shard stays
-# below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
-# 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
+# Group checkpoints by observed Cloud CI duration. Each shard has two workers,
+# and the ten shards keep the slowest worker lane below six minutes while
+# reducing the shared Linux runner peak.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow
-  embedded-browser,cloud-project-creation
-  goal-lifecycle,cloud-worktree-archive-restore
-  rendering-extensions
-  project-automation
-  window-lifecycle
-  priority-filter,cloud-worktree-tools
-  resilience,telemetry-consent
-  cloud-worktree-create,automation-lifecycle,browser-multi-tabs
-  workspace-tabs,cloud-worktree-capability
-  supervisor-lifecycle,conversation-state
-  model-routing
-  plugin-account-auth,cloud-device-lifecycle
-  cloud-worktree-queued-cancel
-  plugin-auto-update,plugin-workspace-publication,workspace-attachments
+  plugin-auto-update,automation-lifecycle
+  core-task-flow,cloud-worktree-create
+  cloud-worktree-capability,cloud-project-creation,cloud-worktree-archive-restore
+  cloud-device-lifecycle,cloud-worktree-queued-cancel,workspace-tabs
+  plugin-workspace-publication,project-automation,supervisor-lifecycle
+  telemetry-consent,workspace-attachments,embedded-browser
+  priority-filter,rendering-extensions,goal-lifecycle
+  window-lifecycle,conversation-state
+  cloud-worktree-tools,browser-multi-tabs,resilience
+  plugin-account-auth,model-routing
 )
-# Group checkpoints by observed Core CI duration so every serial shard stays
-# below the desktop suite's critical-path budget while reusing the same
-# prebuilt application.
+# Group checkpoints by observed Core CI duration. Each shard has two workers,
+# and the thirteen shards keep the slowest worker lane below six minutes while
+# preserving every checkpoint.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-apps,browser-annotation-design
-  supervisor-lifecycle,remote-device-onboarding
-  temporary-chat,local-file-preview,conversation-state,collaboration-settings-matrix
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
-  claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
-  window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
-  resilience,environment-panel-scroll
-  workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
-  rendering-extensions
-  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import,project-ai-settings
-  local-harness,running-conversation-history,running-plan-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
+  rendering-extensions,embedded-browser,workspace-tabs,collaboration-group-onboarding
+  task-status-sync,change-request-status,collaboration-first-use,executor-stream-recovery,running-conversation-history,supervisor-lifecycle,collaboration-local-executor-issue-tools
+  window-lifecycle,workbench-mode,harness-apps,codex-account-login
+  core-task-flow,goal-lifecycle,codex-notification-isolation,offline-local-project-space
+  model-routing,tray-lifecycle,split-workbench,automation-lifecycle,browser-annotation-core
+  environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd
+  collaboration-agent-automation-chain,component-update,native-window-startup,resilience,browser-toolbar-actions
+  project-ai-settings,priority-filter,system-pac,release-package-startup,project-event-sources,computer-use,running-plan-history
+  local-harness,runtime-task-queue,cloud-context-resilience,external-content-import,project-assignment-notification,cloud-space-mention
+  claude-runtime,temporary-chat,browser-annotation-anchors,conversation-state,dsh-owner-capture
+  workspace-attachments,cloud-login-proxy,native-window-chrome,project-automation,fork-provider-preservation,collaboration-local-agent-capabilities
+  collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference
+  task-board-association,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development
 )
 
 validate_core_shards() {
