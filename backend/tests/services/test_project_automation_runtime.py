@@ -668,6 +668,39 @@ def test_manager_prompt_prefers_run_instruction_override():
     assert "Default instruction." not in prompt
 
 
+def test_project_manager_keeps_user_request_out_of_developer_instructions():
+    rule = SimpleNamespace(
+        description="Coordinate ownership and progress.",
+        metadata_json={"project_manager": True},
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="task-1",
+        metadata_json={
+            "instruction_override": "Which Issues are still open?",
+            "event": {"type": "manual"},
+        },
+    )
+
+    prompt = ProjectAutomationExecution._managed_prompt(
+        MagicMock(),
+        owner=SimpleNamespace(id=7),
+        project=SimpleNamespace(id="project-1"),
+        rule=rule,
+        run=run,
+        context={},
+    )
+
+    assert "Current date:" in prompt
+    assert "Project instructions: Coordinate ownership and progress." in prompt
+    assert "Which Issues are still open?" not in prompt
+    assert "Current request:" not in prompt
+    assert (
+        ProjectAutomationExecution._manager_user_message(rule, run)
+        == "Which Issues are still open?"
+    )
+
+
 def test_manager_activity_binding_persists_execution_identity(monkeypatch):
     activity = SimpleNamespace(
         metadata_json={

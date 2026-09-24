@@ -273,7 +273,19 @@ fn run_for_manager(
     let stamp = now();
     let run = json!({"id":run_id,"automationId":"project-manager","projectId":project.id,"projectManager":true,"trigger":trigger,"issueId":issue_id,"instruction":instruction,"taskId":project.id,"taskTitle":project.name,"status":"queued","createdAt":stamp,"updatedAt":stamp,"completedAt":null,"actions":[]});
     {
-        let prompt = format!("You are the project-level AI manager. Coordinate Issues, never claim their delivery. Use wework_space tools to inspect this project. Project ID: {}. Run ID: {}. Event Issue: {}. For assigned Issues, coordinate in comments; changing the assignee or active Issue status/scope requires human approval.\n\nProject instructions: {}\n\nCurrent request: {}", project.id, run_id, issue_id.unwrap_or(""), text(config, "prompt"), instruction.unwrap_or(""));
+        let message = instruction
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Review the project and coordinate the next actions.");
+        let current_date = stamp.get(..10).unwrap_or(&stamp);
+        let developer_instruction = format!(
+            "You are the project-level AI manager. Coordinate Issues, never claim their delivery. Use wework_space tools to inspect this project. Current date: {}. Project ID: {}. Run ID: {}. Event Issue: {}. Collaboration groups are first-class Issue assignees: when a collaboration group is requested, assign the Issue directly with assignee_type=group and the group ID; never substitute its leader or a member. For assigned Issues, coordinate in comments; changing the assignee or active Issue status/scope requires human approval.\n\nProject instructions: {}",
+            current_date,
+            project.id,
+            run_id,
+            issue_id.unwrap_or(""),
+            text(config, "prompt"),
+        );
         create_local_execution(
             connection,
             &project.id,
@@ -281,7 +293,13 @@ fn run_for_manager(
             agent_id,
             &agent,
             "none",
-            json!({"message":prompt,"automation_run_id":run_id,"automation_role":"manager","modelSelection":model_selection}),
+            json!({
+                "message": message,
+                "developer_instruction": developer_instruction,
+                "automation_run_id": run_id,
+                "automation_role": "manager",
+                "modelSelection": model_selection,
+            }),
         )?;
     }
     connection.execute("INSERT INTO loop_items (id, resource_type, cloud_project_id, metadata, created_at, updated_at) VALUES (?1, 'automation_run', ?2, ?3, ?4, ?4)", params![run_id, project.id, run.to_string(), stamp])?;
@@ -962,7 +980,7 @@ impl LocalTaskStore {
                     "completed" | "succeeded" => "succeeded",
                     "failed" => "failed",
                     "cancelled" => "cancelled",
-                    "running" => "running",
+                    "claimed" | "running" | "cancel_requested" => "running",
                     _ => "queued",
                 });
                 if let Some(completed_at) = completed_at { run["completedAt"] = json!(completed_at); }
@@ -1100,6 +1118,11 @@ impl LocalTaskStore {
                             ..TaskUpdate::default()
                         }
                     }
+                    "group" => TaskUpdate {
+                        version,
+                        assignee_group_id: Some(Some(assignee_id.into())),
+                        ..TaskUpdate::default()
+                    },
                     _ => return Err(TaskRuntimeError::Invalid("unsupported assignee".into())),
                 }
             } else {

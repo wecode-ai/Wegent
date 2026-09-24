@@ -28,6 +28,7 @@ import {
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type WorkspaceTaskBinding,
+  type WorkspaceProjectManagerModelSelection,
   type WorkspaceProjectManagerRun,
 } from '@wegent/collaboration'
 import {
@@ -51,7 +52,11 @@ import { generateCollaborationGroupDraft } from '@/features/collaboration/collab
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
+import type {
+  ArchiveRuntimeConversationsResult,
+  WorkbenchContextValue,
+} from '@/features/workbench/workbenchContextTypes'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
   ProjectSpaceDetailServices,
@@ -65,6 +70,7 @@ import {
 import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import type {
   DeviceInfo,
+  ModelType,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -75,6 +81,7 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import { sendOptimisticRuntimeUserMessage } from '@/features/workbench/runtimeConversationSend'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -125,6 +132,57 @@ function openProjectManagerTask(
       console.error('[Wework] Failed to open project manager task', error)
     )
   }
+}
+
+async function continueProjectManagerConversation(
+  sendRuntimePaneMessage: WorkbenchContextValue['sendRuntimePaneMessage'],
+  project: CollaborationProject,
+  run: WorkspaceProjectManagerRun,
+  message: string,
+  modelSelection?: WorkspaceProjectManagerModelSelection
+) {
+  if (!run.runtimeDeviceId || !run.runtimeTaskId) {
+    throw new Error('Project manager conversation has no Runtime address')
+  }
+  const accepted = await sendOptimisticRuntimeUserMessage(
+    {
+      address: {
+        deviceId: run.runtimeDeviceId,
+        taskId: run.runtimeTaskId,
+      },
+      message,
+      modelSelection: modelSelection
+        ? {
+            ...modelSelection,
+            modelType: (modelSelection.modelType as ModelType | null | undefined) ?? null,
+          }
+        : undefined,
+      collaborationMode: 'default',
+      cloudProjectId: project.project_store === 'local' ? undefined : project.id,
+    },
+    request => sendRuntimePaneMessage(request)
+  )
+  if (!accepted) throw new Error('Runtime rejected the follow-up message')
+}
+
+async function stopProjectManagerConversation(
+  services: WorkbenchServices,
+  project: CollaborationProject,
+  run: WorkspaceProjectManagerRun
+) {
+  if (!run.runtimeDeviceId || !run.runtimeTaskId) {
+    throw new Error('Project manager conversation has no Runtime address')
+  }
+  const runtimeApi =
+    (project.project_store === 'local'
+      ? services.localExecutionServices?.runtimeWorkApi
+      : services.runtimeWorkApi) ?? services.runtimeWorkApi
+  if (!runtimeApi) throw new Error('Runtime conversation service is unavailable')
+  const result = await runtimeApi.cancelRuntimeTask({
+    deviceId: run.runtimeDeviceId,
+    taskId: run.runtimeTaskId,
+  })
+  if (!result.accepted) throw new Error('Runtime rejected the stop request')
 }
 
 function issueTaskExecutionStates(
@@ -238,6 +296,7 @@ export function WeworkSharedProject({
   onOpenSettings,
   onOpenRuntimeTask,
   onCancelRuntimeTask,
+  sendRuntimePaneMessage,
   project,
   runtimeTaskLifecycle,
   runtimeWork,
@@ -259,6 +318,7 @@ export function WeworkSharedProject({
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  sendRuntimePaneMessage: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
@@ -651,9 +711,21 @@ export function WeworkSharedProject({
       <div className="min-w-0 flex-1">
         <CollaborationApp
           renderProjectAiConversation={conversationProps => (
-            <ProjectAiDesktopConversation {...conversationProps} />
+            <ProjectAiDesktopConversation {...conversationProps} services={services} />
           )}
           onOpenProjectAiTask={run => openProjectManagerTask(run, onOpenRuntimeTask)}
+          onContinueProjectAiConversation={(managerProject, run, message, modelSelection) =>
+            continueProjectManagerConversation(
+              sendRuntimePaneMessage,
+              managerProject,
+              run,
+              message,
+              modelSelection
+            )
+          }
+          onStopProjectAiConversation={(managerProject, run) =>
+            stopProjectManagerConversation(services, managerProject, run)
+          }
           renderProjectAiComposer={composerProps => (
             <ProjectAiDesktopComposer
               {...composerProps}
@@ -856,6 +928,7 @@ export function WeworkSharedProject({
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
   const { i18n } = useTranslation('common')
+  const workbench = useWorkbench()
   const cloudConnection = useOptionalCloudConnection()
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
@@ -1075,9 +1148,21 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       )}
       <CollaborationPlatformApp
         renderProjectAiConversation={conversationProps => (
-          <ProjectAiDesktopConversation {...conversationProps} />
+          <ProjectAiDesktopConversation {...conversationProps} services={props.services} />
         )}
         onOpenProjectAiTask={run => openProjectManagerTask(run, props.onOpenRuntimeTask)}
+        onContinueProjectAiConversation={(project, run, message, modelSelection) =>
+          continueProjectManagerConversation(
+            workbench.sendRuntimePaneMessage,
+            project,
+            run,
+            message,
+            modelSelection
+          )
+        }
+        onStopProjectAiConversation={(project, run) =>
+          stopProjectManagerConversation(props.services, project, run)
+        }
         renderProjectAiComposer={composerProps => (
           <ProjectAiDesktopComposer
             {...composerProps}
@@ -1356,6 +1441,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               onFocusedItemHandled={props.onFocusedItemHandled}
               onOpenSettings={props.onOpenSettings}
               onOpenRuntimeTask={props.onOpenRuntimeTask}
+              sendRuntimePaneMessage={workbench.sendRuntimePaneMessage}
               project={project}
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}

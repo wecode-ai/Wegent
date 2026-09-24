@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowUp, Bot, ChevronUp, ExternalLink, X } from "lucide-react";
+import { ArrowUp, Bot, ChevronUp, ExternalLink, Plus, X } from "lucide-react";
 import type {
   SharedWorkspaceApi,
   WorkspaceProjectManagerModelSelection,
@@ -38,6 +38,7 @@ const labels = {
     failed: "运行失败",
     cancelled: "任务已取消",
     openTask: "完整任务",
+    newConversation: "新会话",
   },
   en: {
     title: "Project AI",
@@ -52,6 +53,7 @@ const labels = {
     failed: "Run failed",
     cancelled: "Task cancelled",
     openTask: "Full task",
+    newConversation: "New chat",
   },
 };
 
@@ -64,6 +66,8 @@ export function ProjectAiBoardAssistant({
   onOpenSettings,
   onOpenIssue,
   onOpenTask,
+  onContinueConversation,
+  onStopConversation,
   renderComposer,
   renderConversation,
 }: {
@@ -75,15 +79,28 @@ export function ProjectAiBoardAssistant({
   onOpenSettings(): void;
   onOpenIssue(issue: CollaborationIssue): void;
   onOpenTask?(run: WorkspaceProjectManagerRun): void;
+  onContinueConversation?(
+    project: CollaborationProject,
+    run: WorkspaceProjectManagerRun,
+    message: string,
+    modelSelection?: WorkspaceProjectManagerModelSelection,
+  ): Promise<void>;
+  onStopConversation?(
+    project: CollaborationProject,
+    run: WorkspaceProjectManagerRun,
+  ): Promise<void>;
   renderComposer?(props: {
     project: CollaborationProject;
     issues: CollaborationIssue[];
+    activeRun: WorkspaceProjectManagerRun | null;
+    running: boolean;
     value: string;
     onChange(value: string): void;
     onSubmit(
       value: string,
       modelSelection?: WorkspaceProjectManagerModelSelection,
     ): void;
+    onStop(): Promise<void>;
     disabled: boolean;
     busy: boolean;
     placeholder: string;
@@ -121,6 +138,8 @@ export function ProjectAiBoardAssistant({
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [startingNewConversation, setStartingNewConversation] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const hoverTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -136,6 +155,8 @@ export function ProjectAiBoardAssistant({
     setMessage("");
     setOpen(false);
     setPinned(false);
+    setStartingNewConversation(false);
+    setActiveRunId(null);
     setError("");
     responses.current.clear();
     sentInstructions.current.clear();
@@ -196,13 +217,16 @@ export function ProjectAiBoardAssistant({
         return detail;
       }),
     );
-    setRuns(
-      detailed.reverse().map((run) => ({
-        ...run,
-        instruction: run.instruction || sentInstructions.current.get(run.id),
-      })),
-    );
-  }, [manager, project.id]);
+    const ordered = detailed.reverse().map((run) => ({
+      ...run,
+      instruction: run.instruction || sentInstructions.current.get(run.id),
+    }));
+    if (startingNewConversation && !activeRunId) return;
+    const active =
+      ordered.find((run) => run.id === activeRunId) ?? ordered.at(-1) ?? null;
+    setRuns(active ? [active] : []);
+    if (active && active.id !== activeRunId) setActiveRunId(active.id);
+  }, [activeRunId, manager, project.id, startingNewConversation]);
 
   useEffect(() => {
     if (!manager) return;
@@ -261,12 +285,28 @@ export function ProjectAiBoardAssistant({
     setOpen(true);
     setPinned(true);
     try {
+      const activeRun = runs.at(-1);
+      if (
+        activeRun &&
+        activeRun.status === "succeeded" &&
+        activeRun.runtimeTaskId &&
+        activeRun.runtimeDeviceId &&
+        onContinueConversation
+      ) {
+        await onContinueConversation(
+          project,
+          activeRun,
+          value.trim(),
+          modelSelection,
+        );
+        setMessage("");
+        return;
+      }
       const run = await manager.run(project.id, value.trim(), modelSelection);
       sentInstructions.current.set(run.id, value.trim());
-      setRuns((previous) => [
-        ...previous,
-        { ...run, instruction: value.trim() },
-      ]);
+      setStartingNewConversation(false);
+      setActiveRunId(run.id);
+      setRuns([{ ...run, instruction: value.trim() }]);
       setMessage("");
       await refresh();
     } catch (cause) {
@@ -286,6 +326,44 @@ export function ProjectAiBoardAssistant({
   const closeConversation = () => {
     setPinned(false);
     setOpen(false);
+  };
+  const startNewConversation = () => {
+    setStartingNewConversation(true);
+    setActiveRunId(null);
+    setRuns([]);
+    setMessage("");
+    setPinned(true);
+  };
+  const running = runs.some(
+    (run) =>
+      run.status === "queued" ||
+      run.status === "pending" ||
+      run.status === "running",
+  );
+  const stop = async () => {
+    const activeRun = runs.at(-1);
+    if (!activeRun || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (
+        onStopConversation &&
+        activeRun.runtimeDeviceId &&
+        activeRun.runtimeTaskId
+      ) {
+        await onStopConversation(project, activeRun);
+      } else {
+        if (!api.automations) {
+          throw new Error("Project automation service is unavailable");
+        }
+        await api.automations.cancelRun(project.id, activeRun.id);
+      }
+      await refresh();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div
@@ -314,121 +392,156 @@ export function ProjectAiBoardAssistant({
         ) : (
           <section
             data-testid="project-ai-conversation"
-            className="flex max-h-[min(68vh,46rem)] flex-col gap-2"
+            className={
+              hasConversation
+                ? "flex max-h-[min(68vh,46rem)] flex-col overflow-visible rounded-[26px] border border-border/80 bg-background shadow-lg"
+                : "relative flex max-h-[min(68vh,46rem)] flex-col overflow-visible"
+            }
           >
-            {hasConversation && <div className="overflow-hidden rounded-2xl border border-border/80 bg-background shadow-lg">
-              <div className="flex h-10 items-center gap-2 border-b border-border/70 px-4 text-sm">
-                <Bot className="h-4 w-4" aria-hidden="true" />
-                <span className="flex-1 font-medium">{copy.title}</span>
-                <button
-                  type="button"
-                  data-testid="project-ai-open-current-task"
-                  aria-label={copy.openTask}
-                  title={copy.openTask}
-                  disabled={
-                    !onOpenTask ||
-                    !runs.some(
+            {hasConversation && (
+              <>
+                <div className="flex h-10 items-center gap-2 px-4 text-sm">
+                  <Bot className="h-4 w-4" aria-hidden="true" />
+                  <span className="flex-1 font-medium">{copy.title}</span>
+                  <button
+                    type="button"
+                    data-testid="project-ai-new-conversation"
+                    aria-label={copy.newConversation}
+                    title={copy.newConversation}
+                    disabled={runs.some(
                       (run) =>
-                        run.executionUrl ||
-                        (run.runtimeTaskId && run.runtimeDeviceId),
-                    )
-                  }
-                  onClick={() => {
-                    const run = [...runs]
-                      .reverse()
-                      .find(
-                        (item) =>
-                          item.executionUrl ||
-                          (item.runtimeTaskId && item.runtimeDeviceId),
-                      );
-                    if (run) onOpenTask?.(run);
-                  }}
-                  className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-35"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </button>
+                        run.status === "queued" ||
+                        run.status === "pending" ||
+                        run.status === "running",
+                    )}
+                    onClick={startNewConversation}
+                    className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-35"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    <span>{copy.newConversation}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="project-ai-open-current-task"
+                    aria-label={copy.openTask}
+                    title={copy.openTask}
+                    disabled={
+                      !onOpenTask ||
+                      !runs.some(
+                        (run) =>
+                          run.executionUrl ||
+                          (run.runtimeTaskId && run.runtimeDeviceId),
+                      )
+                    }
+                    onClick={() => {
+                      const run = [...runs]
+                        .reverse()
+                        .find(
+                          (item) =>
+                            item.executionUrl ||
+                            (item.runtimeTaskId && item.runtimeDeviceId),
+                        );
+                      if (run) onOpenTask?.(run);
+                    }}
+                    className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-35"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="project-ai-close-conversation"
+                    aria-label={copy.close}
+                    onClick={closeConversation}
+                    className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {runs.length > 0 && (
+                  <div
+                    className="min-h-0"
+                    data-testid="project-ai-conversation-messages"
+                    aria-live="polite"
+                  >
+                    {renderConversation?.({
+                      runs,
+                      issues,
+                      locale,
+                      onOpenIssue,
+                      onOpenTask,
+                    }) ?? (
+                      <div className="max-h-72 space-y-3 overflow-y-auto px-4 py-3 text-sm">
+                        {runs.map((run) => (
+                          <div key={run.id}>
+                            {run.instruction && (
+                              <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-muted px-3 py-2">
+                                {run.instruction}
+                              </p>
+                            )}
+                            <p
+                              data-testid={`project-ai-response-${run.id}`}
+                              className="whitespace-pre-wrap py-2"
+                            >
+                              {run.response ||
+                                (run.status === "failed"
+                                  ? `${copy.failed}: ${run.error ?? ""}`
+                                  : run.status === "cancelled"
+                                    ? copy.cancelled
+                                    : run.status === "queued" ||
+                                        run.status === "pending"
+                                      ? copy.waitingExecutor
+                                      : copy.waiting)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {hint && (
+                  <button
+                    type="button"
+                    data-testid="project-ai-configure"
+                    className="px-5 py-2 text-left text-sm text-text-secondary"
+                    onClick={onOpenSettings}
+                  >
+                    {hint}
+                  </button>
+                )}
+              </>
+            )}
+            <div
+              data-testid="project-ai-composer"
+              className={
+                hasConversation
+                  ? "relative bg-background px-3 pb-3 pt-2"
+                  : "relative bg-background"
+              }
+              onPointerDownCapture={() => setPinned(true)}
+              onClickCapture={() => setPinned(true)}
+              onKeyDownCapture={() => setPinned(true)}
+            >
+              {!hasConversation && (
                 <button
                   type="button"
                   data-testid="project-ai-close-conversation"
                   aria-label={copy.close}
                   onClick={closeConversation}
-                  className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="absolute -top-3 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted"
                 >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              {runs.length > 0 && (
-                <div
-                  className="max-h-64"
-                  data-testid="project-ai-conversation-messages"
-                  aria-live="polite"
-                >
-                  {renderConversation?.({
-                    runs,
-                    issues,
-                    locale,
-                    onOpenIssue,
-                    onOpenTask,
-                  }) ?? (
-                    <div className="max-h-72 space-y-3 overflow-y-auto px-4 py-3 text-sm">
-                      {runs.map((run) => (
-                        <div key={run.id}>
-                          {run.instruction && (
-                            <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-muted px-3 py-2">
-                              {run.instruction}
-                            </p>
-                          )}
-                          <p
-                            data-testid={`project-ai-response-${run.id}`}
-                            className="whitespace-pre-wrap py-2"
-                          >
-                            {run.response ||
-                              (run.status === "failed"
-                                ? `${copy.failed}: ${run.error ?? ""}`
-                                : run.status === "cancelled"
-                                  ? copy.cancelled
-                                  : run.status === "queued" || run.status === "pending"
-                                    ? copy.waitingExecutor
-                                    : copy.waiting)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {hint && (
-                <button
-                  type="button"
-                  data-testid="project-ai-configure"
-                  className="px-5 py-2 text-left text-sm text-text-secondary"
-                  onClick={onOpenSettings}
-                >
-                  {hint}
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
-            </div>}
-            <div
-              data-testid="project-ai-composer"
-              className="relative"
-              onPointerDownCapture={() => setPinned(true)}
-              onClickCapture={() => setPinned(true)}
-              onKeyDownCapture={() => setPinned(true)}
-            >
-              {!hasConversation && <button
-                type="button"
-                data-testid="project-ai-close-conversation"
-                aria-label={copy.close}
-                onClick={closeConversation}
-                className="absolute -top-3 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted"
-              ><X className="h-3.5 w-3.5" /></button>}
               {renderComposer ? (
                 renderComposer({
                   project,
                   issues,
+                  activeRun: runs.at(-1) ?? null,
+                  running,
                   value: message,
                   onChange: setMessage,
                   onSubmit: (value, selection) => void send(value, selection),
+                  onStop: stop,
                   disabled: !config?.enabled,
                   busy,
                   placeholder: copy.placeholder,

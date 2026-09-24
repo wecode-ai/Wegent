@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 
-import { declineInitialTelemetryConsent, ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
+} from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -19,7 +22,8 @@ function scoped(selector) {
 }
 
 export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot }) {
-  let modelCalled = false
+  let modelCallCount = 0
+  let cancellationConnectionClosed = false
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) {
@@ -31,13 +35,22 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         response.end(JSON.stringify({ error: 'Unexpected model request in project AI scenario' }))
         return true
       }
-      modelCalled = true
+      modelCallCount += 1
       const id = `project-space-manager-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (modelCallCount === 4) {
+        response.on('close', () => {
+          cancellationConnectionClosed = true
+        })
+        response.write(
+          createSse([responseCreated(id), assistantMessage('项目 AI 正在执行可取消的检查。')])
+        )
+        return true
+      }
       response.end(
         createSse([
           responseCreated(id),
-          assistantMessage('项目 AI 已检查 Issue #1 看板。'),
+          assistantMessage(`项目 AI 第 ${modelCallCount} 次检查 Issue #1 看板。`),
           responseCompleted(id),
         ])
       )
@@ -153,7 +166,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       await control.command('waitFor', scoped('[data-testid="project-ai-conversation"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(await control.command('getAttribute', scoped('[data-testid="project-ai-board-assistant"]'), { value: 'data-pinned' }), 'false', 'Hover alone must not pin the composer')
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          scoped('[data-testid="project-ai-board-assistant"]'),
+          { value: 'data-pinned' }
+        ),
+        'false',
+        'Hover alone must not pin the composer'
+      )
       await control.command('click', scoped('[data-testid="collaboration-board"]'))
       await control.command('waitFor', scoped('[data-testid="project-ai-expand"]'), {
         timeoutMs: uiTimeoutMs,
@@ -205,14 +226,45 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         timeoutMs: uiTimeoutMs,
       })
       const deadline = Date.now() + workbenchReadyTimeoutMs
-      while (!modelCalled && Date.now() < deadline) {
+      while (modelCallCount < 1 && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
-      assert.equal(modelCalled, true, 'Project AI did not reach the configured model')
+      assert.equal(modelCallCount, 1, 'Project AI did not reach the configured model')
       await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
-        text: '项目 AI 已检查 Issue #1 看板。',
+        text: '项目 AI 第 1 次检查 Issue #1 看板。',
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await control.command('fill', scoped('[data-testid="project-ai-message"]'), {
+        value: 'Continue this project AI session',
+      })
+      await control.command('clickWhenEnabled', scoped('[data-testid="project-ai-send"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
+        text: 'Continue this project AI session',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
+        text: '项目 AI 第 2 次检查 Issue #1 看板。',
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      assert.equal(modelCallCount, 2, 'Project AI follow-up must continue the Runtime session')
+      await control.command('click', scoped('[data-testid="project-ai-new-conversation"]'))
+      await control.command('fill', scoped('[data-testid="project-ai-message"]'), {
+        value: 'Start a new project AI session',
+      })
+      await control.command('clickWhenEnabled', scoped('[data-testid="project-ai-send"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
+        text: 'Start a new project AI session',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
+        text: '项目 AI 第 3 次检查 Issue #1 看板。',
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      assert.equal(modelCallCount, 3, 'New chat must create a fresh project AI task')
       await declineInitialTelemetryConsent(control)
       await captureScreenshot(control, 'project-ai-conversation.png')
       await control.command('click', scoped('[data-testid^="project-ai-response-issue-"]'))
@@ -222,6 +274,38 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       })
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await control.command('click', scoped('[data-testid="project-ai-new-conversation"]'))
+      await control.command('fill', scoped('[data-testid="project-ai-message"]'), {
+        value: 'Stop this project AI session',
+      })
+      await control.command('clickWhenEnabled', scoped('[data-testid="project-ai-send"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="project-ai-composer"] [data-testid="pause-response-button"]'),
+        { timeoutMs: workbenchReadyTimeoutMs }
+      )
+      await control.command(
+        'click',
+        scoped('[data-testid="project-ai-composer"] [data-testid="pause-response-button"]')
+      )
+      await control.command(
+        'waitFor',
+        scoped(
+          '[data-testid="project-ai-conversation-history"] [data-testid="assistant-stopped-notice"]'
+        ),
+        { timeoutMs: uiTimeoutMs }
+      )
+      const cancellationDeadline = Date.now() + workbenchReadyTimeoutMs
+      while (!cancellationConnectionClosed && Date.now() < cancellationDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      assert.equal(
+        cancellationConnectionClosed,
+        true,
+        'Stopping Project AI must close the active model response'
+      )
       await control.command(
         'waitFor',
         scoped('[data-testid="project-ai-open-current-task"]:not(:disabled)'),

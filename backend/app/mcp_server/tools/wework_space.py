@@ -71,6 +71,8 @@ from app.services.workflow_deliverables import (
     missing_requirement_ids,
 )
 from app.services.workflow_stage_context import workflow_stage_context_resolver
+from app.services.workspaces import workspace_service
+from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -569,13 +571,20 @@ def get_board_item(
 def get_assignment_candidates(
     token_info: MCPAuthInfo, space_id: str = ""
 ) -> dict[str, Any]:
-    """List assignable project members and user-created board robots."""
+    """List assignable project members, robots, and collaboration groups."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         members = cloud_project_service.list_members(db, project.id, token_info.user_id)
         robots = project_chat_service.list_agents(
             db, user_id=token_info.user_id, project_id=str(project.id)
+        )
+        teams = (
+            workspace_service.list_project_collaboration_groups(
+                db, project.id, token_info.user_id
+            )
+            if workspace_id_for_project(db, project.id) is not None
+            else []
         )
         return {
             "members": [
@@ -595,6 +604,14 @@ def get_assignment_candidates(
                     "capability": robot.capability_description or "",
                 }
                 for robot in robots
+            ],
+            "groups": [
+                {
+                    "id": team["id"],
+                    "name": team["name"],
+                    "capability": team.get("description") or "",
+                }
+                for team in teams
             ],
         }
 
@@ -772,7 +789,7 @@ async def assign_board_item(
     item_id: str = "",
     notify_assignee: bool = True,
 ) -> dict[str, Any]:
-    """Assign a board item to a project member or user-created board robot."""
+    """Assign a board item to a member, robot, or collaboration group."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
@@ -790,7 +807,12 @@ async def assign_board_item(
                 project.id
             ):
                 raise ValueError("Issue is outside this project")
-            if current.get("assignee_user_id") or current.get("assignee_agent_id"):
+            if (
+                current.get("assignee_user_id")
+                or current.get("assignee_agent_id")
+                or current.get("assignee_team_id")
+                or current.get("assignee_group_id")
+            ):
                 return project_manager_service.propose_change(
                     db,
                     manager_run,

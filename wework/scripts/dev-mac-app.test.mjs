@@ -42,14 +42,17 @@ describe('dev-mac-app', () => {
     expect(source).toContain('$WEWORK_DIR/node_modules/.cache/harness-runtime-dev')
     expect(source).toContain('WEWORK_DEV_EXECUTOR_PATH')
     expect(source).toContain('WEGENT_EXECUTOR_DEV_BUILD_ID="$WEWORK_DEV_INSTANCE_ID"')
-    expect(source).toContain(
-      'WEGENT_EXECUTOR_DEV_RELOAD="${WEGENT_EXECUTOR_DEV_RELOAD:-1}"'
-    )
+    expect(source).toContain('WEGENT_EXECUTOR_DEV_RELOAD="${WEGENT_EXECUTOR_DEV_RELOAD:-1}"')
     expect(source).toContain('WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"')
     expect(source).not.toContain('node_modules/.cache/wework-executor-dev/wegent-executor')
-    expect(source).not.toContain('MANAGED_SOURCE_EXECUTOR')
+    expect(source).toContain('PREBUILD_SOURCE_EXECUTOR="true"')
+    expect(source).toContain(
+      'cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor'
+    )
     expect(source).toContain('node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"')
     expect(source).toContain('node "$SCRIPT_DIR/prepare-dev-component-resources.mjs"')
+    expect(source).toContain('while [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; do')
+    expect(source).not.toContain('Original Wework application build watcher did not become ready')
     expect(source).toContain('WEWORK_CORE_PLUGIN_ROOT=')
     expect(source).toContain('if ! WEWORK_CORE_PLUGINS_SHA256="$(')
     expect(source).toContain('export WEWORK_CORE_PLUGINS_SHA256')

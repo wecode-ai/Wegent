@@ -323,6 +323,7 @@ $env:VITE_WEWORK_RUNTIME_MODE = if ($env:VITE_WEWORK_RUNTIME_MODE) { $env:VITE_W
 $env:ELECTRON_GET_USE_PROXY = if ($env:ELECTRON_GET_USE_PROXY) { $env:ELECTRON_GET_USE_PROXY } else { 'true' }
 
 Remove-Item Env:WEGENT_EXECUTOR_BINARY -ErrorAction SilentlyContinue
+$PREBUILD_SOURCE_EXECUTOR = $false
 if ($env:WEWORK_DEV_EXECUTOR_PATH) {
   $env:WEWORK_EXECUTOR_PATH = $env:WEWORK_DEV_EXECUTOR_PATH
 } else {
@@ -343,6 +344,7 @@ if ($env:WEWORK_DEV_EXECUTOR_PATH) {
     '1'
   }
   $env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID
+  $PREBUILD_SOURCE_EXECUTOR = $true
 }
 
 $DEV_CACHE_ROOT = if ($env:WEWORK_DEV_CACHE_ROOT) {
@@ -434,6 +436,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
       Fail 'Error: failed to prepare development dependencies.'
     }
+    if ($PREBUILD_SOURCE_EXECUTOR) {
+      cargo build --manifest-path (Join-Path $PROJECT_DIR 'executor\Cargo.toml') --bin wegent-executor
+      if ($LASTEXITCODE -ne 0) {
+        Fail 'Error: failed to build the development executor.'
+      }
+    }
     New-Item -ItemType Directory -Force -Path 'electron\resources' | Out-Null
     foreach ($resource in @('icons', 'bundled-plugins')) {
       $target = Join-Path $WEWORK_DIR "resources\$resource"
@@ -488,22 +496,12 @@ try {
     $env:WEWORK_APP_WATCH_READY_FILE = $WATCH_READY_FILE
     $nodePath = (Get-Command node -ErrorAction Stop).Source
     $WATCH_PROCESS = Start-Process -FilePath $nodePath -ArgumentList @(Join-Path $SCRIPT_DIR 'dev-wework-app-watch.mjs') -WorkingDirectory $WEWORK_DIR -WindowStyle Hidden -RedirectStandardOutput $WATCH_OUT_LOG -RedirectStandardError $WATCH_ERR_LOG -PassThru
-    $watchDeadline = (Get-Date).AddSeconds(90)
-    $watchReady = $false
-    while ((Get-Date) -lt $watchDeadline) {
+    while (-not ((Test-Path $WATCH_READY_FILE) -and [bool](Get-Content -LiteralPath $WATCH_READY_FILE -Raw -ErrorAction SilentlyContinue))) {
       if ($WATCH_PROCESS.HasExited) {
         Get-Content -LiteralPath $WATCH_ERR_LOG -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
         Fail 'Error: Wework application build watcher exited before becoming ready.'
       }
-      if ((Test-Path $WATCH_READY_FILE) -and [bool](Get-Content -LiteralPath $WATCH_READY_FILE -Raw -ErrorAction SilentlyContinue)) {
-        $watchReady = $true
-        break
-      }
       Start-Sleep -Milliseconds 250
-    }
-    if (-not $watchReady) {
-      Get-Content -LiteralPath $WATCH_ERR_LOG -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
-      Fail 'Error: Wework application build watcher did not become ready.'
     }
     Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     Remove-Item Env:WEWORK_NODE_PATH -ErrorAction SilentlyContinue

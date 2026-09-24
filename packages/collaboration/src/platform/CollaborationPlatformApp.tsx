@@ -3418,6 +3418,8 @@ export function CollaborationPlatformApp({
   renderProjectAiComposer,
   renderProjectAiConversation,
   onOpenProjectAiTask,
+  onContinueProjectAiConversation,
+  onStopProjectAiConversation,
   renderShell,
   sidebarFooter,
 }: {
@@ -3442,6 +3444,12 @@ export function CollaborationPlatformApp({
   onOpenProjectAiTask?: ComponentProps<
     typeof CollaborationApp
   >["onOpenProjectAiTask"];
+  onContinueProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["onContinueProjectAiConversation"];
+  onStopProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["onStopProjectAiConversation"];
   renderShell?(shell: {
     main: React.ReactNode;
     sidebar: React.ReactNode;
@@ -3984,6 +3992,8 @@ export function CollaborationPlatformApp({
           renderProjectAiComposer={renderProjectAiComposer}
           renderProjectAiConversation={renderProjectAiConversation}
           onOpenProjectAiTask={onOpenProjectAiTask}
+          onContinueProjectAiConversation={onContinueProjectAiConversation}
+          onStopProjectAiConversation={onStopProjectAiConversation}
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           locale={locale}

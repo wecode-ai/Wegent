@@ -17,10 +17,11 @@ describe('dev-windows-app', () => {
     expect(source).toContain('Remove-Item Env:WEWORK_DEV_USER_DATA_DIR')
     expect(source).toContain("Join-Path $SCRIPT_DIR 'dev-executor-sidecar.cmd'")
     expect(source).toContain('$env:WEGENT_EXECUTOR_DEV_RELOAD = if')
-    expect(source).not.toContain(
-      'node_modules\\.cache\\wework-executor-dev\\wegent-executor.exe'
+    expect(source).not.toContain('node_modules\\.cache\\wework-executor-dev\\wegent-executor.exe')
+    expect(source).toContain('$PREBUILD_SOURCE_EXECUTOR = $true')
+    expect(source).toContain(
+      "cargo build --manifest-path (Join-Path $PROJECT_DIR 'executor\\Cargo.toml') --bin wegent-executor"
     )
-    expect(source).not.toContain('$MANAGED_SOURCE_EXECUTOR')
     expect(source).toContain('$env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID')
     expect(source).toContain('node_modules\\.cache\\harness-runtime-dev')
     expect(source).toContain('node_modules\\.cache\\wework-electron-dev-resources')
@@ -39,6 +40,8 @@ describe('dev-windows-app', () => {
     )
     expect(source).toContain('dev-wework-app-watch.mjs')
     expect(source).toContain('WEWORK_APP_WATCH_READY_FILE')
+    expect(source).not.toContain('$watchDeadline')
+    expect(source).not.toContain('Wework application build watcher did not become ready')
   })
 
   test('materializes the dev harness runtime in the worktree and shares only the asset cache', async () => {

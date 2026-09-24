@@ -1939,6 +1939,18 @@ class LoopItemService:
                 if assignment_created
                 else []
             )
+        elif values.assignee_type == "group":
+            return self.update(
+                db,
+                item_id,
+                user_id,
+                LoopItemUpdate(
+                    version=values.version,
+                    assignee_group_id=values.assignee_id,
+                    notify_assignee=values.notify_assignee,
+                ),
+                commit=commit,
+            )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"

@@ -1,23 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ProjectChatComposer } from '@/components/chat/composer/ProjectChatComposer'
 import type { ComposerTextareaHandle } from '@/components/chat/composer/ComposerTextarea'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { getDefaultModelOptions } from '@/lib/model-ui'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
 import type { WorkspaceProjectManagerModelSelection } from '@wegent/collaboration'
+import type { WorkspaceProjectManagerRun } from '@wegent/collaboration'
 import type { CollaborationIssue } from '@wegent/collaboration'
 import { createComposerPathReference } from '@wegent/collaboration/composer/composerMentions'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  getRuntimeConversationTurns,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
+import type { RuntimeConversationTurn } from '@/types/workbench'
+
+const EMPTY_TURNS: RuntimeConversationTurn[] = []
 
 interface Props {
   services: WorkbenchServices
   projectId: string
   projectStore?: string
   issues: CollaborationIssue[]
+  activeRun: WorkspaceProjectManagerRun | null
+  running: boolean
   value: string
   onChange(value: string): void
   onSubmit(value: string, selection?: WorkspaceProjectManagerModelSelection): void
+  onStop(): Promise<void>
   disabled: boolean
   busy: boolean
   placeholder: string
@@ -33,6 +44,24 @@ export function ProjectAiDesktopComposer(props: Props) {
   const [selectedModel, setSelectedModel] = useState<UnifiedModel | null>(null)
   const [options, setOptions] = useState<ModelOptions>({})
   const [fileError, setFileError] = useState('')
+  const address = useMemo(() => {
+    const deviceId = props.activeRun?.runtimeDeviceId
+    const taskId = props.activeRun?.runtimeTaskId
+    return deviceId && taskId ? { deviceId, taskId } : null
+  }, [props.activeRun?.runtimeDeviceId, props.activeRun?.runtimeTaskId])
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => (address ? getRuntimeConversationTurns(address) : EMPTY_TURNS),
+    [address]
+  )
+  const turns = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const runtimeRunning = turns.some(
+    turn => turn.status === 'pending' || turn.status === 'streaming'
+  )
   useEffect(() => {
     let active = true
     void props.services.modelApi
@@ -125,6 +154,8 @@ export function ProjectAiDesktopComposer(props: Props) {
         showProjectWorkBar={false}
         showWorkspaceMenu={false}
         pluginPickerIconOnly
+        isStreaming={props.running || runtimeRunning}
+        onPause={() => void props.onStop()}
       />
       {fileError && (
         <p

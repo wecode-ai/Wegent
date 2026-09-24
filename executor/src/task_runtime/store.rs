@@ -4575,6 +4575,11 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     let workflow_node_id = stored.get("workflow_node_id").cloned();
     let automation_run_id = stored.get("automation_run_id").cloned();
     let automation_role = stored.get("automation_role").cloned();
+    let project_instructions = stored
+        .get("developer_instruction")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned);
     let mut additional_context = json!({
         "task": {
             "kind": "application",
@@ -4631,6 +4636,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     });
     if let Some(local_project_id) = execution.agent_local_project_id {
         payload["projectId"] = json!(local_project_id);
+    }
+    if let Some(project_instructions) = project_instructions {
+        payload["projectInstructions"] = json!(project_instructions);
     }
     payload
 }
@@ -5074,6 +5082,37 @@ mod tests {
         assert_eq!(
             executions[0].execution_payload.as_ref().unwrap()["modelSelection"]["modelName"],
             "gpt-6-sol"
+        );
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the project manager execution must be queued");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(payload["message"], "Summarize open Issues");
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Project instructions: Coordinate the board"));
+        assert!(!payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Current request:"));
+        let runs = store.list_project_manager_runs(&project.id).unwrap();
+        let claimed_run = runs
+            .iter()
+            .find(|candidate| candidate["id"] == run["id"])
+            .unwrap();
+        assert_eq!(claimed_run["status"], "running");
+        assert_eq!(
+            claimed_run["runtimeTaskId"],
+            claimed.runtime_task_id.as_deref().unwrap()
         );
     }
 

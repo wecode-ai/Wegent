@@ -1073,16 +1073,31 @@ async fn call_tool_with_runtime_context(
             let project_id = string_argument(&arguments, "space_id");
             if is_project_manager(grant.as_ref()) {
                 match project_id {
-                    Ok(project_id) => runtime.list_chat_agents(project_id).map(|agents| {
-                        json!({
-                            "members": [],
-                            "robots": agents.into_iter().filter(|agent| agent.status == "active").map(|agent| json!({
-                                "id": agent.id,
-                                "name": agent.display_name,
-                                "capability": agent.capability_description,
-                            })).collect::<Vec<_>>(),
-                        })
-                    }),
+                    Ok(project_id) => {
+                        match runtime.list_projects().and_then(|projects| {
+                            projects
+                                .into_iter()
+                                .find(|project| project.id == project_id)
+                                .ok_or(super::TaskRuntimeError::ProjectNotFound)
+                        }) {
+                            Ok(project) => runtime.list_chat_agents(project_id).map(|agents| {
+                                json!({
+                                    "members": [],
+                                    "robots": agents.into_iter().filter(|agent| agent.status == "active").map(|agent| json!({
+                                        "id": agent.id,
+                                        "name": agent.display_name,
+                                        "capability": agent.capability_description,
+                                    })).collect::<Vec<_>>(),
+                                    "groups": project.metadata["collaboration_groups"].as_array().cloned().unwrap_or_default().into_iter().map(|group| json!({
+                                        "id": group["id"],
+                                        "name": group["name"],
+                                        "capability": group["description"],
+                                    })).collect::<Vec<_>>(),
+                                })
+                            }),
+                            Err(error) => Err(error),
+                        }
+                    }
                     Err(error) => Err(error),
                 }
             } else {
@@ -1152,6 +1167,7 @@ async fn call_tool_with_runtime_context(
                                         json!({"assignee_type":kind,"assignee_id":target});
                                     if current.assignee_user_id.is_some()
                                         || current.assignee_agent_id.is_some()
+                                        || current.metadata["collaboration_group"]["id"].is_string()
                                     {
                                         runtime.record_project_manager_action(
                                             project_id, run_id, "assign", task_id, payload, true,
@@ -1175,6 +1191,11 @@ async fn call_tool_with_runtime_context(
                                                         "invalid assignee".into(),
                                                     )
                                                 }),
+                                            "group" => Ok(super::TaskUpdate {
+                                                version: current.version,
+                                                assignee_group_id: Some(Some(target.into())),
+                                                ..super::TaskUpdate::default()
+                                            }),
                                             _ => Err(super::TaskRuntimeError::Invalid(
                                                 "unsupported assignee".into(),
                                             )),
@@ -2017,7 +2038,18 @@ async fn call_backend_tool(
                     .map_err(|error| error.to_string())?,
             )
             .await?;
-            return Ok(normalize_assignment_candidates(members, robots));
+            let teams = backend_json(
+                client
+                    .get(format!(
+                        "{base}/cloud-projects/{project_id}/collaboration-groups"
+                    ))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            return Ok(normalize_assignment_candidates(members, robots, teams));
         }
         "submit_workflow_plan" => {
             let request = client
@@ -2547,7 +2579,7 @@ async fn backend_json(response: reqwest::Response) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|error| error.to_string())
 }
 
-fn normalize_assignment_candidates(members: Value, robots: Value) -> Value {
+fn normalize_assignment_candidates(members: Value, robots: Value, teams: Value) -> Value {
     let members = members
         .as_array()
         .into_iter()
@@ -2579,7 +2611,23 @@ fn normalize_assignment_candidates(members: Value, robots: Value) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    json!({"members": members, "robots": robots})
+    let teams = teams
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|team| {
+            json!({
+                "id": team.get("id").cloned().unwrap_or(Value::Null),
+                "name": team.get("name").cloned().unwrap_or(Value::Null),
+                "capability": team
+                    .get("description")
+                    .cloned()
+                    .unwrap_or_else(|| json!("")),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"members": members, "robots": robots, "groups": teams})
 }
 
 fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
@@ -2862,7 +2910,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_assignment_candidates",
-            "List assignable project members and robots with their capability descriptions",
+            "List assignable project members, robots, and collaboration groups with their capability descriptions",
             json!({
                 "type": "object",
                 "properties": {"space_id": {"type": "string"}},
@@ -2927,13 +2975,13 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "assign_board_item",
-            "Assign a board item to one project member or robot. Human assignees are notified by default; do not send a duplicate notification.",
+            "Assign a board item directly to one project member, robot, or collaboration group. Use assignee_type=group for a collaboration group; never substitute its leader or a member. Human assignees are notified by default; do not send a duplicate notification.",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "assignee_type": {"enum": ["user", "agent"]},
+                    "assignee_type": {"enum": ["user", "agent", "group"]},
                     "assignee_id": {"type": "string"},
                     "notify_assignee": {"type": "boolean", "default": true}
                 },
@@ -3973,6 +4021,14 @@ mod tests {
     #[test]
     fn exposes_only_wework_space_business_vocabulary() {
         let exposed_tools = tools();
+        let assign = exposed_tools
+            .iter()
+            .find(|tool| tool["name"] == "assign_board_item")
+            .expect("assign_board_item tool");
+        assert_eq!(
+            assign["inputSchema"]["properties"]["assignee_type"]["enum"],
+            json!(["user", "agent", "group"])
+        );
         for exposed_tool in &exposed_tools {
             let public_surface = format!(
                 "{} {}",
@@ -4342,6 +4398,13 @@ mod tests {
                 "name": "Review bot",
                 "capabilityDescription": "Code review and release checks"
             }]),
+            json!({
+                "items": [{
+                    "id": "group-3",
+                    "name": "Release group",
+                    "description": "Coordinates release work"
+                }]
+            }),
         );
 
         assert_eq!(
@@ -4357,6 +4420,11 @@ mod tests {
                     "id": "agent-9",
                     "name": "Review bot",
                     "capability": "Code review and release checks"
+                }],
+                "groups": [{
+                    "id": "group-3",
+                    "name": "Release group",
+                    "capability": "Coordinates release work"
                 }]
             })
         );

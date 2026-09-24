@@ -92,6 +92,7 @@ class ProjectAutomationManagedExecutionService:
         owner: User,
         team: Kind,
         prompt: str,
+        user_message: str,
         title: str,
         project_id: str,
         loop_item_id: str,
@@ -103,13 +104,16 @@ class ProjectAutomationManagedExecutionService:
         """Create a real Task/Subtask and dispatch it without a device route."""
 
         normalized_prompt = prompt.strip()
+        normalized_user_message = user_message.strip()
         if not normalized_prompt:
             raise ValueError("Managed project automation prompt cannot be empty")
+        if not normalized_user_message:
+            raise ValueError("Managed project automation user message cannot be empty")
         if team.kind != "Team":
             raise ValueError("Managed project automation requires a Team resource")
 
         params = TaskCreationParams(
-            message=normalized_prompt,
+            message=normalized_user_message,
             title=title.strip() or "AI managed automation",
             model_id=(model_selection or {}).get("modelName") or model_id,
             force_override_bot_model=bool(model_selection),
@@ -123,7 +127,7 @@ class ProjectAutomationManagedExecutionService:
             db=db,
             user=owner,
             team=team,
-            message=normalized_prompt,
+            message=normalized_user_message,
             params=params,
             should_trigger_ai=True,
             source="project_automation",
@@ -160,7 +164,8 @@ class ProjectAutomationManagedExecutionService:
                 user_subtask_id=result.user_subtask.id,
                 team_id=team.id,
                 user_id=owner.id,
-                prompt=normalized_prompt,
+                prompt=normalized_user_message,
+                developer_instruction=normalized_prompt,
             )
         except Exception as exc:
             error = str(exc) or "AI 托管任务入队失败。"
@@ -382,6 +387,7 @@ class ProjectAutomationManagedExecutionService:
         team_id: int,
         user_id: int,
         prompt: str,
+        developer_instruction: str = "",
         source: str = "project_automation",
         execution_id: int = 0,
     ) -> bool:
@@ -473,6 +479,15 @@ class ProjectAutomationManagedExecutionService:
             enable_deep_thinking=True,
             include_wework_space_mcp=True,
         )
+        if developer_instruction.strip():
+            request.system_prompt = "\n\n".join(
+                part
+                for part in (
+                    request.system_prompt.strip(),
+                    developer_instruction.strip(),
+                )
+                if part
+            )
         request.device_id = None
         if not self._execution_is_running(
             handle=handle,

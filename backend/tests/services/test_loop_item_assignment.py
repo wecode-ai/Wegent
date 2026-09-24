@@ -142,10 +142,21 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
             test_user.id,
             LoopItemUpdate(version=item.version, assignee_group_id="group-1"),
         )
-    db.refresh(updated)
-    assert updated.metadata_json["collaboration_group"]["id"] == "group-1"
-    assert updated.assignee_user_id is None
-    values = loop_item_service.response_values(db, updated, test_user.id)
+        assigned = loop_item_service.assign(
+            db,
+            project_id=project.id,
+            item_id=updated.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=updated.version,
+                assignee_type="group",
+                assignee_id="group-1",
+            ),
+        )
+    db.refresh(assigned)
+    assert assigned.metadata_json["collaboration_group"]["id"] == "group-1"
+    assert assigned.assignee_user_id is None
+    values = loop_item_service.response_values(db, assigned, test_user.id)
     assert values["assignee_group_name"] == "Delivery team"
     with patch(
         "app.services.workspaces.workspace_service.list_project_collaboration_groups",
@@ -157,7 +168,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
                 item.id,
                 test_user.id,
                 LoopItemUpdate(
-                    version=updated.version, assignee_group_id="other-project-team"
+                    version=assigned.version, assignee_group_id="other-project-team"
                 ),
             )
     assert error.value.status_code == 422
@@ -165,7 +176,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
         db,
         item.id,
         test_user.id,
-        LoopItemUpdate(version=updated.version, assignee_user_id=test_user.id),
+        LoopItemUpdate(version=assigned.version, assignee_user_id=test_user.id),
     )
     assert not restored.metadata_json.get("collaboration_group")
     assert restored.assignee_user_id == test_user.id

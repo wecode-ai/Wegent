@@ -228,6 +228,7 @@ export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
 export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
 export ELECTRON_GET_USE_PROXY="${ELECTRON_GET_USE_PROXY:-true}"
 unset WEGENT_EXECUTOR_BINARY
+PREBUILD_SOURCE_EXECUTOR="false"
 if [ -n "${WEWORK_DEV_EXECUTOR_PATH:-}" ]; then
   export WEWORK_EXECUTOR_PATH="$WEWORK_DEV_EXECUTOR_PATH"
 else
@@ -235,6 +236,7 @@ else
   configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
   export WEGENT_EXECUTOR_DEV_RELOAD="${WEGENT_EXECUTOR_DEV_RELOAD:-1}"
   export WEGENT_EXECUTOR_DEV_BUILD_ID="$WEWORK_DEV_INSTANCE_ID"
+  PREBUILD_SOURCE_EXECUTOR="true"
 fi
 export WEWORK_DEV_CACHE_ROOT="${WEWORK_DEV_CACHE_ROOT:-$HOME/Library/Caches/wegent/wework-dev}"
 export WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT:-$WEWORK_DEV_CACHE_ROOT/harness-runtime}"
@@ -295,6 +297,9 @@ fi
 
 cd "$WEWORK_DIR"
 node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"
+if [ "$PREBUILD_SOURCE_EXECUTOR" = "true" ]; then
+  cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
+fi
 if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
@@ -342,10 +347,7 @@ export WEWORK_APP_WATCH_READY_FILE
 node "$SCRIPT_DIR/dev-wework-app-watch.mjs" &
 WEWORK_APP_WATCH_PID="$!"
 
-for _ in $(seq 1 240); do
-  if [ -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
-    break
-  fi
+while [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; do
   if ! kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
     wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
     echo "Error: Original Wework application build watcher exited before becoming ready." >&2
@@ -353,10 +355,6 @@ for _ in $(seq 1 240); do
   fi
   sleep 0.25
 done
-if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
-  echo "Error: Original Wework application build watcher did not become ready." >&2
-  exit 1
-fi
 
 # The parent Wework terminal may expose the release app's Electron-backed Node
 # runtime. A source checkout must create its own Node launcher, while the

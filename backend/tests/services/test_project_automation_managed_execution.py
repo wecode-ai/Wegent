@@ -134,7 +134,8 @@ async def test_managed_dispatch_creates_real_task_with_board_labels(monkeypatch)
         db=db,
         owner=owner,
         team=team,
-        prompt="  Triage this board event  ",
+        prompt="  Hidden project manager context  ",
+        user_message="  Triage this board event  ",
         title="Board steward",
         project_id="project-1",
         loop_item_id="board-task-1",
@@ -174,6 +175,7 @@ async def test_managed_dispatch_creates_real_task_with_board_labels(monkeypatch)
         team_id=8,
         user_id=7,
         prompt="Triage this board event",
+        developer_instruction="Hidden project manager context",
     )
 
 
@@ -661,7 +663,8 @@ async def test_managed_dispatch_projects_broker_enqueue_failure(monkeypatch):
             db=db,
             owner=SimpleNamespace(id=7),
             team=SimpleNamespace(id=8, kind="Team"),
-            prompt="Handle event",
+            prompt="Hidden project manager context",
+            user_message="Handle event",
             title="Board steward",
             project_id="project-1",
             loop_item_id="board-task-1",
@@ -756,12 +759,15 @@ async def test_managed_execution_builds_explicit_board_mcp_and_has_no_device(
         team_id=8,
         user_id=7,
         prompt="Handle event",
+        developer_instruction="Coordinate the project without executing Issues.",
     )
 
     kwargs = build_request.await_args.kwargs
+    assert kwargs["message"] == "Handle event"
     assert kwargs["device_id"] is None
     assert kwargs["is_subscription"] is False
     assert kwargs["include_wework_space_mcp"] is True
+    assert request.system_prompt == ("Coordinate the project without executing Issues.")
     assert dispatched is True
     mark_started.assert_called_once_with(task_id=51)
     dispatcher.dispatch.assert_awaited_once()
@@ -1631,6 +1637,7 @@ def test_celery_managed_execution_runs_async_service(monkeypatch):
         team_id=8,
         user_id=7,
         prompt="Handle event",
+        developer_instruction="",
     )
 
     assert result == {"status": "dispatched", "task_id": 81}
@@ -1640,6 +1647,7 @@ def test_celery_managed_execution_runs_async_service(monkeypatch):
         team_id=8,
         user_id=7,
         prompt="Handle event",
+        developer_instruction="",
     )
 
 

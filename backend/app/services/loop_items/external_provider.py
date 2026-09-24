@@ -688,6 +688,7 @@ class ExternalLoopItemProvider:
             "assignee_user_id",
             "assignee_agent_id",
             "assignee_team_id",
+            "assignee_group_id",
         } & dumped.keys()
         label_change = {"tags", "priority", "status"} & dumped.keys()
         if label_change or assignee_change:
@@ -789,6 +790,25 @@ class ExternalLoopItemProvider:
                     "Robot is not active in this project",
                 )
             return self._assignee_label("agent", agent.id, agent.title or agent.name)
+        if values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, project.id, user_id
+                    )
+                    if str(entry["id"]) == values.assignee_group_id
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            return self._assignee_label("group", str(group["id"]), str(group["name"]))
         if values.assignee_team_id:
             team = runnable_wegent_team(db, user_id, values.assignee_team_id)
             return self._assignee_label("team", str(team.id), team.name)
@@ -906,6 +926,25 @@ class ExternalLoopItemProvider:
                 assigner_user_id=user_id,
                 priority=priority,
             )
+        elif values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                entry
+                for entry in workspace_service.list_project_collaboration_groups(
+                    db, project.id, user_id
+                )
+                if str(entry["id"]) == values.assignee_group_id
+            )
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+                assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
         elif values.assignee_user_id:
             target = db.get(User, values.assignee_user_id)
             self._ensure_index_row(
@@ -991,6 +1030,8 @@ class ExternalLoopItemProvider:
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None
+        group: dict[str, object] | None = None
+        target_user_id: int | None = None
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if (
@@ -1045,6 +1086,28 @@ class ExternalLoopItemProvider:
             team = runnable_wegent_team(db, user_id, target_team_id)
             assignee_label = self._assignee_label("team", str(team.id), team.name)
             assignee_name = team.name
+        elif values.assignee_type == "group":
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, project.id, user_id
+                    )
+                    if str(entry["id"]) == values.assignee_id
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            assignee_label = self._assignee_label(
+                "group", str(group["id"]), str(group["name"])
+            )
+            assignee_name = str(group["name"])
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
@@ -1072,12 +1135,19 @@ class ExternalLoopItemProvider:
                 else (
                     str(team.id)
                     if values.assignee_type == "team" and team is not None
-                    else str(target_user_id)
+                    else (
+                        str(group["id"])
+                        if values.assignee_type == "group" and group is not None
+                        else str(target_user_id)
+                    )
                 )
             ),
             assignee_name=assignee_name,
             user_id=user_id,
         )
+        if group is not None:
+            db.commit()
+            return self._response(db, project, issue, access, user_id)
         from app.services.issue_assignments import issue_assignment_service
 
         target_id = (
@@ -1189,6 +1259,17 @@ class ExternalLoopItemProvider:
             row.assignee_team_id = int(assignee_id)
             loop_item_service._write_assignment_change(
                 metadata, user_id, "team", assignee_id, assignee_name
+            )
+        elif assignee_type == "group":
+            row.assignee_user_id = 0
+            row.assignee_agent_id = ""
+            row.assignee_team_id = None
+            metadata["collaboration_group"] = {
+                "id": assignee_id,
+                "name": assignee_name or "",
+            }
+            loop_item_service._write_assignment_change(
+                metadata, user_id, "group", assignee_id, assignee_name
             )
         else:
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
@@ -1467,6 +1548,8 @@ class ExternalLoopItemProvider:
         assignee_agent_name: str | None = None
         assignee_team_id: int | None = None
         assignee_team_name: str | None = None
+        assignee_group_id: str | None = None
+        assignee_group_name: str | None = None
         assignee = self._assignee_from_labels(labels)
         if assignee is not None:
             if assignee["type"] == "user":
@@ -1495,6 +1578,21 @@ class ExternalLoopItemProvider:
                 if assignee_team_name is None and assignee_team_id is not None:
                     team = db.get(Kind, assignee_team_id)
                     assignee_team_name = team.name if team is not None else None
+            elif assignee["type"] == "group":
+                assignee_group_id = assignee["id"]
+                from app.services.workspaces import workspace_service
+
+                group = next(
+                    (
+                        entry
+                        for entry in workspace_service.list_project_collaboration_groups(
+                            db, project.id, user_id
+                        )
+                        if str(entry["id"]) == assignee_group_id
+                    ),
+                    None,
+                )
+                assignee_group_name = str(group["name"]) if group else None
         return {
             "id": f"{project.project_key}-{number}",
             "cloud_project_id": str(project.id),
@@ -1509,6 +1607,8 @@ class ExternalLoopItemProvider:
             "assignee_agent_name": assignee_agent_name,
             "assignee_team_id": assignee_team_id,
             "assignee_team_name": assignee_team_name,
+            "assignee_group_id": assignee_group_id,
+            "assignee_group_name": assignee_group_name,
             "priority": self._priority(labels),
             "due_at": None,
             "sort_order": number,
@@ -2120,7 +2220,11 @@ class ExternalLoopItemProvider:
         if label is None:
             return None
         parts = label.removeprefix(ASSIGNEE_PREFIX).split(":", 2)
-        if len(parts) < 2 or parts[0] not in {"user", "agent", "team"} or not parts[1]:
+        if (
+            len(parts) < 2
+            or parts[0] not in {"user", "agent", "team", "group"}
+            or not parts[1]
+        ):
             return None
         return {
             "type": parts[0],

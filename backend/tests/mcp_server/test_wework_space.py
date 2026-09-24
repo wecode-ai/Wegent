@@ -321,6 +321,7 @@ def test_project_details_expose_assignable_members(
             "capability": "Builds Python APIs",
         }
     ]
+    assert details["groups"] == []
 
 
 async def test_ai_manager_submits_structured_plan_for_current_issue(

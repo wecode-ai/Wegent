@@ -110,6 +110,12 @@ interface CollaborationAppProps {
   onOpenProjectAiTask?: ComponentProps<
     typeof ProjectAiBoardAssistant
   >["onOpenTask"];
+  onContinueProjectAiConversation?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["onContinueConversation"];
+  onStopProjectAiConversation?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["onStopConversation"];
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
       onMarkRead(): Promise<void>;
@@ -157,6 +163,8 @@ export function CollaborationApp({
   renderProjectAiComposer,
   renderProjectAiConversation,
   onOpenProjectAiTask,
+  onContinueProjectAiConversation,
+  onStopProjectAiConversation,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const translate = useMemo(
@@ -653,6 +661,8 @@ export function CollaborationApp({
                       renderComposer={renderProjectAiComposer}
                       renderConversation={renderProjectAiConversation}
                       onOpenTask={onOpenProjectAiTask}
+                      onContinueConversation={onContinueProjectAiConversation}
+                      onStopConversation={onStopProjectAiConversation}
                       api={api}
                       project={project}
                       issues={issues}
