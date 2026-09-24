@@ -122,6 +122,7 @@ def _workflow_plan(robot: ProjectChatAgent) -> dict[str, object]:
                 "client_key": "implement",
                 "title": "Implement the change",
                 "description": "Implement the requested change and add tests.",
+                "prompt": "Implement this change, add tests, and report verification evidence.",
                 "assignee_type": "agent",
                 "assignee_id": robot.id,
                 "assignee_name": robot.name,

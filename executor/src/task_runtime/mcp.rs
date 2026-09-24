@@ -2657,6 +2657,7 @@ fn tools() -> Vec<Value> {
                                     "required": [
                                         "client_key",
                                         "title",
+                                        "prompt",
                                         "assignee_type",
                                         "assignee_id"
                                     ]

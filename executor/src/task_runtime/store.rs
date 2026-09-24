@@ -5340,7 +5340,7 @@ mod tests {
         let payload = claimed.execution_payload.as_ref().unwrap();
         assert_eq!(
             payload["message"],
-            "Ship the feature\n\nImplement and verify it."
+            "You are the AI manager for this Issue. Use get_current_context, get_board_item, and get_assignment_candidates to inspect the Issue and eligible members. Then call submit_workflow_plan with independently verifiable child tasks. Write a specific execution prompt for each assignee, including the goal, boundaries, and acceptance criteria. Do not execute the child tasks.\n\nIssue: Ship the feature"
         );
         assert_eq!(
             payload["origin"]["automationRole"],
@@ -5352,6 +5352,20 @@ mod tests {
             .unwrap();
         assert_eq!(candidates["robots"].as_array().unwrap().len(), 1);
         assert_eq!(candidates["robots"][0]["name"], "当前设备智能体");
+        assert!(store
+            .submit_local_automation_workflow_plan(
+                &project.id,
+                &task.id,
+                run_id,
+                &json!({"items": [{
+                    "client_key": "missing-prompt",
+                    "title": "Implement",
+                    "description": "Generic project instructions",
+                    "assignee_type": "agent",
+                    "assignee_id": leader.id,
+                }]}),
+            )
+            .is_err());
         store
             .submit_local_automation_workflow_plan(
                 &project.id,

@@ -134,7 +134,9 @@ class ProjectAutomationExecution:
             )
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             dispatch_target = metadata(rule).get("dispatch_target")
-            if isinstance(dispatch_target, dict):
+            if isinstance(dispatch_target, dict) and not run_metadata.get(
+                "bypass_workflow_definition"
+            ):
                 await self._dispatch_configured_target(
                     db,
                     owner=owner,
@@ -155,10 +157,32 @@ class ProjectAutomationExecution:
                 )
                 return
             context = self._automation_context(db, rule, run)
-            instruction = self._run_instruction(rule, run)
-            configured_mode = assignment_mode(metadata(rule))
+            manager_run = bool(run_metadata.get("bypass_workflow_definition"))
+            instruction = (
+                self._managed_prompt(
+                    db,
+                    owner=owner,
+                    project=project,
+                    rule=rule,
+                    run=run,
+                    context=context,
+                )
+                if manager_run
+                else self._run_instruction(rule, run)
+            )
+            configured_mode = (
+                "manual" if manager_run else assignment_mode(metadata(rule))
+            )
             if configured_mode == "manual":
                 configured_agent_id = str(context.get("agent_id") or "")
+                if manager_run:
+                    self._create_manager_activity(
+                        db,
+                        rule=rule,
+                        run=run,
+                        configured_manager="project_robot",
+                        agent_id=configured_agent_id or rule.assignee_agent_id,
+                    )
                 if not configured_agent_id and (
                     "workspace_binding" in context
                     or role_config(metadata(rule)).get("source") == "generic"
@@ -470,7 +494,24 @@ class ProjectAutomationExecution:
             ),
         }
         item = db.get(LoopItem, run.task_id)
-        if item is not None:
+        manager_run = bool(metadata(run).get("bypass_workflow_definition"))
+        if manager_run and item is not None:
+            from app.services.project_chat.service import bot_config
+
+            config = bot_config(agent)
+            loop_item_execution_service.create_for_assignment(
+                db,
+                loop_item_id=item.id,
+                cloud_project_id=item.cloud_project_id,
+                agent=agent,
+                assigner_user_id=owner.id,
+                environment=str(config.get("execution_environment") or "local"),
+                execution_device_id=config.get("execution_device_id"),
+                priority=item.priority,
+                automation_context=robot_context,
+                instruction=instruction,
+            )
+        elif item is not None:
             loop_item_service.assign(
                 db,
                 project_id=int(str(rule.cloud_project_id)),
@@ -553,36 +594,19 @@ class ProjectAutomationExecution:
                 raise RuntimeError(
                     "The collaboration group is no longer available in this Project"
                 )
-            stages = [
-                dict(stage)
-                for stage in group.get("stages", [])
-                if isinstance(stage, dict)
-            ]
-            first_stage = stages[0] if stages else None
-            selected = (
-                first_stage.get("assignee")
-                if first_stage and isinstance(first_stage.get("assignee"), dict)
-                else group.get("leader")
-            )
-            if not isinstance(selected, dict):
-                raise RuntimeError("The collaboration group has no active leader")
-            target_kind = str(selected.get("kind") or "")
-            target_id = str(selected.get("id") or "")
-            workflow_step = (
-                str(first_stage.get("name") or "") or None if first_stage else None
-            )
             context["collaboration_group"] = {
                 "id": str(group["id"]),
                 "name": str(group["name"]),
                 "leader": group["leader"],
                 "members": group["members"],
-                "stages": stages,
+                "instructions": group.get("instructions") or "",
             }
             self._bind_group_to_issue(db, run=run, group=context["collaboration_group"])
             definition = self._collaboration_group_workflow_definition(
                 db,
                 project_id=str(rule.cloud_project_id),
                 group=context["collaboration_group"],
+                automation_id=str(rule.id),
             )
             await self._dispatch_workflow(
                 db,
@@ -643,95 +667,34 @@ class ProjectAutomationExecution:
         *,
         project_id: str,
         group: dict[str, Any],
+        automation_id: str,
     ) -> ProjectWorkflowDefinition:
-        """Compile the group's ordered stages into the existing Issue workflow."""
+        """Start every collaboration group with its AI manager."""
 
         from app.services.issue_execution_configuration import (
             project_robot_execution_config,
         )
 
-        stages = [
-            dict(stage) for stage in group.get("stages", []) if isinstance(stage, dict)
-        ]
-        if not stages:
-            stages = [
-                {
-                    "id": "leader",
-                    "name": "负责人处理",
-                    "description": str(group.get("description") or ""),
-                    "assignee": group.get("leader"),
-                }
-            ]
-
-        members = {
-            (str(member.get("kind") or ""), str(member.get("id") or ""))
-            for member in group.get("members", [])
-            if isinstance(member, dict)
-        }
-        nodes: list[dict[str, Any]] = []
-        previous_node_id: str | None = None
-        for index, stage in enumerate(stages):
-            assignee = stage.get("assignee")
-            if not isinstance(assignee, dict):
-                assignee = group.get("leader")
-            if not isinstance(assignee, dict):
-                raise RuntimeError("The collaboration group stage has no assignee")
-
-            node_id = f"group-stage-{index + 1}"
-            assignee_kind = str(assignee.get("kind") or "")
-            assignee_id = str(assignee.get("id") or "")
-            if (assignee_kind, assignee_id) not in members:
-                raise RuntimeError(
-                    "The collaboration-group stage assignee must be a "
-                    "collaboration-group member"
-                )
-            execution_config = None
-            if assignee_kind == "agent":
-                agent = self._project_agent_for_group_member(
-                    db,
-                    project_id=project_id,
-                    member_id=assignee_id,
-                )
-                if agent is None:
-                    raise RuntimeError(
-                        "The collaboration-group Agent is unavailable in this Project"
-                    )
-                execution_config = project_robot_execution_config(db, agent).model_dump(
-                    mode="json", by_alias=True
-                )
-            elif assignee_kind != "human":
-                raise RuntimeError("The collaboration-group stage assignee is invalid")
-
-            nodes.append(
-                {
-                    "id": node_id,
-                    "name": str(stage.get("name") or f"步骤 {index + 1}"),
-                    "prompt": str(stage.get("description") or ""),
-                    "execution_mode": (
-                        "robot" if assignee_kind == "agent" else "human"
-                    ),
-                    "depends_on": [previous_node_id] if previous_node_id else [],
-                    "workspace_policy": (
-                        "composer" if previous_node_id is None else "inherit"
-                    ),
-                    "required_assignee_type": (
-                        "user" if assignee_kind == "human" else None
-                    ),
-                    "required_assignee_id": (
-                        assignee_id if assignee_kind == "human" else None
-                    ),
-                    "execution_config": execution_config,
-                    "execution_config_override": execution_config is not None,
-                }
-            )
-            previous_node_id = node_id
+        leader = group.get("leader")
+        if not isinstance(leader, dict) or leader.get("kind") != "agent":
+            raise RuntimeError("Automated collaboration requires an AI manager")
+        agent = self._project_agent_for_group_member(
+            db, project_id=project_id, member_id=str(leader.get("id") or "")
+        )
+        if agent is None:
+            raise RuntimeError("The collaboration-group AI manager is unavailable")
 
         return ProjectWorkflowDefinition.model_validate(
             {
-                "stage_mode": "dag",
-                "advancement_policy": "manual",
+                "stage_mode": "none",
+                "advancement_policy": "ai",
                 "approval_policy": "automatic",
-                "nodes": nodes,
+                "ai_automation_rule_id": automation_id,
+                "coordinator_prompt": str(group.get("instructions") or ""),
+                "execution_config": project_robot_execution_config(
+                    db, agent
+                ).model_dump(mode="json", by_alias=True),
+                "nodes": [],
             }
         )
 
@@ -1176,6 +1139,7 @@ class ProjectAutomationExecution:
         rule: ProjectAutomationRule,
         run: ProjectAutomationRun,
         configured_manager: str | None,
+        agent_id: str | None = None,
     ) -> ProjectChatMessage:
         rule_metadata = metadata(rule)
         manager_ref = str(rule.id)
@@ -1193,6 +1157,11 @@ class ProjectAutomationExecution:
             sender_name = str(team.name or "Wegent 智能体")
             sender_id = f"wegent_team:{team.id}"
             manager_ref = str(team.id)
+        elif configured_manager == "project_robot":
+            agent = project_agent(db, str(rule.cloud_project_id), agent_id)
+            sender_name = agent.name
+            sender_id = f"project_agent:{agent.id}"
+            manager_ref = str(agent.id)
         else:
             raise RuntimeError("AI manager configuration is incomplete")
 

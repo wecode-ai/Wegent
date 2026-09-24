@@ -103,6 +103,7 @@ def _plan(agent: ProjectChatAgent, *, key: str) -> dict[str, object]:
                 "client_key": key,
                 "title": key,
                 "description": f"Complete {key} and report the outcome.",
+                "prompt": f"Complete {key} and report the outcome with evidence.",
                 "assignee_type": "agent",
                 "assignee_id": agent.id,
                 "assignee_name": agent.name,
@@ -341,6 +342,10 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
         .one()
     )
     assert claude_execution.agent_id == claude.id
+    assert claude_execution.automation_run_id == ""
+    assert claude_execution.runtime_origin_context["execution_prompt"] == (
+        "Complete implement and report the outcome with evidence."
+    )
     completed_claude_execution = loop_item_execution_service.complete(
         test_db,
         execution_id=claude_execution.id,
@@ -422,6 +427,10 @@ async def test_ai_workflow_enforces_claude_then_codex_until_issue_completed(
         .one()
     )
     assert codex_execution.agent_id == codex.id
+    assert codex_execution.automation_run_id == ""
+    assert codex_execution.runtime_origin_context["execution_prompt"] == (
+        "Complete verify and report the outcome with evidence."
+    )
     completed_codex_execution = loop_item_execution_service.complete(
         test_db,
         execution_id=codex_execution.id,

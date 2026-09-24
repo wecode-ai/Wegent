@@ -20,7 +20,6 @@ import {
   responseCompleted,
   responseCreated,
   selectMcpTool,
-  streamingTextEvents,
 } from '../modules/response-protocol.mjs'
 import { CLOUD_DEVICE_ID } from '../modules/shared.mjs'
 import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
@@ -47,7 +46,6 @@ const CODEX_SYSTEM_MARKER = 'COLLABORATION_CODEX_AGENT_E2E'
 const CLAUDE_SYSTEM_MARKER = 'COLLABORATION_CLAUDE_AGENT_E2E'
 const MODEL_COMPLETION_MARKER = 'COLLABORATION_AUTOMATION_STAGE_COMPLETED'
 const MODEL_NAME = 'desktop-e2e-public-model'
-const TOOL_SEQUENCE = ['get_current_context', 'get_board_item', 'add_board_item_comment']
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -147,27 +145,6 @@ function convertedToolName(body, toolName) {
     .find(name => name === toolName || name?.endsWith(`__${toolName}`))
 }
 
-function stageKey(issue, agent) {
-  return `${issue.id}:${agent}`
-}
-
-function stageCallIds(issue, agent) {
-  const prefix = `collaboration-${issue.id}-${agent}`
-  return {
-    contextSearch: `${prefix}-search-current-context`,
-    contextCall: `${prefix}-get-current-context`,
-    itemSearch: `${prefix}-search-board-item`,
-    itemCall: `${prefix}-get-board-item`,
-    commentSearch: `${prefix}-search-add-comment`,
-    commentCall: `${prefix}-add-comment`,
-  }
-}
-
-function stageComment(issue, agent) {
-  const trigger = issue.title === CREATED_ISSUE_TITLE ? 'create' : 'tag'
-  return `COLLAB_E2E:${issue.id}:${trigger}:${agent}:completed`
-}
-
 function executionItems(response, issueId) {
   return (response.items ?? []).filter(execution => execution.loopItemId === issueId)
 }
@@ -190,7 +167,7 @@ function collaborationGroupAgentId(agent) {
   )
 }
 
-function summarizeModelRequest(body, serialized, issue, agent, ids) {
+function summarizeModelRequest(body, serialized, issue, agent) {
   return {
     agent,
     issue: issue?.title ?? null,
@@ -201,20 +178,7 @@ function summarizeModelRequest(body, serialized, issue, agent, ids) {
     hasConfiguredSkill:
       serialized.includes(SKILL_NAME) || serialized.includes(SKILL_CONTENT_MARKER),
     hasConfiguredPlugin: serialized.includes(PLUGIN_CONTENT_MARKER),
-    completedCalls: ids
-      ? Object.entries(ids)
-          .filter(([, callId]) => requestContainsToolOutput(body, callId))
-          .map(([name]) => name)
-      : [],
   }
-}
-
-function deferred() {
-  let resolve = () => undefined
-  const promise = new Promise(resolvePromise => {
-    resolve = resolvePromise
-  })
-  return { promise, resolve }
 }
 
 export async function createDesktopScenario({
@@ -240,10 +204,9 @@ export async function createDesktopScenario({
   let active = false
   let fixtureArchived = false
   const modelRequests = []
-  const modelStages = []
-  const actualToolCalls = []
-  const persistedComments = []
-  const pendingCompletions = new Map()
+  const managerPlans = new Set()
+  const executorPrompts = new Set()
+  const managerReviews = new Set()
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
@@ -290,25 +253,14 @@ export async function createDesktopScenario({
   }
 
   function issueFromRequest(serialized) {
-    for (const issue of [createdIssue, tagIssue].filter(Boolean)) {
-      for (const agent of ['codex', 'claude_code']) {
-        if (Object.values(stageCallIds(issue, agent)).some(callId => serialized.includes(callId))) {
-          return issue
-        }
-      }
-    }
     if (createdIssue && serialized.includes(CREATED_ISSUE_TITLE)) return createdIssue
     if (tagIssue && serialized.includes(TAG_ISSUE_TITLE)) return tagIssue
+    if (createdIssue && serialized.includes(createdIssue.id)) return createdIssue
+    if (tagIssue && serialized.includes(tagIssue.id)) return tagIssue
     return null
   }
 
-  function agentFromRequest(serialized, issue) {
-    if (issue) {
-      for (const agent of ['codex', 'claude_code']) {
-        const callIds = Object.values(stageCallIds(issue, agent))
-        if (callIds.some(callId => serialized.includes(callId))) return agent
-      }
-    }
+  function agentFromRequest(serialized) {
     if (serialized.includes(CODEX_SYSTEM_MARKER)) return 'codex'
     if (serialized.includes(CLAUDE_SYSTEM_MARKER)) return 'claude_code'
     return null
@@ -318,20 +270,6 @@ export async function createDesktopScenario({
     return request(`/api/v1/loop-items/${issue.id}/comments`)
   }
 
-  async function waitForComment(issue, agent, timeoutMs) {
-    const body = stageComment(issue, agent)
-    const comments = await waitForValue(
-      () => commentsFor(issue),
-      values => {
-        const matches = values.filter(comment => comment.body === body)
-        return matches.length === 1 ? values : false
-      },
-      `The real wework_space MCP did not persist exactly one ${agent} comment for ${issue.title}`,
-      timeoutMs
-    )
-    return comments.find(comment => comment.body === body)
-  }
-
   function writeEvents(response, responseId, events) {
     response.writeHead(200, {
       'cache-control': 'no-cache',
@@ -339,6 +277,145 @@ export async function createDesktopScenario({
       'content-type': 'text/event-stream; charset=utf-8',
     })
     response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
+  }
+
+  function plannedPrompt(issue, agent) {
+    return `COLLAB_MANAGER_PROMPT:${issue.id}:${agent}: inspect the Issue, complete your assigned work, and report verification evidence.`
+  }
+
+  function plannedCallIds(issue, agent) {
+    const prefix = `planned-${issue.id}-${agent}`
+    return { search: `${prefix}-search`, call: `${prefix}-call` }
+  }
+
+  function plannedPlanArguments(issue) {
+    return {
+      space_id: String(project.id),
+      item_id: issue.id,
+      plan: {
+        summary: 'Assign implementation and independent review.',
+        items: ['codex', 'claude_code'].map((member, index) => ({
+          client_key: member,
+          title: index === 0 ? 'Implement and verify' : 'Review and verify',
+          description: index === 0 ? 'Implement the Issue.' : 'Review the Issue result.',
+          prompt: plannedPrompt(issue, member),
+          assignee_type: 'agent',
+          assignee_id: member === 'codex' ? codexAgent.id : claudeAgent.id,
+          assignee_name: member === 'codex' ? codexAgent.name : claudeAgent.name,
+          rationale: 'Assigned by the AI manager for this Issue.',
+        })),
+      },
+    }
+  }
+
+  function handlePlannedWorkflowRequest(body, serialized, issue, agent, response, responseId) {
+    const planIds = plannedCallIds(issue, 'manager-plan')
+    const reviewIds = plannedCallIds(issue, 'manager-review')
+    if (requestContainsToolOutput(body, planIds.call)) {
+      const output = serializedToolOutput(body, planIds.call)
+      assert.ok(output.includes('run_id'), 'The real manager plan tool did not persist a plan')
+      managerPlans.add(issue.id)
+      writeEvents(response, responseId, [assistantMessage('The manager assigned both tasks.')])
+      return true
+    }
+    if (requestContainsToolOutput(body, planIds.search)) {
+      writeEvents(
+        response,
+        responseId,
+        namespacedCallAfterSearch(
+          body,
+          'submit_workflow_plan',
+          plannedPlanArguments(issue),
+          planIds.call
+        )
+      )
+      return true
+    }
+    if (requestContainsToolOutput(body, reviewIds.call)) {
+      assert.ok(
+        serializedToolOutput(body, reviewIds.call).includes('completed'),
+        'The AI manager did not complete its review'
+      )
+      managerReviews.add(issue.id)
+      writeEvents(response, responseId, [assistantMessage('The manager approved the results.')])
+      return true
+    }
+    if (requestContainsToolOutput(body, reviewIds.search)) {
+      writeEvents(
+        response,
+        responseId,
+        namespacedCallAfterSearch(
+          body,
+          'decide_workflow_review',
+          { decision: 'completed', summary: 'Both child tasks reported verified results.' },
+          reviewIds.call
+        )
+      )
+      return true
+    }
+    for (const member of ['codex', 'claude_code']) {
+      const reportIds = plannedCallIds(issue, `report-${member}`)
+      if (requestContainsToolOutput(body, reportIds.call)) {
+        assert.ok(
+          serializedToolOutput(body, reportIds.call).includes('outcome'),
+          `${member} did not persist its workflow outcome`
+        )
+        writeEvents(response, responseId, [assistantMessage(`${member} reported its result.`)])
+        return true
+      }
+      if (requestContainsToolOutput(body, reportIds.search)) {
+        writeEvents(
+          response,
+          responseId,
+          namespacedCallAfterSearch(
+            body,
+            'report_workflow_outcome',
+            { verdict: 'passed', summary: `${member} verified the assigned work.` },
+            reportIds.call
+          )
+        )
+        return true
+      }
+    }
+    if (serialized.includes('请读取当前 Issue 和执行者的任务结果')) {
+      const selection = directOrSearchEvents(
+        body,
+        'decide_workflow_review',
+        { decision: 'completed', summary: 'Both child tasks reported verified results.' },
+        reviewIds.search,
+        reviewIds.call
+      )
+      writeEvents(response, responseId, selection.events)
+      return true
+    }
+    if (agent && serialized.includes(plannedPrompt(issue, agent))) {
+      assert.ok(managerPlans.has(issue.id), 'An executor started before the manager plan')
+      executorPrompts.add(`${issue.id}:${agent}`)
+      const reportIds = plannedCallIds(issue, `report-${agent}`)
+      const selection = directOrSearchEvents(
+        body,
+        'report_workflow_outcome',
+        { verdict: 'passed', summary: `${agent} verified the assigned work.` },
+        reportIds.search,
+        reportIds.call
+      )
+      writeEvents(response, responseId, selection.events)
+      return true
+    }
+    if (serialized.includes('你是看板的 AI 管家，只负责编排')) {
+      assert.ok(serialized.includes(SKILL_NAME), 'The manager did not receive its Skill')
+      assert.ok(serialized.includes(PLUGIN_CONTENT_MARKER), 'The manager lost its plugin Skill')
+      const selection = directOrSearchEvents(
+        body,
+        'submit_workflow_plan',
+        plannedPlanArguments(issue),
+        planIds.search,
+        planIds.call
+      )
+      writeEvents(response, responseId, selection.events)
+      return true
+    }
+    return false
   }
 
   function directOrSearchEvents(body, toolName, argumentsValue, searchCallId, toolCallId) {
@@ -371,16 +448,6 @@ export async function createDesktopScenario({
       `Deferred tool search did not expose ${MCP_NAMESPACE}.${toolName} or a converted Claude tool`
     )
     return functionCall(toolCallId, convertedName, argumentsValue)
-  }
-
-  function recordToolCall(issue, agent, toolName) {
-    actualToolCalls.push({
-      agent,
-      issueId: issue.id,
-      issueTitle: issue.title,
-      toolName,
-      sequence: actualToolCalls.length + 1,
-    })
   }
 
   async function archiveFixture() {
@@ -1123,183 +1190,65 @@ export async function createDesktopScenario({
     return issue
   }
 
-  async function waitForExecutionStage(issue, expectedAgent, expectedCount, timeoutMs) {
-    return waitForValue(
-      () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
-      response => {
-        const items = executionItems(response, issue.id)
-        if (items.length !== expectedCount) return false
-        const current = items.at(-1)
-        return current?.agentId === expectedAgent.id &&
-          current.executionEnvironment === 'cloud' &&
-          current.executionDeviceId === CLOUD_DEVICE_ID &&
-          current.runtimeDeviceId === CLOUD_DEVICE_ID &&
-          current.runtimeInstanceId &&
-          !terminalExecution(current) &&
-          current.runtimeTaskId
-          ? { current, items }
-          : false
-      },
-      `${expectedAgent.name} did not become execution ${expectedCount} for ${issue.title}`,
-      timeoutMs
+  async function runIssueChain(control, issue, expectedRule, screenshotPrefix) {
+    const runtimeTimeoutMs = Math.max(uiTimeoutMs, 90_000)
+    const plan = await waitForValue(
+      () => request(`/api/v1/loop-items/${issue.id}/workflow-plan`),
+      value =>
+        value?.items?.length === 2 && value.items.every(item => item.task_id) ? value : false,
+      `The AI manager did not materialize two child tasks for ${issue.title}`,
+      runtimeTimeoutMs
     )
-  }
+    await waitForValue(
+      async () => managerPlans.has(issue.id),
+      Boolean,
+      'The AI manager did not finish submitting its persisted plan',
+      runtimeTimeoutMs
+    )
+    for (const member of ['codex', 'claude_code']) {
+      const item = plan.items.find(candidate => candidate.client_key === member)
+      assert.ok(item, `The AI manager omitted ${member}`)
+      assert.equal(item.prompt, plannedPrompt(issue, member))
+      assert.equal(item.assignee_id, member === 'codex' ? codexAgent.id : claudeAgent.id)
+    }
+    await capture(control, `${screenshotPrefix}-planned.png`)
 
-  async function waitForChainCompleted(issue, expectedAgents, timeoutMs) {
-    const result = await waitForValue(
+    const completed = await waitForValue(
       async () => {
-        const [latestIssue, executions] = await Promise.all([
+        const [latestIssue, latestPlan, executions] = await Promise.all([
           request(`/api/v1/loop-items/${issue.id}`),
+          request(`/api/v1/loop-items/${issue.id}/workflow-plan`),
           request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
         ])
-        return { executions: executionItems(executions, issue.id), issue: latestIssue }
+        return { issue: latestIssue, plan: latestPlan, executions: executions.items ?? [] }
       },
       value =>
-        ['in_review', 'completed'].includes(value.issue.status) &&
-        value.executions.length === expectedAgents.length &&
-        value.executions.every(execution => execution.status === 'completed'),
-      `Every collaboration stage did not complete for Issue ${issue.title}`,
-      timeoutMs
+        value.issue.status === 'completed' &&
+        value.plan.status === 'completed' &&
+        managerReviews.has(issue.id) &&
+        ['codex', 'claude_code'].every(member => executorPrompts.has(`${issue.id}:${member}`)) &&
+        value.plan.items.every(item =>
+          value.executions.some(
+            execution => execution.loopItemId === item.task_id && execution.status === 'completed'
+          )
+        ),
+      `The manager plan, child executions, and review did not complete for ${issue.title}`,
+      runtimeTimeoutMs
     )
     assert.deepEqual(
-      result.executions.map(execution => execution.agentId),
-      expectedAgents.map(agent => agent.id)
-    )
-    return result
-  }
-
-  async function runIssueChain(control, issue, expectedRule, screenshotPrefix) {
-    const runtimeTimeoutMs = Math.max(uiTimeoutMs, 60_000)
-    await waitForExecutionStage(issue, codexAgent, 1, runtimeTimeoutMs)
-    const codexGate = await waitForValue(
-      () => pendingCompletions.get(stageKey(issue, 'codex')) ?? null,
-      Boolean,
-      `Codex did not finish the real MCP sequence for ${issue.title}`,
-      runtimeTimeoutMs
-    )
-    const codexComment = await waitForComment(issue, 'codex', runtimeTimeoutMs)
-    const beforeClaude = await request(
-      `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
-    )
-    assert.equal(
-      executionItems(beforeClaude, issue.id).some(
-        execution => execution.agentId === claudeAgent.id
-      ),
-      false,
-      'Claude Code started before the Codex MCP comment was persisted and Codex completed'
-    )
-    await control.command('waitFor', scoped('[data-testid="collaboration-automation-stage-0"]'), {
-      text: `执行中 · ${codexAgent.name}`,
-      timeoutMs: runtimeTimeoutMs,
-      visible: true,
-    })
-    await control.command(
-      'waitFor',
-      scoped(
-        `[data-testid="cloud-todo-card-tool-${issue.id}-${stageCallIds(issue, 'codex').commentCall}"]`
-      ),
-      {
-        timeoutMs: runtimeTimeoutMs,
-        visible: true,
-      }
-    )
-    await capture(control, `${screenshotPrefix}-codex-running.png`)
-    codexGate.resolve()
-
-    const claudeStage = await waitForExecutionStage(issue, claudeAgent, 2, runtimeTimeoutMs)
-    const [codexExecution, claudeExecution] = claudeStage.items
-    assert.equal(codexExecution.status, 'completed')
-    assert.equal(claudeExecution.previousExecutionId, codexExecution.id)
-    assert.ok(
-      new Date(codexExecution.completedAt).getTime() <=
-        new Date(claudeExecution.queuedAt).getTime(),
-      'Claude Code was queued before Codex reached its terminal state'
-    )
-    assert.equal(claudeExecution.runtimeInstanceId, codexExecution.runtimeInstanceId)
-    const claudeGate = await waitForValue(
-      () => pendingCompletions.get(stageKey(issue, 'claude_code')) ?? null,
-      Boolean,
-      `Claude Code did not finish the real MCP sequence for ${issue.title}`,
-      runtimeTimeoutMs
-    )
-    const claudeComment = await waitForComment(issue, 'claude_code', runtimeTimeoutMs)
-    assert.ok(
-      new Date(codexComment.created_at).getTime() <= new Date(claudeComment.created_at).getTime(),
-      'The persisted Claude Code comment predates the Codex comment'
-    )
-    assert.deepEqual(
-      modelStages.filter(stage => stage.issueId === issue.id).map(stage => stage.agent),
-      ['codex', 'claude_code']
-    )
-    await control.command('waitFor', scoped('[data-testid="collaboration-automation-stage-1"]'), {
-      text: `执行中 · ${claudeAgent.name}`,
-      timeoutMs: runtimeTimeoutMs,
-      visible: true,
-    })
-    await control.command(
-      'waitFor',
-      scoped(
-        `[data-testid="cloud-todo-card-tool-${issue.id}-${stageCallIds(issue, 'claude_code').commentCall}"]`
-      ),
-      {
-        timeoutMs: runtimeTimeoutMs,
-        visible: true,
-      }
-    )
-    await capture(control, `${screenshotPrefix}-claude-running.png`)
-    claudeGate.resolve()
-
-    const completed = await waitForChainCompleted(
-      issue,
-      [codexAgent, claudeAgent],
-      runtimeTimeoutMs
+      completed.plan.items.map(item => item.outcome_verdict),
+      ['passed', 'passed']
     )
     const runs = await waitForValue(
       () => request(`/api/v1/cloud-projects/${project.id}/automations/${expectedRule.id}/runs`),
-      values =>
-        values.length === 1 && values[0].taskId === issue.id && values[0].status === 'succeeded'
-          ? values
-          : false,
-      `The expected Automation Run did not succeed for ${issue.title}`,
+      values => (values.length === 1 && values[0].status === 'succeeded' ? values : false),
+      `The collaboration automation did not succeed for ${issue.title}`,
       runtimeTimeoutMs
     )
+    assert.equal(runs[0].taskId, issue.id)
     assert.equal(runs[0].eventType, expectedRule.eventType)
-    assert.equal(runs[0].trigger, 'event')
-    assert.deepEqual(
-      completed.issue.workflow.nodes.map(node => node.automation_run_id),
-      completed.executions.map(execution => execution.automationRunId)
-    )
-    assert.deepEqual(
-      actualToolCalls
-        .filter(call => call.issueId === issue.id)
-        .map(call => `${call.agent}:${call.toolName}`),
-      [
-        ...TOOL_SEQUENCE.map(tool => `codex:${tool}`),
-        ...TOOL_SEQUENCE.map(tool => `claude_code:${tool}`),
-      ]
-    )
-    const comments = await commentsFor(issue)
-    assert.deepEqual(
-      comments
-        .filter(comment => comment.body.startsWith(`COLLAB_E2E:${issue.id}:`))
-        .map(comment => comment.body),
-      [stageComment(issue, 'codex'), stageComment(issue, 'claude_code')]
-    )
-    await control.command('waitFor', scoped('[data-testid="collaboration-automation-progress"]'), {
-      text: '2 / 2',
-      timeoutMs: runtimeTimeoutMs,
-      visible: true,
-    })
-    for (const index of [0, 1]) {
-      await control.command(
-        'waitFor',
-        scoped(`[data-testid="collaboration-automation-stage-${index}"][data-status="completed"]`),
-        { timeoutMs: runtimeTimeoutMs, visible: true }
-      )
-    }
     await capture(control, `${screenshotPrefix}-completed.png`)
   }
-
   return {
     claudeBinary,
     requiresCloudEnvironment: true,
@@ -1369,9 +1318,8 @@ export async function createDesktopScenario({
       const body = await readRequestBody(requestMessage)
       const serialized = JSON.stringify(body)
       const issue = issueFromRequest(serialized)
-      const agent = agentFromRequest(serialized, issue)
-      const ids = issue && agent ? stageCallIds(issue, agent) : null
-      const requestSummary = summarizeModelRequest(body, serialized, issue, agent, ids)
+      const agent = agentFromRequest(serialized)
+      const requestSummary = summarizeModelRequest(body, serialized, issue, agent)
       requestSummary.requestNumber = modelRequests.length + 1
       modelRequests.push(requestSummary)
       const responseId = `collaboration-agent-chain-${Date.now()}-${modelRequests.length}`
@@ -1385,174 +1333,15 @@ export async function createDesktopScenario({
         ])
         return true
       }
-      if (!issue || !agent || !ids) {
-        assert.fail(
-          `Active collaboration execution emitted an unrecognized model request: ${JSON.stringify(requestSummary)}`
-        )
-      }
-
-      if (requestContainsToolOutput(body, ids.commentCall)) {
-        const output = serializedToolOutput(body, ids.commentCall)
-        assert.ok(
-          output.includes(stageComment(issue, agent)),
-          `${agent} did not receive the persisted comment from the real wework_space MCP`
-        )
-        const comment = await waitForComment(issue, agent, Math.max(uiTimeoutMs, 30_000))
-        persistedComments.push({
-          agent,
-          body: comment.body,
-          createdAt: comment.created_at,
-          issueId: issue.id,
-        })
-        const gate = deferred()
-        pendingCompletions.set(stageKey(issue, agent), gate)
-        const completion = streamingTextEvents(
-          responseId,
-          `${MODEL_COMPLETION_MARKER}:${issue.id}:${agent}`
-        )
-        response.writeHead(200, {
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-          'content-type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(createSse(completion.start))
-        await gate.promise
-        response.end(
-          createSse([
-            ...completion.chunks.map((delta, index) => ({
-              type: 'response.output_text.delta',
-              item_id: completion.itemId,
-              output_index: 0,
-              content_index: 0,
-              delta,
-              offset: completion.chunks.slice(0, index).join('').length,
-            })),
-            ...completion.finish,
-          ])
-        )
+      if (
+        issue &&
+        handlePlannedWorkflowRequest(body, serialized, issue, agent, response, responseId)
+      ) {
         return true
       }
-
-      if (requestContainsToolOutput(body, ids.commentSearch)) {
-        recordToolCall(issue, agent, 'add_board_item_comment')
-        writeEvents(
-          response,
-          responseId,
-          namespacedCallAfterSearch(
-            body,
-            'add_board_item_comment',
-            {
-              space_id: String(project.id),
-              item_id: issue.id,
-              body: stageComment(issue, agent),
-            },
-            ids.commentCall
-          )
-        )
-        return true
-      }
-
-      if (requestContainsToolOutput(body, ids.itemCall)) {
-        const output = serializedToolOutput(body, ids.itemCall)
-        assert.ok(output.includes(issue.id), `${agent} get_board_item returned the wrong Issue id`)
-        assert.ok(
-          output.includes(issue.title),
-          `${agent} get_board_item did not return the real Issue title`
-        )
-        if (issue.title === TAG_ISSUE_TITLE) {
-          assert.ok(
-            output.includes(MATCHING_TAG),
-            `${agent} get_board_item did not return the persisted matching Tag`
-          )
-        }
-        const selection = directOrSearchEvents(
-          body,
-          'add_board_item_comment',
-          {
-            space_id: String(project.id),
-            item_id: issue.id,
-            body: stageComment(issue, agent),
-          },
-          ids.commentSearch,
-          ids.commentCall
-        )
-        if (selection.mode === 'direct') {
-          recordToolCall(issue, agent, 'add_board_item_comment')
-        }
-        writeEvents(response, responseId, selection.events)
-        return true
-      }
-
-      if (requestContainsToolOutput(body, ids.itemSearch)) {
-        recordToolCall(issue, agent, 'get_board_item')
-        writeEvents(
-          response,
-          responseId,
-          namespacedCallAfterSearch(
-            body,
-            'get_board_item',
-            { space_id: String(project.id), item_id: issue.id },
-            ids.itemCall
-          )
-        )
-        return true
-      }
-
-      if (requestContainsToolOutput(body, ids.contextCall)) {
-        const output = serializedToolOutput(body, ids.contextCall)
-        assert.ok(
-          output.includes(String(project.id)),
-          `${agent} get_current_context returned the wrong project`
-        )
-        assert.ok(
-          output.includes(issue.id),
-          `${agent} get_current_context returned the wrong bound Issue`
-        )
-        const selection = directOrSearchEvents(
-          body,
-          'get_board_item',
-          { space_id: String(project.id), item_id: issue.id },
-          ids.itemSearch,
-          ids.itemCall
-        )
-        if (selection.mode === 'direct') {
-          recordToolCall(issue, agent, 'get_board_item')
-        }
-        writeEvents(response, responseId, selection.events)
-        return true
-      }
-
-      if (requestContainsToolOutput(body, ids.contextSearch)) {
-        recordToolCall(issue, agent, 'get_current_context')
-        writeEvents(
-          response,
-          responseId,
-          namespacedCallAfterSearch(body, 'get_current_context', {}, ids.contextCall)
-        )
-        return true
-      }
-
-      assert.ok(serialized.includes(SKILL_NAME), `${agent} did not receive its configured Skill`)
-      if (agent === 'codex') {
-        assert.ok(
-          serialized.includes(PLUGIN_CONTENT_MARKER),
-          `${agent} did not receive its configured plugin Skill`
-        )
-      }
-      modelStages.push({ agent, issueId: issue.id, issueTitle: issue.title })
-      const selection = directOrSearchEvents(
-        body,
-        'get_current_context',
-        {},
-        ids.contextSearch,
-        ids.contextCall
+      assert.fail(
+        `The planned collaboration workflow emitted an unexpected model request: ${JSON.stringify(requestSummary)}`
       )
-      if (selection.mode === 'direct') {
-        recordToolCall(issue, agent, 'get_current_context')
-      }
-      writeEvents(response, responseId, selection.events)
-      return true
     },
 
     async verify(control) {
@@ -1622,14 +1411,13 @@ export async function createDesktopScenario({
         failure = error
       } finally {
         active = false
-        for (const gate of pendingCompletions.values()) gate.resolve()
         try {
           await archiveFixture()
         } catch (cleanupError) {
           failure = failure
             ? new AggregateError(
                 [failure, cleanupError],
-                'Collaboration automation verification and fixture cleanup both failed'
+                `Collaboration verification failed: ${failure.message}; fixture cleanup failed: ${cleanupError.message}`
               )
             : cleanupError
         }
@@ -1639,7 +1427,6 @@ export async function createDesktopScenario({
 
     async cleanup() {
       active = false
-      for (const gate of pendingCompletions.values()) gate.resolve()
       await archiveFixture()
     },
 
@@ -1653,14 +1440,14 @@ export async function createDesktopScenario({
             ? { id: claudeAgent.id, name: claudeAgent.name, runtime: claudeAgent.runtime }
             : null,
         ].filter(Boolean),
-        actualToolCalls,
         collaborationGroupId: collaborationGroup?.id ?? null,
         createdIssueId: createdIssue?.id ?? null,
         createdRuleId: createdRule?.id ?? null,
         fixtureArchived,
         modelRequests,
-        modelStages,
-        persistedComments,
+        managerPlans: [...managerPlans],
+        executorPrompts: [...executorPrompts],
+        managerReviews: [...managerReviews],
         projectId: project?.id ?? null,
         tagIssueId: tagIssue?.id ?? null,
         tagRuleId: tagRule?.id ?? null,

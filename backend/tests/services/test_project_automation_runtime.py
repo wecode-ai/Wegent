@@ -436,6 +436,35 @@ async def test_manual_assignment_enters_only_existing_project_robot_path(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_workflow_manager_robot_creates_activity_before_assignment(monkeypatch):
+    service = ProjectAutomationExecution()
+    db, _owner, _project, rule, run = _dispatch_objects(
+        {"action": "execute", "role": {"source": "agent"}}
+    )
+    run.metadata_json = {"bypass_workflow_definition": True}
+    monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
+    monkeypatch.setattr(
+        service, "_managed_prompt", MagicMock(return_value="Plan Issue")
+    )
+    activity = MagicMock()
+    assign = MagicMock()
+    monkeypatch.setattr(service, "_create_manager_activity", activity)
+    monkeypatch.setattr(service, "_assign_project_robot", assign)
+
+    await service.dispatch(db, rule, run)
+
+    activity.assert_called_once_with(
+        db,
+        rule=rule,
+        run=run,
+        configured_manager="project_robot",
+        agent_id="agent-1",
+    )
+    assign.assert_called_once()
+    assert assign.call_args.kwargs["instruction"] == "Plan Issue"
+
+
+@pytest.mark.asyncio
 async def test_invalid_workflow_definition_fails_before_creating_issue(monkeypatch):
     service = ProjectAutomationExecution()
     db, _owner, _project, rule, run = _dispatch_objects(

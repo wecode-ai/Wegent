@@ -1583,8 +1583,12 @@ def test_later_runtime_event_cannot_overwrite_terminal_truth(
     assert claimed.last_event_seq == 1
 
 
+@pytest.mark.parametrize("manager_action_recorded", [False, True])
 def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
-    test_db: Session, test_user: User
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    manager_action_recorded: bool,
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -1611,6 +1615,16 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
     test_db.add(run)
     test_db.add(child)
     test_db.commit()
+    if manager_action_recorded:
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        monkeypatch.setattr(
+            project_automation_execution,
+            "has_recorded_manager_assignment",
+            lambda _db, *, run_id: run_id == str(run.id),
+        )
     child_execution = _make_execution(
         test_db,
         child,
@@ -1649,7 +1663,7 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
     assert completed.status == "completed"
     test_db.refresh(run)
     assert run.status == "succeeded"
-    assert run.description == "Run succeeded."
+    assert run.description == ("" if manager_action_recorded else "Run succeeded.")
 
 
 def test_complete_truncates_long_execution_note(
@@ -5207,7 +5221,15 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
     assert "api_key" not in claimed.execution_payload
 
 
-@pytest.mark.parametrize("executor_type", ["project_robot", "automation_manager"])
+@pytest.mark.parametrize(
+    "executor_type",
+    [
+        "project_robot",
+        "workflow_child_robot",
+        "workflow_manager_robot",
+        "automation_manager",
+    ],
+)
 def test_local_runtime_payload_materializes_only_for_executor_pull(
     test_db: Session, test_user: User, executor_type: str
 ) -> None:
@@ -5240,7 +5262,11 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
         )
     )
     test_db.flush()
-    if executor_type == "project_robot":
+    if executor_type in {
+        "project_robot",
+        "workflow_child_robot",
+        "workflow_manager_robot",
+    }:
         bot = _make_bot(test_db, project, test_user)
         profile = RuntimeProfile(
             user_id=test_user.id,
@@ -5262,6 +5288,38 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
             "default_runtime_profile_id": profile.id,
         }
         test_db.commit()
+        automation_context = None
+        instruction = None
+        if executor_type == "workflow_child_robot":
+            automation_context = {"source": "issue_workflow"}
+            instruction = "Manager-generated child task instruction"
+        if executor_type == "workflow_manager_robot":
+            rule = ProjectAutomationRule(
+                id=f"workflow-rule-{uuid.uuid4().hex[:10]}",
+                cloud_project_id=project.id,
+                title="Workflow manager",
+                description="Static group policy",
+                status="enabled",
+                created_by_user_id=test_user.id,
+                metadata_json={},
+            )
+            test_db.add(rule)
+            test_db.flush()
+            run = ProjectAutomationRun(
+                cloud_project_id=project.id,
+                parent_id=rule.id,
+                task_id=item.id,
+                status="pending",
+                created_by_user_id=test_user.id,
+                metadata_json={
+                    "bypass_workflow_definition": True,
+                    "instruction_override": "Coordinate this Issue",
+                    "event": {"type": "task.created"},
+                },
+            )
+            test_db.add(run)
+            test_db.flush()
+            automation_context = {"run_id": str(run.id)}
         execution = loop_item_execution_service.create_for_assignment(
             test_db,
             loop_item_id=item.id,
@@ -5271,6 +5329,8 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
             environment="local",
             execution_device_id="local-device",
             priority="medium",
+            automation_context=automation_context,
+            instruction=instruction,
         )
     else:
         rule = ProjectAutomationRule(
@@ -5345,9 +5405,15 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
         )
     test_db.commit()
 
-    if executor_type == "project_robot":
+    if executor_type in {
+        "project_robot",
+        "workflow_child_robot",
+        "workflow_manager_robot",
+    }:
         assert execution.agent_id == bot.id
-        assert execution.automation_run_id == ""
+        assert execution.automation_run_id == (
+            str(run.id) if executor_type == "workflow_manager_robot" else ""
+        )
     else:
         assert execution.agent_id == ""
         assert execution.automation_run_id == str(run.id)
@@ -5395,6 +5461,13 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
         assert "Handle the task" in payload["message"]
+    if executor_type == "workflow_manager_robot":
+        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
+        assert "submit_workflow_plan" in payload["message"]
+        assert "Coordinate this Issue" in payload["message"]
+        assert payload["origin"]["automationRole"] == "manager"
+    if executor_type == "workflow_child_robot":
+        assert "Manager-generated child task instruction" in payload["message"]
 
 
 def test_public_cloud_model_uses_backend_gateway_config(

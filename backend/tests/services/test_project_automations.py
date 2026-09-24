@@ -986,7 +986,7 @@ def test_direct_workflow_node_runs_without_binding_to_an_automation_rule(
     assert definition["nodes"][1]["execution_config"]["agent_id"] == "agent-1"
 
 
-def test_collaboration_group_stage_compiles_agent_runtime_capabilities(
+def test_collaboration_group_uses_ai_manager_even_with_configured_stages(
     test_db,
     test_user,
 ) -> None:
@@ -1023,8 +1023,10 @@ def test_collaboration_group_stage_compiles_agent_runtime_capabilities(
     definition = project_automation_execution._collaboration_group_workflow_definition(
         test_db,
         project_id=str(project.id),
+        automation_id="automation-1",
         group={
             "name": "Implementation group",
+            "instructions": "Coordinate this project",
             "leader": {"kind": "agent", "id": agent.id},
             "members": [
                 {"kind": "agent", "id": agent.id},
@@ -1050,15 +1052,12 @@ def test_collaboration_group_stage_compiles_agent_runtime_capabilities(
         },
     )
 
-    first_node, human_node, final_node = definition.nodes
-    assert first_node.workspace_policy == "composer"
-    assert human_node.workspace_policy == "inherit"
-    assert human_node.depends_on == [first_node.id]
-    assert human_node.execution_mode == "human"
-    assert human_node.required_assignee_type == "user"
-    assert human_node.required_assignee_id == str(test_user.id)
-    assert final_node.depends_on == [human_node.id]
-    config = first_node.execution_config
+    assert definition.advancement_policy == "ai"
+    assert definition.stage_mode == "none"
+    assert definition.ai_automation_rule_id == "automation-1"
+    assert definition.coordinator_prompt == "Coordinate this project"
+    assert definition.nodes == []
+    config = definition.execution_config
     assert config is not None
     assert config.agent_id == agent.id
     assert config.runtime == "claude_code"
@@ -1071,7 +1070,7 @@ def test_collaboration_group_stage_compiles_agent_runtime_capabilities(
     }
 
 
-def test_collaboration_group_stage_rejects_assignee_outside_group(
+def test_collaboration_group_requires_ai_manager(
     test_db,
     test_user,
 ) -> None:
@@ -1086,11 +1085,12 @@ def test_collaboration_group_stage_rejects_assignee_outside_group(
 
     with pytest.raises(
         RuntimeError,
-        match="stage assignee must be a collaboration-group member",
+        match="requires an AI manager",
     ):
         project_automation_execution._collaboration_group_workflow_definition(
             test_db,
             project_id=str(project.id),
+            automation_id="automation-1",
             group={
                 "name": "Invalid group",
                 "leader": {"kind": "human", "id": str(test_user.id)},

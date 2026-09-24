@@ -117,6 +117,10 @@ class IssueWorkflowPlanningService:
             item.model_copy(update={"stage_id": stage_id}) for item in values.items
         ]
         for item in items:
+            if not item.prompt.strip():
+                raise ValueError(
+                    "AI manager must provide an execution prompt for every child task"
+                )
             self._validate_assignee(
                 db,
                 issue,
@@ -178,8 +182,6 @@ class IssueWorkflowPlanningService:
         workflow["orchestration_status"] = "dispatching"
         self._write_workflow(issue, workflow)
         db.flush()
-        run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
-        automation_run_id = str(run_metadata.get("project_automation_run_id") or "")
         for item in items:
             if item.loop_item_id:
                 continue
@@ -201,11 +203,8 @@ class IssueWorkflowPlanningService:
                     "workflow_run_id": run.id,
                     "plan_version": self._plan_version(run),
                     "plan_item_id": item.id,
-                    **({"run_id": automation_run_id} if automation_run_id else {}),
                 },
-                instruction=self._item_metadata(item).get("prompt")
-                or item.description
-                or "",
+                instruction=str(self._item_metadata(item)["prompt"]),
                 assign_creator_if_unassigned=False,
             )
             child.metadata_json = {

@@ -301,7 +301,10 @@ def test_required_plan_materializes_once_after_approval(
     )
     assert execution.agent_id == robot.id
     assert execution.status == "queued"
-    assert execution.automation_run_id == "automation-run-1"
+    assert execution.automation_run_id == ""
+    assert execution.runtime_origin_context["execution_prompt"] == (
+        "Implement the feature, add tests, and report verification evidence."
+    )
 
 
 def test_plan_view_projects_manager_runtime(

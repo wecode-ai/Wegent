@@ -253,44 +253,28 @@ fn dispatch(
                 .ok_or_else(|| {
                     TaskRuntimeError::Invalid("collaboration group was not found".into())
                 })?;
-            let manager_planning = group["coordination_mode"].as_str().unwrap_or("manager")
-                == "manager"
-                && !group["stages"]
-                    .as_array()
-                    .is_some_and(|stages| !stages.is_empty());
-            let stages = group["stages"].as_array().filter(|stages| !stages.is_empty()).cloned().unwrap_or_else(|| vec![json!({"id":"leader", "name":group["name"], "description":group["instructions"], "assignee":group["leader"]})]);
-            let mut nodes = Vec::new();
-            let mut previous: Option<String> = None;
-            for stage in stages {
-                let assignee = if stage["assignee"].is_object() {
-                    &stage["assignee"]
-                } else {
-                    &group["leader"]
-                };
-                let kind = text(assignee, "kind");
-                if !matches!(kind, "agent" | "human") {
-                    return Err(TaskRuntimeError::Invalid(
-                        "unsupported collaboration group member".into(),
-                    ));
-                }
-                let id = format!("{}:{}", run_id, text(&stage, "id"));
-                let prompt = if manager_planning {
-                    format!(
-                        "{}\n\n{}",
-                        task.title.as_deref().unwrap_or_default(),
-                        task.description
-                    )
-                } else {
-                    format!(
-                        "{}\n\n{}\n\n{}",
-                        text(&stage, "description"),
-                        task.title.as_deref().unwrap_or_default(),
-                        task.description
-                    )
-                };
-                nodes.push(json!({"id":id,"name":stage["name"],"prompt":prompt.trim(),"kind":"ai","execution_mode":if kind=="agent" {"robot"} else {"human"},"required_assignee_type":if kind=="agent" {"agent"} else {"user"},"required_assignee_id":assignee["id"],"depends_on":previous.iter().collect::<Vec<_>>(),"required":true,"automation_role":if manager_planning && nodes.is_empty() {"manager"} else {""}}));
-                previous = Some(id);
+            let leader = &group["leader"];
+            if text(leader, "kind") != "agent" || text(leader, "id").is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "automated collaboration requires an AI manager".into(),
+                ));
             }
+            let manager_prompt = format!(
+                "You are the AI manager for this Issue. Use get_current_context, get_board_item, and get_assignment_candidates to inspect the Issue and eligible members. Then call submit_workflow_plan with independently verifiable child tasks. Write a specific execution prompt for each assignee, including the goal, boundaries, and acceptance criteria. Do not execute the child tasks.\n\nIssue: {}",
+                task.title.as_deref().unwrap_or_default()
+            );
+            let nodes = vec![json!({
+                "id": format!("{run_id}:manager"),
+                "name": group["name"],
+                "prompt": manager_prompt.trim(),
+                "kind": "ai",
+                "execution_mode": "robot",
+                "required_assignee_type": "agent",
+                "required_assignee_id": leader["id"],
+                "depends_on": [],
+                "required": true,
+                "automation_role": "manager",
+            })];
             let mut workflow = instantiate_local_workflow(&json!({"version":1,"nodes":nodes}))?;
             workflow["automation_run_id"] = json!(run_id);
             enqueue_ready_local_workflow_stages(
@@ -482,12 +466,16 @@ impl LocalTaskStore {
                 }
             }
             let node_id = format!("{run_id}:plan:{index}:{client_key}");
-            let description = text(item, "description");
-            let prompt = text(item, "prompt");
+            let prompt = text(item, "prompt").trim();
+            if prompt.is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "AI manager must provide an execution prompt for every child task".into(),
+                ));
+            }
             nodes.push(json!({
                 "id": node_id,
                 "name": title,
-                "prompt": if prompt.trim().is_empty() { description } else { prompt },
+                "prompt": prompt,
                 "kind": "ai",
                 "execution_mode": if assignee_type == "agent" {"robot"} else {"human"},
                 "required_assignee_type": assignee_type,

@@ -14,7 +14,7 @@ multi-worker cloud dispatchers never double-claim a run.
 import json
 import logging
 from collections.abc import Collection
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -722,6 +722,8 @@ class LoopItemExecutionService:
             if automation_context is not None
             else inferred_context
         )
+        if instruction is not None:
+            effective_context["execution_prompt"] = instruction
         persisted_config = bot_config(agent)
         mode = str(persisted_config.get("execution_mode") or "auto")
         runtime_source = str(effective_context.get("runtime_source") or "agent_default")
@@ -3010,15 +3012,15 @@ class LoopItemExecutionService:
         from app.services.project_chat.service import project_chat_service
 
         activity = self._linked_activity(db, execution)
-        manager_assignment_recorded = bool(
-            execution.executor_type == "automation_manager"
+        manager_action_recorded = bool(
+            execution.executor_type in {"automation_manager", "project_robot"}
             and execution.automation_run_id
             and project_automation_execution.has_recorded_manager_assignment(
                 db, run_id=execution.automation_run_id
             )
         )
         if activity is not None and execution.executor_type == "automation_manager":
-            if terminal_status != STATUS_COMPLETED and manager_assignment_recorded:
+            if terminal_status != STATUS_COMPLETED and manager_action_recorded:
                 activity.status = STATUS_COMPLETED
                 activity.message_type = "text"
                 activity.content = "AI 调度员已完成分派，但调度结果回传失败。" + (
@@ -3057,10 +3059,7 @@ class LoopItemExecutionService:
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
-                if (
-                    execution.executor_type == "automation_manager"
-                    and manager_assignment_recorded
-                ):
+                if manager_action_recorded:
                     if run.status not in TERMINAL_RUN_STATUSES:
                         run.status = "succeeded"
                         run.completed_at = completed_at
@@ -3074,13 +3073,6 @@ class LoopItemExecutionService:
                 if (
                     execution.executor_type == "automation_manager"
                     and terminal_status == STATUS_COMPLETED
-                ):
-                    return activity
-                if (
-                    execution.executor_type == "project_robot"
-                    and project_automation_execution.has_recorded_manager_assignment(
-                        db, run_id=execution.automation_run_id
-                    )
                 ):
                     return activity
                 run_status = {
@@ -3817,19 +3809,49 @@ class LoopItemExecutionService:
                         db, execution.loop_item_id
                     )
             origin_context = self._selection_context(execution, origin_context)
-            return (
-                WeworkExecutionProfile.for_project_robot(
-                    agent,
-                    db=db,
-                    runtime_profile=runtime_profile,
-                    cloud_project_id=execution.cloud_project_id,
-                    model_override=str(origin_context.get("model") or ""),
-                    model_type_override=origin_context.get("model_type"),
-                    model_options_override=origin_context.get("model_options"),
-                    workspace_binding_override=origin_context.get("workspace_binding"),
-                ),
-                origin_context,
+            profile = WeworkExecutionProfile.for_project_robot(
+                agent,
+                db=db,
+                runtime_profile=runtime_profile,
+                cloud_project_id=execution.cloud_project_id,
+                model_override=str(origin_context.get("model") or ""),
+                model_type_override=origin_context.get("model_type"),
+                model_options_override=origin_context.get("model_options"),
+                workspace_binding_override=origin_context.get("workspace_binding"),
             )
+            run_metadata = (
+                run.metadata_json
+                if run is not None and isinstance(run.metadata_json, dict)
+                else {}
+            )
+            if run_metadata.get("bypass_workflow_definition") and rule is not None:
+                from app.services.project_automation_execution import (
+                    project_automation_execution,
+                )
+
+                project = db.get(CloudProject, execution.cloud_project_id)
+                owner = db.get(User, rule.created_by_user_id)
+                if project is None or owner is None:
+                    raise WeworkRuntimeConfigurationError(
+                        "AI manager project or owner is unavailable"
+                    )
+                profile = replace(
+                    profile,
+                    instruction=project_automation_execution._managed_prompt(
+                        db,
+                        owner=owner,
+                        project=project,
+                        rule=rule,
+                        run=run,
+                        context=origin_context,
+                    ),
+                    manager_mode=True,
+                )
+            else:
+                assigned_prompt = origin_context.get("execution_prompt")
+                if isinstance(assigned_prompt, str) and assigned_prompt.strip():
+                    profile = replace(profile, execution_prompt=assigned_prompt)
+            return profile, origin_context
 
         if execution.executor_type == "generic_robot":
             if run is None:

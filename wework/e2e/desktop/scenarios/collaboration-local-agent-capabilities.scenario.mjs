@@ -5,7 +5,12 @@ import { dirname, join } from 'node:path'
 import {
   assistantMessage,
   createSse,
+  functionCall,
+  mcpToolRequestEvents,
+  namespacedFunctionCall,
   readRequestBody,
+  requestContainsToolOutput,
+  requestToolSearchResults,
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
@@ -22,6 +27,16 @@ const GROUP_NAME = `本地能力协作小组-${process.pid}`
 const ISSUE_NAME = `本地智能体执行验收-${process.pid}`
 const RUN_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_RUN'
 const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
+const EXECUTOR_PROMPT =
+  'LOCAL_MANAGER_GENERATED_EXECUTOR_PROMPT: verify the configured capability and report evidence.'
+const CONTEXT_SEARCH = 'local-manager-context-search'
+const CONTEXT_CALL = 'local-manager-context-call'
+const CANDIDATES_SEARCH = 'local-manager-candidates-search'
+const CANDIDATES_CALL = 'local-manager-candidates-call'
+const PLAN_SEARCH = 'local-manager-plan-search'
+const PLAN_CALL = 'local-manager-plan-call'
+const REVIEW_SEARCH = 'local-manager-review-search'
+const REVIEW_CALL = 'local-manager-review-call'
 const SKILL_NAME = `local-agent-skill-${process.pid}`
 const SKILL_ID = 91001
 const SKILL_MARKER = 'LOCAL_AGENT_REAL_SKILL'
@@ -40,6 +55,60 @@ function scoped(selector) {
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' })
   response.end(JSON.stringify(body))
+}
+
+function toolCallAfterSearch(body, toolName, argumentsValue, callId) {
+  const tools = [...(body.tools ?? []), ...requestToolSearchResults(body)]
+  const namespace = tools.find(
+    tool =>
+      tool?.type === 'namespace' &&
+      tool.name === 'wework_space' &&
+      tool.tools?.some(candidate => candidate.name === toolName)
+  )
+  if (namespace) {
+    return namespacedFunctionCall(callId, namespace.name, toolName, argumentsValue)
+  }
+  const convertedName = tools
+    .map(tool => tool?.name ?? tool?.function?.name)
+    .find(name => name === toolName || name?.endsWith(`__${toolName}`))
+  assert.ok(convertedName, `The searched tool ${toolName} was unavailable`)
+  return functionCall(callId, convertedName, argumentsValue)
+}
+
+function toolOutput(body, callId) {
+  const visit = value => {
+    if (Array.isArray(value)) return value.map(visit).find(Boolean)
+    if (!value || typeof value !== 'object') return null
+    if (
+      value.call_id === callId &&
+      ['function_call_output', 'mcp_tool_call_output', 'custom_tool_call_output'].includes(
+        value.type
+      )
+    ) {
+      return value.output
+    }
+    return Object.values(value).map(visit).find(Boolean) ?? null
+  }
+  return visit(body)
+}
+
+function objectFromOutput(value, predicate) {
+  if (typeof value === 'string') {
+    try {
+      return objectFromOutput(JSON.parse(value), predicate)
+    } catch {
+      return null
+    }
+  }
+  if (Array.isArray(value))
+    return value.map(item => objectFromOutput(item, predicate)).find(Boolean) ?? null
+  if (!value || typeof value !== 'object') return null
+  if (predicate(value)) return value
+  return (
+    Object.values(value)
+      .map(item => objectFromOutput(item, predicate))
+      .find(Boolean) ?? null
+  )
 }
 
 async function prepareCapabilities(executorHome) {
@@ -89,6 +158,9 @@ export async function createDesktopScenario({
   const resultRoot = dirname(executorHome)
   let active = false
   let verifiedRequest = null
+  let submittedPlan = false
+  let planArguments = null
+  let boundContext = null
 
   return {
     async handleHttp(request, response, url) {
@@ -162,16 +234,143 @@ export async function createDesktopScenario({
         pluginSkillContent.includes(PLUGIN_SKILL_MARKER),
         'The local Agent plugin entry Skill was not installed with the bundled plugin content'
       )
-      verifiedRequest = body
       const responseId = `local-agent-capability-${Date.now()}`
-      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-      response.end(
-        createSse([
-          responseCreated(responseId),
-          assistantMessage(COMPLETION_MARKER),
-          responseCompleted(responseId),
-        ])
+      const writeEvents = events => {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
+        )
+      }
+      if (requestContainsToolOutput(body, REVIEW_CALL)) {
+        writeEvents([assistantMessage('The manager reviewed the child result.')])
+        return true
+      }
+      if (requestContainsToolOutput(body, REVIEW_SEARCH)) {
+        writeEvents(
+          toolCallAfterSearch(
+            body,
+            'decide_workflow_review',
+            {
+              space_id: boundContext.space_id,
+              item_id: boundContext.item_id,
+              decision: 'completed',
+              summary: 'The child result was verified.',
+            },
+            REVIEW_CALL
+          )
+        )
+        return true
+      }
+      if (requestContainsToolOutput(body, PLAN_CALL)) {
+        assert.ok(
+          JSON.stringify(toolOutput(body, PLAN_CALL)).includes('submitted'),
+          'The AI manager did not submit a workflow plan'
+        )
+        submittedPlan = true
+        writeEvents([assistantMessage('The child task is assigned.')])
+        return true
+      }
+      if (requestContainsToolOutput(body, PLAN_SEARCH)) {
+        writeEvents(toolCallAfterSearch(body, 'submit_workflow_plan', planArguments, PLAN_CALL))
+        return true
+      }
+      if (requestContainsToolOutput(body, CANDIDATES_CALL)) {
+        const candidates = objectFromOutput(toolOutput(body, CANDIDATES_CALL), value =>
+          Array.isArray(value.robots)
+        )
+        const robot = candidates?.robots?.find(candidate => candidate.name === AGENT_NAME)
+        assert.ok(robot?.id, 'The AI manager could not find the assigned local Agent')
+        planArguments = {
+          space_id: boundContext.space_id,
+          item_id: boundContext.item_id,
+          plan: {
+            summary: 'The manager assigned the capability check.',
+            items: [
+              {
+                client_key: 'capability-check',
+                title: 'Verify the configured capability',
+                description: 'Check the configured local capability.',
+                prompt: EXECUTOR_PROMPT,
+                assignee_type: 'agent',
+                assignee_id: robot.id,
+              },
+            ],
+          },
+        }
+        const selection = mcpToolRequestEvents(body, {
+          toolName: 'submit_workflow_plan',
+          argumentsValue: planArguments,
+          searchCallId: PLAN_SEARCH,
+          toolCallId: PLAN_CALL,
+        })
+        writeEvents(selection.events)
+        return true
+      }
+      if (requestContainsToolOutput(body, CANDIDATES_SEARCH)) {
+        writeEvents(
+          toolCallAfterSearch(
+            body,
+            'get_assignment_candidates',
+            { space_id: boundContext.space_id, item_id: boundContext.item_id },
+            CANDIDATES_CALL
+          )
+        )
+        return true
+      }
+      if (requestContainsToolOutput(body, CONTEXT_CALL)) {
+        boundContext = objectFromOutput(
+          toolOutput(body, CONTEXT_CALL),
+          value => typeof value.space_id === 'string' && typeof value.item_id === 'string'
+        )
+        assert.ok(
+          boundContext?.space_id && boundContext?.item_id,
+          'The bound Issue context was missing'
+        )
+        const selection = mcpToolRequestEvents(body, {
+          toolName: 'get_assignment_candidates',
+          argumentsValue: { space_id: boundContext.space_id, item_id: boundContext.item_id },
+          searchCallId: CANDIDATES_SEARCH,
+          toolCallId: CANDIDATES_CALL,
+        })
+        writeEvents(selection.events)
+        return true
+      }
+      if (requestContainsToolOutput(body, CONTEXT_SEARCH)) {
+        writeEvents(toolCallAfterSearch(body, 'get_current_context', {}, CONTEXT_CALL))
+        return true
+      }
+      if (serialized.includes(EXECUTOR_PROMPT)) {
+        assert.ok(submittedPlan, 'The child execution started before manager planning')
+        verifiedRequest = body
+        writeEvents([assistantMessage(COMPLETION_MARKER)])
+        return true
+      }
+      if (serialized.includes('Review the executor results.')) {
+        const selection = mcpToolRequestEvents(body, {
+          toolName: 'decide_workflow_review',
+          argumentsValue: {
+            space_id: boundContext.space_id,
+            item_id: boundContext.item_id,
+            decision: 'completed',
+            summary: 'The child result was verified.',
+          },
+          searchCallId: REVIEW_SEARCH,
+          toolCallId: REVIEW_CALL,
+        })
+        writeEvents(selection.events)
+        return true
+      }
+      assert.ok(
+        serialized.includes('You are the AI manager for this Issue.'),
+        'The collaboration group did not start with its AI manager'
       )
+      const selection = mcpToolRequestEvents(body, {
+        toolName: 'get_current_context',
+        argumentsValue: {},
+        searchCallId: CONTEXT_SEARCH,
+        toolCallId: CONTEXT_CALL,
+      })
+      writeEvents(selection.events)
       return true
     },
 
@@ -341,12 +540,17 @@ export async function createDesktopScenario({
           timeoutMs: modelResponseTimeoutMs,
         }
       )
+      const deadline = Date.now() + modelResponseTimeoutMs
+      while (!verifiedRequest && Date.now() < deadline) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.ok(submittedPlan, 'The AI manager did not submit its child-task plan')
+      assert.ok(verifiedRequest, 'The manager-generated prompt never reached the child Agent')
       const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
         executorLog.includes(COMPLETION_MARKER),
         'The local Agent completion was not emitted by the runtime'
       )
-      assert.ok(verifiedRequest, 'The local Agent never reached the real model request')
       await captureScreenshot(
         control,
         'collaboration-local-agent-05-capabilities-verified.png',
