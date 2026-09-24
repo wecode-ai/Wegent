@@ -302,7 +302,13 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
+  if (
+    checkpoint === 'native-window-chrome' ||
+    checkpoint === 'browser-multi-tabs' ||
+    checkpoint === 'core-task-flow'
+  ) {
+    // Core task flow verifies the native drag-to-popout window. macOS background
+    // mode prohibits activation and hides the app when that window is presented.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
