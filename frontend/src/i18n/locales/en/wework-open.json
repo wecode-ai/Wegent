@@ -1,0 +1,10 @@
+{
+  "brand": "Wegent Collaboration",
+  "title": "Open task in Wework",
+  "description": "Choose the button below to open Wework at this task.",
+  "open_wework": "Open in Wework",
+  "view_task": "View task",
+  "browser_hint": "If no prompt to open Wework appears, open this page in your system browser and try again. You can also view the task on the web.",
+  "invalid_title": "Invalid link",
+  "invalid_description": "This link does not identify a task. Return to the notification and open it again."
+}

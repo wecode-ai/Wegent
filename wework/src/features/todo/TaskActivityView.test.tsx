@@ -354,6 +354,62 @@ describe('TaskActivityView', () => {
     expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
   })
 
+  it('sends a structured project member mention from the parent comment composer', async () => {
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = screen.getByTestId('cloud-task-activity-composer')
+    await user.type(input, '请确认 @')
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    expect(input).toHaveValue('请确认 [$@hajimi](wework-member://4) ')
+    await user.click(screen.getByTestId('send-message-button'))
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '请确认 @hajimi',
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
+  })
+
   it('defaults the parent comment execution project to the task page project', async () => {
     runtimeWorkMock.value = {
       projects: [
@@ -2859,6 +2915,71 @@ describe('TaskActivityView', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('sends a structured project member mention from the card reply composer', async () => {
+    const user = userEvent.setup()
+    const rootMessage: ProjectChatMessage = {
+      ...userMessage,
+      rootMessageId: null,
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [rootMessage],
+          latestSequence: 1,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = await screen.findByTestId(
+      `cloud-task-activity-card-composer-${rootMessage.messageId}`
+    )
+    await user.type(input, '@')
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    await user.type(input, '看一下{Enter}')
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: rootMessage.messageId,
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
+  })
+
   it('keeps the reply send button disabled until there is a draft', async () => {
     const user = userEvent.setup()
     const rootMessage: ProjectChatMessage = {
@@ -3131,7 +3252,9 @@ describe('TaskActivityView', () => {
 
     fireEvent(composer, pasteEvent)
 
-    expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    await waitFor(() =>
+      expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    )
   })
 
   it('uploads files selected through the card composer attach button', async () => {
@@ -3580,6 +3703,58 @@ describe('TaskActivityView', () => {
     expect(writeText).toHaveBeenCalledWith(
       '状态: 执行失败\n错误: Device went offline before dispatch'
     )
+  })
+
+  it('flashes the comment a notification opened', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [userMessage, agentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          focusedCommentId="message-1"
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+            } as never
+          }
+        />
+      )
+
+      const comment = await screen.findByTestId('cloud-task-activity-message-message-1')
+      expect(comment).toHaveAttribute('data-message-id', 'message-1')
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
+      expect(screen.getByTestId('cloud-task-activity-message-message-2')).not.toHaveAttribute(
+        'data-flash'
+      )
+
+      await act(async () => {
+        vi.advanceTimersByTime(2500)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

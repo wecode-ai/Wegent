@@ -9,17 +9,65 @@ from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import NotificationCreate
+from app.services.notification_copy import (
+    WEB_LINK_LABEL,
+    WEWORK_LINK_LABEL,
+    NotificationLink,
+    push_copy,
+)
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 _PENDING = "wework_notification_ids"
 
 
-def issue_url(project_id: str, item_id: str | None = None) -> str:
+def issue_url(
+    project_id: str, item_id: str | None = None, comment_id: str | None = None
+) -> str:
+    """The Wework destination for a board item, optionally one comment inside it."""
+
     url = f"wework://boards/{quote(project_id, safe='')}"
-    return f"{url}/issues/{quote(item_id, safe='')}" if item_id else url
+    if not item_id:
+        return url
+    url = f"{url}/issues/{quote(item_id, safe='')}"
+    return f"{url}/comments/{quote(comment_id, safe='')}" if comment_id else url
+
+
+def web_issue_url(project_id: str, item_id: str) -> str:
+    """The board page of one item for a recipient without the desktop app."""
+
+    base = settings.FRONTEND_URL.rstrip("/")
+    return (
+        f"{base}/collaboration/{quote(project_id, safe='')}"
+        f"/issues/{quote(item_id, safe='')}"
+    )
+
+
+def notification_links(notification: WeworkNotification) -> list[NotificationLink]:
+    """Every destination a push for one stored notification should offer.
+
+    The inbox opens inside Wework, so the stored url is the desktop deep link;
+    a push reaches recipients who may not run Wework, so it carries the web
+    board page as well.
+    """
+
+    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    links: list[NotificationLink] = []
+    if notification.url:
+        links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification.url))
+    project_id = payload.get("projectId")
+    item_id = payload.get("itemId")
+    if project_id and item_id:
+        links.append(
+            NotificationLink(
+                label=WEB_LINK_LABEL,
+                url=web_issue_url(str(project_id), str(item_id)),
+            )
+        )
+    return links
 
 
 def create_notification(
@@ -31,6 +79,7 @@ def create_notification(
     body: str,
     project_id: str | None = None,
     item_id: str | None = None,
+    comment_id: str | None = None,
     url: str | None = None,
     kind: str = "message",
     payload: dict | None = None,
@@ -46,7 +95,7 @@ def create_notification(
         url=(
             url
             if url is not None
-            else issue_url(project_id, item_id) if project_id else ""
+            else issue_url(project_id, item_id, comment_id) if project_id else ""
         ),
         payload=payload or {},
         created_at=now,
@@ -115,13 +164,24 @@ async def deliver_notification(notification_id: str) -> None:
             sessions = await im_session_service.list_user_sessions(
                 db, user_id=notification.user_id
             )
+            payload = (
+                notification.payload if isinstance(notification.payload, dict) else {}
+            )
+            push = push_copy(
+                kind=notification.kind,
+                title=notification.title,
+                body=notification.body,
+                payload=payload,
+            )
             for session in sessions:
                 if session.user_id != notification.user_id:
                     continue
-                text = notification.body
-                if notification.url:
-                    text += f"\n\n{notification.url}"
-                result = await im_notification_dispatcher.send_text(db, session, text)
+                result = await im_notification_dispatcher.send_notification(
+                    db,
+                    session,
+                    push,
+                    links=notification_links(notification),
+                )
                 if not result.get("success"):
                     logger.warning(
                         "Wework IM delivery failed: id=%s channel=%s",

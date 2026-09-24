@@ -37,6 +37,17 @@ describe("shared Issue threads", () => {
   let container: HTMLDivElement;
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -104,7 +115,7 @@ describe("shared Issue threads", () => {
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(message);
-    act(() =>
+    await act(async () =>
       root.render(
         <IssueProjectChatThread
           thread={{ root: message, replies: [] }}
@@ -115,13 +126,14 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    const input = container.querySelector("textarea")!;
+    const input = container.querySelector<HTMLElement>(
+      '[data-testid="collaboration-chat-reply-input-root"]',
+    )!;
     act(() => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!.call(input, "Please check");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      (input as HTMLElement & { value: string }).value = "Please check";
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "k", bubbles: true }),
+      );
     });
     await act(async () => {
       container
@@ -153,7 +165,9 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    expect(container.querySelector("textarea")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-reply-input-root"]'),
+    ).toBeNull();
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {

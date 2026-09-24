@@ -11,6 +11,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-local-agent-capabilities',
   'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
+  'collaboration-issue-comment-mention',
+  'collaboration-issue-comment-notification',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',

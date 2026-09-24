@@ -1824,9 +1824,9 @@ flowchart LR
   stays vertically centered as text and row height change.
   Sort entries within each category by event time, newest first. Cloud category
   counts and pagination must be computed by the server, not inferred from the
-  first page. Cloud `assignment` and `human_work` events belong to Collaboration;
-  every other cloud kind belongs to Other notifications until given an explicit
-  category in the product contract.
+  first page. Cloud `assignment`, `mention`, `execution` and `human_work` events
+  belong to Collaboration; every other cloud kind belongs to Other notifications
+  until given an explicit category in the product contract.
 - Keep source-specific navigation and
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not
