@@ -276,6 +276,12 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    logRuntimeTaskCreateStage('lifecycle-transcript-received', {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      running: transcript.running ?? null,
+      preserveActiveTurn: options.preserveActiveTurn === true,
+    })
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
       options.preserveActiveTurn === true &&

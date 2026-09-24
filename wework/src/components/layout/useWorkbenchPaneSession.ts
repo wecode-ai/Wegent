@@ -786,7 +786,6 @@ export function useWorkbenchPaneSession({
           taskId: address.taskId,
           deviceId: address.deviceId,
           cancelled,
-          running: transcript.running ?? null,
           messageCount: transcript.messages.length,
           turnCount: transcript.turns.length,
         })
