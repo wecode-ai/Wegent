@@ -1710,6 +1710,43 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
 }
 
 #[test]
+fn built_in_provider_does_not_emit_reserved_model_provider_overrides() {
+    let _lock = crate::test_env::lock();
+    let request = ExecutionRequest {
+        task_id: "project-ai-task".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-6-luna",
+            "model_provider": "openai",
+            "default_headers": {
+                "X-Custom-Header": "custom-value"
+            },
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": true,
+                    "configured": true
+                }
+            }
+        }),
+        extra: json!({
+            "project_id": "project-1"
+        })
+        .as_object()
+        .expect("extra must be an object")
+        .clone(),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|value| value.starts_with("model_providers.openai.")));
+}
+
+#[test]
 fn configured_inference_provider_reads_the_unmodified_user_config() {
     let root = unique_test_path("configured-inference-provider");
     fs::create_dir_all(&root).expect("test directory should be created");

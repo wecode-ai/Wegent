@@ -4324,6 +4324,9 @@ fn header_overrides(
     project_id: Option<&str>,
     task_id: &str,
 ) -> Vec<String> {
+    if matches!(model_provider, "openai" | "ollama" | "lmstudio") {
+        return Vec::new();
+    }
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
         let mut headers = parse_header_map(default_headers);
         inject_session_headers(&mut headers, task_id);

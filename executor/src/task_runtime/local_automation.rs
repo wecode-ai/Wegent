@@ -8,6 +8,7 @@ type ProjectManagerExecutionState = (
     Option<String>,
     Option<String>,
     Option<String>,
+    String,
 );
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -971,11 +972,11 @@ impl LocalTaskStore {
             let mut run: Value = serde_json::from_str(&record)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
             let state: Option<ProjectManagerExecutionState> = connection.query_row(
-                "SELECT status, completed_at, execution_note, runtime_task_id, COALESCE(runtime_device_id, execution_device_id) FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
+                "SELECT status, completed_at, execution_note, runtime_task_id, COALESCE(runtime_device_id, execution_device_id), error_message FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
                 [text(&run, "id")],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             ).optional()?;
-            if let Some((status, completed_at, response, runtime_task_id, runtime_device_id)) = state {
+            if let Some((status, completed_at, response, runtime_task_id, runtime_device_id, error)) = state {
                 run["status"] = json!(match status.as_str() {
                     "completed" | "succeeded" => "succeeded",
                     "failed" => "failed",
@@ -985,6 +986,7 @@ impl LocalTaskStore {
                 });
                 if let Some(completed_at) = completed_at { run["completedAt"] = json!(completed_at); }
                 if status == "completed" || status == "succeeded" { run["response"] = json!(response); }
+                if status == "failed" { run["error"] = json!(error); }
                 run["runtimeTaskId"] = json!(runtime_task_id);
                 run["runtimeDeviceId"] = json!(runtime_device_id);
             }

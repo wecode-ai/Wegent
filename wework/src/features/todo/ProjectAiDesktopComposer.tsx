@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ProjectChatComposer } from '@/components/chat/composer/ProjectChatComposer'
 import type { ComposerTextareaHandle } from '@/components/chat/composer/ComposerTextarea'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { getDefaultModelOptions } from '@/lib/model-ui'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
 import type { WorkspaceProjectManagerModelSelection } from '@wegent/collaboration'
 import type { WorkspaceProjectManagerRun } from '@wegent/collaboration'
 import type { CollaborationIssue } from '@wegent/collaboration'
 import { createComposerPathReference } from '@wegent/collaboration/composer/composerMentions'
+import type { ModelSelectionConfig } from '@/types/api'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import {
+  defaultNewChatModelSelection,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -35,15 +41,33 @@ interface Props {
 }
 
 const pluginApi = createLocalCodexPluginApi()
+const projectAiDefaultModelSelection = defaultNewChatModelSelection
 
 export function ProjectAiDesktopComposer(props: Props) {
   const { t } = useTranslation('common')
   const editor = useRef<ComposerTextareaHandle>(null)
-  const [models, setModels] = useState<UnifiedModel[]>([])
-  const [modelReady, setModelReady] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<UnifiedModel | null>(null)
-  const [options, setOptions] = useState<ModelOptions>({})
   const [fileError, setFileError] = useState('')
+  const appPreferences = useAppPreferencesState()
+  const persistModelSelection = useCallback(
+    (selection: ModelSelectionConfig) => {
+      void updateAppPreferences({ projectAiModelSelection: selection }).catch(() => {
+        setFileError(t('project_ai.model_unavailable'))
+      })
+    },
+    [t]
+  )
+  const modelSelection = useWorkbenchModels({
+    api: props.services.modelApi,
+    locked: false,
+    scopeKey: 'project-ai',
+    persistSelection: true,
+    selectionConfig: appPreferences?.preferences.projectAiModelSelection ?? null,
+    defaultSelectionConfig: projectAiDefaultModelSelection,
+    selectionReady: appPreferences?.loaded ?? true,
+    onSelectionChange: persistModelSelection,
+  })
+  const selectedModel = modelSelection.selectedModel
+  const options = modelSelection.selectedModelOptions
   const address = useMemo(() => {
     const deviceId = props.activeRun?.runtimeDeviceId
     const taskId = props.activeRun?.runtimeTaskId
@@ -62,29 +86,6 @@ export function ProjectAiDesktopComposer(props: Props) {
   const runtimeRunning = turns.some(
     turn => turn.status === 'pending' || turn.status === 'streaming'
   )
-  useEffect(() => {
-    let active = true
-    void props.services.modelApi
-      .listModels()
-      .then(response => {
-        if (!active) return
-        const available = response.data.filter(
-          model => model.isActive !== false && !model.compatibilityDisabled
-        )
-        setModels(available)
-        setSelectedModel(available[0] ?? null)
-        setOptions(available[0] ? getDefaultModelOptions(available[0]) : {})
-      })
-      .catch(() => {
-        if (active) setFileError(t('project_ai.model_unavailable'))
-      })
-      .finally(() => {
-        if (active) setModelReady(true)
-      })
-    return () => {
-      active = false
-    }
-  }, [props.services.modelApi, t])
   const issueMentions = useMemo(
     () =>
       props.issues.map(issue => ({
@@ -97,13 +98,19 @@ export function ProjectAiDesktopComposer(props: Props) {
       })),
     [props.issues, props.projectId]
   )
-  const submit = (value?: string) =>
+  const submit = (value?: string) => {
+    const executionModel = selectedModelExecutionFields(selectedModel, options)
     props.onSubmit(
       value ?? editor.current?.getValue() ?? props.value,
-      selectedModel
-        ? { modelName: selectedModel.name, modelType: selectedModel.type, options }
+      executionModel.modelId
+        ? {
+            modelName: executionModel.modelId,
+            modelType: executionModel.modelType,
+            options: executionModel.modelOptions,
+          }
         : undefined
     )
+  }
   const addFiles = (selected: File | File[]) => {
     const files = Array.isArray(selected) ? selected : [selected]
     const paths = files.map(file => window.weworkElectronFiles?.getPathForFile(file)?.trim() ?? '')
@@ -129,23 +136,21 @@ export function ProjectAiDesktopComposer(props: Props) {
         placeholder={props.placeholder}
         inputTestId="project-ai-message"
         submitButtonTestId="project-ai-send"
-        models={models}
+        models={modelSelection.models}
         selectedModel={selectedModel}
         selectedModelOptions={options}
-        isModelSelectionReady={modelReady}
+        isModelSelectionReady={modelSelection.isSelectionReady}
         attachments={[]}
         uploadingFiles={new Map()}
         attachmentErrors={new Map()}
         onSelectModel={model => {
-          setSelectedModel(model)
-          setOptions(model ? getDefaultModelOptions(model) : {})
+          modelSelection.setSelectedModel(model)
           return true
         }}
         onSelectModelAndOptions={(model, nextOptions) => {
-          setSelectedModel(model)
-          setOptions(nextOptions)
+          modelSelection.setSelectedModelAndOptions(model, nextOptions)
         }}
-        onSelectModelOption={(key, value) => setOptions(current => ({ ...current, [key]: value }))}
+        onSelectModelOption={modelSelection.setSelectedModelOption}
         onFileSelect={addFiles}
         onRemoveAttachment={() => {}}
         onListLocalSkills={() => pluginApi.listSkills()}
@@ -157,13 +162,13 @@ export function ProjectAiDesktopComposer(props: Props) {
         isStreaming={props.running || runtimeRunning}
         onPause={() => void props.onStop()}
       />
-      {fileError && (
+      {(fileError || modelSelection.error) && (
         <p
           role="alert"
           data-testid="project-ai-file-error"
           className="px-5 pb-3 text-sm text-red-600"
         >
-          {fileError}
+          {fileError || t('project_ai.model_unavailable')}
         </p>
       )}
     </>

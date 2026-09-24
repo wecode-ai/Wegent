@@ -23,6 +23,7 @@ import type {
 import { ComposerTextInput, ProjectComposerBody } from "../composer";
 import type { ComposerInputHandle } from "../composer/composerInputTypes";
 import { DEFAULT_PROJECT_MANAGER_PROMPT } from "./projectManagerDefaults";
+import { ProjectManagerConversation } from "./ProjectManagerConversation";
 
 const labels = {
   "zh-CN": {
@@ -32,11 +33,6 @@ const labels = {
     close: "关闭对话",
     unavailable: "先在项目设置中选择管理者智能体",
     disabled: "项目 AI 已关闭，可在项目设置中开启",
-    empty: "在下方输入，和项目 AI 对话",
-    waiting: "项目 AI 正在处理…",
-    waitingExecutor: "等待执行器启动…",
-    failed: "运行失败",
-    cancelled: "任务已取消",
     openTask: "完整任务",
     newConversation: "新会话",
   },
@@ -47,11 +43,6 @@ const labels = {
     close: "Close conversation",
     unavailable: "Choose a manager Agent in project settings",
     disabled: "Project AI is off. Enable it in project settings",
-    empty: "Type below to talk to project AI",
-    waiting: "Project AI is working…",
-    waitingExecutor: "Waiting for executor…",
-    failed: "Run failed",
-    cancelled: "Task cancelled",
     openTask: "Full task",
     newConversation: "New chat",
   },
@@ -380,7 +371,7 @@ export function ProjectAiBoardAssistant({
       onMouseLeave={() => onHover(false)}
     >
       <div
-        className={`pointer-events-auto overflow-hidden text-text-primary transition-[width,max-height,opacity,transform] duration-200 ease-out ${open ? "w-full max-h-[min(68vh,46rem)]" : "w-28 max-h-10"}`}
+        className={`pointer-events-auto text-text-primary transition-[width,max-height,opacity,transform] duration-200 ease-out ${open ? "w-full max-h-[min(68vh,46rem)] overflow-visible" : "w-28 max-h-10 overflow-hidden"}`}
       >
         {!open ? (
           <button
@@ -475,31 +466,7 @@ export function ProjectAiBoardAssistant({
                       onOpenIssue,
                       onOpenTask,
                     }) ?? (
-                      <div className="max-h-72 space-y-3 overflow-y-auto px-4 py-3 text-sm">
-                        {runs.map((run) => (
-                          <div key={run.id}>
-                            {run.instruction && (
-                              <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-muted px-3 py-2">
-                                {run.instruction}
-                              </p>
-                            )}
-                            <p
-                              data-testid={`project-ai-response-${run.id}`}
-                              className="whitespace-pre-wrap py-2"
-                            >
-                              {run.response ||
-                                (run.status === "failed"
-                                  ? `${copy.failed}: ${run.error ?? ""}`
-                                  : run.status === "cancelled"
-                                    ? copy.cancelled
-                                    : run.status === "queued" ||
-                                        run.status === "pending"
-                                      ? copy.waitingExecutor
-                                      : copy.waiting)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
+                      <ProjectManagerConversation runs={runs} locale={locale} />
                     )}
                   </div>
                 )}

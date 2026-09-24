@@ -1926,6 +1926,16 @@ impl LocalTaskStore {
                     Some("Runtime reconciled cancellation"),
                 );
             }
+            "missing" => {
+                let error = if current.termination_reason == "runtime_dispatch_unknown"
+                    && !current.error_message.trim().is_empty()
+                {
+                    current.error_message.as_str()
+                } else {
+                    "Runtime task disappeared before execution completed"
+                };
+                return self.fail_execution(execution_id, error, true);
+            }
             _ => {}
         }
 
@@ -2170,8 +2180,14 @@ impl LocalTaskStore {
             } else {
                 connection.execute(
                     "UPDATE loop_item_executions
-                     SET sync_state = 'stale', error_message = ?2,
-                         termination_reason = 'runtime_observation_stale',
+                     SET sync_state = 'stale',
+                         error_message = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                                AND error_message != ''
+                           THEN error_message ELSE ?2 END,
+                         termination_reason = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                           THEN termination_reason ELSE 'runtime_observation_stale' END,
                          version = version + 1, updated_at = ?1
                      WHERE id = ?3",
                     params![now, "Runtime state requires reconciliation", id],
@@ -4575,6 +4591,19 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     let workflow_node_id = stored.get("workflow_node_id").cloned();
     let automation_run_id = stored.get("automation_run_id").cloned();
     let automation_role = stored.get("automation_role").cloned();
+    let model_selection = stored.get("modelSelection").and_then(Value::as_object);
+    let selected_model_name = model_selection
+        .and_then(|selection| selection.get("modelName"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let selected_model_type = model_selection
+        .and_then(|selection| selection.get("modelType"))
+        .cloned();
+    let selected_model_options = model_selection
+        .and_then(|selection| selection.get("options"))
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
     let project_instructions = stored
         .get("developer_instruction")
         .and_then(Value::as_str)
@@ -4612,7 +4641,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "message": message,
         "title": execution.task_title,
         "cloudProjectId": execution.cloud_project_id,
-        "modelId": execution.agent_model,
+        "modelId": selected_model_name.or(execution.agent_model.as_deref()),
+        "modelType": selected_model_type,
+        "modelOptions": selected_model_options,
         "bot": [{
             "id": execution.agent_id,
             "name": execution.agent_name,
@@ -5096,6 +5127,9 @@ mod tests {
             .expect("the project manager execution must be queued");
         let payload = claimed.execution_payload.as_ref().unwrap();
         assert_eq!(payload["message"], "Summarize open Issues");
+        assert_eq!(payload["modelId"], "gpt-6-sol");
+        assert_eq!(payload["modelType"], "public");
+        assert_eq!(payload["modelOptions"], json!({}));
         assert!(payload["projectInstructions"]
             .as_str()
             .unwrap()
@@ -5114,6 +5148,17 @@ mod tests {
             claimed_run["runtimeTaskId"],
             claimed.runtime_task_id.as_deref().unwrap()
         );
+        store
+            .fail_execution(claimed.id, "Selected model failed", false)
+            .unwrap();
+        let failed_run = store
+            .list_project_manager_runs(&project.id)
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate["id"] == run["id"])
+            .unwrap();
+        assert_eq!(failed_run["status"], "failed");
+        assert_eq!(failed_run["error"], "Selected model failed");
     }
 
     #[test]
@@ -5778,6 +5823,10 @@ mod tests {
         let serialized_claim = serde_json::to_value(&first).unwrap();
         assert!(serialized_claim.get("runtime_payload").is_some());
         assert!(serialized_claim.get("execution_payload").is_none());
+        assert_eq!(
+            serialized_claim["runtime_payload"]["modelOptions"],
+            json!({})
+        );
         accept_and_start(&store, &first);
         let running_claude = store.get_task(&project.id, &task.id).unwrap();
         assert_eq!(
@@ -7474,6 +7523,91 @@ mod tests {
             })
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn local_recovery_retries_a_delivered_run_missing_from_runtime() {
+        let (directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Retry missing runtime task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
+            device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+        let first = store.claim_next_local_execution(&claim).unwrap().unwrap();
+        let device_id = first.runtime_device_id.as_deref().unwrap();
+        let task_id = first.runtime_task_id.as_deref().unwrap();
+        store
+            .request_runtime_start(first.id, device_id, task_id, 300)
+            .unwrap()
+            .expect("start intent must be fenced");
+        store
+            .mark_runtime_dispatch_unknown(
+                first.id,
+                device_id,
+                task_id,
+                "invalid type: null, expected a map",
+            )
+            .unwrap();
+        let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
+        connection
+            .execute(
+                "UPDATE loop_item_executions
+                 SET lease_expires_at = '2000-01-01T00:00:00+00:00'
+                 WHERE id = ?1",
+                params![first.id],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.recover_stale_local_executions().unwrap(), (0, 1));
+        let retry = store
+            .reconcile_execution_snapshot(first.id, "missing", false, None)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(retry.id, first.id);
+        assert_eq!(retry.status, "queued");
+        assert_eq!(retry.previous_execution_id, Some(first.id));
+        let previous = execution_row(&store.connection().unwrap(), first.id).unwrap();
+        assert_eq!(previous.status, "failed");
+        assert_eq!(previous.termination_reason, "runtime_failed");
+        assert_eq!(previous.error_message, "invalid type: null, expected a map");
+        assert_eq!(
+            store
+                .claim_next_local_execution(&claim)
+                .unwrap()
+                .unwrap()
+                .id,
+            retry.id
+        );
     }
 
     #[test]

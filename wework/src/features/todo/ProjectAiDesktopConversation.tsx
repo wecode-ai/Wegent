@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { CollaborationIssue, WorkspaceProjectManagerRun } from '@wegent/collaboration'
+import {
+  projectManagerConversationMessages,
+  projectManagerFallbackMessages,
+} from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   getRuntimeConversationMessages,
@@ -9,7 +13,6 @@ import {
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { projectManagerConversationMessages } from './projectAiConversationMessages'
 
 const EMPTY_MESSAGES: WorkbenchMessage[] = []
 
@@ -65,41 +68,10 @@ export function ProjectAiDesktopConversation({
     }
   }, [address, services.runtimeWorkApi])
 
-  const fallbackMessages = useMemo(() => {
-    const messages: WorkbenchMessage[] = []
-    for (const run of runs) {
-      if (run.instruction) {
-        messages.push({
-          id: `project-ai-user-${run.id}`,
-          role: 'user',
-          content: run.instruction,
-          status: 'done',
-          createdAt: run.createdAt ?? '',
-        })
-      }
-      const responseId = `project-ai-assistant-${run.id}`
-      const waiting = run.status === 'queued' || run.status === 'pending'
-      messages.push({
-        id: responseId,
-        role: 'assistant',
-        content:
-          run.response ??
-          (run.status === 'failed'
-            ? `${locale === 'zh-CN' ? '运行失败' : 'Run failed'}: ${run.error ?? ''}`
-            : run.status === 'cancelled'
-              ? ''
-              : waiting
-                ? locale === 'zh-CN'
-                  ? '等待执行器启动…'
-                  : 'Waiting for executor…'
-                : ''),
-        status:
-          run.status === 'failed' ? 'failed' : run.status === 'running' ? 'streaming' : 'done',
-        createdAt: run.createdAt ?? '',
-      })
-    }
-    return messages
-  }, [runs, locale])
+  const fallbackMessages = useMemo(
+    () => projectManagerFallbackMessages(runs, locale),
+    [runs, locale]
+  )
   const visibleRuntimeMessages = useMemo(() => {
     const instruction = activeRun?.instruction?.trim()
     if (!instruction) return runtimeMessages

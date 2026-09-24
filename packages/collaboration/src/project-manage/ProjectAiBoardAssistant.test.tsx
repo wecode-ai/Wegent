@@ -112,6 +112,10 @@ describe("ProjectAiBoardAssistant", () => {
         ?.click();
     });
     await waitForElement(container, '[data-testid="manager-session"]');
+    expect(
+      container.querySelector('[data-testid="project-ai-conversation"]')
+        ?.parentElement?.className,
+    ).toContain("overflow-visible");
 
     await act(async () => {
       changeComposer("Follow up");
