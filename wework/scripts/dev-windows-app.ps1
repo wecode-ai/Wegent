@@ -9,11 +9,8 @@ $ENV_FILE = Join-Path $PROJECT_DIR '.env'
 $EXECUTOR_ISOLATION = $false
 $ELECTRON_ARGS = @()
 $ISOLATED_EXECUTOR_HOME = ''
-$MANAGED_SOURCE_EXECUTOR = $false
 $MANAGED_DWS_BINARY = $false
 $MANAGED_HARNESS_RUNTIME = $false
-$MANAGED_SOURCE_EXECUTOR_BINARY = ''
-$EXECUTOR_BINARY_TEMP = ''
 $WATCH_PROCESS = $null
 $WATCH_READY_FILE = ''
 
@@ -212,13 +209,6 @@ function Configure-Sccache([string]$ProjectDir, [string]$TargetDir) {
   }
 }
 
-function Get-ExecutorBinaryPath {
-  if ($env:CARGO_TARGET_DIR) {
-    return Join-Path $env:CARGO_TARGET_DIR 'debug\wegent-executor.exe'
-  }
-  return Join-Path $PROJECT_DIR 'executor\target\debug\wegent-executor.exe'
-}
-
 function Start-PrepareStep([string]$Name, [string]$Command) {
   $stdout = Join-Path $env:TEMP "wework-dev-$Name-$PID.out.log"
   $stderr = Join-Path $env:TEMP "wework-dev-$Name-$PID.err.log"
@@ -337,7 +327,6 @@ if ($env:WEWORK_DEV_EXECUTOR_PATH) {
   $env:WEWORK_EXECUTOR_PATH = $env:WEWORK_DEV_EXECUTOR_PATH
 } else {
   $env:WEWORK_EXECUTOR_PATH = Join-Path $SCRIPT_DIR 'dev-executor-sidecar.cmd'
-  $MANAGED_SOURCE_EXECUTOR = $true
   if (-not $env:WEGENT_DISABLE_SHARED_CARGO_TARGET -and -not $env:CARGO_TARGET_DIR) {
     $cacheRoot = Select-BestCacheDir (Get-CargoCacheCandidates 'executor-dev')
     if ($cacheRoot) {
@@ -348,8 +337,11 @@ if ($env:WEWORK_DEV_EXECUTOR_PATH) {
     New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
     Configure-Sccache $PROJECT_DIR $env:CARGO_TARGET_DIR
   }
-  $MANAGED_SOURCE_EXECUTOR_BINARY = Get-ExecutorBinaryPath
-  $env:WEGENT_EXECUTOR_BINARY = Join-Path $WEWORK_DIR 'node_modules\.cache\wework-executor-dev\wegent-executor.exe'
+  $env:WEGENT_EXECUTOR_DEV_RELOAD = if ($env:WEGENT_EXECUTOR_DEV_RELOAD) {
+    $env:WEGENT_EXECUTOR_DEV_RELOAD
+  } else {
+    '1'
+  }
   $env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID
 }
 
@@ -472,17 +464,6 @@ try {
       Wait-PrepareStep $job
       Write-Host "Prepared $($job.Name)"
     }
-    if ($MANAGED_SOURCE_EXECUTOR) {
-      cargo build --manifest-path (Join-Path $PROJECT_DIR 'executor\Cargo.toml') --bin wegent-executor
-      if ($LASTEXITCODE -ne 0) {
-        Fail 'Error: failed to build the wegent executor.'
-      }
-      New-Item -ItemType Directory -Force -Path (Split-Path $env:WEGENT_EXECUTOR_BINARY -Parent) | Out-Null
-      $EXECUTOR_BINARY_TEMP = "$($env:WEGENT_EXECUTOR_BINARY).tmp.$PID"
-      Copy-Item -LiteralPath $MANAGED_SOURCE_EXECUTOR_BINARY -Destination $EXECUTOR_BINARY_TEMP -Force
-      Move-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Destination $env:WEGENT_EXECUTOR_BINARY -Force
-      $EXECUTOR_BINARY_TEMP = ''
-    }
     if (-not (Test-Path $env:WEWORK_EXECUTOR_PATH)) {
       Fail "Error: Executor command is not available: $env:WEWORK_EXECUTOR_PATH"
     }
@@ -552,8 +533,5 @@ try {
   }
   if ($ISOLATED_EXECUTOR_HOME) {
     Remove-Item -LiteralPath $ISOLATED_EXECUTOR_HOME -Recurse -Force -ErrorAction SilentlyContinue
-  }
-  if ($EXECUTOR_BINARY_TEMP -and (Test-Path $EXECUTOR_BINARY_TEMP)) {
-    Remove-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Force -ErrorAction SilentlyContinue
   }
 }
