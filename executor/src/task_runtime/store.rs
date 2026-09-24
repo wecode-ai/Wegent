@@ -5360,10 +5360,16 @@ mod tests {
         assert_eq!(claimed.agent_id, leader.id);
         assert_eq!(claimed.agent_name, "当前设备智能体");
         let payload = claimed.execution_payload.as_ref().unwrap();
-        assert_eq!(
-            payload["message"],
-            "You are the AI manager for this Issue. Use get_current_context, get_board_item, and get_assignment_candidates to inspect the Issue and eligible members. Then call submit_workflow_plan with independently verifiable child tasks. Write a specific execution prompt for each assignee, including the goal, boundaries, and acceptance criteria. Do not execute the child tasks.\n\nIssue: Ship the feature"
-        );
+        let message = payload["message"]
+            .as_str()
+            .expect("manager message should be a string");
+        assert!(message.starts_with("You are the AI manager for this Issue."));
+        assert!(message.contains("\n\nIssue: Ship the feature"));
+        assert!(message.contains("\n\nIssue description: Implement and verify it."));
+        assert!(message.contains("\n\nConfigured project workflow"));
+        assert!(message.contains("\"name\":\"Delivery team\""));
+        assert!(message.contains("\"instructions\":\"Coordinate the work.\""));
+        assert!(message.contains("\n\nAutomation instruction:"));
         assert_eq!(
             payload["origin"]["automationRole"],
             Value::String("manager".to_owned())
