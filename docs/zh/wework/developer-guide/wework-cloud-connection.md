@@ -151,6 +151,8 @@ Wework 管理的 Agent 环境和 macOS 用户级入口使用同一套分发规�
 
 模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
 
+模型选择器的本地目录和云端目录互相独立。本地目录依赖本机 Executor 状态和桌面偏好，这些前置条件失败时只能降级为“仅本地自定义模型”，不得让整个列表失败，也不得阻止云端目录加载；云端目录必须在同一个 `listModels` 调用里独立发起。损坏的桌面偏好文件会先隔离为 `app-preferences.json.corrupt-<时间戳>`，然后按默认值继续，因此一个坏文件只会丢掉被隔离的偏好，不会让用户永久看不到任何模型。
+
 目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`；选择云端或远程设备时，Wework 会在发送前按需同步该模型的 Codex 能力目录，并把任务所需的模型连接配置直接交给目标 Executor。
 
 本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。

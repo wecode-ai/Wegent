@@ -1429,6 +1429,26 @@ describe('createLocalAppServices', () => {
     ).toBe(false)
   })
 
+  test('degrades to custom local models when the local environment is unreadable', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const request = vi.fn().mockResolvedValue({})
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockRejectedValue(new Error('local executor unavailable')),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(models.data).toEqual([])
+    expect(request).not.toHaveBeenCalled()
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to read the local model environment',
+      expect.any(Error)
+    )
+    warning.mockRestore()
+  })
+
   test('normalizes runtime handles returned by local executor task lists', async () => {
     const request = vi.fn().mockResolvedValue({
       workspaces: [

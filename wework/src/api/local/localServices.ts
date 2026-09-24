@@ -3628,10 +3628,21 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   let rememberedCodexAuthConfigured: boolean | null = null
   const modelApi = {
     listModels: async () => {
-      // Always reconcile pending local model catalogs (custom model interfaces)
-      // so they appear in the picker even when the Codex subscription is off.
-      await ensureStatus()
-      const { localCodexSubscriptionEnabled } = await getAppPreferences()
+      // The picker merges this catalog with the cloud one, so a broken local
+      // environment (unreadable preferences, an executor that refuses to start)
+      // must degrade to "custom local models only" instead of rejecting the
+      // whole list and leaving the model selector empty.
+      let localCodexSubscriptionEnabled: boolean
+      try {
+        // Always reconcile pending local model catalogs (custom model
+        // interfaces) so they appear in the picker even when the Codex
+        // subscription is off.
+        await ensureStatus()
+        localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
+      } catch (error) {
+        console.warn('[Wework] Failed to read the local model environment', error)
+        return { data: localRuntimeModels([], null, false) }
+      }
       if (!localCodexSubscriptionEnabled) {
         return { data: localRuntimeModels([], null, false) }
       }
