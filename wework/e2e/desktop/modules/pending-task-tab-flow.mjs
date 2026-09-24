@@ -10,7 +10,6 @@ import {
   assert,
   createSingleRootLocalProject,
   selectE2EModel,
-  withTimeout,
 } from './shared.mjs'
 
 export async function verifyPendingTaskAcrossTabs({ control, workspacePath }) {
@@ -23,7 +22,6 @@ export async function verifyPendingTaskAcrossTabs({ control, workspacePath }) {
   control.holdScenarioResponse(scenario)
   control.setScenario(scenario)
   const previousRequestCount = control.scenarioRequests.get(scenario)?.length ?? 0
-  const request = control.awaitScenarioRequestCount(scenario, previousRequestCount + 1)
   try {
     await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, CHECKPOINT_TASK_PROMPT)
     await control.command('waitFor', '[data-testid="worktree-creation-status"]', {
@@ -38,10 +36,10 @@ export async function verifyPendingTaskAcrossTabs({ control, workspacePath }) {
       { visible: true, stableMs: 3000, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    await withTimeout(
-      request,
-      WORKBENCH_READY_TIMEOUT_MS,
-      'The background task did not reach the model'
+    await control.awaitScenarioRequestCount(
+      scenario,
+      previousRequestCount + 1,
+      WORKBENCH_READY_TIMEOUT_MS
     )
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command(
