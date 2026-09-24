@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     event,
     func,
+    text,
 )
 
 from app.db.base import Base
@@ -174,9 +175,14 @@ class LoopItemExecution(Base):
     # the Local or Cloud compiler and are never persisted here.
     execution_payload = Column(Text, nullable=False, default="")
     version = Column(Integer, nullable=False, default=1, server_default="1")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
     updated_at = Column(
-        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=func.now(),
     )
 
     __table_args__ = (

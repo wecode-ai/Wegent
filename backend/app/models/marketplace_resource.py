@@ -4,7 +4,7 @@
 
 """Small indexed projection of user-published marketplace resources."""
 
-from sqlalchemy import Column, DateTime, Index, Integer, SmallInteger, String
+from sqlalchemy import Column, DateTime, Index, Integer, SmallInteger, String, text
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -53,14 +53,14 @@ class MarketplaceResource(Base):
         DateTime,
         nullable=False,
         default=func.now(),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         comment="Initial marketplace publication time",
     )
     updated_at = Column(
         DateTime,
         nullable=False,
         default=func.now(),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         onupdate=func.now(),
         comment="Marketplace resource update time",
     )
