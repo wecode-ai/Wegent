@@ -37,6 +37,7 @@ core_segments=(
   computer-use
   task-status-sync
   task-board-association
+  task-board-bulk-actions
   core-task-flow
   task-attachments
   window-lifecycle
@@ -152,7 +153,7 @@ core_shards=(
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-tool-roles,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
@@ -580,6 +581,12 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-notification"
       return
       ;;
+    wework/src/features/todo/TaskBoardView* | \
+      wework/src/features/workbench/runtimeTaskArchive* | \
+      wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs)
+      select_target "core:task-board-bulk-actions"
+      return
+      ;;
     wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
@@ -603,6 +610,7 @@ classify_wework_path() {
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
         select_target "core:collaboration-local-agent-capabilities"
+        select_target "core:task-board-bulk-actions"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
@@ -660,6 +668,7 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
         select_target "core:task-status-sync"
+        select_target "core:task-board-bulk-actions"
       fi
       return
       ;;

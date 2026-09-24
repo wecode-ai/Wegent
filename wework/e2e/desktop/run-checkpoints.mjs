@@ -79,6 +79,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'system-proxy': './scenarios/system-proxy.scenario.mjs',
   'system-pac': './scenarios/system-pac.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
+  'task-board-bulk-actions': './scenarios/task-board-bulk-actions.scenario.mjs',
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
@@ -135,6 +136,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'system-proxy',
   'system-pac',
   'workbench-mode',
+  'task-board-bulk-actions',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-device-lifecycle',

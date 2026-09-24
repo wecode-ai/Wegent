@@ -29,6 +29,7 @@ import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/run
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
+import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 
 interface TaskBoardViewProps {
@@ -46,8 +47,14 @@ interface TaskBoardViewProps {
 
 type RuntimeTaskContextSource = ProjectSpaceTaskContextSource<ProjectSpaceApi>
 
+const BULK_TASK_CONCURRENCY = 8
+
 function runtimeTaskKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}`
+}
+
+function sameProjectSpaceApis(left: ProjectSpaceApi[], right: ProjectSpaceApi[]): boolean {
+  return left.length === right.length && left.every((api, index) => api === right[index])
 }
 
 async function trackDefaultWorkItem(
@@ -137,6 +144,9 @@ export function TaskBoardView({
     () => new Map()
   )
   const taskContextLookupVersions = useRef(new Map<string, number>())
+  const pendingTaskContextLookups = useRef(new Map<string, ProjectSpaceApi[]>())
+  const projectSpaceApisRef = useRef(projectSpaceApis)
+  const mountedRef = useRef(true)
   const [batchConfirmItems, setBatchConfirmItems] = useState<RuntimeMyWorkItem[] | null>(null)
   const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
   const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
@@ -197,24 +207,49 @@ export function TaskBoardView({
     [allItems]
   )
   useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  useEffect(() => {
+    projectSpaceApisRef.current = projectSpaceApis
+  }, [projectSpaceApis])
+  useEffect(() => {
     if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
-    let active = true
-    void Promise.allSettled(
-      reviewItems.map(async item => {
-        const key = runtimeTaskKey(item.runtime_address)
-        const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
-        taskContextLookupVersions.current.set(key, lookupVersion)
+    const lookupApis = projectSpaceApis
+    const unresolvedItems = reviewItems.filter(item => {
+      const key = runtimeTaskKey(item.runtime_address)
+      const existing = taskContexts.get(key)
+      if (
+        (existing && lookupApis.includes(existing.api)) ||
+        sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)
+      ) {
+        return false
+      }
+      pendingTaskContextLookups.current.set(key, lookupApis)
+      return true
+    })
+    if (unresolvedItems.length === 0) return
+    void allSettledWithConcurrency(unresolvedItems, BULK_TASK_CONCURRENCY, async item => {
+      const key = runtimeTaskKey(item.runtime_address)
+      const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
+      taskContextLookupVersions.current.set(key, lookupVersion)
+      try {
         return {
           key,
           lookupVersion,
-          source: await findProjectSpaceContextSourceForTask(
-            projectSpaceApis,
-            item.runtime_address
-          ),
+          source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
         }
-      })
-    ).then(results => {
-      if (!active) return
+      } finally {
+        if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
+          pendingTaskContextLookups.current.delete(key)
+        }
+      }
+    }).then(results => {
+      if (!mountedRef.current || !sameProjectSpaceApis(projectSpaceApisRef.current, lookupApis)) {
+        return
+      }
       const resolved = results.flatMap(result =>
         result.status === 'fulfilled' &&
         result.value.source.context.loop_item &&
@@ -229,20 +264,19 @@ export function TaskBoardView({
         return next
       })
     })
-    return () => {
-      active = false
-    }
-  }, [projectSpaceApis, reviewItems])
+  }, [projectSpaceApis, reviewItems, taskContexts])
   const items = useMemo(
     () =>
-      filteredItems.map(item => {
-        const trackedItem = taskContexts.get(runtimeTaskKey(item.runtime_address))?.context
-          .loop_item
+      filteredItems.flatMap(item => {
+        const source = taskContexts.get(runtimeTaskKey(item.runtime_address))
+        const trackedItem =
+          source && projectSpaceApis.includes(source.api) ? source.context.loop_item : undefined
+        if (trackedItem?.status === 'archived') return []
         return item.status === 'in_review' && trackedItem?.status === 'completed'
-          ? { ...item, status: 'completed' as const }
-          : item
+          ? [{ ...item, status: 'completed' as const }]
+          : [item]
       }),
-    [filteredItems, taskContexts]
+    [filteredItems, projectSpaceApis, taskContexts]
   )
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
@@ -298,10 +332,13 @@ export function TaskBoardView({
       )
     }
     const localContextKeys = new Set<string>()
-    const results = await Promise.allSettled(
-      reviewItemsToConfirm.map(async item => {
+    const results = await allSettledWithConcurrency(
+      reviewItemsToConfirm,
+      BULK_TASK_CONCURRENCY,
+      async item => {
         const key = runtimeTaskKey(item.runtime_address)
         let source = taskContexts.get(key)
+        if (source && !projectSpaceApis.includes(source.api)) source = undefined
         if (!source) {
           try {
             source = await findProjectSpaceContextSourceForTask(
@@ -319,7 +356,7 @@ export function TaskBoardView({
         if (!trackedItem) throw new Error('Task could not be linked to My Tasks')
         if (source.context.project.project_store === 'local') localContextKeys.add(key)
         const updated =
-          trackedItem.status === 'completed'
+          trackedItem.status === 'completed' || trackedItem.status === 'archived'
             ? trackedItem
             : await source.api.updateLoopItem(trackedItem.id, {
                 version: trackedItem.version,
@@ -332,7 +369,7 @@ export function TaskBoardView({
             context: { ...source.context, loop_item: updated },
           },
         }
-      })
+      }
     )
     const succeeded = results.flatMap(result =>
       result.status === 'fulfilled' ? [result.value] : []
