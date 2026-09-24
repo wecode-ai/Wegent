@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Admin lookup for the IP observed during device registration."""
+"""Admin lookup for a device's directly reachable Executor gateway."""
 
-from ipaddress import ip_address
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,15 +17,17 @@ from app.core.security import (
 )
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.device.device_gateway_address import reported_device_address
 
 router = APIRouter()
 
 
 class AdminDeviceIpResponse(BaseModel):
-    """The last backend-observed IP for a device."""
+    """The directly reachable IP and Executor gateway port for a device."""
 
     device_id: str
     ip_address: Optional[str]
+    port: Optional[int]
     observed_at: Optional[str]
 
 
@@ -37,23 +38,13 @@ def _admin_user(
     return get_admin_user(current_user)
 
 
-def _observed_ip(value: object) -> Optional[str]:
-    """Return a canonical IP from persisted registration metadata."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return str(ip_address(value.strip()))
-    except ValueError:
-        return None
-
-
 @router.get("/{device_id}/ip", response_model=AdminDeviceIpResponse)
 def get_device_ip(
     device_id: str,
     db: Session = Depends(get_db),
     _current_user: User = Depends(_admin_user),
 ) -> AdminDeviceIpResponse:
-    """Read the device's last backend-observed connection IP."""
+    """Read the device's directly reachable Executor gateway address."""
     devices = (
         db.query(Kind)
         .filter(
@@ -71,8 +62,10 @@ def get_device_ip(
         raise HTTPException(status.HTTP_409_CONFLICT, "Ambiguous device ID")
 
     spec = (devices[0].json or {}).get("spec") or {}
+    ip_address, port = reported_device_address(spec)
     return AdminDeviceIpResponse(
         device_id=device_id,
-        ip_address=_observed_ip(spec.get("clientIp")),
+        ip_address=ip_address,
+        port=port,
         observed_at=None,
     )

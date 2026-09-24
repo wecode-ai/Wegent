@@ -251,7 +251,6 @@ ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
 ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace
 ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
-ENV DEVICE_PUBLIC_BASE_URL=
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
 ENV DEVICE_CODE_SERVER_ENABLED=true
@@ -361,14 +360,6 @@ _write_probe="$WEGENT_EXECUTOR_HOME/.write-probe.$$"
 printf 'ok' >"$_write_probe"
 rm -f "$_write_probe"
 install -m 0755 /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"
-
-# Auto-detect public base URL if not explicitly set.
-# Uses the container's routable IP address.
-if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
-    _device_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    _device_ip="${_device_ip:-localhost}"
-    export DEVICE_PUBLIC_BASE_URL="http://${_device_ip}:${DEVICE_SESSION_GATEWAY_PORT}"
-fi
 
 pids=()
 
