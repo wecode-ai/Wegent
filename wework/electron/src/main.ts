@@ -340,7 +340,8 @@ function focusStartupSplashIfActive(): boolean {
   if (!startupSplashBlocksMainWindowActivation(snapshot ?? null)) return false
 
   const target = startupSplashWindow
-  if (target && !target.isDestroyed() && target.isVisible()) target.focus()
+  if (!target || target.isDestroyed() || !target.isVisible()) return false
+  target.focus()
   return true
 }
 
@@ -1134,6 +1135,7 @@ async function reactivateMainWindow(): Promise<void> {
   if (keepE2EWindowInBackground) {
     e2eForegroundActivationAllowed = true
     app.setActivationPolicy('regular')
+    app.show()
     dockVisible = true
   } else {
     await setDockVisible(true)
