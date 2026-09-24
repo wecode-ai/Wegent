@@ -19,6 +19,53 @@ from app.services.project_automation_execution import project_automation_executi
 from app.services.project_manager import project_manager_service
 
 
+def test_manager_run_detail_exposes_request_and_reply(
+    test_db, test_user, monkeypatch
+) -> None:
+    project = CloudProject(
+        project_key="MANAGERREPLY",
+        name="Manager reply",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/manager-reply",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Project manager",
+        description="Coordinate Issues",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        metadata_json={"project_manager": True},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=str(project.id),
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+        metadata_json={"instruction_override": "Summarize the board"},
+    )
+    test_db.add(run)
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automation_execution,
+        "_activity",
+        lambda *_args: SimpleNamespace(content="Three Issues remain open."),
+    )
+
+    detail = project_manager_service.run_detail(
+        test_db, str(project.id), str(run.id), test_user.id
+    )
+
+    assert detail["instruction"] == "Summarize the board"
+    assert detail["response"] == "Three Issues remain open."
+
+
 def test_approved_manager_assignment_schedules_after_commit(
     test_db, test_user, monkeypatch
 ) -> None:

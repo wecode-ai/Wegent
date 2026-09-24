@@ -523,9 +523,14 @@ class ProjectManagerService:
         )
 
         await project_automation_execution.dispatch(db, rule, run)
-        return project_automation_service._run_view(
-            run, str(metadata(rule).get("timezone") or "Asia/Shanghai"), metadata(rule)
-        )
+        return {
+            **project_automation_service._run_view(
+                run,
+                str(metadata(rule).get("timezone") or "Asia/Shanghai"),
+                metadata(rule),
+            ),
+            "instruction": message,
+        }
 
     def list_runs(self, db: Session, project_id: str, user_id: int) -> list[dict]:
         require_cloud_project_role(db, int(project_id), user_id, BaseRole.Reporter)
@@ -545,7 +550,11 @@ class ProjectManagerService:
             .all()
         )
         return [
-            project_automation_service._run_view(row, rule_metadata={}) for row in rows
+            {
+                **project_automation_service._run_view(row, rule_metadata={}),
+                "instruction": metadata(row).get("instruction_override"),
+            }
+            for row in rows
         ]
 
     def run_detail(
@@ -563,9 +572,18 @@ class ProjectManagerService:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND, "Project manager run not found"
             )
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        activity = project_automation_execution._activity(db, run)
         return {
             **project_automation_service._run_view(run, rule_metadata=metadata(rule)),
             "actions": metadata(run).get("manager_actions") or [],
+            "instruction": metadata(run).get("instruction_override"),
+            "response": (
+                activity.content if activity and run.status == "succeeded" else None
+            ),
         }
 
 

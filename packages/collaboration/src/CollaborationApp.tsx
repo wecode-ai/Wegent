@@ -51,6 +51,7 @@ import {
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
   ProjectAiManager,
+  ProjectAiBoardAssistant,
   ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
@@ -452,8 +453,9 @@ export function CollaborationApp({
                 </>
               )}
               slots={{
-                board:
-                  issues.length === 0 ? (
+                board: (
+                  <div className="relative flex min-h-0 min-w-0 flex-1">
+                  {issues.length === 0 ? (
                     <div
                       data-testid={collaborationTestIds.board}
                       className="relative flex min-h-0 flex-1"
@@ -616,7 +618,27 @@ export function CollaborationApp({
                           : undefined
                       }
                     />
-                  ),
+                  )}
+                  <ProjectAiBoardAssistant
+                    api={api}
+                    project={project}
+                    issues={issues}
+                    agents={agents ?? []}
+                    locale={locale}
+                    onOpenIssue={(issue) => host.navigate({
+                      projectId: project.id,
+                      issueId: issue.id,
+                      view: "board",
+                    })}
+                    onOpenSettings={() => host.navigate({
+                      projectId: project.id,
+                      issueId: null,
+                      view: "manage",
+                      projectSettingsSection: "project-ai",
+                    })}
+                  />
+                  </div>
+                ),
                 table: (
                   <div className="collaboration-project-content">
                     <ProjectIssueTable

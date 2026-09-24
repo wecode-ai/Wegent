@@ -82,7 +82,9 @@ class ProjectManagerActionView(ProjectChatSchema):
 
 class ProjectManagerRunView(ProjectAutomationRunView):
     trigger_type: Literal["manual", "schedule", "event", "workflow"] | None = None
+    instruction: str | None = None
 
 
 class ProjectManagerRunDetail(ProjectManagerRunView):
     actions: list[ProjectManagerActionView] = Field(default_factory=list)
+    response: str | None = None

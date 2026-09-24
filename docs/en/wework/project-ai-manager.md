@@ -4,13 +4,13 @@ sidebar_position: 9
 
 # Project AI manager
 
-A project space can enable one AI manager. It inspects the project board, creates Issues, assigns owners, tracks progress, and proposes adjustments. Issue assignees own execution, status progress, and delivery. The manager cannot delete Issues or change project settings or membership.
+A project space enables one project AI by default. It inspects the project board, creates Issues, assigns owners, tracks progress, and proposes adjustments. Issue assignees own execution, status progress, and delivery. The manager cannot delete Issues or change project settings or membership.
 
-Open **Project settings → Project manager** to choose an Agent, write instructions, and enable it. Cloud spaces require a project Agent backed by a Wegent Team. Local spaces use a local project Agent and continue to work offline.
+Click **Project AI** at the bottom of the board to expand the same composer used in task details and view the conversation and replies. Open related Issues directly from the conversation, or choose a task through “Open Issue.” New projects enable project AI automatically when an eligible Agent is available. Local spaces prefer the current device Agent; cloud spaces require a project Agent backed by a Wegent Team. If none is available, choose one in **Project settings → Project AI**. Instructions, triggers, and the on/off switch are also there. Local spaces continue to work offline.
 
 ## Triggers and conversation
 
-The manager can have multiple triggers: Issue creation, tag addition, status changes, and Cron schedules. Members can also start a conversation on the manager page. Owners and Maintainers can request Issue changes. Other members can query and discuss; the server rejects writes from their conversations.
+The manager can have multiple triggers: Issue creation, tag addition, status changes, and Cron schedules. Members can start a conversation from the board entry. Owners and Maintainers can request Issue changes. Other members can query and discuss; the server rejects writes from their conversations.
 
 Automatic processing remains a separate feature. Saving overlapping event triggers returns a conflict, and runtime selection allows only one manager for the same event. Issues created by the manager do not trigger the manager again.
 

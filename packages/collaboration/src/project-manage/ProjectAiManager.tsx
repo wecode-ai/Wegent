@@ -13,9 +13,8 @@ import { ProjectSettingsPage } from './ProjectSettingsPage'
 
 const copy = {
   'zh-CN': {
-    title: '项目 AI 管理者',
-    description:
-      '一个项目 AI 管理整个项目的 Issue。Issue 负责人负责执行与交付；需要更换负责人或改动进行中的 Issue 时，由人确认。',
+    title: '项目 AI',
+    description: '设置管理指令和自动触发条件。',
     enabled: '启用项目 AI',
     agent: '管理者智能体',
     instructions: '管理指令',
@@ -28,9 +27,6 @@ const copy = {
     timezone: '时区',
     save: '保存设置',
     saving: '保存中…',
-    conversation: '向项目 AI 提问或下达指令',
-    conversationHint: '项目成员可以查询；Owner 和 Maintainer 可以要求 AI 修改 Issue。',
-    send: '发送',
     history: '运行记录',
     noRuns: '暂无运行记录',
     approve: '同意',
@@ -42,9 +38,8 @@ const copy = {
     conflict: '同一事件不能同时触发项目 AI 与自动处理，请调整触发条件。',
   },
   en: {
-    title: 'Project AI manager',
-    description:
-      'One AI coordinates project Issues. Assignees own execution and delivery; changing an owner or an active Issue needs human confirmation.',
+    title: 'Project AI',
+    description: 'Set instructions and automatic triggers.',
     enabled: 'Enable project AI',
     agent: 'Manager Agent',
     instructions: 'Instructions',
@@ -57,9 +52,6 @@ const copy = {
     timezone: 'Timezone',
     save: 'Save settings',
     saving: 'Saving…',
-    conversation: 'Ask or instruct project AI',
-    conversationHint: 'Members can query. Owners and Maintainers can request Issue changes.',
-    send: 'Send',
     history: 'Run history',
     noRuns: 'No runs yet',
     approve: 'Approve',
@@ -96,7 +88,6 @@ export function ProjectAiManager({
   const [config, setConfig] = useState<WorkspaceProjectManagerConfig | null>(null)
   const [runs, setRuns] = useState<WorkspaceProjectManagerRun[]>([])
   const [selectedRun, setSelectedRun] = useState<WorkspaceProjectManagerRun | null>(null)
-  const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -173,6 +164,7 @@ export function ProjectAiManager({
             <input
               type="checkbox"
               data-testid="project-ai-enabled"
+              data-enabled={config.enabled}
               checked={config.enabled}
               disabled={!canManage || busy}
               onChange={event => patch({ enabled: event.target.checked })}
@@ -373,31 +365,6 @@ export function ProjectAiManager({
           )}
         </div>
       )}
-      <section className="mt-9 space-y-3 border-t border-border pt-6">
-        <h2 className="heading-sm">{labels.conversation}</h2>
-        <p className="text-text-secondary">{labels.conversationHint}</p>
-        <textarea
-          data-testid="project-ai-message"
-          className="min-h-24 w-full rounded-lg border border-border bg-surface px-3 py-2"
-          value={message}
-          onChange={event => setMessage(event.target.value)}
-        />
-        <button
-          type="button"
-          data-testid="project-ai-send"
-          disabled={busy || !config?.enabled || !message.trim()}
-          className="rounded-lg bg-text-primary px-4 py-2 text-surface"
-          onClick={() =>
-            void execute(async () => {
-              const run = await manager.run(project.id, message.trim())
-              setSelectedRun(run)
-              setMessage('')
-            })
-          }
-        >
-          {labels.send}
-        </button>
-      </section>
       <section className="mt-9 space-y-3 border-t border-border pt-6">
         <h2 className="heading-sm">{labels.history}</h2>
         {runs.length === 0 && <p className="text-text-secondary">{labels.noRuns}</p>}

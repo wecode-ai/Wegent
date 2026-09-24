@@ -373,6 +373,7 @@ export interface WorkspaceProjectManagerAction {
 export interface WorkspaceProjectManagerRun extends WorkspaceAutomationRun {
   actions?: WorkspaceProjectManagerAction[]
   instruction?: string
+  response?: string | null
 }
 
 export interface SharedWorkspaceProjectManagerApi {

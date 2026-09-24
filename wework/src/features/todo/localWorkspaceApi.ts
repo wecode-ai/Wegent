@@ -7,6 +7,7 @@ import {
   type SharedWorkspaceApi,
   type WorkspaceAutomationRule,
 } from '@wegent/collaboration'
+import { DEFAULT_PROJECT_MANAGER_PROMPT } from '@wegent/collaboration/project-manage'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   isDefaultWorkItemProject,
@@ -504,14 +505,32 @@ export function createLocalWorkspaceApi(
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
         const { includeDefaultAgent = true, ...projectInput } = input
-        const project = decorateProject(await delivery.projects.create(projectInput))
+        let project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
-          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
-            console.warn(
-              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
-              error
+          const agent = await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(
+            error => {
+              console.warn(
+                `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+                error
+              )
+              return null
+            }
+          )
+          if (agent) {
+            project = decorateProject(
+              await delivery.projects.update(project.id, {
+                version: project.version,
+                projectManager: {
+                  projectId: project.id,
+                  version: project.version,
+                  enabled: true,
+                  agentId: agent.id,
+                  prompt: DEFAULT_PROJECT_MANAGER_PROMPT,
+                  triggers: [],
+                },
+              })
             )
-          })
+          }
         }
         return project
       },

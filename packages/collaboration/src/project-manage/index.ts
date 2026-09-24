@@ -11,6 +11,8 @@ export * from "./ProjectExecutionEnvironments";
 export * from "./ProjectCollaborationGroups";
 export * from "./ProjectAutomaticProcessing";
 export * from "./ProjectAiManager";
+export * from "./ProjectAiBoardAssistant";
+export * from "./projectManagerDefaults";
 export * from "./memberSearch";
 export * from "./projectMutationQueue";
 export * from "./BoardLayoutEditor";
