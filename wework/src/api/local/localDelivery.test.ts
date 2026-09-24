@@ -856,6 +856,79 @@ describe('local delivery API', () => {
     })
   })
 
+  test('shares the project catalog across concurrent runtime task context lookups', async () => {
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'runtime_tasks.context') {
+        const taskId = String(params?.task_id)
+        return {
+          id: `binding-${taskId}`,
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: taskId,
+          task_title: 'Runtime',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return taskRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await Promise.all([
+      api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-1' }),
+      api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-2' }),
+    ])
+
+    expect(request.mock.calls.filter(([method]) => method === 'projects.list')).toHaveLength(1)
+  })
+
+  test('invalidates the shared project catalog after project mutations', async () => {
+    const createdProject = {
+      ...projectRecord,
+      id: 'project-2',
+      public_id: 'public-2',
+      project_key: 'SECOND',
+      name: 'Second board',
+    }
+    let projectRecords = [projectRecord]
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return projectRecords
+      if (method === 'projects.create') {
+        projectRecords = [projectRecord, createdProject]
+        return createdProject
+      }
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: 'binding-runtime-2',
+          cloud_project_id: 'project-2',
+          loop_item_id: null,
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: params?.task_id,
+          task_title: 'Runtime',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.listCloudProjects()
+    await api.createCloudProject({ name: 'Second board' })
+
+    await expect(
+      api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-2' })
+    ).resolves.toMatchObject({
+      project: { id: 'project-2', project_key: 'SECOND' },
+    })
+    expect(request.mock.calls.filter(([method]) => method === 'projects.list')).toHaveLength(2)
+  })
+
   test('tracks concurrent calls for the same runtime task only once', async () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     const request = vi.fn(async (method: string) => {

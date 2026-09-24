@@ -145,6 +145,105 @@ describe('TaskBoardView', () => {
     ])
   })
 
+  it('limits concurrent updates when confirming all review tasks', async () => {
+    const work: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project',
+          label: 'Project',
+          available: true,
+          tasks: Array.from({ length: 9 }, (_, index) => ({
+            taskId: `review-${index}`,
+            workspacePath: '/workspace/project',
+            title: `Review ${index}`,
+            runtime: 'codex' as const,
+            status: 'done' as const,
+            running: false,
+          })),
+        },
+      ],
+      totalTasks: 9,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-batch-confirm-concurrency')
+    lifecycleStore.syncRuntimeWork(work)
+    const updateRequests = new Map<
+      string,
+      {
+        promise: Promise<{ id: string; status: string; version: number }>
+        resolve: (value: { id: string; status: string; version: number }) => void
+      }
+    >()
+    const updateLoopItem = vi.fn((itemId: string, values: { version: number; status?: string }) => {
+      let resolve!: (value: { id: string; status: string; version: number }) => void
+      const promise = new Promise<{ id: string; status: string; version: number }>(nextResolve => {
+        resolve = nextResolve
+      })
+      updateRequests.set(itemId, { promise, resolve })
+      return promise.then(() => ({
+        id: itemId,
+        status: values.status ?? 'in_review',
+        version: values.version + 1,
+      }))
+    })
+    const projectSpaceApi = {
+      findCloudContextForTask: vi.fn(async ({ taskId }: { taskId: string }) => ({
+        project: {
+          id: 'default-work-items',
+          project_key: 'WORK',
+          project_store: 'backend',
+        },
+        loop_item: {
+          id: taskId,
+          status: 'in_review',
+          version: 1,
+        },
+      })),
+      updateLoopItem,
+    } as unknown as ProjectSpaceApi
+
+    render(
+      <TaskBoardView
+        runtimeWork={work}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        unreadRuntimeTaskKeys={new Set()}
+        onCreateTask={vi.fn()}
+        projectSpaceApis={[projectSpaceApi]}
+        onArchiveRuntimeTasks={vi.fn()}
+        onMarkRuntimeTaskRead={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(projectSpaceApi.findCloudContextForTask).toHaveBeenCalledTimes(9))
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review'))
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review-confirm'))
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(8))
+
+    await act(async () => {
+      updateRequests.get('review-0')?.resolve({
+        id: 'review-0',
+        status: 'completed',
+        version: 2,
+      })
+      await updateRequests.get('review-0')?.promise
+    })
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(9))
+
+    await act(async () => {
+      for (let index = 1; index < 9; index += 1) {
+        updateRequests.get(`review-${index}`)?.resolve({
+          id: `review-${index}`,
+          status: 'completed',
+          version: 2,
+        })
+      }
+      await Promise.all(updateLoopItem.mock.results.map(result => result.value as Promise<unknown>))
+    })
+    expect(screen.queryByTestId('task-board-batch-confirm-review-dialog')).not.toBeInTheDocument()
+  })
+
   it('repairs missing Runtime Task bindings before confirming them', async () => {
     const work = runtimeWork()
     const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-repair-bindings')
@@ -214,6 +313,105 @@ describe('TaskBoardView', () => {
     expect(screen.queryByTestId('task-board-batch-confirm-review-dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent('Review one')
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent('Review two')
+  })
+
+  it('filters tasks whose linked project item is archived', async () => {
+    const work = runtimeWork()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-archived-binding')
+    lifecycleStore.syncRuntimeWork(work)
+    const findCloudContextForTask = vi.fn(async ({ taskId }: { taskId: string }) => ({
+      project: {
+        id: 'default-work-items',
+        project_key: 'WORK',
+        project_store: 'backend',
+      },
+      loop_item: {
+        id: taskId,
+        status: taskId === 'review-1' ? 'archived' : 'in_review',
+        version: 1,
+      },
+    }))
+    const projectSpaceApi = {
+      findCloudContextForTask,
+      updateLoopItem: vi.fn(),
+    } as unknown as ProjectSpaceApi
+
+    render(
+      <TaskBoardView
+        runtimeWork={work}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        unreadRuntimeTaskKeys={new Set()}
+        onCreateTask={vi.fn()}
+        projectSpaceApis={[projectSpaceApi]}
+        onArchiveRuntimeTasks={vi.fn()}
+        onMarkRuntimeTaskRead={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText('Review one')).not.toBeInTheDocument())
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent('Review two')
+  })
+
+  it('does not repeat pending context lookups when runtime work refreshes', async () => {
+    const work = runtimeWork()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-context-single-flight')
+    lifecycleStore.syncRuntimeWork(work)
+    let resolveContexts: (() => void) | undefined
+    const contextsReady = new Promise<void>(resolve => {
+      resolveContexts = resolve
+    })
+    const findCloudContextForTask = vi.fn(async ({ taskId }: { taskId: string }) => {
+      await contextsReady
+      return {
+        project: {
+          id: 'default-work-items',
+          project_key: 'WORK',
+          project_store: 'backend',
+        },
+        loop_item: {
+          id: taskId,
+          status: taskId === 'review-1' ? 'archived' : 'in_review',
+          version: 1,
+        },
+      }
+    })
+    const projectSpaceApi = {
+      findCloudContextForTask,
+      updateLoopItem: vi.fn(),
+    } as unknown as ProjectSpaceApi
+    const view = (nextWork: RuntimeWorkListResponse) => (
+      <TaskBoardView
+        runtimeWork={nextWork}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        unreadRuntimeTaskKeys={new Set()}
+        onCreateTask={vi.fn()}
+        projectSpaceApis={[projectSpaceApi]}
+        onArchiveRuntimeTasks={vi.fn()}
+        onMarkRuntimeTaskRead={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    const rendered = render(view(work))
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      rendered.rerender(view({ ...work, chats: [...work.chats] }))
+      rendered.rerender(view({ ...work, totalTasks: work.totalTasks + 1 }))
+    })
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      resolveContexts?.()
+      await contextsReady
+    })
+    await waitFor(() => expect(screen.queryByText('Review one')).not.toBeInTheDocument())
+    await act(async () => {
+      rendered.rerender(view({ ...work, chats: [...work.chats] }))
+    })
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
   })
 
   it('refreshes a failed local task context before retrying confirmation', async () => {

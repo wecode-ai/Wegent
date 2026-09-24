@@ -849,6 +849,23 @@ function unsupported(name: string): never {
 export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpaceApi {
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
+  let cachedProjectRecords: LocalLoopItemRecord[] | null = null
+  let projectRecordsRequest: Promise<LocalLoopItemRecord[]> | null = null
+
+  function loadProjectRecords(refresh = false): Promise<LocalLoopItemRecord[]> {
+    if (projectRecordsRequest) return projectRecordsRequest
+    if (!refresh && cachedProjectRecords) return Promise.resolve(cachedProjectRecords)
+    projectRecordsRequest = request<LocalLoopItemRecord[]>('projects.list')
+      .then(records => {
+        cachedProjectRecords = records
+        return records
+      })
+      .finally(() => {
+        projectRecordsRequest = null
+      })
+    return projectRecordsRequest
+  }
+
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
     for (const record of records) taskProjects.set(record.id, projectId)
   }
@@ -856,7 +873,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
   async function resolveProjectId(itemId: string): Promise<CloudProjectId> {
     const known = taskProjects.get(itemId)
     if (known) return known
-    const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
+    const projectRecords = await loadProjectRecords()
     const projects = projectRecords.map(localProject)
     const prefixMatches = projects.filter(project => itemId.startsWith(`${project.project_key}-`))
     if (prefixMatches.length === 1) return prefixMatches[0].id
@@ -877,7 +894,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
 
   const api = {
     async listCloudProjects() {
-      const records = await request<LocalLoopItemRecord[]>('projects.list')
+      const records = await loadProjectRecords(true)
       return {
         items: records
           .filter(record => record.metadata.project_store !== 'backend')
@@ -910,6 +927,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         task_provider: data.task_provider ?? 'local',
         provider_config: data.provider_config ?? {},
       })
+      cachedProjectRecords = null
       return localProject(record)
     },
     async importLocalCodeProject(data: {
@@ -922,6 +940,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         name: data.name,
         roots: data.roots,
       })
+      cachedProjectRecords = null
       return localProject(record)
     },
     async updateCloudProject(
@@ -944,6 +963,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         project_id: projectId,
         project: data,
       })
+      cachedProjectRecords = null
       return localProject(record)
     },
     async archiveCloudProject(projectId: CloudProjectId, version: number) {
@@ -951,6 +971,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         project_id: projectId,
         version,
       })
+      cachedProjectRecords = null
     },
     async listMyWork() {
       return { items: [] }
@@ -1465,7 +1486,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         device_id: task.deviceId,
         task_id: task.taskId,
       })
-      const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
+      const projectRecords = await loadProjectRecords()
       const projectRecord = projectRecords.find(record => record.id === binding.cloud_project_id)
       if (!projectRecord) throw new Error('Local project not found')
       const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null

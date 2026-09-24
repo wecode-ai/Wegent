@@ -5,6 +5,7 @@ import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
+import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   RuntimeTaskSummary,
@@ -55,6 +56,11 @@ import {
   completeRuntimeConversationHydration,
   evictRuntimeConversation,
 } from './runtimeConversationCache'
+import {
+  archiveRuntimeTaskAddresses,
+  BULK_RUNTIME_TASK_CONCURRENCY,
+  findFailedRuntimeTaskArchive,
+} from './runtimeTaskArchive'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -232,29 +238,32 @@ export function useWorkbenchRuntimeTasks({
 
   const removeArchivedWorktrees = useCallback(
     async (worktreeTargets: RuntimeTaskWorktreeTarget[]) => {
-      let succeeded = true
-      for (const target of uniqueRuntimeTaskWorktreeTargets(worktreeTargets)) {
-        try {
+      const results = await allSettledWithConcurrency(
+        uniqueRuntimeTaskWorktreeTargets(worktreeTargets),
+        BULK_RUNTIME_TASK_CONCURRENCY,
+        async target => {
           if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
           await services.runtimeWorkApi.deleteWorktree({
             deviceId: target.deviceId,
             path: target.path,
             preserveSnapshot: true,
           })
-        } catch (error) {
-          succeeded = false
+        }
+      )
+      for (const result of results) {
+        if (result.status === 'rejected') {
           dispatch({
             type: 'error_set',
             error:
-              error instanceof Error
+              result.reason instanceof Error
                 ? t('workbench.archive_runtime_task_remove_failed_detail', {
-                    message: error.message,
+                    message: result.reason.message,
                   })
                 : t('workbench.archive_runtime_task_remove_failed'),
           })
         }
       }
-      return succeeded
+      return results.every(result => result.status === 'fulfilled')
     },
     [dispatch, services.runtimeWorkApi, t]
   )
@@ -274,38 +283,31 @@ export function useWorkbenchRuntimeTasks({
         address =>
           !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
       )
-      const results = await Promise.all(
-        persistedTargets.map(async address => {
-          try {
-            return { address, response: await executorClient.runtime.archiveConversation(address) }
-          } catch (error) {
-            return { address, error }
-          }
-        })
+      const archiveResults = await archiveRuntimeTaskAddresses(persistedTargets, address =>
+        executorClient.runtime.archiveConversation(address)
       )
       const archivedAddresses = [
         ...localFailedTargets,
-        ...results.flatMap(result => (result.response?.accepted ? [result.address] : [])),
+        ...archiveResults.flatMap(result => (result.response?.accepted ? [result.address] : [])),
       ]
-      let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
-        worktreeCleanupSucceeded = await removeArchivedWorktrees(
+        const worktreeCleanupSucceeded = await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
-        if (worktreeCleanupSucceeded) {
-          track('feature_action_completed', { domain: 'conversation', action: 'archive' })
-        } else {
+        if (!worktreeCleanupSucceeded) {
           track('operation_failed', { operation: 'worktree_archive_cleanup' })
         }
       }
-      const failedResult = results.find(result => !result.response?.accepted)
-      if (!failedResult && worktreeCleanupSucceeded) return { status: 'archived' }
-      if (!failedResult) return { status: 'failed' }
+      const failedResult = findFailedRuntimeTaskArchive(archiveResults)
+      if (!failedResult) {
+        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
+        return { status: 'archived' }
+      }
       track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',
