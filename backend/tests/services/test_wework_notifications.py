@@ -577,6 +577,75 @@ def test_notification_preferences_are_account_scoped_and_clear_category_unread(
     )
 
 
+def test_malformed_notification_preferences_fall_back_without_blocking_delivery(
+    test_client, test_db, test_user, test_token, no_external_delivery
+):
+    test_user.preferences = json.dumps(
+        {
+            "wework_notification_preferences": {
+                "collaboration": {
+                    "in_app": "invalid",
+                    "system": True,
+                    "im": False,
+                    "future_channel": True,
+                },
+                "future_category": {"in_app": False},
+            }
+        }
+    )
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+
+    preferences = test_client.get(
+        "/api/v1/wework-notifications/preferences",
+        headers=headers,
+    )
+    notification = test_client.post(
+        "/api/v1/wework-notifications",
+        headers=headers,
+        json={"title": "Available", "body": "Delivery still works"},
+    )
+
+    assert preferences.status_code == 200
+    assert preferences.json()["collaboration"] == {
+        "in_app": True,
+        "system": True,
+        "im": False,
+    }
+    assert notification.status_code == 201
+    no_external_delivery.assert_called_once()
+
+
+def test_disabling_local_task_inbox_does_not_clear_cloud_unread(
+    test_client, test_db, test_user, test_token
+):
+    rows = [
+        create_notification(
+            test_db,
+            user_id=test_user.id,
+            actor_user_id=test_user.id,
+            title=kind,
+            body=kind,
+            kind=kind,
+        )
+        for kind in ("assignment", "message")
+    ]
+    test_db.commit()
+
+    response = test_client.put(
+        "/api/v1/wework-notifications/preferences",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={"category": "tasks", "channel": "in_app", "enabled": False},
+    )
+
+    assert response.status_code == 200
+    test_db.expire_all()
+    assert all(
+        test_db.get(WeworkNotification, notification.id).is_read is False
+        for notification in rows
+    )
+
+
 def test_disabled_inbox_still_allows_enabled_im_delivery(
     test_client, test_db, test_user, test_token, no_external_delivery
 ):

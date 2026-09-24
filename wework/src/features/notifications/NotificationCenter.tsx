@@ -327,36 +327,59 @@ function ConnectedNotificationCenter({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const requestId = useRef(0)
+  const preferenceRequestId = useRef(0)
   const refreshPreferences = useCallback(async () => {
-    if (!api || !runtimeApi) return Promise.resolve()
+    const id = ++preferenceRequestId.current
     try {
-      await migrateLegacyTaskSystemNotification(accountKey, () =>
-        api.updatePreferences({
-          category: 'tasks',
-          channel: 'system',
-          enabled: true,
-        })
-      )
+      await migrateLegacyTaskSystemNotification(accountKey, async () => {
+        if (api) {
+          await api.updatePreferences({
+            category: 'tasks',
+            channel: 'system',
+            enabled: true,
+          })
+        }
+        if (id !== preferenceRequestId.current) {
+          throw new Error('Stale notification preference migration')
+        }
+        const current = readCachedNotificationPreferences(accountKey)
+        const migrated = {
+          ...current,
+          tasks: { ...current.tasks, system: true },
+        }
+        cacheNotificationPreferences(accountKey, migrated)
+        setPreferences(migrated)
+      })
     } catch (cause) {
+      if (id !== preferenceRequestId.current) return
       console.error('[Wework] Failed to migrate legacy task notification setting', cause)
     }
+    if (!api || !runtimeApi || id !== preferenceRequestId.current) return
 
     const next = await api.getPreferences()
-    let taskIm = preferences.tasks.im
+    let taskIm: boolean | null | undefined
+    let taskImSession: string | null | undefined
     try {
       const imSettings = await runtimeApi.getImNotificationSettings()
       taskIm = imSettings.global.enabled
-      setTaskImSessionKey(imSettings.global.sessionKey ?? null)
+      taskImSession = imSettings.global.sessionKey ?? null
     } catch (cause) {
       console.error('[Wework] Failed to load task IM notification settings', cause)
     }
-    const merged = {
-      ...next,
-      tasks: { ...next.tasks, im: taskIm },
-    }
-    setPreferences(merged)
-    cacheNotificationPreferences(accountKey, merged)
-  }, [accountKey, api, preferences.tasks.im, runtimeApi])
+    if (id !== preferenceRequestId.current) return
+    if (taskImSession !== undefined) setTaskImSessionKey(taskImSession)
+    setPreferences(current => {
+      const merged = {
+        ...next,
+        tasks: {
+          ...next.tasks,
+          im: taskIm === undefined ? current.tasks.im : taskIm,
+        },
+      }
+      cacheNotificationPreferences(accountKey, merged)
+      return merged
+    })
+  }, [accountKey, api, runtimeApi])
   const openSettings = useCallback(() => {
     if (!buttonRef.current) return
     setAnchor(buttonRef.current)
@@ -561,6 +584,7 @@ function ConnectedNotificationCenter({
     enabled: boolean
   ) =>
     void mutate(async () => {
+      preferenceRequestId.current++
       if (preferenceCategory === 'tasks' && channel === 'im') {
         if (!runtimeApi || (!taskImSessionKey && enabled)) {
           throw new Error(t('notifications.im_target_required'))

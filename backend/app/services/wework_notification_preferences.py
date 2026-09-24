@@ -1,9 +1,11 @@
 """Account-scoped Wework notification channel preferences."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -15,6 +17,7 @@ from app.schemas.wework_notification import (
 from app.services.notification_copy import COLLABORATION_NOTIFICATION_KINDS
 
 PREFERENCE_KEY = "wework_notification_preferences"
+logger = logging.getLogger(__name__)
 
 
 def _load_user_preferences(value: Any) -> dict[str, Any]:
@@ -34,7 +37,46 @@ def get_notification_preferences(user: User) -> NotificationPreferences:
     raw = preferences.get(PREFERENCE_KEY)
     if not isinstance(raw, dict):
         return NotificationPreferences()
-    return NotificationPreferences.model_validate(raw)
+
+    defaults = NotificationPreferences()
+    merged = defaults.model_dump()
+    dropped_value = False
+    for category_name, default_channels in merged.items():
+        raw_channels = raw.get(category_name)
+        if not isinstance(raw_channels, dict):
+            dropped_value = dropped_value or category_name in raw
+            continue
+        for channel_name, default_value in default_channels.items():
+            if channel_name not in raw_channels:
+                continue
+            value = raw_channels[channel_name]
+            if isinstance(value, bool) and default_value is not None:
+                merged[category_name][channel_name] = value
+            elif value is None and default_value is None:
+                merged[category_name][channel_name] = value
+            else:
+                dropped_value = True
+        dropped_value = dropped_value or any(
+            channel_name not in default_channels for channel_name in raw_channels
+        )
+    dropped_value = dropped_value or any(
+        category_name not in merged for category_name in raw
+    )
+
+    try:
+        result = NotificationPreferences.model_validate(merged)
+    except ValidationError:
+        logger.warning(
+            "Invalid Wework notification preferences ignored: user_id=%s",
+            user.id,
+        )
+        return defaults
+    if dropped_value:
+        logger.warning(
+            "Unknown or invalid Wework notification preferences ignored: user_id=%s",
+            user.id,
+        )
+    return result
 
 
 def notification_category(kind: str) -> str:
@@ -59,7 +101,11 @@ def update_notification_preferences(
     stored[PREFERENCE_KEY] = preferences.model_dump()
     user.preferences = json.dumps(stored)
 
-    if values.channel == "in_app" and not values.enabled:
+    if (
+        values.channel == "in_app"
+        and not values.enabled
+        and values.category in ("collaboration", "general")
+    ):
         query = db.query(WeworkNotification).filter(
             WeworkNotification.user_id == user.id,
             WeworkNotification.is_read.is_(False),
@@ -68,7 +114,7 @@ def update_notification_preferences(
             query = query.filter(
                 WeworkNotification.kind.in_(COLLABORATION_NOTIFICATION_KINDS)
             )
-        elif values.category == "general":
+        else:
             query = query.filter(
                 WeworkNotification.kind.notin_(COLLABORATION_NOTIFICATION_KINDS)
             )

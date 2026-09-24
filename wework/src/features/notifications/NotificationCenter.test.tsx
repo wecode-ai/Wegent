@@ -23,10 +23,18 @@ const runtimeApi = vi.hoisted(() => ({
   getImNotificationSettings: vi.fn(),
   updateGlobalImNotification: vi.fn(),
 }))
+const desktopHost = vi.hoisted(() => ({ invoke: vi.fn() }))
+const environment = vi.hoisted(() => ({ electron: false }))
 const taskState = vi.hoisted(() => ({ reminders: null as unknown }))
 vi.mock('@/api/notifications', () => ({ createNotificationsApi: () => api }))
 vi.mock('@/api/runtimeWork', () => ({ createRuntimeWorkApi: () => runtimeApi }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: desktopHost.invoke }))
 vi.mock('@/desktop/trayNavigation', () => ({ syncNotificationUnreadCount: vi.fn() }))
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  getDesktopWindowLabel: () => 'main',
+  isElectronRuntime: () => environment.electron,
+}))
 vi.mock('@/lib/navigation', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/navigation')>()),
   navigateTo: navigation.navigateTo,
@@ -80,6 +88,10 @@ const viewWithTask = (value = connection) => (
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  environment.electron = false
+  desktopHost.invoke.mockResolvedValue({
+    taskCompletionNotificationsEnabled: false,
+  })
   api.list.mockImplementation((_offset, category) =>
     Promise.resolve(
       category === 'general'
@@ -226,6 +238,18 @@ describe('notification center', () => {
     expect(api.updatePreferences).not.toHaveBeenCalled()
   })
 
+  it('migrates the legacy task system setting for offline users', async () => {
+    environment.electron = true
+    desktopHost.invoke.mockResolvedValue({
+      taskCompletionNotificationsEnabled: true,
+    })
+
+    render(viewWithTask({ ...connection, token: null, apiBaseUrl: null }))
+
+    await waitFor(() => expect(readActiveNotificationPreferences().tasks.system).toBe(true))
+    expect(api.updatePreferences).not.toHaveBeenCalled()
+  })
+
   it('counts tasks and cloud records together and marks both sources read', async () => {
     render(viewWithTask())
     expect(await screen.findByTestId('wework-notifications-unread')).toHaveTextContent('2')
@@ -356,5 +380,47 @@ describe('notification center', () => {
         enabled: true,
       })
     )
+  })
+
+  it('does not let a slow preference refresh overwrite a completed toggle', async () => {
+    render(view())
+    await waitFor(() => expect(api.getPreferences).toHaveBeenCalled())
+    api.getPreferences.mockClear()
+    runtimeApi.getImNotificationSettings.mockClear()
+
+    let resolveImSettings:
+      | ((value: {
+          global: { enabled: boolean; sessionKey: string }
+          runtimeTaskSubscriptions: never[]
+        }) => void)
+      | undefined
+    runtimeApi.getImNotificationSettings.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveImSettings = resolve
+      })
+    )
+
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-settings'))
+    await waitFor(() => expect(api.getPreferences).toHaveBeenCalledOnce())
+    const taskSystem = screen.getByTestId('wework-notifications-setting-tasks-system')
+    fireEvent.click(taskSystem)
+    await waitFor(() =>
+      expect(api.updatePreferences).toHaveBeenCalledWith({
+        category: 'tasks',
+        channel: 'system',
+        enabled: true,
+      })
+    )
+
+    await act(async () => {
+      resolveImSettings?.({
+        global: { enabled: false, sessionKey: 'session-1' },
+        runtimeTaskSubscriptions: [],
+      })
+    })
+
+    expect(taskSystem).toHaveAttribute('aria-checked', 'true')
+    expect(readActiveNotificationPreferences().tasks.system).toBe(true)
   })
 })

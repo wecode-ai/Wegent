@@ -169,13 +169,11 @@ async function resolveBackendRsBinary() {
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
   if (!(await pathExists(binary))) {
-    await runChecked('cargo', [
-      'build',
-      '--manifest-path',
-      manifestPath,
-      '--bin',
-      'wegent-backend-rs',
-    ])
+    await runChecked(
+      'cargo',
+      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
+      { cwd: repoDir }
+    )
   }
   return binary
 }
