@@ -1222,7 +1222,12 @@ async function verifyWorktreeCreationStatus({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeFork,
+    '',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const currentForkTask = currentRuntimeTaskFromDebugSnapshot(forkDebugSnapshot)
