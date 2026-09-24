@@ -20,10 +20,23 @@ struct Intent {
     connector_slug: String,
 }
 
-#[derive(Default)]
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
     cursor: usize,
+    retry_delay: Duration,
+}
+
+impl Default for Reconciler {
+    fn default() -> Self {
+        Self {
+            retries: HashMap::new(),
+            cursor: 0,
+            retry_delay: super::e2e_duration(
+                "WEWORK_E2E_PLUGIN_ACCOUNT_RETRY_DELAY_MS",
+                Duration::from_secs(60),
+            ),
+        }
+    }
 }
 
 impl Reconciler {
@@ -88,8 +101,7 @@ impl Reconciler {
     fn record(&mut self, key: (u64, String), _succeeded: bool) {
         // Missing/locked credentials remain local. Retry after login without
         // repeatedly prompting the OS on every scheduler tick.
-        self.retries
-            .insert(key, Instant::now() + Duration::from_secs(60));
+        self.retries.insert(key, Instant::now() + self.retry_delay);
     }
 }
 

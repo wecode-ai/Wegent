@@ -19,6 +19,7 @@ const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-shared-core', 'collaboration-runtime'],
   ['collaboration-settings-matrix', 'collaboration-runtime'],
+  ['collaboration-issue-comment-notification', 'collaboration-runtime'],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',

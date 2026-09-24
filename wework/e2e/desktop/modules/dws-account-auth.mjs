@@ -60,6 +60,7 @@ export async function verifyDwsCloudAccount({
   api,
   waitForValue,
   managedRoot,
+  reconcileMarker,
   timeoutMs,
   invoke,
 }) {
@@ -144,15 +145,26 @@ export async function verifyDwsCloudAccount({
     'DWS cloud grant was not revoked'
   )
   await invoke(command, 'plugin_auth_device_not_granted')
-  // Observe more than one native reconciliation period after manual revocation.
-  const until = Date.now() + 32000
-  while (Date.now() < until) {
+  const reconciliationCount = () =>
+    readFile(reconcileMarker, 'utf8')
+      .then(contents => contents.split('\n').filter(Boolean).length)
+      .catch(error => {
+        if (error.code === 'ENOENT') return 0
+        throw error
+      })
+  const initialReconciliations = await reconciliationCount()
+  // Observe two completed native reconciliation cycles after manual revocation.
+  const until = Date.now() + timeoutMs
+  while ((await reconciliationCount()) < initialReconciliations + 2) {
     const current = (await api('/plugin-connections')).find(item => item.id === connection.id)
     assert.ok(
       !current.device_ids.includes(CLOUD_DEVICE_ID),
       'Automatic sync restored a revoked grant'
     )
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    if (Date.now() >= until) {
+      throw new Error('Automatic reconciliation did not complete two post-revocation cycles')
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
   }
   await invoke(command, 'plugin_auth_device_not_granted')
 }

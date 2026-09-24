@@ -24,6 +24,26 @@ pub use gateway::{ConnectionMetadata, NativeAuthGateway};
 pub use revocation::revoke_pending;
 
 pub const MAX_FRAME_BYTES: usize = 65_536;
+const E2E_RECONCILE_MARKER_ENV: &str = "WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_MARKER";
+
+fn e2e_reconcile_marker() -> Option<PathBuf> {
+    std::env::var_os(E2E_RECONCILE_MARKER_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn e2e_duration(name: &str, default: Duration) -> Duration {
+    if e2e_reconcile_marker().is_none() {
+        return default;
+    }
+    let Some(milliseconds) = std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return default;
+    };
+    Duration::from_millis(milliseconds.clamp(100, default.as_millis() as u64))
+}
 
 #[derive(Debug, Clone, Copy, thiserror::Error, PartialEq, Eq)]
 #[error("{0}")]

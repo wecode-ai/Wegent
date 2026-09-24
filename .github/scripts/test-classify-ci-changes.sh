@@ -1412,12 +1412,11 @@ if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] 
   exit 1
 fi
 
-if [[ "$desktop_other_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
-  [[ "$desktop_other_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
-  [[ "$desktop_other_job" == *"build-wework-desktop-core-e2e"* ]] ||
+if [[ "$desktop_other_job" != *"uses: actions/download-artifact@v4"* ]] ||
+  [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/WeWork"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/resources/bin/wegent-executor"* ]]; then
-  printf 'Non-Core desktop E2E must overlap setup while waiting for the shared Electron package\n' >&2
+  printf 'Non-Core desktop E2E must wait for and download the shared Electron package\n' >&2
   exit 1
 fi
 
@@ -1436,10 +1435,9 @@ for desktop_job_start in \
         ;;
     esac
   )"
-  if [[ "$desktop_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
-    [[ "$desktop_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
-    [[ "$desktop_job" == *"build-wework-desktop-core-e2e"* ]]; then
-    printf 'Desktop E2E shards must overlap setup while waiting for the shared build\n' >&2
+  if [[ "$desktop_job" != *"uses: actions/download-artifact@v4"* ]] ||
+    [[ "$desktop_job" != *"build-wework-desktop-core-e2e"* ]]; then
+    printf 'Desktop E2E shards must start after the shared build is ready\n' >&2
     exit 1
   fi
 done
@@ -1528,15 +1526,14 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"max-parallel: 10"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"uses: actions/download-artifact@v4"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
-  printf 'Wework Cloud desktop E2E must use ten prebuilt two-worker shards\n' >&2
+  printf 'Wework Cloud desktop E2E must use ten prebuilt three-worker shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1550,11 +1547,11 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 13"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
-  printf 'Wework Core desktop E2E must use thirteen prebuilt two-worker shards\n' >&2
+  printf 'Wework Core desktop E2E must use thirteen prebuilt three-worker shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1676,6 +1673,18 @@ if ! grep -Fq 'const DEFAULT_PARALLEL_CHECKPOINTS = 1' "$desktop_checkpoint_runn
   printf 'Wework desktop E2E must default to one checkpoint per runner\n' >&2
   exit 1
 fi
+
+for collaboration_checkpoint in \
+  collaboration-shared-core \
+  collaboration-settings-matrix \
+  collaboration-issue-comment-notification; do
+  if ! grep -Fq \
+    "['$collaboration_checkpoint', 'collaboration-runtime']" \
+    "$desktop_checkpoint_runner"; then
+    printf 'Shared Collaboration checkpoints must serialize their cloud runtime\n' >&2
+    exit 1
+  fi
+done
 
 if grep -Fq 'cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES' "$desktop_build_flows" ||
   [[ "$(grep -Fc \

@@ -343,7 +343,9 @@ jobs:
 
   wework-desktop-core-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs: changes
+    needs:
+      - changes
+      - build-wework-desktop-core-e2e
     if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -383,13 +385,10 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        env:
-          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
 
       - name: Restore Wework desktop Core E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
@@ -408,7 +407,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -772,7 +771,9 @@ jobs:
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs: changes
+    needs:
+      - changes
+      - build-wework-desktop-core-e2e
     if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -796,13 +797,10 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
-        env:
-          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
@@ -830,7 +828,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
@@ -898,7 +896,9 @@ jobs:
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs: changes
+    needs:
+      - changes
+      - build-wework-desktop-core-e2e
     if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -920,13 +920,10 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
-        env:
-          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
