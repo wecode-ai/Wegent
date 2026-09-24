@@ -54,9 +54,6 @@ jobs:
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      playwright_version: ${{ steps.playwright-version.outputs.version }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -65,13 +62,6 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Resolve Playwright version
-        id: playwright-version
-        working-directory: ./frontend
-        run: |
-          version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Restore shared Next.js build cache
         id: nextjs-cache
@@ -113,7 +103,7 @@ jobs:
 
   prepare-platform-e2e-image:
     name: Prepare Platform E2E Image
-    needs: [changes, build-frontend-e2e]
+    needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -129,15 +119,18 @@ jobs:
 
       - name: Resolve Platform E2E image
         id: image
-        env:
-          PLAYWRIGHT_VERSION: ${{ needs.build-frontend-e2e.outputs.playwright_version }}
         run: |
           dockerfile=docker/wework-e2e/browser.Dockerfile
           image_ref="$(awk '$1 == "FROM" { print $2 }' "$dockerfile")"
           image_version="${image_ref#mcr.microsoft.com/playwright:v}"
           image_version="${image_version%-noble}"
-          if [[ "$image_version" != "$PLAYWRIGHT_VERSION" ]]; then
-            echo "Playwright image version $image_version does not match workspace version $PLAYWRIGHT_VERSION" >&2
+          playwright_version="$(
+            sed -n 's/^  playwright@\([^:]*\):$/\1/p' pnpm-lock.yaml |
+              head -n 1
+          )"
+          test -n "$playwright_version"
+          if [[ "$image_version" != "$playwright_version" ]]; then
+            echo "Playwright image version $image_version does not match workspace version $playwright_version" >&2
             exit 1
           fi
           digest="$(sha256sum "$dockerfile" | cut -d ' ' -f 1)"
@@ -375,18 +368,18 @@ jobs:
           MYSQL_DATABASE: wegent_test
         options: >-
           --health-cmd="mysqladmin ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=45s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
       redis:
         image: redis:7-alpine
         options: >-
           --health-cmd="redis-cli ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=15
 
       qdrant:
         image: qdrant/qdrant:v1.15.4
@@ -398,10 +391,10 @@ jobs:
           MINIO_ROOT_PASSWORD: wegent-e2e-secret
         options: >-
           --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=20s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
     steps:
       - name: Generate internal service token
@@ -614,8 +607,7 @@ jobs:
           pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
-      - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 4
+      - name: Run Provider-native E2E tests
         timeout-minutes: 15
         working-directory: ./frontend
         env:
@@ -626,7 +618,12 @@ jobs:
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CI: true
-        run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
+        run: |
+          pnpm exec playwright test \
+            --project=provider-native-chromium \
+            --workers=1 \
+            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
+            --no-deps
 
       - name: Stop Knowledge Runtime
         if: always()
@@ -718,9 +715,9 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="mysqladmin ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=30
 
       redis:
         image: redis:7-alpine
@@ -728,9 +725,9 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=15
 
       minio:
         image: bitnamilegacy/minio:2025.7.23-debian-12-r0
@@ -741,10 +738,10 @@ jobs:
           MINIO_ROOT_PASSWORD: wegent-e2e-secret
         options: >-
           --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=20s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
     steps:
       - name: Generate internal service token

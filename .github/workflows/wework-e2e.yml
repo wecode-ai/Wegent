@@ -251,21 +251,32 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
-      - name: Build Wework Electron E2E application
+      - name: Build shared Wework desktop E2E runtime
         env:
           CI: true
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
-        run: |
-          pnpm --filter wework ai:verify:electron:build
-          test -x wework/electron/release/WeWork-linux-x64/WeWork
-          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
-
-      - name: Build Rust Backend E2E gateway
-        env:
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
           CARGO_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
         run: |
-          cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
+          pnpm --filter wework ai:verify:electron:build &
+          wework_pid=$!
+
+          cargo build \
+            --locked \
+            --manifest-path backend-rs/Cargo.toml \
+            --bin wegent-backend-rs &
+          backend_pid=$!
+
+          status=0
+          wait "$wework_pid" || status=$?
+          wait "$backend_pid" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
+
+          test -x wework/electron/release/WeWork-linux-x64/WeWork
+          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
           mkdir -p .ci-artifacts
           cp "$CARGO_TARGET_DIR/debug/wegent-backend-rs" .ci-artifacts/wegent-backend-rs
           chmod 0755 .ci-artifacts/wegent-backend-rs
@@ -399,7 +410,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -839,7 +850,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |

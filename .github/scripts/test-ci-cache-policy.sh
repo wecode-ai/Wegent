@@ -197,6 +197,24 @@ for action_file in "$action_dir"/*/action.yml; do
   fi
 done
 
+platform_e2e_workflow="$workflow_dir/e2e-tests.yml"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
+  "$platform_e2e_workflow" ||
+  grep -A3 -F 'name: Run Provider-native E2E tests' "$platform_e2e_workflow" |
+    grep -Fq 'if: matrix.shardIndex == 4'; then
+  fail "Provider-native E2E coverage must be distributed across the existing platform shards"
+fi
+
+wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
+if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"' \
+  "$wework_e2e_workflow")" -ne 2 ]] ||
+  ! grep -Fq 'name: Build shared Wework desktop E2E runtime' \
+    "$wework_e2e_workflow"; then
+  fail "Linux Wework desktop E2E must use in-runner checkpoint and build parallelism"
+fi
+
 warmup_workflow="$workflow_dir/ci-cache-warmup.yml"
 if ! grep -q '^  push:$' "$warmup_workflow" ||
   ! grep -A3 '^  push:$' "$warmup_workflow" | grep -q 'main'; then
