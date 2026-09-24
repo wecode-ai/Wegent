@@ -157,7 +157,9 @@ Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH
 执行 Vite、Electron 和 Executor 构建。桌面分片不依赖构建 job 完成才启动，而是在
 准备自身依赖后轮询共享 artifact；这会把分片初始化与唯一一次打包重叠起来，但不会
 增加 matrix job 数量或减少任何 checkpoint。Rust gateway 和 Executor 都以 debug
-profile 构建，避免为 E2E 产物执行无用的 release 优化。Rust 构建同时复用由 `main`
+profile 构建，避免为 E2E 产物执行无用的 release 优化；测试产物还会关闭 dev
+profile 的 debuginfo，因为诊断 artifact 不保留这些符号，生成后再剥离只会延长
+冷构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
 artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短所有桌面分片的
@@ -167,7 +169,10 @@ cache warmup，防止主分支只在 lockfile 变化时刷新缓存。桌面 E2E
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+macOS Inspector 路径同样使用 debug Executor profile，并关闭 dev profile 的
+debuginfo。只有真正执行内存 checkpoint（`ci:memory`、`ci:all` 或非 PR
+运行）时才构建 release Executor：优化后的代码生成会影响内存测量，但在仅运行
+Inspector 时不会增加覆盖。macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
 并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
 定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
@@ -276,11 +281,13 @@ Runtime、Executor Home、工作区、测试归档或组件目录。
 
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。为缩短冷启动时间，Executor 构建与 Backend/Redis/数据库准备并行，远端 Executor 注册与 Electron 应用构建并行；应用启动前仍必须同时等待两组前置任务完成。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
-混合 Backend 启动脚本会让 Python Uvicorn 在每次响应后显式关闭上游 HTTP
-连接。Rust gateway 当前会复用连接池；如果让 Uvicorn 独立过期空闲连接，gateway
-可能复用已经被上游关闭的 socket，并把并发 API 请求错误地返回为 `502 fallback
-upstream unavailable`。该设置只约束本机 Rust → Python fallback 连接，不改变
-外部客户端到 gateway 的连接复用。
+混合 Backend 启动脚本会把 Python Uvicorn 的上游 HTTP keep-alive 设为 2400 秒，
+长于混合 E2E workflow 最长的 35 分钟 job。`brz-http-gateway` 0.1.4 创建
+hyper-util 连接池时没有安装空闲连接计时器；如果 Uvicorn 先让空闲 socket 过期，
+gateway 可能复用已经被上游关闭的连接，并把请求错误地返回为 `502 fallback
+upstream unavailable`。让本地启动器的上游连接生命周期覆盖整个 job，可消除该
+测试运行中的陈旧 socket 窗口。该设置只约束本机 Rust → Python fallback 连接，
+不改变外部客户端到 gateway 的连接复用。
 
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
 

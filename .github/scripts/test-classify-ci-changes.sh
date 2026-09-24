@@ -1393,7 +1393,8 @@ desktop_other_job="$(
 )"
 if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$core_build_job" != *"wework/electron/release/WeWork-linux-x64/WeWork"* ]] ||
-  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]]; then
+  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]] ||
+  [[ "$core_build_job" != *'CARGO_PROFILE_DEV_DEBUG: "0"'* ]]; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi
@@ -1683,8 +1684,11 @@ if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
   [[ "$wework_memory_job" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
   [[ "$wework_memory_job" != *"pnpm install --frozen-lockfile"* ]] ||
   [[ "$wework_memory_job" != *"pnpm --dir wework/electron install --frozen-lockfile"* ]] ||
+  [[ "$wework_memory_job" != *'CARGO_PROFILE_DEV_DEBUG: "0"'* ]] ||
+  [[ "$wework_memory_job" != *"contains(github.event.pull_request.labels.*.name, 'ci:memory')"* ]] ||
+  [[ "$wework_memory_job" != *"'release' || 'debug'"* ]] ||
   [[ "$wework_memory_job" == *"--offline"* ]]; then
-  printf 'Wework memory E2E must allow dependency downloads when the macOS pnpm cache is incomplete\n' >&2
+  printf 'Wework macOS E2E must keep memory builds representative without slowing Inspector-only runs\n' >&2
   exit 1
 fi
 

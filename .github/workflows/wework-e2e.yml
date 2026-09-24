@@ -268,6 +268,7 @@ jobs:
       - name: Build shared Wework desktop E2E runtime
         env:
           CI: true
+          CARGO_PROFILE_DEV_DEBUG: "0"
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
@@ -1171,9 +1172,10 @@ jobs:
 
       - name: Build Wework Electron E2E application
         env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
-          WEWORK_EXECUTOR_PROFILE: release
+          WEWORK_EXECUTOR_PROFILE: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')) && 'release' || 'debug' }}
         run: |
           pnpm --filter wework ai:verify:electron:build &
           wework_pid=$!

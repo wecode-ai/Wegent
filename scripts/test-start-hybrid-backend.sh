@@ -35,8 +35,8 @@ fail() {
     exit 1
 }
 
-if ! grep -Fq -- '--timeout-keep-alive 0' "$HYBRID_START_SH"; then
-    fail "hybrid Backend must not pool stale Python upstream connections"
+if ! grep -Fq -- '--timeout-keep-alive 2400' "$HYBRID_START_SH"; then
+    fail "Python upstream keep-alive must outlive the longest hybrid E2E job"
 fi
 
 extract_function() {

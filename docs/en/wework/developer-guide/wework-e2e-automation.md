@@ -168,7 +168,9 @@ start without waiting for the build job to finish and poll for the shared
 artifact after preparing their own dependencies. This overlaps shard setup with
 the single package build without adding matrix jobs or dropping checkpoints.
 Both the Rust gateway and Executor use debug profiles so E2E does not spend time
-on unused release optimization. Rust builds
+on unused release optimization. Test artifacts also disable dev-profile
+debuginfo because diagnostics do not retain those symbols; generating and then
+stripping them only extends a cold build. Rust builds
 reuse both the `main`-owned Cargo target cache and sccache compiler units: the
 target cache bounds PR and first-run latency, while sccache reduces incremental
 compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
@@ -181,7 +183,11 @@ spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The macOS Inspector path also uses the debug
+Executor profile and disables dev-profile debuginfo. It builds a release
+Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
+or a non-pull-request run), because optimized code generation is relevant to
+memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -324,13 +330,15 @@ On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` set
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
-The hybrid Backend launcher makes Python Uvicorn close each upstream HTTP
-connection after its response. The Rust gateway currently uses a connection
-pool; if Uvicorn independently expires an idle connection, the gateway can
-reuse the upstream-closed socket and incorrectly return `502 fallback upstream
-unavailable` for concurrent API requests. This setting affects only the local
-Rust-to-Python fallback connection and does not disable keep-alive between
-external clients and the gateway.
+The hybrid Backend launcher gives Python Uvicorn a 2,400-second upstream HTTP
+keep-alive, longer than the workflow's longest 35-minute hybrid E2E job.
+`brz-http-gateway` 0.1.4 builds a hyper-util connection pool without installing
+its idle-connection timer. If Uvicorn expires an idle socket first, the gateway
+can reuse that upstream-closed connection and incorrectly return `502 fallback
+upstream unavailable`. Bounding the upstream lifetime beyond the job prevents
+that stale-socket window in this local hybrid launcher. The setting affects only
+the local Rust-to-Python fallback connection and does not disable keep-alive
+between external clients and the gateway.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 

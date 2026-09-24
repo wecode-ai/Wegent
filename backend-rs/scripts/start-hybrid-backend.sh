@@ -225,8 +225,9 @@ fi
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 (
     cd "$BACKEND_DIR"
-    # Explicitly close upstream HTTP connections so the gateway cannot reuse
-    # a socket after Uvicorn expires it from its keep-alive pool.
+    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
+    # upstream sockets alive beyond the longest CI job so its pooled client
+    # cannot reuse a socket that Uvicorn expired during the run.
     exec "$PYTHON_UVICORN" app.main:app \
         --reload \
         --reload-dir . \
@@ -237,7 +238,7 @@ echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT
         --reload-exclude '.git/*' \
         --host 127.0.0.1 \
         --port "$PYTHON_UPSTREAM_PORT" \
-        --timeout-keep-alive 0 \
+        --timeout-keep-alive 2400 \
         --log-level debug
 ) &
 PYTHON_PID=$!
