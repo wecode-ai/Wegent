@@ -76,6 +76,8 @@ mkdir -p \
   "$repo/wework/e2e" \
   "$repo/wework/src"
 cp "$script_dir/resolve-wework-core-e2e-build-ref.sh" "$repo/.github/scripts/"
+grep -Fq "git -c \"safe.directory=\$PWD\" ls-files" \
+  "$repo/.github/scripts/resolve-wework-core-e2e-build-ref.sh"
 printf 'source\n' >"$repo/wework/src/app.ts"
 printf 'scenario\n' >"$repo/wework/e2e/scenario.mjs"
 printf '{}\n' >"$repo/package.json"

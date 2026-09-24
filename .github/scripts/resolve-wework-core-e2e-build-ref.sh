@@ -14,7 +14,7 @@ backend_rs_image="$4"
 manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 
-git ls-files -s -- \
+git -c "safe.directory=$PWD" ls-files -s -- \
   .github/actions/build-wework-core-e2e \
   .github/actions/setup-node-workspace \
   .github/scripts/archive-wework-core-e2e-build.sh \
