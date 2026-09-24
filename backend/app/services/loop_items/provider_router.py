@@ -33,6 +33,8 @@ class LoopItemProviderRouter:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
         assign_creator_if_unassigned: bool = True,
+        apply_project_workflow: bool = True,
+        commit: bool = True,
     ) -> RoutedLoopItem:
         if project.task_provider in {"github", "gitlab"}:
             if automation_context is None and instruction is None:
@@ -51,7 +53,11 @@ class LoopItemProviderRouter:
                 )
             internal_item = (
                 db.get(LoopItem, str(created["id"]))
-                if values.assignee_agent_id or values.assignee_team_id
+                if (
+                    values.assignee_agent_id
+                    or values.assignee_team_id
+                    or values.assignee_group_id
+                )
                 else None
             )
             return RoutedLoopItem(values=created, internal_item=internal_item)
@@ -64,6 +70,8 @@ class LoopItemProviderRouter:
             automation_context=automation_context,
             instruction=instruction,
             assign_creator_if_unassigned=assign_creator_if_unassigned,
+            apply_project_workflow=apply_project_workflow,
+            commit=commit,
         )
         response = loop_item_service.response_values(db, item, user.id)
         return RoutedLoopItem(values=response, internal_item=item)

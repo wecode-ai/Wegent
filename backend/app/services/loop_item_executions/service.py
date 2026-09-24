@@ -3984,7 +3984,11 @@ class LoopItemExecutionService:
             WeworkExecutionProfile.for_automation_manager(
                 owner_user_id=owner_user_id,
                 display_name="自定义 AI 调度员",
-                instruction=manager_prompt,
+                instruction=project_automation_execution._manager_user_message(
+                    rule,
+                    run,
+                ),
+                developer_instruction=manager_prompt,
                 model=model,
                 model_type=(
                     selection.get("model_type") or profile_metadata.get("model_type")

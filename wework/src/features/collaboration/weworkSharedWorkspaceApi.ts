@@ -59,6 +59,7 @@ export interface WeworkAutomationSharedWorkspaceApi {
     NonNullable<SharedWorkspaceApi['automations']>,
     'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
   >
+  projectManager?: SharedWorkspaceApi['projectManager']
   incomingHooks?: Pick<
     NonNullable<SharedWorkspaceApi['incomingHooks']>,
     'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
@@ -462,6 +463,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
               automatic_processing_rules: input.automaticProcessingRules as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['automatic_processing_rules'],
+              project_manager: input.projectManager as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['project_manager'],
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
@@ -806,7 +810,17 @@ export function createWeworkAutomationSharedWorkspaceApi(
       update: delivery.projects.update,
     },
     ...(projectAutomationApi
-      ? { automations: createWeworkAutomationsApi(projectAutomationApi) }
+      ? {
+          automations: createWeworkAutomationsApi(projectAutomationApi),
+          projectManager: {
+            get: projectAutomationApi.getProjectManager,
+            save: projectAutomationApi.saveProjectManager,
+            run: projectAutomationApi.runProjectManager,
+            listRuns: projectAutomationApi.listProjectManagerRuns,
+            getRun: projectAutomationApi.getProjectManagerRun,
+            decide: projectAutomationApi.decideProjectManagerAction,
+          },
+        }
       : {}),
     ...(projectIncomingHookApi
       ? { incomingHooks: createWeworkIncomingHooksApi(projectIncomingHookApi) }
@@ -1016,6 +1030,14 @@ export function createWeworkSharedWorkspaceApi<
       async retryRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.retryRun(projectId, runId))
       },
+    },
+    projectManager: {
+      get: projectAutomationApi.getProjectManager,
+      save: projectAutomationApi.saveProjectManager,
+      run: projectAutomationApi.runProjectManager,
+      listRuns: projectAutomationApi.listProjectManagerRuns,
+      getRun: projectAutomationApi.getProjectManagerRun,
+      decide: projectAutomationApi.decideProjectManagerAction,
     },
     incomingHooks: {
       ...createWeworkIncomingHooksApi(projectIncomingHookApi),

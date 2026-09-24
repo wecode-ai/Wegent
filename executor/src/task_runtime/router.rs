@@ -481,6 +481,30 @@ impl TaskRuntime {
         }
     }
 
+    pub async fn create_project_manager_task(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        input: TaskCreate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            return self
+                .local_store
+                .create_project_manager_task(project_id, run_id, input);
+        }
+        let item = self.create_task(project_id, input).await?;
+        self.record_project_manager_action(
+            project_id,
+            run_id,
+            "create",
+            &item.id,
+            Value::Null,
+            false,
+        )?;
+        Ok(item)
+    }
+
     pub async fn update_task(
         &self,
         project_id: &str,
@@ -504,6 +528,26 @@ impl TaskRuntime {
                 "{provider:?}"
             ))),
         }
+    }
+
+    pub async fn update_project_manager_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        run_id: &str,
+        kind: &str,
+        payload: Value,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? == TaskProviderKind::Local {
+            return self
+                .local_store
+                .update_project_manager_task(project_id, task_id, input, run_id, kind, payload);
+        }
+        let item = self.update_task(project_id, task_id, input).await?;
+        self.record_project_manager_action(project_id, run_id, kind, task_id, payload, false)?;
+        Ok(item)
     }
 
     pub async fn mark_task_read(
@@ -708,6 +752,48 @@ impl TaskRuntime {
     ) -> Result<Vec<Value>, TaskRuntimeError> {
         self.local_store
             .list_project_automation_runs(project_id, rule_id)
+    }
+
+    pub fn run_project_manager(
+        &self,
+        project_id: &str,
+        instruction: &str,
+        model_selection: Option<&Value>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .run_project_manager(project_id, instruction, model_selection)
+    }
+
+    pub fn list_project_manager_runs(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_project_manager_runs(project_id)
+    }
+
+    pub fn record_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        kind: &str,
+        item_id: &str,
+        payload: Value,
+        pending: bool,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .record_project_manager_action(project_id, run_id, kind, item_id, payload, pending)
+    }
+
+    pub fn decide_project_manager_action(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        action_id: &str,
+        approve: bool,
+        version: i64,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .decide_project_manager_action(project_id, run_id, action_id, approve, version)
     }
 
     pub fn list_executions(

@@ -29,6 +29,7 @@ const mergedDefaultPreferences = {
   telemetryEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
+  projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -242,6 +243,32 @@ describe('appPreferences', () => {
         modelType: 'public',
         options: {
           weworkCloudModelNamespace: 'default',
+        },
+      },
+    })
+  })
+
+  test('normalizes the last selected project AI model', async () => {
+    invokeMock.mockResolvedValue({
+      projectAiModelSelection: {
+        modelName: '  project-manager-model  ',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
+          invalid: 1,
+        },
+      },
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      projectAiModelSelection: {
+        modelName: 'project-manager-model',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
         },
       },
     })

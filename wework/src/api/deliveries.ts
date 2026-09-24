@@ -361,6 +361,7 @@ export interface CloudProject {
   workflow_definition?: ProjectWorkflowDefinition
   collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
   automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
+  project_manager?: import('@wegent/collaboration').WorkspaceProjectManagerConfig
   execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
   workflow_automation_id?: string | null
   created_by_user_id: number
@@ -867,6 +868,7 @@ export function createDeliveryApi(client: HttpClient) {
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        project_manager?: CloudProject['project_manager']
         execution_environment?: {
           repositories: Array<{
             name: string

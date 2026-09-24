@@ -29,6 +29,7 @@ core_segments=(
   core-dsh-plugin-management
   plugin-development
   project-ai-settings
+  project-space-ai-manager
   model-routing
   fork-provider-preservation
   codex-account-login
@@ -151,7 +152,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
+  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors

@@ -317,11 +317,11 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.runOnlyPendingTimersAsync()
     expect(claimNext).toHaveBeenNthCalledWith(1, {
       execution_device_id: 'local-device',
-      lease_seconds: 300,
+      lease_seconds: 60,
     })
     expect(claimNext).toHaveBeenNthCalledWith(2, {
       execution_device_id: 'app-device',
-      lease_seconds: 300,
+      lease_seconds: 60,
     })
     expect(mocks.createRuntimeTask).toHaveBeenCalledOnce()
     stop()
@@ -371,7 +371,7 @@ describe('startLocalRobotQueueDispatcher', () => {
 
     expect(claimNext).toHaveBeenNthCalledWith(1, {
       execution_device_id: 'electron-app-1',
-      lease_seconds: 300,
+      lease_seconds: 60,
     })
     const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
     expect(call.deviceId).toBe('electron-app-1')
@@ -876,7 +876,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     const claimNext = vi.fn(async () => null)
     const { services: svc, mocks } = services({ recoverStale, claimNext })
     const stop = startLocalRobotQueueDispatcher(svc)
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(15_000)
     expect(mocks.recoverStale).toHaveBeenCalled()
     stop()
   })

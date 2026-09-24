@@ -337,10 +337,37 @@ impl LocalTaskStore {
             local_automation::validate_rules(&automatic_processing_rules)?;
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
+        let manager_changed = input.project_manager.is_some();
+        if let Some(project_manager) = input.project_manager {
+            local_automation::validate_manager(
+                &project_manager,
+                &metadata["automatic_processing_rules"],
+            )?;
+            metadata["project_manager"] = project_manager;
+        }
+        local_automation::validate_manager(
+            &metadata["project_manager"],
+            &metadata["automatic_processing_rules"],
+        )?;
         if let Some(execution_environment) = input.execution_environment {
             metadata["execution_environment"] = execution_environment;
         }
         let connection = self.connection()?;
+        if manager_changed && metadata["project_manager"]["enabled"] == true {
+            let agent_id = metadata["project_manager"]["agentId"]
+                .as_str()
+                .unwrap_or_default();
+            let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("project manager Agent was not found".into())
+            })?;
+            if agent.cloud_project_id.as_deref() != Some(project_id)
+                || agent.status.as_deref() != Some("active")
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "project manager Agent is unavailable".into(),
+                ));
+            }
+        }
         let updated = connection.execute(
             "UPDATE loop_items
              SET name = COALESCE(?1, name),
@@ -457,6 +484,24 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_internal(project_id, input, None)
+    }
+
+    pub fn create_project_manager_task(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        input: TaskCreate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_internal(project_id, input, Some(run_id))
+    }
+
+    fn create_task_internal(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        manager_run_id: Option<&str>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
@@ -482,8 +527,10 @@ impl LocalTaskStore {
         let mut metadata = json!({"tags": input.tags});
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
-        } else if let Some(definition) = project.metadata.get("workflow_definition") {
-            metadata["workflow"] = instantiate_local_workflow(definition)?;
+        } else if manager_run_id.is_none() {
+            if let Some(definition) = project.metadata.get("workflow_definition") {
+                metadata["workflow"] = instantiate_local_workflow(definition)?;
+            }
         }
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
@@ -546,7 +593,25 @@ impl LocalTaskStore {
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
-        local_automation::on_event(&transaction, project_id, &id, "task.created", &[])?;
+        if let Some(run_id) = manager_run_id {
+            local_automation::record_project_manager_action_in(
+                &transaction,
+                project_id,
+                run_id,
+                "create",
+                &id,
+                Value::Null,
+                false,
+            )?;
+        }
+        local_automation::on_event_with_origin(
+            &transaction,
+            project_id,
+            &id,
+            "task.created",
+            &[],
+            manager_run_id.is_some(),
+        )?;
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -557,6 +622,28 @@ impl LocalTaskStore {
         project_id: &str,
         task_id: &str,
         input: TaskUpdate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_internal(project_id, task_id, input, None)
+    }
+
+    pub fn update_project_manager_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        run_id: &str,
+        kind: &str,
+        payload: Value,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_internal(project_id, task_id, input, Some((run_id, kind, payload)))
+    }
+
+    fn update_task_internal(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        manager_action: Option<(&str, &str, Value)>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -750,21 +837,34 @@ impl LocalTaskStore {
             }
         }
         if !added_tags.is_empty() {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
                 "task.tag_added",
                 &added_tags,
+                manager_action.is_some(),
             )?;
         }
         if status_changed {
-            local_automation::on_event(
+            local_automation::on_event_with_origin(
                 &transaction,
                 project_id,
                 task_id,
                 "task.status_changed",
                 &[],
+                manager_action.is_some(),
+            )?;
+        }
+        if let Some((run_id, kind, payload)) = manager_action {
+            local_automation::record_project_manager_action_in(
+                &transaction,
+                project_id,
+                run_id,
+                kind,
+                task_id,
+                payload,
+                false,
             )?;
         }
         transaction.commit()?;
@@ -1190,7 +1290,7 @@ impl LocalTaskStore {
                     e.execution_scope, e.observed_state, e.sync_state,
                     e.claimed_at, e.start_requested_at, e.observed_at,
                     e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                    t.title, t.status, t.priority,
+                    COALESCE(t.title, t.name, ''), t.status, t.priority,
                     a.name, a.title, a.metadata, e.runtime_instance_id
              FROM loop_item_executions e
              LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -1826,6 +1926,16 @@ impl LocalTaskStore {
                     Some("Runtime reconciled cancellation"),
                 );
             }
+            "missing" => {
+                let error = if current.termination_reason == "runtime_dispatch_unknown"
+                    && !current.error_message.trim().is_empty()
+                {
+                    current.error_message.as_str()
+                } else {
+                    "Runtime task disappeared before execution completed"
+                };
+                return self.fail_execution(execution_id, error, true);
+            }
             _ => {}
         }
 
@@ -2070,8 +2180,14 @@ impl LocalTaskStore {
             } else {
                 connection.execute(
                     "UPDATE loop_item_executions
-                     SET sync_state = 'stale', error_message = ?2,
-                         termination_reason = 'runtime_observation_stale',
+                     SET sync_state = 'stale',
+                         error_message = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                                AND error_message != ''
+                           THEN error_message ELSE ?2 END,
+                         termination_reason = CASE
+                           WHEN termination_reason = 'runtime_dispatch_unknown'
+                           THEN termination_reason ELSE 'runtime_observation_stale' END,
                          version = version + 1, updated_at = ?1
                      WHERE id = ?3",
                     params![now, "Runtime state requires reconciliation", id],
@@ -4375,7 +4491,7 @@ fn execution_row(
                 e.execution_scope, e.observed_state, e.sync_state,
                 e.claimed_at, e.start_requested_at, e.observed_at,
                 e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                t.title, t.status, t.priority,
+                COALESCE(t.title, t.name, ''), t.status, t.priority,
                 a.name, a.title, a.metadata, e.runtime_instance_id
          FROM loop_item_executions e
          LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -4475,6 +4591,24 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     let workflow_node_id = stored.get("workflow_node_id").cloned();
     let automation_run_id = stored.get("automation_run_id").cloned();
     let automation_role = stored.get("automation_role").cloned();
+    let model_selection = stored.get("modelSelection").and_then(Value::as_object);
+    let selected_model_name = model_selection
+        .and_then(|selection| selection.get("modelName"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let selected_model_type = model_selection
+        .and_then(|selection| selection.get("modelType"))
+        .cloned();
+    let selected_model_options = model_selection
+        .and_then(|selection| selection.get("options"))
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    let project_instructions = stored
+        .get("developer_instruction")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned);
     let mut additional_context = json!({
         "task": {
             "kind": "application",
@@ -4507,7 +4641,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "message": message,
         "title": execution.task_title,
         "cloudProjectId": execution.cloud_project_id,
-        "modelId": execution.agent_model,
+        "modelId": selected_model_name.or(execution.agent_model.as_deref()),
+        "modelType": selected_model_type,
+        "modelOptions": selected_model_options,
         "bot": [{
             "id": execution.agent_id,
             "name": execution.agent_name,
@@ -4531,6 +4667,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     });
     if let Some(local_project_id) = execution.agent_local_project_id {
         payload["projectId"] = json!(local_project_id);
+    }
+    if let Some(project_instructions) = project_instructions {
+        payload["projectInstructions"] = json!(project_instructions);
     }
     payload
 }
@@ -4931,6 +5070,305 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+
+    #[test]
+    fn project_manager_run_uses_project_name_as_execution_title() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let run = store
+            .run_project_manager(
+                &project.id,
+                "Summarize open Issues",
+                Some(&json!({"modelName":"gpt-6-sol","modelType":"public","options":{}})),
+            )
+            .unwrap();
+        let follow_up = store
+            .run_project_manager(&project.id, "Plan the next Issue", None)
+            .unwrap();
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+
+        assert_eq!(run["taskTitle"], project.name.as_deref().unwrap());
+        assert_eq!(follow_up["status"], "queued");
+        assert_eq!(executions.len(), 2);
+        assert_eq!(executions[0].task_title, project.name.as_deref().unwrap());
+        assert_eq!(
+            executions[0].execution_payload.as_ref().unwrap()["modelSelection"]["modelName"],
+            "gpt-6-sol"
+        );
+        let claimed = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-instance".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("the project manager execution must be queued");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(payload["message"], "Summarize open Issues");
+        assert_eq!(payload["modelId"], "gpt-6-sol");
+        assert_eq!(payload["modelType"], "public");
+        assert_eq!(payload["modelOptions"], json!({}));
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Project instructions: Coordinate the board"));
+        assert!(!payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Current request:"));
+        let runs = store.list_project_manager_runs(&project.id).unwrap();
+        let claimed_run = runs
+            .iter()
+            .find(|candidate| candidate["id"] == run["id"])
+            .unwrap();
+        assert_eq!(claimed_run["status"], "running");
+        assert_eq!(
+            claimed_run["runtimeTaskId"],
+            claimed.runtime_task_id.as_deref().unwrap()
+        );
+        store
+            .fail_execution(claimed.id, "Selected model failed", false)
+            .unwrap();
+        let failed_run = store
+            .list_project_manager_runs(&project.id)
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate["id"] == run["id"])
+            .unwrap();
+        assert_eq!(failed_run["status"], "failed");
+        assert_eq!(failed_run["error"], "Selected model failed");
+    }
+
+    #[test]
+    fn manager_created_issue_is_audited_without_triggering_the_manager_again() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [
+                            {"id":"on-create","kind":"event","eventType":"task.created","enabled":true},
+                            {"id":"on-tag","kind":"event","eventType":"task.tag_added","enabled":true},
+                            {"id":"on-status","kind":"event","eventType":"task.status_changed","enabled":true}
+                        ],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let run = store
+            .run_project_manager(&project.id, "Plan work", None)
+            .unwrap();
+        let input = serde_json::from_value(json!({"title":"New work"})).unwrap();
+
+        let issue = store
+            .create_project_manager_task(&project.id, run["id"].as_str().unwrap(), input)
+            .unwrap();
+        let updated = store
+            .update_project_manager_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    tags: Some(vec!["planned".into()]),
+                    status: Some("pending".into()),
+                    ..TaskUpdate::default()
+                },
+                run["id"].as_str().unwrap(),
+                "update",
+                json!({"tags":["planned"],"status":"pending"}),
+            )
+            .unwrap();
+        let runs = store.list_project_manager_runs(&project.id).unwrap();
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["actions"][0]["kind"], "create");
+        assert_eq!(runs[0]["actions"][0]["itemId"], issue.id);
+        assert_eq!(runs[0]["actions"][1]["kind"], "update");
+        assert_eq!(updated.status.as_deref(), Some("pending"));
+        assert_eq!(issue.assignee_user_id, None);
+        assert_eq!(issue.assignee_agent_id, None);
+        assert!(issue.metadata.get("workflow").is_none());
+    }
+
+    #[test]
+    fn manager_issue_creation_rolls_back_when_run_is_invalid() {
+        let (_directory, store, project) = chat_agent_store();
+        let input = serde_json::from_value(json!({"title":"New work"})).unwrap();
+
+        let error = store
+            .create_project_manager_task(&project.id, "missing-run", input)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("manager run was not found"));
+        assert!(store.list_tasks(&project.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn manager_event_tags_match_the_issues_current_tags() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate urgent work",
+                        "triggers": [
+                            {"id":"on-create","kind":"event","eventType":"task.created","enabled":true,"tags":["urgent"]},
+                            {"id":"on-status","kind":"event","eventType":"task.status_changed","enabled":true,"tags":["urgent"]}
+                        ],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let routine = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Routine","tags":["routine"]})).unwrap(),
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &routine.id,
+                TaskUpdate {
+                    version: routine.version,
+                    status: Some("pending".into()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert!(store
+            .list_project_manager_runs(&project.id)
+            .unwrap()
+            .is_empty());
+
+        store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Urgent","tags":["urgent"]})).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            store.list_project_manager_runs(&project.id).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn unavailable_project_manager_records_failed_run() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        store
+            .archive_chat_agent(&project.id, &agent.id, agent.version)
+            .unwrap();
+
+        let run = store
+            .run_project_manager(&project.id, "Summarize open Issues", None)
+            .unwrap();
+
+        assert_eq!(run["status"], "failed");
+        assert!(run["error"].as_str().unwrap().contains("unavailable"));
+        assert!(store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn missing_issue_does_not_block_manager_action_rejection() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    project_manager: Some(json!({
+                        "enabled": true,
+                        "agentId": agent.id,
+                        "prompt": "Coordinate the board",
+                        "triggers": [],
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let run = store
+            .run_project_manager(&project.id, "Summarize open Issues", None)
+            .unwrap();
+        let run_id = run["id"].as_str().unwrap();
+        let proposal = store
+            .record_project_manager_action(
+                &project.id,
+                run_id,
+                "update",
+                "missing-issue",
+                json!({"title":"New title"}),
+                true,
+            )
+            .unwrap();
+
+        let decision = store
+            .decide_project_manager_action(
+                &project.id,
+                run_id,
+                proposal["id"].as_str().unwrap(),
+                false,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(decision["status"], "rejected");
     }
 
     fn default_chat_agent_input() -> ChatAgentCreate {
@@ -5385,6 +5823,10 @@ mod tests {
         let serialized_claim = serde_json::to_value(&first).unwrap();
         assert!(serialized_claim.get("runtime_payload").is_some());
         assert!(serialized_claim.get("execution_payload").is_none());
+        assert_eq!(
+            serialized_claim["runtime_payload"]["modelOptions"],
+            json!({})
+        );
         accept_and_start(&store, &first);
         let running_claude = store.get_task(&project.id, &task.id).unwrap();
         assert_eq!(
@@ -7081,6 +7523,91 @@ mod tests {
             })
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn local_recovery_retries_a_delivered_run_missing_from_runtime() {
+        let (directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Retry missing runtime task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
+            device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+        let first = store.claim_next_local_execution(&claim).unwrap().unwrap();
+        let device_id = first.runtime_device_id.as_deref().unwrap();
+        let task_id = first.runtime_task_id.as_deref().unwrap();
+        store
+            .request_runtime_start(first.id, device_id, task_id, 300)
+            .unwrap()
+            .expect("start intent must be fenced");
+        store
+            .mark_runtime_dispatch_unknown(
+                first.id,
+                device_id,
+                task_id,
+                "invalid type: null, expected a map",
+            )
+            .unwrap();
+        let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
+        connection
+            .execute(
+                "UPDATE loop_item_executions
+                 SET lease_expires_at = '2000-01-01T00:00:00+00:00'
+                 WHERE id = ?1",
+                params![first.id],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.recover_stale_local_executions().unwrap(), (0, 1));
+        let retry = store
+            .reconcile_execution_snapshot(first.id, "missing", false, None)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(retry.id, first.id);
+        assert_eq!(retry.status, "queued");
+        assert_eq!(retry.previous_execution_id, Some(first.id));
+        let previous = execution_row(&store.connection().unwrap(), first.id).unwrap();
+        assert_eq!(previous.status, "failed");
+        assert_eq!(previous.termination_reason, "runtime_failed");
+        assert_eq!(previous.error_message, "invalid type: null, expected a map");
+        assert_eq!(
+            store
+                .claim_next_local_execution(&claim)
+                .unwrap()
+                .unwrap()
+                .id,
+            retry.id
+        );
     }
 
     #[test]

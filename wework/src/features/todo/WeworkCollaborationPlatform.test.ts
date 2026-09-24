@@ -2127,6 +2127,12 @@ describe('Wework collaboration workspace API', () => {
     const delivery = {
       ...createLocalDeliveryApi(),
       createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
+      updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
+        id: 'new-local',
+        name: 'New local',
+        version: 2,
+        project_manager: input.project_manager,
+      })),
     }
     const details = {
       ...createLocalDetailServices(),
@@ -2150,6 +2156,15 @@ describe('Wework collaboration workspace API', () => {
         name: 'current-device-agent',
         model: null,
         capabilityMode: 'follow_device',
+      })
+    )
+    expect(delivery.updateCloudProject).toHaveBeenCalledWith(
+      'new-local',
+      expect.objectContaining({
+        project_manager: expect.objectContaining({
+          enabled: true,
+          agentId: 'LA-new-local',
+        }),
       })
     )
   })

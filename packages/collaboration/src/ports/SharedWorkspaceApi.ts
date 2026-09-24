@@ -60,6 +60,7 @@ export interface WorkspaceProjectUpdateInput {
   workflowDefinition?: Record<string, unknown>
   collaborationGroups?: import('../types').CollaborationGroup[]
   automaticProcessingRules?: WorkspaceAutomationRule[]
+  projectManager?: WorkspaceProjectManagerConfig
   executionEnvironment?: {
     repositories: Array<{
       name: string
@@ -344,6 +345,73 @@ export interface WorkspaceAutomationRun {
   completedAt?: string | null
   retryable?: boolean
   [key: string]: unknown
+}
+
+export interface WorkspaceProjectManagerTrigger {
+  id: string
+  kind: 'event' | 'schedule'
+  eventType?: 'task.created' | 'task.tag_added' | 'task.status_changed' | null
+  tags: string[]
+  cronExpression?: string | null
+  timezone: string
+  enabled: boolean
+}
+
+export interface WorkspaceProjectManagerConfig {
+  projectId: string
+  version: number
+  enabled: boolean
+  agentId: string
+  prompt: string
+  triggers: WorkspaceProjectManagerTrigger[]
+}
+
+export interface WorkspaceProjectManagerAction {
+  id: string
+  kind: string
+  itemId: string
+  itemVersion?: number
+  approverUserId?: number | null
+  status: 'executed' | 'pending_confirmation' | 'rejected'
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface WorkspaceProjectManagerRun extends WorkspaceAutomationRun {
+  actions?: WorkspaceProjectManagerAction[]
+  instruction?: string
+  response?: string | null
+  executionUrl?: string | null
+  runtimeTaskId?: string | null
+  runtimeDeviceId?: string | null
+}
+
+export interface WorkspaceProjectManagerModelSelection {
+  modelName: string
+  modelType?: string | null
+  options?: Record<string, string>
+}
+
+export interface SharedWorkspaceProjectManagerApi {
+  get(projectId: string): Promise<WorkspaceProjectManagerConfig>
+  save(
+    projectId: string,
+    config: Omit<WorkspaceProjectManagerConfig, 'projectId'>
+  ): Promise<WorkspaceProjectManagerConfig>
+  run(
+    projectId: string,
+    message: string,
+    modelSelection?: WorkspaceProjectManagerModelSelection
+  ): Promise<WorkspaceProjectManagerRun>
+  listRuns(projectId: string): Promise<WorkspaceProjectManagerRun[]>
+  getRun(projectId: string, runId: string): Promise<WorkspaceProjectManagerRun>
+  decide(
+    projectId: string,
+    runId: string,
+    actionId: string,
+    approve: boolean,
+    version: number
+  ): Promise<WorkspaceProjectManagerAction>
 }
 
 export interface WorkspaceIncomingHook {
@@ -830,6 +898,7 @@ export interface SharedWorkspaceApi {
   deliveries: SharedWorkspaceDeliveriesApi
   executions: SharedWorkspaceExecutionsApi
   automations?: SharedWorkspaceAutomationsApi
+  projectManager?: SharedWorkspaceProjectManagerApi
   incomingHooks?: SharedWorkspaceIncomingHooksApi
   automationExecutionCatalog?: SharedWorkspaceAutomationExecutionCatalogApi
   runtimeProfiles: SharedWorkspaceRuntimeProfilesApi

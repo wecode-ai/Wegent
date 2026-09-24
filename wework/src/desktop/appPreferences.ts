@@ -47,6 +47,7 @@ export interface AppPreferences {
   telemetryEnabled: boolean
   supervisorPrinciples: string
   supervisorModelSelection: ModelSelectionConfig | null
+  projectAiModelSelection: ModelSelectionConfig | null
   supervisorIntervalSeconds: number
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
@@ -125,6 +126,7 @@ export interface AppPreferencesPatch {
   telemetryEnabled?: boolean
   supervisorPrinciples?: string
   supervisorModelSelection?: ModelSelectionConfig | null
+  projectAiModelSelection?: ModelSelectionConfig | null
   supervisorIntervalSeconds?: number
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
@@ -169,6 +171,7 @@ export const defaultAppPreferences: AppPreferences = {
   telemetryEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
+  projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -323,6 +326,7 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.supervisorPrinciples
         : defaultAppPreferences.supervisorPrinciples,
     supervisorModelSelection: normalizeModelSelection(record.supervisorModelSelection),
+    projectAiModelSelection: normalizeModelSelection(record.projectAiModelSelection),
     supervisorIntervalSeconds: [10, 30, 60, 300].includes(record.supervisorIntervalSeconds ?? 0)
       ? (record.supervisorIntervalSeconds as number)
       : defaultAppPreferences.supervisorIntervalSeconds,

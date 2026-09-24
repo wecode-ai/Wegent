@@ -2512,6 +2512,33 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 )
                 .map_err(task_runtime_error)?,
         ),
+        "projects.manager.run" => runtime
+            .run_project_manager(
+                required_task_string(&params, "project_id")?,
+                required_task_string(&params, "instruction")?,
+                params.get("model_selection"),
+            )
+            .map_err(task_runtime_error),
+        "projects.manager.runs" => serialize_task_value(
+            runtime
+                .list_project_manager_runs(required_task_string(&params, "project_id")?)
+                .map_err(task_runtime_error)?,
+        ),
+        "projects.manager.decide" => runtime
+            .decide_project_manager_action(
+                required_task_string(&params, "project_id")?,
+                required_task_string(&params, "run_id")?,
+                required_task_string(&params, "action_id")?,
+                params
+                    .get("approve")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| AppIpcError::new("bad_request", "approve is required"))?,
+                params
+                    .get("version")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?,
+            )
+            .map_err(task_runtime_error),
         "executions.list" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = params.get("agent_id").and_then(Value::as_str);
