@@ -28,7 +28,7 @@ use crate::{
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
     emitter::ResponsesEventBuilder,
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, push_error_fields, task_fields},
     process_environment,
     protocol::ExecutionRequest,
     runner::{streaming::StreamingEventDispatcher, AgentEngine, EventSink, ExecutionOutcome},
@@ -515,7 +515,7 @@ async fn handle_deferred_mcp_loop(
             Err(error) => {
                 let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
                 let mut failed_fields = fields.clone();
-                failed_fields.push(("error_len", error.len().to_string()));
+                push_error_fields(&mut failed_fields, &error);
                 log_executor_event("deferred mcp proxy failed", &failed_fields);
                 return ExecutionOutcome::Failed {
                     message: decision
