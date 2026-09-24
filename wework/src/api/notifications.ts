@@ -36,6 +36,26 @@ export interface WeworkInbox {
 }
 
 export type WeworkNotificationCategory = 'collaboration' | 'general'
+export type WeworkNotificationPreferenceCategory = 'tasks' | WeworkNotificationCategory
+export type WeworkNotificationChannel = 'in_app' | 'system' | 'im'
+
+export interface WeworkNotificationChannelPreference {
+  in_app: boolean
+  system: boolean | null
+  im: boolean | null
+}
+
+export interface WeworkNotificationPreferences {
+  tasks: WeworkNotificationChannelPreference
+  collaboration: WeworkNotificationChannelPreference
+  general: WeworkNotificationChannelPreference
+}
+
+export interface WeworkNotificationPreferenceUpdate {
+  category: WeworkNotificationPreferenceCategory
+  channel: WeworkNotificationChannel
+  enabled: boolean
+}
 
 export function createNotificationsApi(client: HttpClient) {
   const path = '/v1/wework-notifications'
@@ -47,5 +67,9 @@ export function createNotificationsApi(client: HttpClient) {
     read: (id: string): Promise<WeworkNotification> =>
       client.post(`${path}/${encodeURIComponent(id)}/read`, {}),
     readAll: (): Promise<void> => client.post(`${path}/read-all`, {}),
+    getPreferences: (): Promise<WeworkNotificationPreferences> => client.get(`${path}/preferences`),
+    updatePreferences: (
+      data: WeworkNotificationPreferenceUpdate
+    ): Promise<WeworkNotificationPreferences> => client.put(`${path}/preferences`, data),
   }
 }

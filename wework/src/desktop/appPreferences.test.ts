@@ -30,7 +30,6 @@ const mergedDefaultPreferences = {
   supervisorPrinciples: '',
   supervisorModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,

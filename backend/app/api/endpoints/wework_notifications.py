@@ -13,9 +13,15 @@ from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import (
     InboxView,
     NotificationCreate,
+    NotificationPreferences,
+    NotificationPreferencesUpdate,
     NotificationView,
 )
 from app.services.notification_copy import COLLABORATION_NOTIFICATION_KINDS
+from app.services.wework_notification_preferences import (
+    get_notification_preferences,
+    update_notification_preferences,
+)
 from app.services.wework_notifications import send_wework_notification
 
 router = APIRouter()
@@ -60,6 +66,25 @@ def send_notification(
     user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WeworkNotification:
     return send_wework_notification(db, user_id=user.id, values=values)
+
+
+@router.get("/preferences", response_model=NotificationPreferences)
+def read_notification_preferences(
+    user: User = Depends(get_current_user),
+) -> NotificationPreferences:
+    return get_notification_preferences(user)
+
+
+@router.put("/preferences", response_model=NotificationPreferences)
+def write_notification_preferences(
+    values: NotificationPreferencesUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> NotificationPreferences:
+    try:
+        return update_notification_preferences(db, user=user, values=values)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 @router.post("/read-all", status_code=204)
