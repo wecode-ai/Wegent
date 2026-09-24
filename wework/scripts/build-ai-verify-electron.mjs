@@ -11,6 +11,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(process.env)
+const prebuiltExecutorPath = process.env.WEWORK_E2E_PREBUILT_EXECUTOR_PATH?.trim()
 const buildEnvironment = {
   ...resolveHarnessRuntimeAssetCacheEnvironment(
     isolatedEnvironment,
@@ -20,6 +21,7 @@ const buildEnvironment = {
   VITE_WEWORK_E2E: 'true',
   VITE_WEWORK_RELEASE_CHANNEL: 'stable',
   VITE_WEWORK_RUNTIME_MODE: 'local-first',
+  ...(prebuiltExecutorPath ? { WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath) } : {}),
 }
 
 function run(command, args, environment = process.env) {

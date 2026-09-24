@@ -175,18 +175,52 @@ jobs:
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.runtime.outputs.image }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Resolve Backend Rust E2E runtime
+        id: runtime
+        env:
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check content-addressed Backend Rust E2E image
+        id: image-check
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Rust
+        if: steps.image-check.outputs.exists != 'true'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Set up sccache
+        if: steps.image-check.outputs.exists != 'true'
         uses: ./.github/actions/setup-sccache
 
       - name: Restore Backend Rust Cargo sources
+        if: steps.image-check.outputs.exists != 'true'
         id: backend-rs-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -198,6 +232,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-backend-rs-cargo-sources-v1-
 
       - name: Build Backend Rust E2E runtime
+        if: steps.image-check.outputs.exists != 'true'
         env:
           CARGO_PROFILE_RELEASE_STRIP: "false"
           CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
@@ -212,8 +247,40 @@ jobs:
             .ci-artifacts/wegent-backend-rs
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
+      - name: Publish content-addressed Backend Rust E2E image
+        if: steps.image-check.outputs.exists != 'true'
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          mkdir -p .ci-artifacts/backend-rs-image
+          cp .ci-artifacts/wegent-backend-rs \
+            .ci-artifacts/backend-rs-image/wegent-backend-rs
+          printf '%s\n' \
+            'FROM scratch' \
+            'COPY wegent-backend-rs /app/wegent-backend-rs' \
+            'ENTRYPOINT ["/app/wegent-backend-rs"]' \
+            > .ci-artifacts/backend-rs-image/Dockerfile
+          docker build \
+            --tag "$IMAGE" \
+            .ci-artifacts/backend-rs-image
+          docker push "$IMAGE"
+
+      - name: Restore content-addressed Backend Rust E2E binary
+        if: steps.image-check.outputs.exists == 'true'
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          docker pull "$IMAGE"
+          container_id="$(docker create "$IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          mkdir -p .ci-artifacts
+          docker cp \
+            "$container_id:/app/wegent-backend-rs" \
+            .ci-artifacts/wegent-backend-rs
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
       - name: Save Backend Rust Cargo sources
-        if: github.ref == 'refs/heads/main' && steps.backend-rs-cargo-sources-cache.outputs.cache-hit != 'true'
+        if: steps.image-check.outputs.exists != 'true' && github.ref == 'refs/heads/main' && steps.backend-rs-cargo-sources-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |

@@ -213,12 +213,12 @@ fi
 
 wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
 if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
-  "$wework_e2e_workflow")" -ne 3 ]] ||
+  "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
-    "$wework_e2e_workflow")" -ne 1 ]] ||
+    "$wework_e2e_workflow")" -ne 3 ]] ||
   ! grep -Fq 'name: Build shared Wework desktop E2E runtime' \
-    "$wework_e2e_workflow"; then
-  fail "Linux Wework desktop E2E must serialize checkpoints while keeping build parallelism"
+  "$wework_e2e_workflow"; then
+  fail "Linux Wework desktop E2E must use bounded checkpoint parallelism"
 fi
 
 warmup_workflow="$workflow_dir/ci-cache-warmup.yml"
@@ -501,48 +501,33 @@ if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
 fi
 
 if ! grep -Fq 'mysql-server' "$wework_desktop_image" ||
-  ! grep -Fq 'mysqld --version' "$wework_desktop_image"; then
-  fail "Wework desktop E2E image must provide a runnable MySQL server"
+  ! grep -Fq 'mysqld --version' "$wework_desktop_image" ||
+  ! grep -Fq 'skopeo' "$wework_desktop_image" ||
+  ! grep -Fq 'umoci' "$wework_desktop_image"; then
+  fail "Wework desktop E2E image must provide MySQL and OCI runtime restoration"
 fi
 
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-wework_target_key='wework-electron-e2e-v2-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''backend-rs/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
-if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
-  ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
-  fail "Wework E2E and warmup must share the Electron build cache"
-fi
-
-desktop_warmup_section="$(
-  sed -n \
-    '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
-    "$warmup_workflow"
-)"
 desktop_build_section="$(
   sed -n \
     '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
     "$workflow_dir/wework-e2e.yml"
 )"
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}'* ]] ||
-  [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
-  [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
-  [[ "$desktop_warmup_section" != *'backend-rs/target'* ]] ||
-  [[ "$desktop_warmup_section" != *'~/.cache/electron'* ]] ||
-  [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
-  [[ "$desktop_warmup_section" =~ dtolnay/rust-toolchain ]]; then
-  fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
-fi
-
-if [[ "$desktop_warmup_section" == *'CARGO_PROFILE_DEV_DEBUG'* ]] ||
-  [[ "$desktop_build_section" == *'CARGO_PROFILE_DEV_DEBUG'* ]] ||
+memory_build_section="$(
+  sed -n \
+    '/^  wework-desktop-memory-e2e:/,$p' \
+    "$workflow_dir/wework-e2e.yml"
+)"
+if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
+  [[ "$desktop_build_section" == *'cargo build'* ]] ||
+  [[ "$desktop_build_section" != *'restore-oci-runtime-binary.sh'* ]] ||
+  [[ "$desktop_build_section" != *'WEWORK_E2E_PREBUILT_EXECUTOR_PATH'* ]] ||
+  [[ "$memory_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
   ! grep -Fq 'strip --strip-debug' \
     "$script_dir/archive-wework-core-e2e-build.sh"; then
-  fail "Linux Wework builds must reuse the default dev compiler cache and strip archived binaries"
+  fail "Linux Wework builds must reuse shared Rust runtimes without a duplicate warmup"
 fi
 
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
+bash "$script_dir/test-restore-oci-runtime-binary.sh"
 
 printf 'CI cache policy tests passed\n'

@@ -1284,7 +1284,9 @@ desktop_other_job="$(
 )"
 if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$core_build_job" != *"wework/electron/release/WeWork-linux-x64/WeWork"* ]] ||
-  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]]; then
+  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]] ||
+  [[ "$core_build_job" != *"restore-oci-runtime-binary.sh"* ]] ||
+  [[ "$core_build_job" == *"cargo build"* ]]; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi
@@ -1294,43 +1296,6 @@ if [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/WeWork"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/resources/bin/wegent-executor"* ]]; then
   printf 'Non-Core desktop E2E must consume the shared Electron package\n' >&2
-  exit 1
-fi
-
-electron_cache_step="$(
-  extract_named_workflow_step_from_job \
-    "$wework_workflow" \
-    "  build-wework-desktop-core-e2e:" \
-    "  wework-desktop-core-e2e:" \
-    "Restore shared Wework Electron E2E build dependencies"
-)"
-electron_cache_key="$(
-  printf '%s\n' "$electron_cache_step" |
-    sed -n 's/^          key:[[:space:]]*//p'
-)"
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-electron-e2e-v2-' \
-  <<<"$electron_cache_key" ||
-  ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
-    <<<"$electron_cache_key"; then
-  printf 'Wework Electron E2E cache key must follow the desktop image\n' >&2
-  exit 1
-fi
-
-electron_cache_save_step="$(
-  extract_named_workflow_step \
-    "$wework_workflow" \
-    "Save shared Wework Electron E2E build dependencies"
-)"
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
-if ! grep -Fq "if: github.ref == 'refs/heads/main'" \
-  <<<"$electron_cache_save_step" ||
-  ! grep -Fq \
-    'key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}' \
-    <<<"$electron_cache_save_step"; then
-  printf 'Only main may save the shared Wework Electron E2E cache\n' >&2
   exit 1
 fi
 
@@ -1381,14 +1346,14 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"max-parallel: 15"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"uses: actions/download-artifact@v4"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
-  printf 'Wework Cloud desktop E2E must use fifteen prebuilt serial shards\n' >&2
+  printf 'Wework Cloud desktop E2E must use fifteen prebuilt bounded-parallel shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1402,11 +1367,11 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 17"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
-  printf 'Wework Core desktop E2E must use seventeen prebuilt serial shards\n' >&2
+  printf 'Wework Core desktop E2E must use seventeen prebuilt bounded-parallel shards\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then

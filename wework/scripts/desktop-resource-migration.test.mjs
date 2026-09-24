@@ -337,6 +337,13 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
 
+  test('allows the packaged CI build to opt into a prebuilt executor', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'), 'utf8')
+
+    expect(source).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_PATH')
+    expect(source).toContain('WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath)')
+  })
+
   test.each([
     'resources/icons/icon.icns',
     'resources/icons/icon.ico',

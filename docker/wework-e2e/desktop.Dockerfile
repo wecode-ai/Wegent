@@ -33,7 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
     redis-server \
+    skopeo \
     sqlite3 \
+    umoci \
     x11-utils \
     xvfb \
     zstd \
@@ -58,5 +60,7 @@ RUN node --version \
   && python3 --version \
   && uv --version \
   && mysqld --version \
+  && skopeo --version \
+  && umoci --version \
   && rustc --version \
   && cargo --version

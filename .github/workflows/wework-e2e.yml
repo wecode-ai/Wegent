@@ -40,6 +40,8 @@ jobs:
     outputs:
       browser_image: ${{ steps.image.outputs.browser-ref }}
       desktop_image: ${{ steps.image.outputs.desktop-ref }}
+      executor_image: ${{ steps.runtime.outputs.executor-ref }}
+      backend_rs_image: ${{ steps.runtime.outputs.backend-rs-ref }}
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
@@ -125,6 +127,24 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Resolve shared Rust E2E runtimes
+        if: steps.classify.outputs.wework_desktop_e2e == 'true'
+        id: runtime
+        env:
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+        run: |
+          runtime_output="$(mktemp)"
+          GITHUB_OUTPUT="$runtime_output" \
+            SOURCE_DIGEST="$EXECUTOR_SOURCE_DIGEST" \
+            .github/scripts/resolve-executor-e2e-runtime.sh
+          executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
+          test -n "$executor_image"
+          {
+            echo "executor-ref=$executor_image"
+            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish Wework browser E2E image
         if: steps.browser-image-check.outputs.exists == 'false'
@@ -228,9 +248,6 @@ jobs:
       - name: Install Wework Electron dependencies
         run: pnpm --dir wework/electron install --frozen-lockfile
 
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
       - name: Restore bundled Codex cache
         id: bundled-codex-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -238,74 +255,40 @@ jobs:
           path: ~/.cache/wegent/codex
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
-      - name: Restore legacy shared Wework Electron E2E build dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+      - name: Restore shared Rust E2E runtimes
+        env:
+          EXECUTOR_IMAGE: ${{ needs.changes.outputs.executor_image }}
+          BACKEND_RS_IMAGE: ${{ needs.changes.outputs.backend_rs_image }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OCI_RUNTIME_WAIT_SECONDS: "420"
+        run: |
+          mkdir -p .ci-artifacts
+          .github/scripts/restore-oci-runtime-binary.sh \
+            "$EXECUTOR_IMAGE" \
+            /app/executor \
+            .ci-artifacts/wegent-executor &
+          executor_pid=$!
+          .github/scripts/restore-oci-runtime-binary.sh \
+            "$BACKEND_RS_IMAGE" \
+            /app/wegent-backend-rs \
+            .ci-artifacts/wegent-backend-rs &
+          backend_pid=$!
 
-      - name: Restore shared Wework Electron E2E build dependencies
-        id: wework-desktop-cargo-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            backend-rs/target
-            ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v2-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-e2e-v2-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
-            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+          status=0
+          wait "$executor_pid" || status=$?
+          wait "$backend_pid" || status=$?
+          exit "$status"
 
       - name: Build shared Wework desktop E2E runtime
         env:
           CI: true
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
-          WEWORK_EXECUTOR_PROFILE: debug
+          WEWORK_E2E_PREBUILT_EXECUTOR_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-executor
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
-          CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
         run: |
-          pnpm --filter wework ai:verify:electron:build &
-          wework_pid=$!
-
-          cargo build \
-            --locked \
-            --manifest-path backend-rs/Cargo.toml \
-            --bin wegent-backend-rs &
-          backend_pid=$!
-
-          status=0
-          wait "$wework_pid" || status=$?
-          wait "$backend_pid" || status=$?
-          if [[ "$status" -ne 0 ]]; then
-            exit "$status"
-          fi
-
+          pnpm --filter wework ai:verify:electron:build
           test -x wework/electron/release/WeWork-linux-x64/WeWork
           test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
-          mkdir -p .ci-artifacts
-          cp "$CARGO_TARGET_DIR/debug/wegent-backend-rs" .ci-artifacts/wegent-backend-rs
-          chmod 0755 .ci-artifacts/wegent-backend-rs
-
-      - name: Save shared Wework Electron E2E build dependencies
-        if: github.ref == 'refs/heads/main' && steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            backend-rs/target
-            ~/.cache/electron
-          key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
+          test -x .ci-artifacts/wegent-backend-rs
 
       - name: Save bundled Codex cache
         if: github.ref == 'refs/heads/main' && steps.bundled-codex-cache.outputs.cache-hit != 'true'
@@ -406,7 +389,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -827,7 +810,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
@@ -1171,7 +1154,7 @@ jobs:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
-          WEWORK_EXECUTOR_PROFILE: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')) && 'release' || 'debug' }}
+          WEWORK_EXECUTOR_PROFILE: release
         run: |
           pnpm --filter wework ai:verify:electron:build &
           wework_pid=$!
