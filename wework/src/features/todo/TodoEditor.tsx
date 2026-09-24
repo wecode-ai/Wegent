@@ -85,6 +85,8 @@ export type TodoEditorProps = TodoEditorApiProps & {
   currentAssignment?: CollaborationAssignment | null
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
+  /** Opens the activity list on one comment instead of the newest message. */
+  focusedCommentId?: string | null
   onClose: () => void
   onEscape?: () => void
   presentation?: 'modal' | 'workspace-panel'
@@ -205,6 +207,9 @@ export function TodoEditor(props: TodoEditorProps) {
           issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
+          members={context.members}
+          agents={context.agents}
+          focusedCommentId={props.focusedCommentId}
           linear
         />
       ) : null,

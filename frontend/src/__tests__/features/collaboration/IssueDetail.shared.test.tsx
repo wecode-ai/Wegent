@@ -13,6 +13,15 @@ if (typeof globalThis.structuredClone !== 'function') {
   })
 }
 
+/** The shared composer renders ProseMirror and mirrors its draft on `value`. */
+function writeComposer(testId: string, value: string) {
+  const composer = screen.getByTestId(testId) as HTMLElement & { value: string }
+  act(() => {
+    composer.value = value
+    composer.dispatchEvent(new KeyboardEvent('keyup', { key: value.at(-1) ?? '', bubbles: true }))
+  })
+}
+
 import {
   IssueCreate,
   IssueDetail,
@@ -264,9 +273,7 @@ describe('shared IssueDetail', () => {
       expect.any(Function)
     )
     expect(screen.queryByTestId('collaboration-current-assignment')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByTestId('collaboration-chat-reply-input-chat-root'), {
-      target: { value: 'Follow up' },
-    })
+    writeComposer('collaboration-chat-reply-input-chat-root', 'Follow up')
     fireEvent.click(screen.getByTestId('collaboration-chat-reply-send-chat-root'))
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith(
@@ -476,7 +483,7 @@ describe('shared IssueDetail', () => {
       })
       const editor = screen.getByTestId('cloud-todo-detail')
       const comment = screen.getByTestId('collaboration-issue-comment')
-      fireEvent.change(comment, { target: { value: '保留这条草稿' } })
+      writeComposer('collaboration-issue-comment', '保留这条草稿')
       fireEvent.click(screen.getByTestId('collaboration-open-execution-92'))
       expect(await screen.findByText('Actual runtime output')).toBeInTheDocument()
       expect(await screen.findByText(/Actual execution device/)).toBeInTheDocument()
@@ -948,7 +955,10 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toBeDisabled()
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-remove-只读')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
+    expect(screen.getByTestId('collaboration-issue-comment')).toHaveAttribute(
+      'contenteditable',
+      'true'
+    )
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
@@ -1004,7 +1014,10 @@ describe('shared IssueDetail', () => {
       onCreateTask,
     })
 
-    expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
+    expect(screen.getByTestId('collaboration-issue-comment')).toHaveAttribute(
+      'contenteditable',
+      'false'
+    )
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
@@ -1027,9 +1040,7 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api, { onCommentsChange })
 
-    fireEvent.change(screen.getByTestId('collaboration-issue-comment'), {
-      target: { value: createdComment.body },
-    })
+    writeComposer('collaboration-issue-comment', createdComment.body)
     fireEvent.click(screen.getByTestId('collaboration-issue-comment-submit'))
 
     await waitFor(() => expect(createComment).toHaveBeenCalledWith(issue.id, createdComment.body))

@@ -12,6 +12,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-local-tool-roles',
   'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
+  'collaboration-issue-comment-mention',
+  'collaboration-issue-comment-notification',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',
@@ -92,6 +94,7 @@ export const DESKTOP_CHECKPOINTS = [
 export const PLUGIN_SEGMENTS = [
   'core-dsh-ui-plugin-composition',
   'core-dsh-plugin-management',
+  'plugin-composer-network-isolation',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',

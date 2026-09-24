@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.core.async_utils as async_utils
 import app.services.project_automation_execution as project_automation_execution_module
 from app.db.base import Base
 from app.models.cloud_project import LoopItemTaskBinding
@@ -36,6 +37,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
@@ -7377,3 +7379,241 @@ def test_enqueue_generic_robot_uses_codex_runtime_default_model(
         execution=execution,
     )
     assert profile.model == ""
+
+
+def _set_app_device_id(db: Session, device: Kind, app_device_id: str) -> None:
+    spec = dict(device.json["spec"])
+    spec["deviceId"] = device.name
+    spec["appDeviceId"] = app_device_id
+    device.json = {"spec": spec}
+    db.commit()
+
+
+def _generic_rule_and_run(
+    db: Session,
+    *,
+    project: CloudProject,
+    item: LoopItem,
+    user: User,
+    rule_id: str,
+) -> ProjectAutomationRun:
+    rule = ProjectAutomationRule(
+        id=rule_id,
+        cloud_project_id=project.id,
+        title="Generic device rule",
+        description="Handle this task",
+        status="enabled",
+        created_by_user_id=user.id,
+        metadata_json=_automation_metadata(action="execute"),
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        status="queued",
+        created_by_user_id=user.id,
+        metadata_json={
+            "trigger": "workflow",
+            "workflow_node_id": "node-1",
+            "instruction_override": "Handle this task",
+        },
+    )
+    db.add_all([rule, run])
+    db.flush()
+    return run
+
+
+def _enqueue_generic_run(
+    db: Session,
+    *,
+    project: CloudProject,
+    item: LoopItem,
+    user: User,
+    run: ProjectAutomationRun,
+) -> LoopItemExecution:
+    return loop_item_execution_service.enqueue_generic_robot(
+        db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        runtime_subject_user_id=user.id,
+        runtime_profile=None,
+        execution_device_id="electron-app-1",
+        model="test-model",
+        model_type="runtime",
+        model_options={},
+        assigner_user_id=user.id,
+        priority="medium",
+        automation_context={"runtime_source": "runtime_user", "run_id": str(run.id)},
+    )
+
+
+def test_enqueue_notifies_the_task_assignee_that_the_run_started(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    assignee = User(
+        user_name="runowner",
+        password_hash="unused",
+        email="runowner@example.com",
+        is_active=True,
+    )
+    test_db.add(assignee)
+    test_db.flush()
+    item.assignee_user_id = assignee.id
+    test_db.commit()
+    device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    _set_app_device_id(test_db, device, "electron-app-1")
+    run = _generic_rule_and_run(
+        test_db,
+        project=project,
+        item=item,
+        user=test_user,
+        rule_id="notify-assignee-rule",
+    )
+
+    _enqueue_generic_run(
+        test_db,
+        project=project,
+        item=item,
+        user=test_user,
+        run=run,
+    )
+
+    test_db.commit()
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == assignee.id)
+        .one()
+    )
+    assert notification.kind == "execution"
+    assert notification.url == f"wework://boards/{project.id}/issues/{item.id}"
+    assert notification.payload["status"] == "queued"
+    assert notification.payload["itemTitle"] == item.title
+
+
+def test_enqueue_notifies_the_task_creator_when_unassigned(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    _set_app_device_id(test_db, device, "electron-app-1")
+    run = _generic_rule_and_run(
+        test_db,
+        project=project,
+        item=item,
+        user=test_user,
+        rule_id="notify-creator-rule",
+    )
+
+    _enqueue_generic_run(
+        test_db,
+        project=project,
+        item=item,
+        user=test_user,
+        run=run,
+    )
+
+    test_db.commit()
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == test_user.id)
+        .one()
+    )
+    assert notification.kind == "execution"
+    assert notification.payload["itemId"] == item.id
+
+
+def test_enqueue_notifies_the_runtime_wait_when_approval_also_waits(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that both needs approval and waits for a runtime reports the row."""
+
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+    )
+
+    test_db.commit()
+    assert execution.status == "waiting_runtime"
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == test_user.id)
+        .one()
+    )
+    assert notification.kind == "execution"
+    assert notification.payload["status"] == "waiting_runtime"
+    assert "需要选择运行设备" in notification.title
+
+
+def _execution_notification_ids(db: Session, user_id: int) -> list[str]:
+    return [
+        row.id
+        for row in db.query(WeworkNotification)
+        .filter(
+            WeworkNotification.user_id == user_id,
+            WeworkNotification.kind == "execution",
+        )
+        .order_by(WeworkNotification.created_at)
+        .all()
+    ]
+
+
+def test_managed_team_run_announces_its_start_once(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pipeline accepting a queued team run is not a second start notice."""
+
+    monkeypatch.setattr(async_utils, "schedule_async_task", MagicMock())
+    monkeypatch.setattr(
+        type(loop_item_execution_service),
+        "_push_activity",
+        lambda *args, **kwargs: None,
+    )
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.assignee_user_id = test_user.id
+    team = Kind(
+        kind="Team",
+        name="board-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {}},
+    )
+    test_db.add(team)
+    test_db.commit()
+
+    execution = loop_item_execution_service.create_for_team_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        team=team,
+        assigner_user_id=test_user.id,
+        priority="medium",
+    )
+    test_db.commit()
+    queued = _execution_notification_ids(test_db, test_user.id)
+    assert len(queued) == 1
+    assert test_db.get(WeworkNotification, queued[0]).payload["status"] == "queued"
+
+    loop_item_execution_service.mark_managed_running(
+        test_db, execution_id=execution.id, backend_task_id=61
+    )
+
+    assert _execution_notification_ids(test_db, test_user.id) == queued

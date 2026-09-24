@@ -1,8 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { createAuthenticatedSocketClient } from '../../../packages/chat-core/src/socket/authenticatedSocketClient'
+
+/**
+ * The Issue comment boxes are the shared ProseMirror composer, which refuses
+ * input while its host still loads. `fill` reports a non-editable editor
+ * instead of waiting for it, so wait for the editor to accept input first.
+ */
+export async function writeSharedComposer(locator: Locator, text: string): Promise<void> {
+  await expect
+    .poll(() => locator.evaluate((element: HTMLElement) => element.isContentEditable), {
+      message: 'The shared composer never became editable',
+    })
+    .toBe(true)
+  await locator.fill(text)
+}
 
 export async function webApi<T>(
   page: Page,

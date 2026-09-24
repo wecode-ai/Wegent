@@ -223,10 +223,10 @@ export function IssueActivityPanel({
               members={members}
               agents={agents}
               translate={translate}
-              send={async (body) => {
+              send={async (body, mentions) => {
                 if (api.activity) {
-                  await chat.send(body);
-                  return;
+                  await chat.send(body, undefined, mentions)
+                  return
                 }
                 return api.comments.create(issue.id, body);
               }}
@@ -254,6 +254,8 @@ export function IssueActivityPanel({
                     thread={entry.thread}
                     canComment={canComment}
                     send={chat.send}
+                    members={members}
+                    agents={agents}
                     upload={
                       canAttach && api.attachments
                         ? (file) => api.attachments!.upload(issue.id, file)

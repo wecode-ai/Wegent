@@ -3474,6 +3474,8 @@ fn build_codex_launch_config_with_route_scope(
             &inference_provider,
             runtime_proxy_url(&request.model_config),
         ) {
+            let mut upstream = upstream;
+            inject_session_headers(&mut upstream.default_headers, &request.task_id);
             log_executor_event(
                 "codex model route selected",
                 &[
@@ -3494,7 +3496,7 @@ fn build_codex_launch_config_with_route_scope(
                 upstream,
                 model.clone(),
                 request_model_switched(request),
-                vision_sidecar_upstream(&request.model_config)?,
+                vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
             );
         } else {
             log_executor_event(
@@ -3516,11 +3518,14 @@ fn build_codex_launch_config_with_route_scope(
                 &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
+                &request.task_id,
             ));
         }
     } else if let Some(upstream) =
         local_model_proxy::upstream_from_model_config(&request.model_config)
     {
+        let mut upstream = upstream;
+        inject_session_headers(&mut upstream.default_headers, &request.task_id);
         log_executor_event(
             "codex model route selected",
             &[
@@ -3541,7 +3546,7 @@ fn build_codex_launch_config_with_route_scope(
             upstream,
             model.clone(),
             request_model_switched(request),
-            vision_sidecar_upstream(&request.model_config)?,
+            vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
         );
     } else {
         let inference_provider = inference_model_provider(&request.model_config);
@@ -3559,7 +3564,13 @@ fn build_codex_launch_config_with_route_scope(
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        launch_config.model_provider = Some(inference_provider);
+        launch_config.model_provider = Some(inference_provider.clone());
+        launch_config.config_overrides.extend(header_overrides(
+            &inference_provider,
+            request.model_config.get("default_headers"),
+            project_id.as_deref(),
+            &request.task_id,
+        ));
     }
 
     launch_config
@@ -3715,6 +3726,17 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
         model_id,
         max_descriptions_per_turn,
         timeout: Duration::from_millis(timeout_ms),
+    }))
+}
+
+/// Resolve the vision sidecar and attach the session (task) id headers.
+fn vision_sidecar_with_session_headers(
+    model_config: &Value,
+    task_id: &str,
+) -> Result<Option<VisionSidecarUpstream>, String> {
+    Ok(vision_sidecar_upstream(model_config)?.map(|mut sidecar| {
+        inject_session_headers(&mut sidecar.default_headers, task_id);
+        sidecar
     }))
 }
 
@@ -4300,9 +4322,11 @@ fn header_overrides(
     model_provider: &str,
     default_headers: Option<&Value>,
     project_id: Option<&str>,
+    task_id: &str,
 ) -> Vec<String> {
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let headers = parse_header_map(default_headers);
+        let mut headers = parse_header_map(default_headers);
+        inject_session_headers(&mut headers, task_id);
         return if headers.is_empty() {
             Vec::new()
         } else {
@@ -4323,6 +4347,7 @@ fn header_overrides(
     insert_missing_header(&mut headers, "wecode-action", "wegent");
     insert_missing_header(&mut headers, "wecode-source", "wegent-local");
     insert_missing_header(&mut headers, "wecode-executor", "codex");
+    inject_session_headers(&mut headers, task_id);
     insert_header(&mut headers, "wecode-project", project_id);
 
     headers
@@ -4373,6 +4398,32 @@ fn insert_missing_header(headers: &mut Vec<(String, String)>, key: &str, value: 
         return;
     }
     headers.push((key.to_owned(), value.to_owned()));
+}
+
+/// Attach the Wegent session (task) id to model call headers.
+///
+/// Direct providers receive the plain `wecode-session-id` header. When the
+/// headers target the backend LLM gateway (marked by `X-Wegent-Model-Type`),
+/// the gateway only forwards `X-Wegent-Upstream-Header-*` entries upstream, so
+/// the session id is additionally emitted in that prefixed form.
+fn inject_session_headers(headers: &mut Vec<(String, String)>, task_id: &str) {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return;
+    }
+    // The request's task id is authoritative; replace any value coming from
+    // provider configuration so session correlation never points at a stale id.
+    insert_header(headers, "wecode-session-id", task_id);
+    let targets_gateway = headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("X-Wegent-Model-Type"));
+    if targets_gateway {
+        insert_header(
+            headers,
+            "X-Wegent-Upstream-Header-wecode-session-id",
+            task_id,
+        );
+    }
 }
 
 fn insert_header(headers: &mut Vec<(String, String)>, key: &str, value: &str) {

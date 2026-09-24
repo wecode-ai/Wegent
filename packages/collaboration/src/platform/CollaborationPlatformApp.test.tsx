@@ -719,6 +719,20 @@ async function change(
   element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
 ) {
+  if (
+    !(element instanceof HTMLSelectElement) &&
+    !(element instanceof HTMLTextAreaElement) &&
+    !(element instanceof HTMLInputElement)
+  ) {
+    // A rich composer writes its draft through the editor element it renders.
+    await act(async () => {
+      (element as unknown as { value: string }).value = value;
+      element.dispatchEvent(
+        new KeyboardEvent("keyup", { key: value.at(-1) ?? "", bubbles: true }),
+      );
+    });
+    return;
+  }
   const prototype =
     element instanceof HTMLSelectElement
       ? HTMLSelectElement.prototype
@@ -4729,8 +4743,8 @@ describe("Issue permission separation in the real shared editor", () => {
       (byTestId("cloud-todo-detail-title") as HTMLTextAreaElement).style.height,
     ).toBe("96px");
     expect(
-      (byTestId("collaboration-issue-comment") as HTMLTextAreaElement).disabled,
-    ).toBe(false);
+      byTestId("collaboration-issue-comment").getAttribute("contenteditable"),
+    ).toBe("true");
     expect(
       container.querySelector(
         '[data-testid="collaboration-assignment-target"]',
