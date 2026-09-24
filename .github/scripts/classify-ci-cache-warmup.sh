@@ -66,7 +66,7 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
-    backend-rs/Cargo.lock)
+    backend-rs/* | backend-rs/**)
       changed[wework_target]=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
@@ -76,6 +76,7 @@ classify_path() {
     executor/*)
       changed[docker]=true
       changed[executor_rust]=true
+      changed[wework_target]=true
       ;;
     frontend/e2e/fixtures/claudecode-executor/* | shared/assets/*)
       changed[docker]=true

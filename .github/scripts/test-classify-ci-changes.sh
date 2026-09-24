@@ -1398,13 +1398,37 @@ if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] 
   exit 1
 fi
 
-if [[ "$desktop_other_job" != *"uses: actions/download-artifact@v4"* ]] ||
-  [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
+if [[ "$desktop_other_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
+  [[ "$desktop_other_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
+  [[ "$desktop_other_job" == *"build-wework-desktop-core-e2e"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/WeWork"* ]] ||
   [[ "$desktop_other_job" != *"electron-app/resources/bin/wegent-executor"* ]]; then
-  printf 'Non-Core desktop E2E must consume the shared Electron package\n' >&2
+  printf 'Non-Core desktop E2E must overlap setup while waiting for the shared Electron package\n' >&2
   exit 1
 fi
+
+for desktop_job_start in \
+  "  wework-desktop-core-e2e:" \
+  "  wework-desktop-cloud-e2e:"; do
+  desktop_job="$(
+    case "$desktop_job_start" in
+      "  wework-desktop-core-e2e:")
+        sed -n '/^  wework-desktop-core-e2e:/,/^  build-wework-desktop-windows-core-e2e:/p' \
+          "$wework_workflow"
+        ;;
+      *)
+        sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' \
+          "$wework_workflow"
+        ;;
+    esac
+  )"
+  if [[ "$desktop_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
+    [[ "$desktop_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
+    [[ "$desktop_job" == *"build-wework-desktop-core-e2e"* ]]; then
+    printf 'Desktop E2E shards must overlap setup while waiting for the shared build\n' >&2
+    exit 1
+  fi
+done
 
 electron_cache_step="$(
   extract_named_workflow_step_from_job \
@@ -1494,7 +1518,8 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *"uses: actions/download-artifact@v4"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'ACTIONS_ARTIFACT_WAIT_SECONDS: "600"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
   printf 'Wework Cloud desktop E2E must use ten prebuilt two-worker shards\n' >&2

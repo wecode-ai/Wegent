@@ -90,6 +90,10 @@ executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
+assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
+  "backend-rs/src/hybrid.rs"
+assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
+  "executor/src/main.rs"
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \

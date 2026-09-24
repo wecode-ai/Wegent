@@ -225,6 +225,8 @@ fi
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 (
     cd "$BACKEND_DIR"
+    # Explicitly close upstream HTTP connections so the gateway cannot reuse
+    # a socket after Uvicorn expires it from its keep-alive pool.
     exec "$PYTHON_UVICORN" app.main:app \
         --reload \
         --reload-dir . \
@@ -235,6 +237,7 @@ echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT
         --reload-exclude '.git/*' \
         --host 127.0.0.1 \
         --port "$PYTHON_UPSTREAM_PORT" \
+        --timeout-keep-alive 0 \
         --log-level debug
 ) &
 PYTHON_PID=$!

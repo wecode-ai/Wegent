@@ -547,7 +547,6 @@ jobs:
           wework_pid=$!
           cargo build \
             --locked \
-            --release \
             --manifest-path backend-rs/Cargo.toml \
             --bin wegent-backend-rs &
           backend_pid=$!
@@ -560,7 +559,7 @@ jobs:
           fi
           test -x wework/electron/release/WeWork-linux-x64/WeWork
           test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
-          test -x "$CARGO_TARGET_DIR/release/wegent-backend-rs"
+          test -x "$CARGO_TARGET_DIR/debug/wegent-backend-rs"
 
       - name: Save shared Wework Electron E2E build dependencies
         if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
