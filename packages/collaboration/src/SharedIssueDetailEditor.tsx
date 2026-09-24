@@ -1097,6 +1097,7 @@ export function TodoEditor(props: TodoEditorProps) {
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return;
     let active = true;
+    setProjectGroups(project?.collaboration_groups ?? []);
     const applyResult = <T,>(
       request: Promise<T>,
       apply: (value: T) => void,

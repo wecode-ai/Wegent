@@ -294,7 +294,13 @@ def update_workflow_plan_task_status(
 ) -> LoopItem | None:
     """Project a materialized plan child's Runtime state onto its parent stage."""
 
-    child = db.get(LoopItem, child_id)
+    child = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == child_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
     if child is None or not child.parent_id:
         return None
     child_metadata = (

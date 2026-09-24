@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2204,10 +2205,9 @@ def test_runtime_completion_advances_assigned_task_to_review(
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
 
-def test_runtime_completion_survives_workflow_projection_database_failure(
+def test_runtime_completion_waits_for_reported_workflow_outcome(
     test_db: Session,
     test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = create_project(test_db, test_user)
     issue = LoopItem(
@@ -2251,33 +2251,6 @@ def test_runtime_completion_survives_workflow_projection_database_failure(
         ),
     )
 
-    projection_calls: list[str] = []
-
-    def fail_projection(db: Session, *, child_id: str) -> None:
-        projection_calls.append(child_id)
-        db.add(
-            ProjectChatMessage(
-                message_id=response.message_id,
-                client_message_id=str(uuid.uuid4()),
-                project_id=project.id,
-                task_id=task.id,
-                sender_type="agent",
-                sender_id="12",
-                sender_name="Code Reviewer",
-                message_type="text",
-                content="Duplicate projection row",
-                metadata_json={},
-                status="completed",
-            )
-        )
-        db.flush()
-
-    monkeypatch.setattr(
-        "app.services.issue_workflow_planning."
-        "issue_workflow_planning_service.sync_from_child",
-        fail_projection,
-    )
-
     completed = project_chat_service.project_runtime_event(
         test_db,
         device_id="local-device",
@@ -2288,9 +2261,8 @@ def test_runtime_completion_survives_workflow_projection_database_failure(
 
     assert completed is not None
     assert completed[0].status == "completed"
-    assert projection_calls == [task.id]
     test_db.refresh(task)
-    assert task.status == "in_review"
+    assert task.status == "in_progress"
     assert task.metadata_json["ai_state"]["status"] == "completed"
     stored_response = (
         test_db.query(ProjectChatMessage)
@@ -2300,6 +2272,91 @@ def test_runtime_completion_survives_workflow_projection_database_failure(
     assert stored_response.status == "completed"
     assert stored_response.content == "Ready for review"
     assert test_db.query(LoopItem).filter(LoopItem.id == task.id).count() == 1
+
+
+def test_runtime_completion_preserves_reported_workflow_outcome(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = create_project(test_db, test_user)
+    parent = LoopItem(
+        id="CHAT-WORKFLOW-PARENT",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Workflow parent",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+    )
+    task = LoopItem(
+        id="CHAT-WORKFLOW-OUTCOME",
+        cloud_project_id=project.id,
+        parent_id=parent.id,
+        sequence_number=3,
+        title="Preserve executor outcome",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+        metadata_json={"workflow_plan": {"run_id": "workflow-run-1"}},
+    )
+    test_db.add_all([parent, task])
+    test_db.commit()
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="runtime-task-workflow-outcome",
+            prompt="Complete the task",
+        ),
+    )
+    stale_metadata = dict(task.metadata_json or {})
+    reported_outcome = {
+        "verdict": "passed",
+        "summary": "Executor evidence is complete.",
+    }
+    test_db.execute(
+        update(LoopItem)
+        .where(LoopItem.id == task.id)
+        .values(
+            status="in_review",
+            metadata_json={
+                **stale_metadata,
+                "workflow_outcome": reported_outcome,
+            },
+        ),
+        execution_options={"synchronize_session": False},
+    )
+    test_db.flush()
+
+    project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="runtime-task-workflow-outcome",
+        event_name="response.completed",
+        payload={"data": {"value": "Ready for manager review"}},
+    )
+
+    test_db.expire_all()
+    stored_task = test_db.get(LoopItem, task.id)
+    assert stored_task is not None
+    assert stored_task.status == "in_review"
+    assert stored_task.metadata_json["workflow_outcome"] == reported_outcome
+    assert stored_task.metadata_json["ai_state"]["status"] == "completed"
+    stored_response = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one()
+    )
+    assert stored_response.status == "completed"
 
 
 def test_runtime_completion_keeps_project_robot_assignee_guard(

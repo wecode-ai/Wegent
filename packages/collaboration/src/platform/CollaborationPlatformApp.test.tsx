@@ -4454,6 +4454,40 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("keeps project collaboration groups assignable when the directory request fails", async () => {
+    const projectWithGroup = {
+      ...project,
+      collaboration_groups: [collaborationGroup],
+    };
+    const { api } = createApi({
+      initialProjects: [projectWithGroup],
+      initialGroups: [],
+    });
+    api.projects.listCollaborationGroups = vi.fn(async () => {
+      throw new Error("Directory unavailable");
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: project.id,
+          issueId: issue.id,
+        }}
+      />,
+    );
+
+    await click(byTestId("cloud-todo-detail-assignee"));
+
+    expect(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-group:${collaborationGroup.id}`,
+      ).textContent,
+    ).toContain(collaborationGroup.name);
+  });
+
   it("imports a collaboration group before creating project members and agents", async () => {
     const { api } = createApi({
       initialProjects: [],

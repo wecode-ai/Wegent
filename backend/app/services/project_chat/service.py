@@ -1764,7 +1764,13 @@ class ProjectChatService:
         if not row.task_id:
             return
 
-        task = db.get(LoopItem, row.task_id)
+        task = (
+            db.query(LoopItem)
+            .filter(LoopItem.id == row.task_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
         if task is None or not loop_datetime_value_is_unset(task.deleted_at):
             logger.warning(
                 "[ProjectChat] Task AI state update skipped because task was not found: "
@@ -1974,8 +1980,10 @@ class ProjectChatService:
         if (
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
+            or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External provider tasks keep their status in provider labels.
+            # External providers and AI-managed workflow tasks own their status
+            # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:
@@ -1992,47 +2000,6 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
-
-        ProjectChatService._sync_issue_workflow_from_completed_task(
-            db,
-            task=task,
-        )
-
-    @staticmethod
-    def _sync_issue_workflow_from_completed_task(
-        db: Session,
-        *,
-        task: LoopItem,
-    ) -> None:
-        """Keep a secondary workflow projection from aborting finalization."""
-
-        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
-        plan = metadata.get("workflow_plan")
-        if (
-            not task.parent_id
-            or not isinstance(plan, dict)
-            or not str(plan.get("run_id") or "")
-        ):
-            return
-        # Flush the activity and task truth before opening the projection
-        # savepoint. A failure in these primary writes must still abort the
-        # caller's transaction.
-        db.flush()
-        from app.services.issue_workflow_planning import (
-            issue_workflow_planning_service,
-        )
-
-        try:
-            with db.begin_nested():
-                issue_workflow_planning_service.sync_from_child(
-                    db,
-                    child_id=task.id,
-                )
-        except Exception:
-            logger.exception(
-                "[ProjectChat] Issue workflow projection failed task_id=%s",
-                task.id,
-            )
 
     def fail_agent_response(
         self,
