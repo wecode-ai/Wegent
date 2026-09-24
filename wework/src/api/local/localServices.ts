@@ -1530,6 +1530,22 @@ async function prepareLocalRuntimeWorkspace(
   }
 }
 
+function normalizeRuntimeProjectKeyForDevice(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string
+): RuntimeTaskCreateRequest {
+  const requestedProjectKey = data.runtimeProjectKey?.trim()
+  if (!requestedProjectKey) return data
+  const remoteProjectIdentity = parseRuntimeRemoteProjectStateId(requestedProjectKey)
+  const executorProjectKey =
+    remoteProjectIdentity?.hostId === localDeviceId
+      ? remoteProjectIdentity.projectKey
+      : requestedProjectKey
+  return executorProjectKey === data.runtimeProjectKey
+    ? data
+    : { ...data, runtimeProjectKey: executorProjectKey }
+}
+
 async function resolveLocalRuntimeTaskWorkspace(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
@@ -1537,13 +1553,14 @@ async function resolveLocalRuntimeTaskWorkspace(
   adaptListResponse: (response: unknown, deviceId: string) => RuntimeWorkListResponse,
   createStandaloneWorkspace = true
 ): Promise<RuntimeTaskCreateRequest> {
-  if (runtimeWorkspacePath(data)) return data
+  const resolvedData = normalizeRuntimeProjectKeyForDevice(data, localDeviceId)
+  if (runtimeWorkspacePath(resolvedData)) return resolvedData
 
   const needsRuntimeWork =
-    data.projectId != null ||
-    data.deviceWorkspaceId != null ||
-    Boolean(data.runtimeProjectKey) ||
-    Boolean(data.workspaceSourceTask)
+    resolvedData.projectId != null ||
+    resolvedData.deviceWorkspaceId != null ||
+    Boolean(resolvedData.runtimeProjectKey) ||
+    Boolean(resolvedData.workspaceSourceTask)
   let runtimeWork: RuntimeWorkListResponse | null = null
   if (needsRuntimeWork) {
     const response = await requestWithLocalDevice<unknown, Record<string, never>>(
@@ -1553,8 +1570,8 @@ async function resolveLocalRuntimeTaskWorkspace(
     runtimeWork = adaptListResponse(response, localDeviceId)
   }
 
-  if (data.workspaceSourceTask) {
-    if (data.workspaceSourceTask.deviceId !== localDeviceId) {
+  if (resolvedData.workspaceSourceTask) {
+    if (resolvedData.workspaceSourceTask.deviceId !== localDeviceId) {
       throw new Error('Inherited workflow workspace belongs to another device')
     }
     const workspaces = [
@@ -1563,11 +1580,11 @@ async function resolveLocalRuntimeTaskWorkspace(
     ]
     for (const workspace of workspaces) {
       const sourceTask = workspace.tasks.find(
-        candidate => candidate.taskId === data.workspaceSourceTask?.taskId
+        candidate => candidate.taskId === resolvedData.workspaceSourceTask?.taskId
       )
       if (sourceTask) {
         return {
-          ...data,
+          ...resolvedData,
           workspacePath: sourceTask.workspacePath || workspace.workspacePath,
         }
       }
@@ -1576,20 +1593,9 @@ async function resolveLocalRuntimeTaskWorkspace(
   }
 
   const projects = runtimeWork?.projects ?? []
-  const requestedProjectKey = data.runtimeProjectKey?.trim()
-  const remoteProjectIdentity = requestedProjectKey
-    ? parseRuntimeRemoteProjectStateId(requestedProjectKey)
-    : null
-  const executorProjectKey =
-    remoteProjectIdentity?.hostId === localDeviceId
-      ? remoteProjectIdentity.projectKey
-      : requestedProjectKey
-  const resolvedProjectData =
-    executorProjectKey && executorProjectKey !== data.runtimeProjectKey
-      ? { ...data, runtimeProjectKey: executorProjectKey }
-      : data
+  const executorProjectKey = resolvedData.runtimeProjectKey
   const selectedProject = projects.find(project => {
-    if (data.projectId != null && project.project.id === data.projectId) return true
+    if (resolvedData.projectId != null && project.project.id === resolvedData.projectId) return true
     return Boolean(executorProjectKey && project.project.key === executorProjectKey)
   })
   const selectedWorkspace =
@@ -1597,34 +1603,38 @@ async function resolveLocalRuntimeTaskWorkspace(
       workspace =>
         workspace.deviceId === localDeviceId &&
         workspace.available &&
-        (data.deviceWorkspaceId == null || workspace.id === data.deviceWorkspaceId)
+        (resolvedData.deviceWorkspaceId == null || workspace.id === resolvedData.deviceWorkspaceId)
     ) ??
     projects
       .flatMap(project => project.deviceWorkspaces)
       .find(
         workspace =>
-          data.deviceWorkspaceId != null &&
-          workspace.id === data.deviceWorkspaceId &&
+          resolvedData.deviceWorkspaceId != null &&
+          workspace.id === resolvedData.deviceWorkspaceId &&
           workspace.deviceId === localDeviceId &&
           workspace.available
       )
   if (selectedWorkspace) {
-    return { ...resolvedProjectData, workspacePath: selectedWorkspace.workspacePath }
+    return { ...resolvedData, workspacePath: selectedWorkspace.workspacePath }
   }
   const rootPath = selectedProject?.project.roots?.[0]?.path
-  if (rootPath) return { ...resolvedProjectData, workspacePath: rootPath }
-  if (data.projectId != null || data.deviceWorkspaceId != null || data.runtimeProjectKey) {
+  if (rootPath) return { ...resolvedData, workspacePath: rootPath }
+  if (
+    resolvedData.projectId != null ||
+    resolvedData.deviceWorkspaceId != null ||
+    resolvedData.runtimeProjectKey
+  ) {
     const binding =
-      data.projectId != null
-        ? `project ${data.projectId}`
-        : data.deviceWorkspaceId != null
-          ? `workspace ${data.deviceWorkspaceId}`
-          : `project '${data.runtimeProjectKey}'`
+      resolvedData.projectId != null
+        ? `project ${resolvedData.projectId}`
+        : resolvedData.deviceWorkspaceId != null
+          ? `workspace ${resolvedData.deviceWorkspaceId}`
+          : `project '${resolvedData.runtimeProjectKey}'`
     throw new Error(`Bound local ${binding} is unavailable on device ${localDeviceId}`)
   }
 
-  if (!data.standaloneChatWorkspace || !createStandaloneWorkspace) return data
-  const taskId = data.taskId ?? createRuntimeExecutionIds(data)[0]
+  if (!resolvedData.standaloneChatWorkspace || !createStandaloneWorkspace) return resolvedData
+  const taskId = resolvedData.taskId ?? createRuntimeExecutionIds(resolvedData)[0]
   const home = await executeLocalDeviceCommand(
     requestWithLocalDevice,
     {
@@ -1635,7 +1645,11 @@ async function resolveLocalRuntimeTaskWorkspace(
     },
     'Failed to resolve home directory'
   )
-  const workspacePath = buildConversationWorkspacePath(commandText(home), data.message, taskId)
+  const workspacePath = buildConversationWorkspacePath(
+    commandText(home),
+    resolvedData.message,
+    taskId
+  )
   await executeLocalDeviceCommand(
     requestWithLocalDevice,
     {
@@ -1647,7 +1661,7 @@ async function resolveLocalRuntimeTaskWorkspace(
     },
     'Failed to create conversation workspace'
   )
-  return { ...data, workspacePath }
+  return { ...resolvedData, workspacePath }
 }
 
 async function createLocalRuntimeTaskPayload(

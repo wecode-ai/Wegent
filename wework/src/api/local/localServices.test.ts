@@ -1649,7 +1649,7 @@ describe('createLocalAppServices', () => {
       deviceId: 'local-device',
       executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
-      runtimeProjectKey: 'product',
+      runtimeProjectKey: 'wegent-remote:device-uuid:product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
       projectInstructions: 'Run focused project tests.',
@@ -2248,6 +2248,7 @@ describe('createLocalAppServices', () => {
         deviceId: 'device-uuid',
         taskId: 'source-task',
       },
+      runtimeProjectKey: 'wegent-remote:device-uuid:local-project',
       runtime: 'codex',
       message: 'continue',
     })
@@ -2262,6 +2263,10 @@ describe('createLocalAppServices', () => {
           deviceId: 'device-uuid',
           taskId: 'source-task',
         },
+        runtimeProjectKey: 'local-project',
+        executionRequest: expect.objectContaining({
+          runtime_project_key: 'local-project',
+        }),
       })
     )
   })
