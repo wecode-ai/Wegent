@@ -1398,6 +1398,13 @@
       "follow_up_status_key": "Send status field (optional; bind it in the template)",
       "mapping_help": "Bind the content field in both writing and completed states. Images are optional; the submit button must include the upload component's local variable to send images."
     },
+    "notification_card": {
+      "title": "Notification card (optional)",
+      "enabled": "Send task notifications as cards",
+      "template_id": "Notification card template ID (optional)",
+      "template_placeholder": "A verified DingTalk card template ID",
+      "help": "Empty uses DingTalk's built-in markdown card (body plus buttons), so the bot needs no card of its own. A template of your own renders your fields; a card that cannot be delivered falls back to a text notification."
+    },
     "title": "IM Channel Management",
     "description": "Manage IM platform integrations (DingTalk, Weibo, Telegram, Discord)",
     "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",

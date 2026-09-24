@@ -615,6 +615,19 @@ fn apply_claude_header_environment(
             ("wecode-executor".to_owned(), "claudecode".to_owned()),
         ],
     );
+    // Attach the session (task) id so providers can correlate model usage.
+    let task_id = request.task_id.trim();
+    if !task_id.is_empty() {
+        // The request's task id is authoritative; replace any stale value.
+        default_headers.retain(|(key, _)| !headers_match(key, "wecode-session-id"));
+        default_headers.push(("wecode-session-id".to_owned(), task_id.to_owned()));
+    }
+    // Cloud model routes carry the gateway identity header; only then should the
+    // gateway-forwarded session header be forced into custom headers below.
+    let targets_gateway = default_headers
+        .iter()
+        .chain(custom_headers.iter())
+        .any(|(key, _)| headers_match(key, "X-Wegent-Model-Type"));
     if let Some(project_id) = project_id(request) {
         default_headers = merge_header_map(
             default_headers,
@@ -629,6 +642,24 @@ fn apply_claude_header_environment(
             .env("DEFAULT_HEADERS", serialized_default_headers.clone())
             .env("default_headers", serialized_default_headers);
         custom_headers = merge_missing_header_map(custom_headers, default_headers);
+    }
+
+    // The merge above preserves any wecode-session-id already present in
+    // ANTHROPIC_CUSTOM_HEADERS; replace it with the request's task id.
+    if !task_id.is_empty() {
+        custom_headers.retain(|(key, _)| !headers_match(key, "wecode-session-id"));
+        custom_headers.push(("wecode-session-id".to_owned(), task_id.to_owned()));
+        if targets_gateway {
+            // Cloud routes additionally carry the gateway-forwarded variant;
+            // it must also win over any configured custom value.
+            custom_headers.retain(|(key, _)| {
+                !headers_match(key, "X-Wegent-Upstream-Header-wecode-session-id")
+            });
+            custom_headers.push((
+                "X-Wegent-Upstream-Header-wecode-session-id".to_owned(),
+                task_id.to_owned(),
+            ));
+        }
     }
 
     if !custom_headers.is_empty() {

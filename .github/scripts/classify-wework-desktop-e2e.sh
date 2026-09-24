@@ -12,6 +12,8 @@ core_segments=(
   collaboration-local-agent-capabilities
   collaboration-local-executor-issue-tools
   collaboration-agent-automation-chain
+  collaboration-issue-comment-mention
+  collaboration-issue-comment-notification
   cloud-space-mention
   priority-filter
   external-content-import
@@ -143,7 +145,7 @@ core_shards=(
   window-lifecycle,workbench-mode,harness-apps,codex-account-login
   core-task-flow,goal-lifecycle,codex-notification-isolation,offline-local-project-space
   model-routing,tray-lifecycle,split-workbench,automation-lifecycle,browser-annotation-core
-  environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd
+  environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd,collaboration-issue-comment-mention,collaboration-issue-comment-notification
   collaboration-agent-automation-chain,component-update,native-window-startup,resilience,browser-toolbar-actions
   project-ai-settings,priority-filter,system-pac,release-package-startup,project-event-sources,computer-use,running-plan-history
   local-harness,runtime-task-queue,cloud-context-resilience,external-content-import,project-assignment-notification,cloud-space-mention
@@ -552,6 +554,16 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
       select_target "core:board-focus-view"
+      return
+      ;;
+    # Issue comment/reply mention wiring lives in the shared composers and in
+    # the Wework collaboration render path.
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
+      select_target "core:collaboration-issue-comment-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
+      select_target "core:collaboration-issue-comment-notification"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
@@ -977,6 +989,8 @@ classify_path() {
       select_target "core:collaboration-local-agent-capabilities"
       select_target "core:collaboration-local-executor-issue-tools"
       select_target "core:collaboration-agent-automation-chain"
+      select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-comment-notification"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
