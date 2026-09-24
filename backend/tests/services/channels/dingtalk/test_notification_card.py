@@ -209,7 +209,7 @@ def test_custom_card_exposes_a_mention_as_separate_plain_text_fields() -> None:
 
     assert params == {
         "kindLabel": "评论提及",
-        "tone": "info",
+        "tone": "blue",
         "headline": "hajimi 在评论中提到了你",
         "itemTitle": "修复登录",
         "itemKey": "WEG-12",
@@ -241,7 +241,7 @@ def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
     )
 
     assert params["kindLabel"] == "任务分配"
-    assert params["tone"] == "info"
+    assert params["tone"] == "blue"
     assert params["headline"] == "admin 把任务分配给了你"
     assert params["itemTitle"] == ""
     assert params["itemKey"] == ""
@@ -255,16 +255,16 @@ def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
 @pytest.mark.parametrize(
     ("status", "kind_label", "tone"),
     [
-        ("queued", "已入队", "info"),
-        ("claimed", "准备执行", "info"),
-        ("running", "执行中", "info"),
-        ("pending_approval", "待审批", "attention"),
-        ("waiting_user_input", "待确认", "attention"),
-        ("waiting_runtime", "待选设备", "attention"),
-        ("completed", "已完成", "success"),
-        ("failed", "执行失败", "error"),
-        ("FAILED", "执行失败", "error"),
-        ("cancelled", "已取消", "neutral"),
+        ("queued", "已入队", "blue"),
+        ("claimed", "准备执行", "blue"),
+        ("running", "执行中", "blue"),
+        ("pending_approval", "待审批", "orange"),
+        ("waiting_user_input", "待确认", "orange"),
+        ("waiting_runtime", "待选设备", "orange"),
+        ("completed", "已完成", "green"),
+        ("failed", "执行失败", "red"),
+        ("FAILED", "执行失败", "red"),
+        ("cancelled", "已取消", "gray"),
     ],
 )
 def test_custom_card_presents_execution_state(

@@ -21,19 +21,19 @@ BUTTON_COLORS = ("blue", "gray")
 MAX_CARD_DETAIL_CHARS = 240
 
 KIND_PRESENTATION = {
-    "mention": ("评论提及", "info"),
-    "assignment": ("任务分配", "info"),
+    "mention": ("评论提及", "blue"),
+    "assignment": ("任务分配", "blue"),
 }
 EXECUTION_PRESENTATION = {
-    "queued": ("已入队", "info"),
-    "claimed": ("准备执行", "info"),
-    "running": ("执行中", "info"),
-    "pending_approval": ("待审批", "attention"),
-    "waiting_user_input": ("待确认", "attention"),
-    "waiting_runtime": ("待选设备", "attention"),
-    "completed": ("已完成", "success"),
-    "failed": ("执行失败", "error"),
-    "cancelled": ("已取消", "neutral"),
+    "queued": ("已入队", "blue"),
+    "claimed": ("准备执行", "blue"),
+    "running": ("执行中", "blue"),
+    "pending_approval": ("待审批", "orange"),
+    "waiting_user_input": ("待确认", "orange"),
+    "waiting_runtime": ("待选设备", "orange"),
+    "completed": ("已完成", "green"),
+    "failed": ("执行失败", "red"),
+    "cancelled": ("已取消", "gray"),
 }
 
 
@@ -106,8 +106,8 @@ def _custom_card_param_map(
 def _presentation(push: PushNotification) -> tuple[str, str]:
     if push.kind == "execution":
         status = _payload_text(push, "status").lower()
-        return EXECUTION_PRESENTATION.get(status, ("任务进展", "info"))
-    return KIND_PRESENTATION.get(push.kind, ("任务通知", "neutral"))
+        return EXECUTION_PRESENTATION.get(status, ("任务进展", "blue"))
+    return KIND_PRESENTATION.get(push.kind, ("任务通知", "gray"))
 
 
 def _payload_text(push: PushNotification, key: str) -> str:
