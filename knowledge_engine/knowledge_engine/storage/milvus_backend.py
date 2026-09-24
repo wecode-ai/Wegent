@@ -70,11 +70,16 @@ def hybrid_candidate_k(top_k: int) -> int:
     records, otherwise a document that one branch did not recall is scored as
     0 by that branch and drops out of the fused top_k even when it is the best
     match overall.
+
+    Above the ceiling there is no room left to widen, so the pool stays at
+    top_k: the pre-decoupling store limit, which keeps the caller from silently
+    receiving fewer records than it asked for.
     """
-    return min(
+    widened = min(
         max(top_k * HYBRID_CANDIDATE_MULTIPLIER, HYBRID_MIN_CANDIDATES),
         HYBRID_MAX_CANDIDATES,
     )
+    return max(top_k, widened)
 
 
 class LazyAsyncMilvusVectorStore(MilvusVectorStore):

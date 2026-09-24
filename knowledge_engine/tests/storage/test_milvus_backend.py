@@ -641,6 +641,43 @@ class TestRetrieve:
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch_collection()
+    def test_retrieve_hybrid_candidate_pool_never_undercuts_top_k(
+        self, mock_client_cls, mock_milvus_vs
+    ):
+        """
+        Beyond the ceiling the pool must not shrink below the requested top_k,
+        otherwise the caller silently gets fewer records than asked for.
+        """
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 1001,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
+        )
+
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.similarity_top_k == 1001
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch_collection()
     def test_retrieve_hybrid_returns_at_most_top_k_fused_records(
         self, mock_client_cls, mock_milvus_vs
     ):
