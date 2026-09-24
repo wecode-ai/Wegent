@@ -11143,8 +11143,38 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('renders the environment commit menu as the compact commit or push panel', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    deviceExecuteCommandMock.mockResolvedValue({ success: true, stdout: [] })
     const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     const onPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/github_wegent',
+              repoUrl: 'https://github.com/wecode-ai/Wegent.git',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: activeProjectRuntimeTask.taskId,
+                  workspacePath: activeProjectRuntimeTask.workspacePath,
+                  title: 'Runtime project task',
+                  runtime: 'codex',
+                  gitInfo: {
+                    currentBranch: 'fix/change-request-refresh',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
 
     render(
       <DesktopWorkbenchLayout
@@ -11154,6 +11184,7 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
+          runtimeWork,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -11174,6 +11205,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(1))
     const popover = await screen.findByTestId('environment-info-popover')
     const commitMenuButton = await screen.findByTestId('environment-commit-button')
     expect(commitMenuButton).toHaveTextContent('提交或推送')
@@ -11216,17 +11248,22 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
     await waitFor(() =>
       expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
-        null,
+        expect.objectContaining({ id: 1 }),
         'keep this',
         activeProjectRuntimeTarget
       )
     )
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
 
     await userEvent.click(screen.getByTestId('environment-commit-button'))
     await userEvent.click(screen.getByTestId('environment-push-button'))
     await waitFor(() =>
-      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeProjectRuntimeTarget)
+      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1 }),
+        activeProjectRuntimeTarget
+      )
     )
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(3))
   }, 10_000)
 
   test('shows the environment commit progress row while generating a message', async () => {
@@ -11747,7 +11784,7 @@ describe('DesktopWorkbenchLayout', () => {
           taskId: 'runtime-1',
         },
         {
-          changeRequestStatusEnabled: false,
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -11857,7 +11894,7 @@ describe('DesktopWorkbenchLayout', () => {
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
         {
-          changeRequestStatusEnabled: false,
+          changeRequestStatusEnabled: true,
           force: true,
           onPartialInfo: expect.any(Function),
         }
@@ -11983,7 +12020,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
-          changeRequestStatusEnabled: false,
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -12076,7 +12113,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
-          changeRequestStatusEnabled: false,
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )

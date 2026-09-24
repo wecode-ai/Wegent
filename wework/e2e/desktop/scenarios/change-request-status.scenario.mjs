@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CHANGE_REQUEST_BUTTON = '[data-testid="change-request-button"]'
+const CHANGE_REQUEST_REFRESH_INTERVAL_MS = 30_000
 const ENVIRONMENT_BUTTON = '[data-testid="environment-info-button"]'
 const QUERY_LOG_FILE = '.wework-change-request-e2e-queries'
 const STATE_FILE = '.wework-change-request-e2e-state'
@@ -196,9 +197,13 @@ function writeTaskCompletion(response, requestCount) {
   )
 }
 
-async function queryCount(path) {
+async function queryTimestamps(path) {
   const contents = await readFile(path, 'utf8')
-  return contents.split('\n').filter(Boolean).length
+  return contents
+    .split('\n')
+    .filter(Boolean)
+    .map(value => Number(value))
+    .filter(Number.isFinite)
 }
 
 async function refreshEnvironment(control) {
@@ -332,6 +337,7 @@ export async function createDesktopScenario({
 
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
+      const monitorRegistrationWindowStartedAt = Date.now()
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: TASK_PROMPT,
       })
@@ -378,8 +384,12 @@ export async function createDesktopScenario({
       )
       await capture(control, 'change-request-status-02-pending.png')
 
-      const initialQueryCount = await queryCount(queryLogPath)
-      assert.ok(initialQueryCount > 0, 'The initial PR/MR lookup did not invoke GitHub CLI')
+      const scheduledRefreshCutoff =
+        monitorRegistrationWindowStartedAt + CHANGE_REQUEST_REFRESH_INTERVAL_MS
+      const initialQueries = (await queryTimestamps(queryLogPath)).filter(
+        timestamp => timestamp < scheduledRefreshCutoff
+      )
+      assert.ok(initialQueries.length > 0, 'The initial PR/MR lookup did not invoke GitHub CLI')
       await control.command('click', ENVIRONMENT_BUTTON)
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: 'Keep the current task active without changing its branch',
@@ -393,8 +403,10 @@ export async function createDesktopScenario({
       })
       await new Promise(resolve => setTimeout(resolve, 500))
       assert.equal(
-        await queryCount(queryLogPath),
-        initialQueryCount,
+        (await queryTimestamps(queryLogPath)).filter(
+          timestamp => timestamp < scheduledRefreshCutoff
+        ).length,
+        initialQueries.length,
         'An equivalent runtime task refresh repeated the PR/MR lookup'
       )
       await control.command('click', ENVIRONMENT_BUTTON)

@@ -264,6 +264,8 @@ export function useWorkbenchPaneEnvironment({
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const changeRequestStatusFallbackEnabled =
+    changeRequestStatusEnabled && currentChangeRequestTarget === null
   const changeRequestMonitor = useMemo(
     () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
     [services?.deviceApi]
@@ -631,7 +633,7 @@ export function useWorkbenchPaneEnvironment({
           {
             ...(force ? { force: true } : {}),
             ...(shareInflight === false ? { shareInflight: false } : {}),
-            changeRequestStatusEnabled: false,
+            changeRequestStatusEnabled: changeRequestStatusFallbackEnabled,
             onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
           }
         )
@@ -653,6 +655,7 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
+      changeRequestStatusFallbackEnabled,
       currentRuntimeTaskDeviceId,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
@@ -662,14 +665,20 @@ export function useWorkbenchPaneEnvironment({
     ]
   )
 
+  const refreshChangeRequestStatus = useCallback(
+    () =>
+      changeRequestStatusEnabled && changeRequestMonitor
+        ? changeRequestMonitor.refresh({ shareInflight: false })
+        : Promise.resolve(),
+    [changeRequestMonitor, changeRequestStatusEnabled]
+  )
+
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
       loadCurrentEnvironmentInfo({ force: true, showLoading: true, shareInflight: false }),
-      changeRequestStatusEnabled
-        ? changeRequestMonitor?.refresh({ shareInflight: false })
-        : undefined,
+      refreshChangeRequestStatus(),
     ])
-  }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
+  }, [loadCurrentEnvironmentInfo, refreshChangeRequestStatus])
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) {
@@ -728,12 +737,16 @@ export function useWorkbenchPaneEnvironment({
       }
       await commitAndPushEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
-      await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+      await Promise.all([
+        loadCurrentEnvironmentInfo({ force: true, showLoading: false }),
+        refreshChangeRequestStatus(),
+      ])
     },
     [
       activeWorkspaceTarget,
       commitAndPushEnvironmentChanges,
       loadCurrentEnvironmentInfo,
+      refreshChangeRequestStatus,
       requireContributionActionsAvailable,
       workspaceProject,
       workspaceTargetError,
@@ -746,11 +759,15 @@ export function useWorkbenchPaneEnvironment({
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await pushEnvironmentChanges(workspaceProject, activeWorkspaceTarget)
-    await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+    await Promise.all([
+      loadCurrentEnvironmentInfo({ force: true, showLoading: false }),
+      refreshChangeRequestStatus(),
+    ])
   }, [
     activeWorkspaceTarget,
     loadCurrentEnvironmentInfo,
     pushEnvironmentChanges,
+    refreshChangeRequestStatus,
     requireContributionActionsAvailable,
     workspaceProject,
     workspaceTargetError,
