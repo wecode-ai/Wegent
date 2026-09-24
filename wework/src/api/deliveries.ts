@@ -122,6 +122,7 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  security_level?: 'open' | 'related'
   detail_loaded?: boolean
   content_revision?: number
   has_additional_context?: boolean
@@ -364,13 +365,16 @@ export interface CloudProject {
   workflow_definition?: ProjectWorkflowDefinition
   collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
   automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
+  project_manager?: import('@wegent/collaboration').WorkspaceProjectManagerConfig
   execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
   workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
-  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
-  visibility?: 'private' | 'public_restricted' | 'public'
+  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
+  visibility?: 'private' | 'public'
+  public_access?: { role: 'Developer' | 'Viewer' } | null
+  default_issue_security?: 'open' | 'related'
   status: string
   tags: string[]
   version: number
@@ -651,7 +655,7 @@ export interface CloudProjectMember {
   user_id: number
   user_name: string
   email: string | null
-  role: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+  role: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
   capability_description?: string
 }
 
@@ -833,7 +837,8 @@ export function createDeliveryApi(client: HttpClient) {
       name: string
       description?: string
       task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
-      visibility?: 'private' | 'public_restricted' | 'public'
+      visibility?: 'private' | 'public'
+      public_access?: { role: 'Developer' | 'Viewer' }
       provider_config?: {
         repository?: string
         domain?: string
@@ -858,13 +863,16 @@ export function createDeliveryApi(client: HttpClient) {
         name?: string
         description?: string
         tags?: string[]
-        visibility?: 'private' | 'public_restricted' | 'public'
+        visibility?: 'private' | 'public'
+        public_access?: { role: 'Developer' | 'Viewer' }
+        default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        project_manager?: CloudProject['project_manager']
         execution_environment?: {
           repositories: Array<{
             name: string
@@ -1126,6 +1134,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_team_id'
           | 'due_at'
           | 'tags'
+          | 'security_level'
           | 'workflow'
           | 'execution_config'
         >

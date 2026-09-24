@@ -55,6 +55,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
+  'board-transcript-preload': './scenarios/board-transcript-preload.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
@@ -68,6 +69,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
+  'project-space-ai-manager': './scenarios/project-space-ai-manager.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -93,6 +95,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'harness-apps',
   'offline-local-project-space',
   'board-focus-view',
+  'board-transcript-preload',
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
@@ -103,6 +106,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-tool-roles',
   'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
+  'project-space-ai-manager',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
   'plugin-development',
@@ -312,7 +316,13 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
+  if (
+    checkpoint === 'native-window-chrome' ||
+    checkpoint === 'browser-multi-tabs' ||
+    checkpoint === 'core-task-flow'
+  ) {
+    // Core task flow verifies the native drag-to-popout window. macOS background
+    // mode prohibits activation and hides the app when that window is presented.
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]

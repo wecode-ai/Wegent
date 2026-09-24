@@ -203,7 +203,10 @@ export function settleRuntimeConversationSubagents(address: RuntimeTaskAddress):
 
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
-  return projectRuntimeConversationMessages(key, touchEntry(turnsByConversation, key) ?? [])
+  return projectRuntimeConversationMessages(
+    key,
+    touchEntry(turnsByConversation, key) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
+  )
 }
 
 export function getRuntimeConversationTurns(
@@ -220,7 +223,7 @@ export function getRuntimeConversationMessagesForLogicalAddress(
   if (turnsByConversation.has(exactKey) || address.deviceId !== 'local-device') {
     return projectRuntimeConversationMessages(
       exactKey,
-      touchEntry(turnsByConversation, exactKey) ?? []
+      touchEntry(turnsByConversation, exactKey) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
     )
   }
 

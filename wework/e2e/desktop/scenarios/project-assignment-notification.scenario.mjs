@@ -1153,6 +1153,68 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
         timeoutMs: uiTimeoutMs,
       })
+
+      await control.command('click', '[data-testid="wework-notifications-settings"]')
+      await control.command('waitFor', '[data-testid="wework-notifications-settings-panel"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'click',
+        '[data-testid="wework-notifications-setting-collaboration-im"]'
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="wework-notifications-setting-collaboration-im"][aria-checked="false"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await waitForApiValue(
+        () => ownerRequest('/api/v1/wework-notifications/preferences'),
+        value => value.collaboration.im === false,
+        'Collaboration IM preference did not disable',
+        uiTimeoutMs
+      )
+
+      await control.command('click', '[data-testid="wework-notifications-setting-general-in_app"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="wework-notifications-setting-general-in_app"][aria-checked="false"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      const suppressed = await ownerRequest('/api/v1/wework-notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Suppressed general notification',
+          body: 'This notification must not enter the inbox',
+        }),
+      })
+      const suppressedInbox = await ownerRequest('/api/v1/wework-notifications?category=general')
+      assert.equal(
+        suppressedInbox.items.some(item => item.id === suppressed.id),
+        false
+      )
+
+      await control.command('click', '[data-testid="wework-notifications-setting-general-in_app"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="wework-notifications-setting-general-in_app"][aria-checked="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        '[data-testid="wework-notifications-setting-collaboration-im"]'
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="wework-notifications-setting-collaboration-im"][aria-checked="true"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await waitForApiValue(
+        () => ownerRequest('/api/v1/wework-notifications/preferences'),
+        value => value.general.in_app === true && value.collaboration.im === true,
+        'Notification preferences did not recover',
+        uiTimeoutMs
+      )
+      await captureScreenshot(control, 'wework-notification-preferences.png')
     },
 
     diagnostics() {

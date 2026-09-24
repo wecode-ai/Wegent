@@ -91,6 +91,13 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address)).toBe(updated)
   })
 
+  test('reuses the empty projection before a transcript is cached', () => {
+    const first = getRuntimeConversationMessages(address)
+
+    expect(first).toEqual([])
+    expect(getRuntimeConversationMessages(address)).toBe(first)
+  })
+
   test('resolves the local-device alias to a unique executor conversation', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',

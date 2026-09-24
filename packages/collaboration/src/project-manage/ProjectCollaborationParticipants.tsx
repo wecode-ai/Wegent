@@ -13,12 +13,14 @@ import {
 import type { CollaborationTranslate } from "../i18n";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 
-type ParticipantTab = "members" | "agents" | "groups";
+type ParticipantTab = "members" | "agents" | "manager" | "groups";
 
 export function CollaborationParticipantsTabs({
   agentsContent,
   agentsLabel,
   ariaLabel,
+  managerContent,
+  managerLabel,
   groupsContent,
   groupsLabel,
   initialTab = "agents",
@@ -30,6 +32,8 @@ export function CollaborationParticipantsTabs({
   agentsContent: ReactNode;
   agentsLabel: string;
   ariaLabel: string;
+  managerContent?: ReactNode;
+  managerLabel?: string;
   groupsContent: ReactNode;
   groupsLabel: string;
   initialTab?: ParticipantTab;
@@ -41,6 +45,7 @@ export function CollaborationParticipantsTabs({
   const [selectedTab, setSelectedTab] = useState<ParticipantTab>(initialTab);
   const tabRefs = useRef<Record<ParticipantTab, HTMLButtonElement | null>>({
     agents: null,
+    manager: null,
     members: null,
     groups: null,
   });
@@ -64,10 +69,14 @@ export function CollaborationParticipantsTabs({
       id: "groups",
       label: groupsLabel,
     },
+    ...(managerContent && managerLabel
+      ? [{ id: "manager" as const, label: managerLabel }]
+      : []),
   ];
   const content = {
     members: membersContent,
     agents: agentsContent,
+    manager: managerContent,
     groups: groupsContent,
   }[selectedTab];
   const selectAndFocusTab = (tab: ParticipantTab) => {
@@ -141,12 +150,14 @@ export function CollaborationParticipantsTabs({
 export function ProjectCollaborationParticipants({
   agentsContent,
   groupsContent,
+  managerContent,
   membersContent,
   requestedTab,
   translate,
 }: {
   agentsContent: ReactNode;
   groupsContent: ReactNode;
+  managerContent?: ReactNode;
   membersContent: ReactNode;
   requestedTab?: ParticipantTab;
   translate: CollaborationTranslate;
@@ -157,16 +168,25 @@ export function ProjectCollaborationParticipants({
     <ProjectSettingsPage
       contentWidth="wide"
       title={title}
-      description={translate(
-        "todo.collaboration_participants_description",
-        "统一管理项目中的智能体、项目成员和协作小组。三者保持独立身份，协作小组从已有智能体和项目成员中组织工作。",
-      )}
+      description={
+        managerContent
+          ? translate(
+              "todo.collaboration_participants_manager_description",
+              "统一管理项目中的智能体、项目管理者、项目成员和协作小组。项目管理者负责协调 Issue，负责人负责执行与交付。",
+            )
+          : translate(
+              "todo.collaboration_participants_description",
+              "统一管理项目中的智能体、项目成员和协作小组。三者保持独立身份，协作小组从已有智能体和项目成员中组织工作。",
+            )
+      }
       testId="collaboration-project-participants-page"
     >
       <CollaborationParticipantsTabs
         agentsContent={agentsContent}
         agentsLabel={translate("todo.project_agents", "智能体")}
         ariaLabel={title}
+        managerContent={managerContent}
+        managerLabel={translate("todo.project_manager", "项目管理者")}
         groupsContent={groupsContent}
         groupsLabel={translate("todo.collaboration_groups", "协作小组")}
         membersContent={membersContent}

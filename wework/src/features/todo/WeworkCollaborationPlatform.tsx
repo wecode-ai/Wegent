@@ -28,6 +28,8 @@ import {
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type WorkspaceTaskBinding,
+  type WorkspaceProjectManagerModelSelection,
+  type WorkspaceProjectManagerRun,
 } from '@wegent/collaboration'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -50,7 +52,10 @@ import { generateCollaborationGroupDraft } from '@/features/collaboration/collab
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
+import type {
+  ArchiveRuntimeConversationsResult,
+  WorkbenchContextValue,
+} from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
   ProjectSpaceDetailServices,
@@ -64,6 +69,7 @@ import {
 import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import type {
   DeviceInfo,
+  ModelType,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -74,11 +80,15 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import { sendOptimisticRuntimeUserMessage } from '@/features/workbench/runtimeConversationSend'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { AiChatModal } from './AiChatModal'
+import { openExternalUrl } from '@/lib/external-links'
+import { ProjectAiDesktopComposer } from './ProjectAiDesktopComposer'
+import { ProjectAiDesktopConversation } from './ProjectAiDesktopConversation'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { projectBoundRuntimeTaskStatuses } from './runtimeMyWork'
@@ -130,6 +140,72 @@ function routeProjectLocation(
   }
 }
 const PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
+
+function openProjectManagerTask(
+  run: WorkspaceProjectManagerRun,
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+) {
+  if (run.runtimeTaskId && run.runtimeDeviceId) {
+    void Promise.resolve(
+      onOpenRuntimeTask?.({ deviceId: run.runtimeDeviceId, taskId: run.runtimeTaskId })
+    ).catch(error => console.error('[Wework] Failed to open project manager task', error))
+  } else if (run.executionUrl) {
+    void openExternalUrl(run.executionUrl).catch(error =>
+      console.error('[Wework] Failed to open project manager task', error)
+    )
+  }
+}
+
+async function continueProjectManagerConversation(
+  sendRuntimePaneMessage: WorkbenchContextValue['sendRuntimePaneMessage'],
+  project: CollaborationProject,
+  run: WorkspaceProjectManagerRun,
+  message: string,
+  modelSelection?: WorkspaceProjectManagerModelSelection
+) {
+  if (!run.runtimeDeviceId || !run.runtimeTaskId) {
+    throw new Error('Project manager conversation has no Runtime address')
+  }
+  const accepted = await sendOptimisticRuntimeUserMessage(
+    {
+      address: {
+        deviceId: run.runtimeDeviceId,
+        taskId: run.runtimeTaskId,
+      },
+      message,
+      modelSelection: modelSelection
+        ? {
+            ...modelSelection,
+            modelType: (modelSelection.modelType as ModelType | null | undefined) ?? null,
+          }
+        : undefined,
+      collaborationMode: 'default',
+      cloudProjectId: project.project_store === 'local' ? undefined : project.id,
+    },
+    request => sendRuntimePaneMessage(request)
+  )
+  if (!accepted) throw new Error('Runtime rejected the follow-up message')
+}
+
+async function stopProjectManagerConversation(
+  services: WorkbenchServices,
+  project: CollaborationProject,
+  run: WorkspaceProjectManagerRun
+) {
+  if (!run.runtimeDeviceId || !run.runtimeTaskId) {
+    throw new Error('Project manager conversation has no Runtime address')
+  }
+  const runtimeApi =
+    (project.project_store === 'local'
+      ? services.localExecutionServices?.runtimeWorkApi
+      : services.runtimeWorkApi) ?? services.runtimeWorkApi
+  if (!runtimeApi) throw new Error('Runtime conversation service is unavailable')
+  const result = await runtimeApi.cancelRuntimeTask({
+    deviceId: run.runtimeDeviceId,
+    taskId: run.runtimeTaskId,
+  })
+  if (!result.accepted) throw new Error('Runtime rejected the stop request')
+}
 
 function issueTaskExecutionStates(
   bindings: WorkspaceTaskBinding[],
@@ -198,6 +274,7 @@ export interface WeworkCollaborationPlatformProps {
     addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
   renderLocalProjectImporter?: (input: {
@@ -244,6 +321,7 @@ export function WeworkSharedProject({
   onOpenSettings,
   onOpenRuntimeTask,
   onCancelRuntimeTask,
+  sendRuntimePaneMessage,
   project,
   runtimeTaskLifecycle,
   runtimeWork,
@@ -266,6 +344,7 @@ export function WeworkSharedProject({
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
@@ -657,6 +736,32 @@ export function WeworkSharedProject({
     >
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          renderProjectAiConversation={conversationProps => (
+            <ProjectAiDesktopConversation {...conversationProps} services={services} />
+          )}
+          onOpenProjectAiTask={run => openProjectManagerTask(run, onOpenRuntimeTask)}
+          onContinueProjectAiConversation={(managerProject, run, message, modelSelection) =>
+            sendRuntimePaneMessage
+              ? continueProjectManagerConversation(
+                  sendRuntimePaneMessage,
+                  managerProject,
+                  run,
+                  message,
+                  modelSelection
+                )
+              : Promise.reject(new Error('Runtime conversation sender is unavailable'))
+          }
+          onStopProjectAiConversation={(managerProject, run) =>
+            stopProjectManagerConversation(services, managerProject, run)
+          }
+          renderProjectAiComposer={composerProps => (
+            <ProjectAiDesktopComposer
+              {...composerProps}
+              services={services}
+              projectId={composerProps.project.id}
+              projectStore={composerProps.project.project_store}
+            />
+          )}
           api={scopedApi}
           initialProject={project}
           host={projectHost}
@@ -1108,6 +1213,32 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         />
       )}
       <CollaborationPlatformApp
+        renderProjectAiConversation={conversationProps => (
+          <ProjectAiDesktopConversation {...conversationProps} services={props.services} />
+        )}
+        onOpenProjectAiTask={run => openProjectManagerTask(run, props.onOpenRuntimeTask)}
+        onContinueProjectAiConversation={(project, run, message, modelSelection) =>
+          props.sendRuntimePaneMessage
+            ? continueProjectManagerConversation(
+                props.sendRuntimePaneMessage,
+                project,
+                run,
+                message,
+                modelSelection
+              )
+            : Promise.reject(new Error('Runtime conversation sender is unavailable'))
+        }
+        onStopProjectAiConversation={(project, run) =>
+          stopProjectManagerConversation(props.services, project, run)
+        }
+        renderProjectAiComposer={composerProps => (
+          <ProjectAiDesktopComposer
+            {...composerProps}
+            services={props.services}
+            projectId={composerProps.project.id}
+            projectStore={composerProps.project.project_store}
+          />
+        )}
         api={platformApi}
         refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}
@@ -1379,6 +1510,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               onFocusedItemHandled={props.onFocusedItemHandled}
               onOpenSettings={props.onOpenSettings}
               onOpenRuntimeTask={props.onOpenRuntimeTask}
+              sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}

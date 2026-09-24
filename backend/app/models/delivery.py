@@ -158,16 +158,6 @@ class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
     @property
-    def visibility(self) -> str:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return "private"
-        visibility = metadata.get("visibility")
-        if visibility in {"private", "public_restricted", "public"}:
-            return str(visibility)
-        return "private"
-
-    @property
     def tags(self) -> list[str]:
         """Project-level tag registry stored inside the metadata JSON column."""
         metadata = self.metadata_json

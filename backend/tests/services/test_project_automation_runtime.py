@@ -34,6 +34,11 @@ def test_manager_type_rejects_unknown_sources(value):
 
 def test_human_assigned_issue_does_not_match_event_automation():
     db = MagicMock()
+    legacy_rule = SimpleNamespace(
+        id="legacy-rule",
+        metadata_json={"trigger_type": "event", "event_type": "task.tag_added"},
+    )
+    db.query.return_value.filter.return_value.all.return_value = [legacy_rule]
     processor = ProjectAutomationProcessor()
 
     matches = processor.matching_rules(
@@ -56,7 +61,34 @@ def test_human_assigned_issue_does_not_match_event_automation():
     )
 
     assert matches == []
-    db.query.assert_not_called()
+
+
+def test_human_assigned_issue_can_trigger_project_manager():
+    db = MagicMock()
+    manager_rule = SimpleNamespace(
+        id="manager-rule",
+        metadata_json={
+            "project_manager": True,
+            "trigger_type": "event",
+            "event_type": "task.tag_added",
+        },
+    )
+    db.query.return_value.filter.return_value.all.return_value = [manager_rule]
+    processor = ProjectAutomationProcessor()
+
+    matches = processor.matching_rules(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.tag_added",
+            project_id="project-1",
+            subject_id="task-1",
+            source="board",
+            actor_user_id=7,
+            payload={"human_work": {"assignee_user_id": 7}},
+        ),
+    )
+
+    assert matches == [manager_rule]
 
 
 def _dispatch_objects(configuration: dict[str, object]):
@@ -645,43 +677,66 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "然后调用 submit_workflow_plan 提交结构化方案。"
         "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
         "不要查询、猜测或伪造阶段标识。"
-        "不要直接修改原 Issue 的负责人。\n\n"
-        "Prefer domain ownership."
+        "不要直接修改原 Issue 的负责人。"
     )
 
 
-def test_manager_user_input_contains_only_issue_context():
-    prompt = ProjectAutomationExecution._managed_user_input(
-        project=SimpleNamespace(id="project-1"),
-        run=SimpleNamespace(id="run-1", task_id="task-1"),
+def test_manager_user_message_contains_project_collaboration_rules():
+    prompt = ProjectAutomationExecution._manager_user_message(
+        SimpleNamespace(description="Prefer domain ownership.", metadata_json={}),
+        SimpleNamespace(id="run-1", task_id="task-1", metadata_json={}),
     )
 
-    assert prompt == (
-        "project_id: project-1\n"
-        "task_id: task-1\n"
-        "automation_run_id: run-1\n\n"
-        "请读取当前 Issue 并完成本轮管理工作。"
-    )
+    assert prompt == "Prefer domain ownership."
     assert "AI 管家" not in prompt
     assert "submit_workflow_plan" not in prompt
 
 
-def test_manager_prompt_prefers_run_instruction_override():
-    prompt = ProjectAutomationExecution._managed_prompt(
-        MagicMock(),
-        owner=SimpleNamespace(id=7),
-        project=SimpleNamespace(id="project-1"),
-        rule=SimpleNamespace(description="Default instruction."),
-        run=SimpleNamespace(
+def test_manager_user_message_prefers_run_instruction_override():
+    prompt = ProjectAutomationExecution._manager_user_message(
+        SimpleNamespace(description="Default instruction.", metadata_json={}),
+        SimpleNamespace(
             id="run-1",
             task_id="task-1",
             metadata_json={"instruction_override": "Stage-specific instruction."},
         ),
-        context={"trigger": "workflow"},
     )
 
-    assert prompt.endswith("Stage-specific instruction.")
+    assert prompt == "Stage-specific instruction."
     assert "Default instruction." not in prompt
+
+
+def test_project_manager_keeps_user_request_out_of_developer_instructions():
+    rule = SimpleNamespace(
+        description="Coordinate ownership and progress.",
+        metadata_json={"project_manager": True},
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="task-1",
+        metadata_json={
+            "instruction_override": "Which Issues are still open?",
+            "event": {"type": "manual"},
+        },
+    )
+
+    prompt = ProjectAutomationExecution._managed_prompt(
+        MagicMock(),
+        owner=SimpleNamespace(id=7),
+        project=SimpleNamespace(id="project-1"),
+        rule=rule,
+        run=run,
+        context={},
+    )
+
+    assert "Current date:" in prompt
+    assert "Project instructions: Coordinate ownership and progress." in prompt
+    assert "Which Issues are still open?" not in prompt
+    assert "Current request:" not in prompt
+    assert (
+        ProjectAutomationExecution._manager_user_message(rule, run)
+        == "Which Issues are still open?"
+    )
 
 
 def test_manager_activity_binding_persists_execution_identity(monkeypatch):

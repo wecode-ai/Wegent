@@ -1,3 +1,5 @@
+import { gunzipSync } from 'node:zlib'
+
 import {
   ARTIFACT_CONTENT,
   ARTIFACT_NAME,
@@ -365,7 +367,10 @@ function readRawRequestBody(request) {
     request.on('data', chunk => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
-    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('end', () => {
+      const body = Buffer.concat(chunks)
+      resolvePromise((body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8'))
+    })
     request.once('error', reject)
   })
 }

@@ -4273,6 +4273,13 @@ fn is_internal_codex_provider(provider: &str) -> bool {
     provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
 }
 
+fn is_builtin_codex_provider(provider: &str) -> bool {
+    matches!(
+        provider,
+        "openai" | "amazon-bedrock" | "ollama" | "lmstudio"
+    )
+}
+
 fn sanitize_provider_id(value: &str) -> String {
     let mut sanitized = String::new();
     let mut last_was_separator = false;
@@ -4324,6 +4331,12 @@ fn header_overrides(
     project_id: Option<&str>,
     task_id: &str,
 ) -> Vec<String> {
+    // Codex owns its built-in providers and rejects any
+    // `model_providers.<builtin>.*` override as a reserved provider conflict.
+    if is_builtin_codex_provider(model_provider) {
+        return Vec::new();
+    }
+
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
         let mut headers = parse_header_map(default_headers);
         inject_session_headers(&mut headers, task_id);

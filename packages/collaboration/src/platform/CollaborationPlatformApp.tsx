@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -67,6 +73,7 @@ import type {
   CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationProject,
   CollaborationWorkspace,
@@ -1378,7 +1385,7 @@ function ResourceCatalogPage({
   ): void;
 }) {
   const [workspaceMembers, setWorkspaceMembers] = useState<
-    Record<string, CollaborationMember[]>
+    Record<string, CollaborationWorkspaceMember[]>
   >({});
   useEffect(() => {
     let active = true;
@@ -3186,7 +3193,7 @@ function RootTeamEditor({
   onCreated(): Promise<void>;
   groupId?: string;
 }) {
-  const [members, setMembers] = useState<CollaborationMember[]>([]);
+  const [members, setMembers] = useState<CollaborationWorkspaceMember[]>([]);
   const [agents, setAgents] = useState<CollaborationOwnedAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3411,6 +3418,11 @@ export function CollaborationPlatformApp({
   onCreateTask,
   onReady,
   renderProject,
+  renderProjectAiComposer,
+  renderProjectAiConversation,
+  onOpenProjectAiTask,
+  onContinueProjectAiConversation,
+  onStopProjectAiConversation,
   renderShell,
   sidebarFooter,
 }: {
@@ -3426,6 +3438,21 @@ export function CollaborationPlatformApp({
   ): void;
   onReady?(): void;
   renderProject?(context: CollaborationProjectRendererContext): React.ReactNode;
+  renderProjectAiComposer?: ComponentProps<
+    typeof CollaborationApp
+  >["renderProjectAiComposer"];
+  renderProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["renderProjectAiConversation"];
+  onOpenProjectAiTask?: ComponentProps<
+    typeof CollaborationApp
+  >["onOpenProjectAiTask"];
+  onContinueProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["onContinueProjectAiConversation"];
+  onStopProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["onStopProjectAiConversation"];
   renderShell?(shell: {
     main: React.ReactNode;
     sidebar: React.ReactNode;
@@ -3453,7 +3480,7 @@ export function CollaborationPlatformApp({
     null,
   );
   const [projectWorkspaceMembers, setProjectWorkspaceMembers] = useState<
-    CollaborationMember[]
+    CollaborationWorkspaceMember[]
   >([]);
   const [projectWorkspaceAgents, setProjectWorkspaceAgents] = useState<
     CollaborationOwnedAgent[]
@@ -3965,6 +3992,11 @@ export function CollaborationPlatformApp({
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
+          renderProjectAiComposer={renderProjectAiComposer}
+          renderProjectAiConversation={renderProjectAiConversation}
+          onOpenProjectAiTask={onOpenProjectAiTask}
+          onContinueProjectAiConversation={onContinueProjectAiConversation}
+          onStopProjectAiConversation={onStopProjectAiConversation}
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           locale={locale}

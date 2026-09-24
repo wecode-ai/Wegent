@@ -92,7 +92,7 @@ class ProjectAutomationService:
     """Own project automation rules, schedules, and persisted run records."""
 
     def list(self, db: Session, project_id: str, user_id: int) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rows = (
             db.query(ProjectAutomationRule)
             .filter(
@@ -102,7 +102,11 @@ class ProjectAutomationService:
             .order_by(ProjectAutomationRule.updated_at.desc())
             .all()
         )
-        return [self._rule_view(db, row) for row in rows]
+        return [
+            self._rule_view(db, row)
+            for row in rows
+            if _metadata(row).get("project_manager") is not True
+        ]
 
     def create(
         self,
@@ -112,6 +116,15 @@ class ProjectAutomationService:
         values: ProjectAutomationCreate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        db.query(CloudProject).filter(
+            CloudProject.id == project_id
+        ).with_for_update().one()
+        if values.enabled and values.trigger_type == "event":
+            from app.services.project_manager import project_manager_service
+
+            project_manager_service.check_automation_conflict(
+                db, project_id, values.event_type, values.event_config
+            )
         row = self._create_rule(
             db,
             project_id=project_id,
@@ -434,7 +447,15 @@ class ProjectAutomationService:
         values: ProjectAutomationUpdate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        db.query(CloudProject).filter(
+            CloudProject.id == project_id
+        ).with_for_update().one()
         row = self._rule(db, project_id, automation_id, for_update=True)
+        if _metadata(row).get("project_manager") is True:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Project manager rules are configured in project manager settings",
+            )
         if row.version != values.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Automation version conflict")
 
@@ -597,6 +618,12 @@ class ProjectAutomationService:
             event_type=str(event_type) if event_type else None,
             event_config=event_config,
         )
+        if row.status == "enabled" and trigger_type == "event":
+            from app.services.project_manager import project_manager_service
+
+            project_manager_service.check_automation_conflict(
+                db, project_id, str(event_type) if event_type else None, event_config
+            )
         rule_metadata.update(
             {
                 "trigger_type": trigger_type,
@@ -658,6 +685,11 @@ class ProjectAutomationService:
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
         row = self._rule(db, project_id, automation_id, for_update=True)
+        if _metadata(row).get("project_manager") is True:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Project manager rules are configured in project manager settings",
+            )
         self._mark_deleted(db, row, user_id=user_id, deleted_at=utcnow())
         project_metadata = dict(project.metadata_json or {})
         if text(project_metadata.get("workflow_automation_id")) == automation_id:
@@ -1142,7 +1174,7 @@ class ProjectAutomationService:
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rule = self._rule(db, project_id, automation_id)
         timezone_name = str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         rows = (
@@ -1495,6 +1527,25 @@ class ProjectAutomationService:
             db.refresh(run)
             await project_automation_execution.dispatch(db, rule, run)
             dispatched += 1
+        from app.services.project_manager import is_project_manager_rule
+
+        waiting_runs = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.status.in_(["pending", "queued"]),
+                ProjectAutomationRun.backend_task_id == 0,
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .limit(500)
+            .all()
+        )
+        for run in waiting_runs:
+            rule = db.get(ProjectAutomationRule, run.parent_id)
+            if rule is None or not is_project_manager_rule(rule):
+                continue
+            await project_automation_execution.dispatch(db, rule, run)
+            if run.backend_task_id:
+                dispatched += 1
         return dispatched
 
     @staticmethod

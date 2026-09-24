@@ -104,6 +104,31 @@ class AutomationRunFactory(Protocol):
 class ProjectAutomationExecution:
     """Turn one persisted automation run into one concrete executor run."""
 
+    @staticmethod
+    def _project_manager_waiting(db: Session, run: ProjectAutomationRun) -> bool:
+        from app.services.project_manager import is_project_manager_rule
+
+        active = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == run.cloud_project_id,
+                ProjectAutomationRun.status.in_(["pending", "queued", "running"]),
+                ProjectAutomationRun.id != run.id,
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .all()
+        )
+        for other in active:
+            rule = db.get(ProjectAutomationRule, other.parent_id)
+            if rule is None or not is_project_manager_rule(rule):
+                continue
+            if other.backend_task_id or (other.created_at, other.id) < (
+                run.created_at,
+                run.id,
+            ):
+                return True
+        return False
+
     @trace_async(
         span_name="project_automation.execution.dispatch",
         tracer_name="backend.project_automation",
@@ -123,6 +148,16 @@ class ProjectAutomationExecution:
             project = db.get(CloudProject, rule.cloud_project_id)
             if owner is None or project is None:
                 raise RuntimeError("Automation owner or project is unavailable")
+            from app.services.project_manager import is_project_manager_rule
+
+            if is_project_manager_rule(rule):
+                db.query(CloudProject).filter(
+                    CloudProject.id == project.id
+                ).with_for_update().one()
+                if self._project_manager_waiting(db, run):
+                    run.status = "queued"
+                    db.commit()
+                    return
             run_metadata = metadata(run)
             if not text(run_metadata.get("task_origin")):
                 run_metadata["task_origin"] = (
@@ -412,6 +447,11 @@ class ProjectAutomationExecution:
         rule: ProjectAutomationRule,
         run: ProjectAutomationRun,
     ) -> None:
+        if metadata(rule).get("project_manager") is True:
+            run.task_id = str(project.id)
+            run.task_title = project.title or project.name or ""
+            db.commit()
+            return
         if run.task_id:
             task = loop_item_execution_service.resolve_task_context(
                 db,
@@ -1025,6 +1065,7 @@ class ProjectAutomationExecution:
             run=run,
             context=context,
         )
+        user_message = self._manager_user_message(rule, run)
         from app.services.project_automation_managed_execution import (
             project_automation_managed_execution_service,
         )
@@ -1034,11 +1075,13 @@ class ProjectAutomationExecution:
             owner=owner,
             team=team,
             prompt=prompt,
+            user_message=user_message,
             title=rule.title or "AI managed automation",
             project_id=str(project.id),
             loop_item_id=str(run.task_id),
             automation_run_id=str(run.id),
             project_chat_message_id=activity.message_id,
+            model_selection=metadata(run).get("model_selection"),
         )
         db.expire_all()
         refreshed_run = db.get(ProjectAutomationRun, run.id)
@@ -1092,6 +1135,28 @@ class ProjectAutomationExecution:
         context: dict,
     ) -> str:
         del db, owner, context
+        if metadata(rule).get("project_manager") is True:
+            event = metadata(run).get("event") or {}
+            read_only = bool(metadata(run).get("read_only"))
+            mode_instruction = (
+                "This conversation is read-only; do not change any Issue. "
+                if read_only
+                else ""
+            )
+            return (
+                "You are the project-level AI manager. Coordinate the project Issues; "
+                "do not execute an Issue or claim its delivery. Use wework_space tools "
+                "to inspect the board before acting. Unassigned Issues may be created, "
+                "edited, and assigned. Collaboration groups are first-class Issue "
+                "assignees: when a collaboration group is requested, assign the Issue "
+                "directly with assignee_type=group and the group ID; never substitute its "
+                "leader or a member. For assigned Issues, coordinate through comments; "
+                "changes to an active Issue or its owner require human confirmation. "
+                f"{mode_instruction}"
+                f"Current date: {datetime.now().astimezone().date().isoformat()}. "
+                f"Project ID: {project.id}. Run ID: {run.id}. Event: {event}.\n\n"
+                f"Project instructions: {rule.description or ''}"
+            )
         task_id = run.task_id or ""
         review = (
             isinstance(metadata(run).get("event"), dict)
@@ -1126,28 +1191,34 @@ class ProjectAutomationExecution:
             ),
             manager_instruction,
         ]
-        instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
-        if instruction:
-            sections.append(instruction)
         return "\n\n".join(sections)
-
-    @staticmethod
-    def _managed_user_input(
-        *,
-        project: CloudProject,
-        run: ProjectAutomationRun,
-    ) -> str:
-        return (
-            f"project_id: {project.id}\n"
-            f"task_id: {run.task_id or ''}\n"
-            f"automation_run_id: {run.id}\n\n"
-            "请读取当前 Issue 并完成本轮管理工作。"
-        )
 
     @staticmethod
     def _run_instruction(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
         override = metadata(run).get("instruction_override")
-        return str(override) if isinstance(override, str) else (rule.description or "")
+        return (
+            str(override)
+            if isinstance(override, str)
+            else (getattr(rule, "description", "") or "")
+        )
+
+    @staticmethod
+    def _manager_user_message(
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+    ) -> str:
+        override = metadata(run).get("instruction_override")
+        if isinstance(override, str) and override.strip():
+            return override.strip()
+        if metadata(rule).get("project_manager") is not True:
+            instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
+            if instruction:
+                return instruction
+        event = metadata(run).get("event")
+        event_type = event.get("type") if isinstance(event, dict) else ""
+        if event_type:
+            return f"Review project event {event_type} and coordinate the next actions."
+        return "Review the project and coordinate the next actions."
 
     def _create_manager_activity(
         self,
@@ -1265,14 +1336,15 @@ class ProjectAutomationExecution:
             raise RuntimeError("AI manager project does not match the automation run")
         if str(run.task_id or "") != str(task_id):
             raise RuntimeError("AI manager task does not match the automation run")
-        if assignee_type not in {"user", "agent"}:
-            raise RuntimeError("AI manager assignee type must be user or agent")
+        if assignee_type not in {"user", "agent", "group"}:
+            raise RuntimeError("AI manager assignee type must be user, agent, or group")
         robot_execution = self._project_robot_execution_for_run(db, run_id)
         current_task = self._task_values(
             db, project_id=project_id, task_id=task_id, user_id=user_id
         )
         current_agent_id = str(current_task.get("assignee_agent_id") or "")
         current_user_id = str(current_task.get("assignee_user_id") or "")
+        current_group_id = str(current_task.get("assignee_group_id") or "")
         activity = self._activity(db, run)
         activity_metadata = dict(activity.metadata_json or {}) if activity else {}
         selected_type = str(activity_metadata.get("selected_assignee_type") or "")
@@ -1281,8 +1353,10 @@ class ProjectAutomationExecution:
             if selected_type != assignee_type or selected_id != assignee_id:
                 raise RuntimeError("AI manager has already selected another assignee")
             task_matches = (
-                assignee_type == "agent" and current_agent_id == assignee_id
-            ) or (assignee_type == "user" and current_user_id == assignee_id)
+                (assignee_type == "agent" and current_agent_id == assignee_id)
+                or (assignee_type == "user" and current_user_id == assignee_id)
+                or (assignee_type == "group" and current_group_id == assignee_id)
+            )
             if not task_matches:
                 raise RuntimeError("AI manager assignment no longer matches the task")
             if assignee_type == "agent" and robot_execution is None:
@@ -1304,7 +1378,7 @@ class ProjectAutomationExecution:
                 context=context,
                 instruction="",
             )
-        else:
+        elif assignee_type == "user":
             member_ids = {
                 str(member["user_id"])
                 for member in cloud_project_service.list_members(
@@ -1347,6 +1421,41 @@ class ProjectAutomationExecution:
             else:
                 raise RuntimeError("Automation task carrier is unavailable")
             run.assignee_agent_id = ""
+        else:
+            item = db.get(LoopItem, task_id)
+            if item is not None:
+                loop_item_service.assign(
+                    db,
+                    project_id=int(project_id),
+                    item_id=item.id,
+                    user_id=owner.id,
+                    values=LoopItemAssign(
+                        notify_assignee=notify_assignee,
+                        version=item.version,
+                        assignee_type="group",
+                        assignee_id=assignee_id,
+                    ),
+                    automation_context=context,
+                    instruction="",
+                )
+            elif external_loop_item_provider.is_external_item(db, task_id):
+                current = external_loop_item_provider.get(db, task_id, owner.id)
+                external_loop_item_provider.assign(
+                    db,
+                    task_id,
+                    owner.id,
+                    LoopItemAssign(
+                        notify_assignee=notify_assignee,
+                        version=int(current.get("version") or 0),
+                        assignee_type="group",
+                        assignee_id=assignee_id,
+                    ),
+                    automation_context=context,
+                    instruction="",
+                )
+            else:
+                raise RuntimeError("Automation task carrier is unavailable")
+            run.assignee_agent_id = ""
 
         activity = self._activity(db, run)
         if activity is not None:
@@ -1373,7 +1482,7 @@ class ProjectAutomationExecution:
             return True
         selected_type = str(metadata.get("selected_assignee_type") or "")
         selected_id = str(metadata.get("selected_assignee_id") or "")
-        if selected_type == "user":
+        if selected_type in {"user", "group"}:
             return bool(selected_id)
         if selected_type == "agent" and selected_id:
             execution = self._project_robot_execution_for_run(db, run_id)
@@ -1545,6 +1654,14 @@ class ProjectAutomationExecution:
         owner = db.get(User, run.created_by_user_id)
         if rule is None or owner is None:
             return False
+        if metadata(rule).get("project_manager") is True:
+            return self._finalize_project_manager_result(
+                db,
+                run=run,
+                content=content,
+                backend_task_id=backend_task_id,
+                push_activity=push_activity,
+            )
         task = self._task_values(
             db,
             project_id=str(rule.cloud_project_id),
@@ -1553,6 +1670,7 @@ class ProjectAutomationExecution:
         )
         assignee_agent_id = task.get("assignee_agent_id")
         assignee_user_id = task.get("assignee_user_id")
+        assignee_group_id = task.get("assignee_group_id")
         activity = self._activity(db, run)
         if activity is None and activity_message_id:
             activity = (
@@ -1596,8 +1714,13 @@ class ProjectAutomationExecution:
             if review_run
             else True
         )
+        selected_group_id = (
+            selected_id
+            if selected_type == "group" and str(assignee_group_id or "") == selected_id
+            else ""
+        )
         if (selected_type or selected_id) and not (
-            selected_agent_id or selected_user_id
+            selected_agent_id or selected_user_id or selected_group_id
         ):
             raise RuntimeError("AI manager assignment no longer matches the task")
         expected_activity_status = "completed" if manager_action_recorded else "failed"
@@ -1655,7 +1778,7 @@ class ProjectAutomationExecution:
                 if workflow_plan_run_id
                 else (
                     "AI 调度员已完成分派。"
-                    if selected_agent_id or selected_user_id
+                    if selected_agent_id or selected_user_id or selected_group_id
                     else "AI 管家已保留项目默认工作流。"
                 )
             )
@@ -1671,13 +1794,50 @@ class ProjectAutomationExecution:
         self._commit_and_push_activity(db, run, push_activity=push_activity)
         return True
 
+    def _finalize_project_manager_result(
+        self,
+        db: Session,
+        *,
+        run: ProjectAutomationRun,
+        content: str | None,
+        backend_task_id: int | None,
+        push_activity: bool,
+    ) -> bool:
+        activity = self._activity(db, run)
+        if run.status in TERMINAL_RUN_STATUSES:
+            return False
+        run.status = "succeeded"
+        run.completed_at = utcnow()
+        run.version += 1
+        if backend_task_id is not None:
+            run.backend_task_id = backend_task_id
+        if activity is not None:
+            activity.status = "completed"
+            activity.message_type = "text"
+            activity.content = (content or "").strip() or "项目 AI 已完成本次协调。"
+            activity.metadata_json = {
+                **(activity.metadata_json or {}),
+                "run_status": "completed",
+            }
+        self._commit_and_push_activity(db, run, push_activity=push_activity)
+        return True
+
     @staticmethod
     def _task_values(
         db: Session, *, project_id: str, task_id: str, user_id: int
     ) -> dict[str, object]:
         item = db.get(LoopItem, task_id)
         if item is not None and str(item.cloud_project_id) == str(project_id):
-            return dict(item.__dict__)
+            values = dict(item.__dict__)
+            item_metadata = metadata(item)
+            group = item_metadata.get("collaboration_group")
+            values["assignee_group_id"] = (
+                str(group.get("id") or "") if isinstance(group, dict) else ""
+            )
+            values["assignee_group_name"] = (
+                str(group.get("name") or "") if isinstance(group, dict) else ""
+            )
+            return values
         values = external_loop_item_provider.get(db, task_id, user_id)
         if str(values.get("cloud_project_id")) != str(project_id):
             raise RuntimeError("Automation task carrier is unavailable")
@@ -2009,15 +2169,7 @@ class ProjectAutomationProcessor:
 
         if not supported_event_type(event.event_type):
             return []
-        if isinstance(event.payload.get("human_work"), dict):
-            logger.info(
-                "[ProjectAutomation] Ignoring event for human-assigned Issue "
-                "project=%s subject=%s event=%s",
-                event.project_id,
-                event.subject_id,
-                event.event_type,
-            )
-            return []
+        created_by_manager = bool(event.payload.get("project_manager_run_id"))
         query = db.query(ProjectAutomationRule).filter(
             ProjectAutomationRule.cloud_project_id == event.project_id,
             ProjectAutomationRule.status == "enabled",
@@ -2059,6 +2211,13 @@ class ProjectAutomationProcessor:
         )
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
+            if created_by_manager and metadata(rule).get("project_manager") is True:
+                continue
+            if (
+                isinstance(event.payload.get("human_work"), dict)
+                and metadata(rule).get("project_manager") is not True
+            ):
+                continue
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
                 continue
             rule_metadata = metadata(rule)
@@ -2259,6 +2418,14 @@ class ProjectAutomationProcessor:
             await consume_queues_background()
             return []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
+        if automation_id is None:
+            manager_rules = [
+                rule
+                for rule in matching_rules
+                if metadata(rule).get("project_manager") is True
+            ]
+            if manager_rules:
+                matching_rules = manager_rules[:1]
         logger.info(
             "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
             "requested_rule=%s matching_rule_ids=%s",
@@ -2444,6 +2611,8 @@ class ProjectAutomationProcessor:
         rule: ProjectAutomationRule,
         event: ProjectAutomationEvent,
     ) -> dict[str, Any]:
+        if metadata(rule).get("project_manager") is True:
+            return {"kind": "project", "task_id": str(rule.cloud_project_id)}
         rule_metadata = metadata(rule)
         event_config = rule_metadata.get("event_config")
         event_config = event_config if isinstance(event_config, dict) else {}
@@ -2692,7 +2861,8 @@ class ProjectAutomationProcessor:
         ):
             return False
         if event.event_type == "task.status_changed":
-            if config.get("transition") != "entered_processing":
+            transition = config.get("transition")
+            if transition not in {"entered_processing", "any"}:
                 return False
             previous_status = event.payload.get("previous_status")
             current_status = event.payload.get("status")
@@ -2700,11 +2870,16 @@ class ProjectAutomationProcessor:
                 current_status, str
             ):
                 return False
-            if not project_status_transition(
-                project,
-                previous_status=previous_status,
-                current_status=current_status,
-            ).entered_processing:
+            if previous_status == current_status:
+                return False
+            if (
+                transition == "entered_processing"
+                and not project_status_transition(
+                    project,
+                    previous_status=previous_status,
+                    current_status=current_status,
+                ).entered_processing
+            ):
                 return False
         expected_priorities = config.get("priorities")
         if (

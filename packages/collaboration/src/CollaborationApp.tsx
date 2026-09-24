@@ -4,7 +4,13 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-License-Identifier: Apache-2.0
 
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 
 import {
   collaborationMessages,
@@ -50,6 +56,8 @@ import {
   ProjectCollaborationParticipants,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
+  ProjectAiManager,
+  ProjectAiBoardAssistant,
   ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
@@ -93,6 +101,21 @@ interface CollaborationAppProps {
     workflowStep?: string,
   ): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
+  renderProjectAiComposer?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["renderComposer"];
+  renderProjectAiConversation?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["renderConversation"];
+  onOpenProjectAiTask?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["onOpenTask"];
+  onContinueProjectAiConversation?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["onContinueConversation"];
+  onStopProjectAiConversation?: ComponentProps<
+    typeof ProjectAiBoardAssistant
+  >["onStopConversation"];
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
       onMarkRead(): Promise<void>;
@@ -137,6 +160,11 @@ export function CollaborationApp({
   onPrepareIssueDelete,
   renderBoardIssueCard,
   renderIssueDetail,
+  renderProjectAiComposer,
+  renderProjectAiConversation,
+  onOpenProjectAiTask,
+  onContinueProjectAiConversation,
+  onStopProjectAiConversation,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const translate = useMemo(
@@ -150,6 +178,9 @@ export function CollaborationApp({
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
     );
+  const [requestedParticipantTab, setRequestedParticipantTab] = useState<
+    "manager" | undefined
+  >();
   const [deleteIssueTarget, setDeleteIssueTarget] =
     useState<CollaborationIssue | null>(null);
   const [deleteIssueBusy, setDeleteIssueBusy] = useState(false);
@@ -212,6 +243,7 @@ export function CollaborationApp({
   }, [host.location.projectSettingsSection, host.location.view, project?.id]);
 
   const navigateView = (view: CollaborationView) => {
+    if (view === "manage") setRequestedParticipantTab(undefined);
     host.navigate({
       projectId: project?.id ?? null,
       issueId: null,
@@ -451,171 +483,210 @@ export function CollaborationApp({
                 </>
               )}
               slots={{
-                board:
-                  issues.length === 0 ? (
-                    <div
-                      data-testid={collaborationTestIds.board}
-                      className="relative flex min-h-0 flex-1"
-                    >
-                      <button
-                        className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-                        data-testid="collaboration-board-settings"
-                        onClick={() => setBoardSettingsOpen(true)}
-                        type="button"
-                      >
-                        {translate("todo.board_settings", "看板设置")}
-                      </button>
+                board: (
+                  <div className="relative flex min-h-0 min-w-0 flex-1">
+                    {issues.length === 0 ? (
                       <div
-                        className="collaboration-empty-project"
-                        data-testid="collaboration-empty-project"
+                        data-testid={collaborationTestIds.board}
+                        className="relative flex min-h-0 flex-1"
                       >
-                        <div className="collaboration-empty-project-content">
-                          <span className="collaboration-empty-project-icon">
-                            ◇
-                          </span>
-                          <span className="collaboration-empty-project-progress">
-                            {messages.emptyProjectProgress}
-                          </span>
-                          <h2>{messages.emptyProjectTitle}</h2>
-                          <p>{messages.emptyProjectHint}</p>
-                          <button
-                            type="button"
-                            className="collaboration-primary-button"
-                            data-testid="collaboration-empty-project-create"
-                            onClick={() => setCreateIssueOpen(true)}
-                          >
-                            {messages.createIssue}
-                          </button>
-                          <div className="collaboration-empty-project-flow">
-                            {[
-                              [
-                                messages.emptyProjectStepIssue,
-                                messages.emptyProjectStepIssueHint,
-                              ],
-                              [
-                                messages.emptyProjectStepAssign,
-                                messages.emptyProjectStepAssignHint,
-                              ],
-                              [
-                                messages.emptyProjectStepDeliver,
-                                messages.emptyProjectStepDeliverHint,
-                              ],
-                            ].map(([title, hint]) => (
-                              <div key={title}>
-                                <strong>{title}</strong>
-                                <small>{hint}</small>
-                              </div>
-                            ))}
+                        <button
+                          className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                          data-testid="collaboration-board-settings"
+                          onClick={() => setBoardSettingsOpen(true)}
+                          type="button"
+                        >
+                          {translate("todo.board_settings", "看板设置")}
+                        </button>
+                        <div
+                          className="collaboration-empty-project"
+                          data-testid="collaboration-empty-project"
+                        >
+                          <div className="collaboration-empty-project-content">
+                            <span className="collaboration-empty-project-icon">
+                              ◇
+                            </span>
+                            <span className="collaboration-empty-project-progress">
+                              {messages.emptyProjectProgress}
+                            </span>
+                            <h2>{messages.emptyProjectTitle}</h2>
+                            <p>{messages.emptyProjectHint}</p>
+                            <button
+                              type="button"
+                              className="collaboration-primary-button"
+                              data-testid="collaboration-empty-project-create"
+                              onClick={() => setCreateIssueOpen(true)}
+                            >
+                              {messages.createIssue}
+                            </button>
+                            <div className="collaboration-empty-project-flow">
+                              {[
+                                [
+                                  messages.emptyProjectStepIssue,
+                                  messages.emptyProjectStepIssueHint,
+                                ],
+                                [
+                                  messages.emptyProjectStepAssign,
+                                  messages.emptyProjectStepAssignHint,
+                                ],
+                                [
+                                  messages.emptyProjectStepDeliver,
+                                  messages.emptyProjectStepDeliverHint,
+                                ],
+                              ].map(([title, hint]) => (
+                                <div key={title}>
+                                  <strong>{title}</strong>
+                                  <small>{hint}</small>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <ProjectBoardAdapter
-                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
-                      runtime={api.runtime}
-                      previewDisabled={Boolean(selectedIssue)}
-                      translate={translate}
-                      agents={agents ?? []}
-                      boardError={error}
+                    ) : (
+                      <ProjectBoardAdapter
+                        onMarkRead={(issue) =>
+                          void commands.markIssueRead(issue)
+                        }
+                        runtime={api.runtime}
+                        previewDisabled={Boolean(selectedIssue)}
+                        translate={translate}
+                        agents={agents ?? []}
+                        boardError={error}
+                        project={project}
+                        issues={issues}
+                        members={members ?? []}
+                        statuses={projectStatuses(project, messages, translate)}
+                        taskBindings={taskBindings}
+                        labels={{
+                          noIssues: messages.noIssues,
+                          noPriority: translate(
+                            "todo.priority_none",
+                            "无优先级",
+                          ),
+                          search: messages.searchIssues,
+                          groupBy: messages.groupBy,
+                          groupStatus: messages.groupStatus,
+                          groupPriority: messages.groupPriority,
+                          groupAssignee: messages.groupAssignee,
+                          groupTag: messages.groupTag,
+                          unassigned: messages.unassigned,
+                          noTag: messages.noTag,
+                        }}
+                        onOpen={(issue) =>
+                          host.navigate({
+                            projectId: project.id,
+                            issueId: issue.id,
+                            view: "board",
+                          })
+                        }
+                        onMove={async (issue, mutation) => {
+                          if (mutation.kind === "status") {
+                            await commands.reorderIssue({
+                              issue,
+                              status: mutation.status,
+                              laneIds: mutation.laneIds,
+                              optimisticItems: mutation.optimisticItems,
+                            });
+                            return;
+                          }
+                          if (
+                            mutation.kind === "assignee" &&
+                            mutation.assigneeType
+                          ) {
+                            await commands.assignIssue(
+                              String(project.id),
+                              issue.id,
+                              {
+                                version: issue.version,
+                                assigneeType: mutation.assigneeType,
+                                assigneeId: mutation.assigneeId!,
+                                notifyAssignee: true,
+                              },
+                            );
+                            return;
+                          }
+                          await commands.updateIssue(
+                            issue.id,
+                            mutation.kind === "priority"
+                              ? {
+                                  version: issue.version,
+                                  priority:
+                                    mutation.priority as CollaborationIssue["priority"],
+                                }
+                              : mutation.kind === "tag"
+                                ? {
+                                    version: issue.version,
+                                    tags: mutation.tags,
+                                  }
+                                : {
+                                    version: issue.version,
+                                    assigneeUserId: null,
+                                    assigneeAgentId: null,
+                                    assigneeTeamId: null,
+                                  },
+                            { throwOnError: true },
+                          );
+                        }}
+                        onCreateIssue={() => setCreateIssueOpen(true)}
+                        onOpenBoardSettings={() => setBoardSettingsOpen(true)}
+                        onDeleteIssue={
+                          issueDeleteAvailable ? requestIssueDelete : undefined
+                        }
+                        onGroupByChange={(groupBy) =>
+                          commands.changeProjectGroup({
+                            project,
+                            groupBy,
+                            defaultStatuses: projectStatuses(
+                              project,
+                              messages,
+                              translate,
+                            ),
+                          })
+                        }
+                        renderIssueCard={
+                          renderBoardIssueCard
+                            ? (context) =>
+                                renderBoardIssueCard({
+                                  ...context,
+                                  onMarkRead: async () => {
+                                    await commands.markIssueRead(context.issue);
+                                  },
+                                })
+                            : undefined
+                        }
+                      />
+                    )}
+                    <ProjectAiBoardAssistant
+                      renderComposer={renderProjectAiComposer}
+                      renderConversation={renderProjectAiConversation}
+                      onOpenTask={onOpenProjectAiTask}
+                      onContinueConversation={onContinueProjectAiConversation}
+                      onStopConversation={onStopProjectAiConversation}
+                      api={api}
                       project={project}
                       issues={issues}
-                      members={members ?? []}
-                      statuses={projectStatuses(project, messages, translate)}
-                      taskBindings={taskBindings}
-                      labels={{
-                        noIssues: messages.noIssues,
-                        noPriority: translate("todo.priority_none", "无优先级"),
-                        search: messages.searchIssues,
-                        groupBy: messages.groupBy,
-                        groupStatus: messages.groupStatus,
-                        groupPriority: messages.groupPriority,
-                        groupAssignee: messages.groupAssignee,
-                        groupTag: messages.groupTag,
-                        unassigned: messages.unassigned,
-                        noTag: messages.noTag,
-                      }}
-                      onOpen={(issue) =>
+                      agents={agents ?? []}
+                      locale={locale}
+                      onOpenIssue={(issue) =>
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
                           view: "board",
                         })
                       }
-                      onMove={async (issue, mutation) => {
-                        if (mutation.kind === "status") {
-                          await commands.reorderIssue({
-                            issue,
-                            status: mutation.status,
-                            laneIds: mutation.laneIds,
-                            optimisticItems: mutation.optimisticItems,
-                          });
-                          return;
-                        }
-                        if (
-                          mutation.kind === "assignee" &&
-                          mutation.assigneeType
-                        ) {
-                          await commands.assignIssue(
-                            String(project.id),
-                            issue.id,
-                            {
-                              version: issue.version,
-                              assigneeType: mutation.assigneeType,
-                              assigneeId: mutation.assigneeId!,
-                              notifyAssignee: true,
-                            },
-                          );
-                          return;
-                        }
-                        await commands.updateIssue(
-                          issue.id,
-                          mutation.kind === "priority"
-                            ? {
-                                version: issue.version,
-                                priority:
-                                  mutation.priority as CollaborationIssue["priority"],
-                              }
-                            : mutation.kind === "tag"
-                              ? { version: issue.version, tags: mutation.tags }
-                              : {
-                                  version: issue.version,
-                                  assigneeUserId: null,
-                                  assigneeAgentId: null,
-                                  assigneeTeamId: null,
-                                },
-                          { throwOnError: true },
-                        );
+                      onOpenSettings={() => {
+                        setRequestedParticipantTab("manager");
+                        host.navigate({
+                          projectId: project.id,
+                          issueId: null,
+                          view: "manage",
+                          projectSettingsSection: "collaboration-participants",
+                        });
                       }}
-                      onCreateIssue={() => setCreateIssueOpen(true)}
-                      onOpenBoardSettings={() => setBoardSettingsOpen(true)}
-                      onDeleteIssue={
-                        issueDeleteAvailable ? requestIssueDelete : undefined
-                      }
-                      onGroupByChange={(groupBy) =>
-                        commands.changeProjectGroup({
-                          project,
-                          groupBy,
-                          defaultStatuses: projectStatuses(
-                            project,
-                            messages,
-                            translate,
-                          ),
-                        })
-                      }
-                      renderIssueCard={
-                        renderBoardIssueCard
-                          ? (context) =>
-                              renderBoardIssueCard({
-                                ...context,
-                                onMarkRead: async () => {
-                                  await commands.markIssueRead(context.issue);
-                                },
-                              })
-                          : undefined
-                      }
                     />
-                  ),
+                  </div>
+                ),
                 table: (
                   <div className="collaboration-project-content">
                     <ProjectIssueTable
@@ -676,6 +747,7 @@ export function CollaborationApp({
                       const nextSectionId =
                         sectionId as ProjectSettingsSectionId;
                       setSettingsSectionId(nextSectionId);
+                      setRequestedParticipantTab(undefined);
                       host.navigate({
                         projectId: project.id,
                         issueId: null,
@@ -709,6 +781,7 @@ export function CollaborationApp({
                         testId: "collaboration-project-settings-participants",
                         content: (
                           <ProjectCollaborationParticipants
+                            requestedTab={requestedParticipantTab}
                             translate={translate}
                             membersContent={
                               <CollaborationSettings
@@ -744,6 +817,16 @@ export function CollaborationApp({
                                 translate={translate}
                                 section="agents"
                               />
+                            }
+                            managerContent={
+                              api.projectManager ? (
+                                <ProjectAiManager
+                                  api={api}
+                                  project={project}
+                                  agents={agents ?? []}
+                                  locale={locale}
+                                />
+                              ) : undefined
                             }
                             groupsContent={
                               api.projects.listCollaborationGroups ? (

@@ -10,6 +10,7 @@ const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platf
 const MENTION_CANDIDATE_PREFIX = 'collaboration-issue-mention-member-'
 const MENTION_MENU = '[data-testid="local-skill-autocomplete"]'
 const MENTION_CHIP = '[data-composer-reference-kind="member"]'
+const CARD_REPLY_TOGGLE_PREFIX = 'cloud-task-activity-reply-toggle-'
 const CARD_COMPOSER_PREFIX = 'cloud-task-activity-card-composer-'
 const CARD_SEND_PREFIX = 'cloud-task-activity-card-send-'
 
@@ -133,6 +134,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
 
+      const collapsedCardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
+      const cardReplyToggleTestId = collapsedCardSnapshot.testIds.find(testId =>
+        testId.startsWith(CARD_REPLY_TOGGLE_PREFIX)
+      )
+      assert.ok(
+        cardReplyToggleTestId,
+        'The posted comment did not render its reply action in the Issue activity'
+      )
+      await control.command('click', board(`[data-testid="${cardReplyToggleTestId}"]`), {
+        visible: true,
+      })
+      const rootId = cardReplyToggleTestId.slice(CARD_REPLY_TOGGLE_PREFIX.length)
+      await control.command('waitFor', board(`[data-testid="${CARD_COMPOSER_PREFIX}${rootId}"]`), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       const cardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
       const cardComposerTestId = cardSnapshot.testIds.find(testId =>
         testId.startsWith(CARD_COMPOSER_PREFIX)
@@ -141,7 +158,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         cardComposerTestId,
         'The posted comment did not render a card reply composer in the Issue activity'
       )
-      const rootId = cardComposerTestId.slice(CARD_COMPOSER_PREFIX.length)
+      assert.equal(
+        cardComposerTestId,
+        `${CARD_COMPOSER_PREFIX}${rootId}`,
+        'The reply action opened a composer for a different Issue activity'
+      )
       const replyName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-02-card-reply.png',
         composer: board(`[data-testid="${cardComposerTestId}"]`),

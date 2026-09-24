@@ -7,8 +7,11 @@ import {
   selectToolSearch,
   toolSearchResponseEvents,
 } from '../modules/response-protocol.mjs'
+import { waitForTestIdByText } from '../modules/workspace-flows.mjs'
 
 // Expectations are deliberately independent of the production authorization table.
+const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
+const EXECUTION_ISSUE_NAME = `本地智能体执行验收-${process.pid}`
 const MANAGEMENT_TOOLS = [
   'get_assignment_candidates',
   'submit_workflow_plan',
@@ -116,10 +119,26 @@ export async function createDesktopScenario(options) {
     ...scenario,
     async verify(control) {
       await scenario.verify(control)
-      await control.command('waitFor', '[data-testid^="cloud-task-manager-event-"]', {
-        text: '验收通过，完成 Issue',
-        timeoutMs: options.modelResponseTimeoutMs,
-      })
+      const completedIssueTestId = await waitForTestIdByText(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        'cloud-todo-card-',
+        EXECUTION_ISSUE_NAME,
+        options.uiTimeoutMs
+      )
+      await control.command(
+        'click',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${completedIssueTestId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid^="cloud-task-manager-event-"]`,
+        {
+          text: '验收通过，完成 Issue',
+          timeoutMs: options.modelResponseTimeoutMs,
+        }
+      )
       assert.ok(reviewPersisted, 'Manager review never persisted its decision')
       for (const role of ['planning-manager', 'executor', 'review-manager']) {
         for (const name of [...EXECUTION_TOOLS, ...MANAGEMENT_TOOLS]) {

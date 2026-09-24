@@ -277,6 +277,10 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
           CloudProject['automatic_processing_rules']
         >)
       : [],
+    project_manager:
+      record.metadata.project_manager && typeof record.metadata.project_manager === 'object'
+        ? (record.metadata.project_manager as CloudProject['project_manager'])
+        : undefined,
     execution_environment:
       record.metadata.execution_environment &&
       typeof record.metadata.execution_environment === 'object' &&
@@ -735,9 +739,6 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
 
 function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
-  const isPublicVisitor = role === 'RestrictedAnalyst'
-  const ownsTask =
-    Boolean(project?.current_user_id) && record.created_by_user_id === project?.current_user_id
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
   return {
@@ -750,8 +751,9 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
       typeof record.metadata.creator_label === 'string'
         ? record.metadata.creator_label.split(':').slice(3).join(':').trim() || null
         : null,
-    can_view_detail: !isPublicVisitor || ownsTask,
-    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
+    can_view_detail: true,
+    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
+    security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
     content_revision: 1,
     has_additional_context:
       typeof record.metadata.has_additional_context === 'boolean'
@@ -969,6 +971,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
+        project_manager?: CloudProject['project_manager']
         execution_environment?: CloudProject['execution_environment']
         version: number
       }
@@ -1511,6 +1514,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       const projectRecords = await loadProjectRecords()
       const projectRecord = projectRecords.find(record => record.id === binding.cloud_project_id)
       if (!projectRecord) throw new Error('Local project not found')
+      if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
       const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
       return {
         ...binding,

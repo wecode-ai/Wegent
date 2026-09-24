@@ -18,12 +18,13 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
-  CollaborationRole,
+  CollaborationWorkspaceMember,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
 
-type MemberRole = Exclude<CollaborationRole, "Owner">;
+type MemberRole = Exclude<CollaborationWorkspaceRole, "Owner">;
 
 export function isCurrentDeviceCollaborationAgent(
   agent: CollaborationAgent,
@@ -40,8 +41,14 @@ export function isCurrentDeviceCollaborationAgent(
 
 export interface WorkspaceResourceCommands {
   searchUsers(query: string): Promise<CollaborationUser[]>;
-  addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
-  updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
+  addMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
+  updateMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
   removeMember(userId: number): Promise<void>;
   createCollaborationGroup(input: {
     name: string;
@@ -129,6 +136,7 @@ const copy = {
     owner: "所有者",
     maintainer: "管理员",
     developer: "开发者",
+    viewer: "只读成员",
     reporter: "参与者",
     noMembers: "空间中还没有成员",
     collaborationGroups: "协作小组",
@@ -186,6 +194,7 @@ const copy = {
     owner: "Owner",
     maintainer: "Maintainer",
     developer: "Developer",
+    viewer: "Viewer",
     reporter: "Reporter",
     noMembers: "No members in this workspace",
     collaborationGroups: "Collaboration groups",
@@ -240,10 +249,11 @@ const copy = {
 
 type ResourceCopy = (typeof copy)[keyof typeof copy];
 
-function roleLabel(role: CollaborationRole, messages: ResourceCopy) {
+function roleLabel(role: CollaborationWorkspaceRole, messages: ResourceCopy) {
   if (role === "Owner") return messages.owner;
   if (role === "Maintainer") return messages.maintainer;
   if (role === "Developer") return messages.developer;
+  if (role === "Viewer") return messages.viewer;
   return messages.reporter;
 }
 
@@ -261,7 +271,7 @@ function MemberInviteDialog({
   commands,
   onClose,
 }: {
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   messages: ResourceCopy;
   commands: WorkspaceResourceCommands;
   onClose(): void;
@@ -315,6 +325,7 @@ function MemberInviteDialog({
           >
             <option value="Maintainer">{messages.maintainer}</option>
             <option value="Developer">{messages.developer}</option>
+            <option value="Viewer">{messages.viewer}</option>
             <option value="Reporter">{messages.reporter}</option>
           </select>
         </label>
@@ -382,7 +393,7 @@ export function WorkspaceMembersConfiguration({
   commands,
 }: {
   workspace: CollaborationWorkspace;
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   locale: "zh-CN" | "en";
   commands: WorkspaceResourceCommands;
 }) {
@@ -445,6 +456,7 @@ export function WorkspaceMembersConfiguration({
                     >
                       <option value="Maintainer">{messages.maintainer}</option>
                       <option value="Developer">{messages.developer}</option>
+                      <option value="Viewer">{messages.viewer}</option>
                       <option value="Reporter">{messages.reporter}</option>
                     </select>
                     <button
@@ -509,7 +521,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
   availableGroups?: CollaborationGroup[];
-  members: CollaborationMember[];
+  members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
   agents: CollaborationAgent[];
   locale: "zh-CN" | "en";
   currentUserId?: number;

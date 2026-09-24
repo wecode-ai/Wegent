@@ -13,11 +13,11 @@ import type {
   CollaborationGroup,
   CollaborationExecutionEnvironment,
   CollaborationExecution,
-  CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationProject,
-  CollaborationRole,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -39,7 +39,7 @@ export interface CollaborationPlatformState {
     project: CollaborationProject;
     execution: CollaborationExecution;
   }>;
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   agents: CollaborationOwnedAgent[];
   collaborationGroups: CollaborationGroup[];
   executionEnvironments: CollaborationExecutionEnvironment[];
@@ -875,7 +875,9 @@ export function useCollaborationPlatformController({
           description?: string;
           projectKey?: string;
           taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
-          visibility?: "private" | "public_restricted" | "public";
+          visibility?: "private" | "public";
+          publicAccess?: { role: "Developer" | "Viewer" };
+          defaultIssueSecurity?: "open" | "related";
           providerConfig?: Record<string, unknown>;
         },
         workspaceId = location.workspaceId,
@@ -896,7 +898,7 @@ export function useCollaborationPlatformController({
       },
       async addMember(
         userId: number,
-        role: Exclude<CollaborationRole, "Owner">,
+        role: Exclude<CollaborationWorkspaceRole, "Owner">,
       ) {
         if (!api.workspaces || !location.workspaceId) {
           throw new Error("Workspace API is unavailable");
@@ -926,7 +928,7 @@ export function useCollaborationPlatformController({
       },
       async updateMember(
         userId: number,
-        role: Exclude<CollaborationRole, "Owner">,
+        role: Exclude<CollaborationWorkspaceRole, "Owner">,
       ) {
         if (!api.workspaces || !location.workspaceId) {
           throw new Error("Workspace API is unavailable");

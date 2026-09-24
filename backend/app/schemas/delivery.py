@@ -29,6 +29,7 @@ class LoopItemCreate(BaseModel):
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
@@ -47,6 +48,7 @@ class LoopItemCreate(BaseModel):
             value is not None
             for value in (
                 self.assignee_user_id,
+                self.assignee_group_id,
                 self.assignee_agent_id,
                 self.assignee_team_id,
             )
@@ -59,6 +61,7 @@ class LoopItemCreate(BaseModel):
 class LoopItemUpdate(BaseModel):
     notify_assignee: bool = True
     version: int = Field(ge=1)
+    security_level: Literal["open", "related"] | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
@@ -80,6 +83,8 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if "security_level" in self.model_fields_set and self.security_level is None:
+            raise ValueError("security_level cannot be null")
         values = [
             value
             for field, value in (
@@ -154,6 +159,7 @@ class LoopItemResponse(BaseModel):
     created_by_user_id: int
     created_by_user_name: str | None = None
     can_view_detail: bool = True
+    security_level: Literal["open", "related"] = "open"
     can_edit: bool = True
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True

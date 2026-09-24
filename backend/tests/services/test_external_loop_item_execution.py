@@ -11,6 +11,7 @@ execution table and never creates a local task row.
 import logging
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
 from threading import Event
 from unittest.mock import patch
 
@@ -455,6 +456,10 @@ def test_external_parent_remains_stored_in_description(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _make_gitlab_project(test_db, test_user)
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "default_issue_security": "related",
+    }
     parent_id = f"{project.project_key}-7"
     captured: dict[str, object] = {}
 
@@ -486,8 +491,10 @@ def test_external_parent_remains_stored_in_description(
 
     assert captured["description"] == f"Child details\n\n{PARENT_MARKER} {parent_id}"
     assert "wegent:status:inbox" in captured["labels"]
+    assert "wegent:security:related" in captured["labels"]
     assert "wegent:status:None" not in captured["labels"]
     assert created["status"] == "inbox"
+    assert created["security_level"] == "related"
     assert created["parent_id"] == parent_id
     assert created["description"] == "Child details"
 
@@ -634,6 +641,46 @@ def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
     assert execution.team_id == team.id
     assert execution.agent_id == bot.id
     assert execution.executor_type == "project_robot"
+
+
+def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    _mock_issue(monkeypatch)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "members": [],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    monkeypatch.setattr(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        lambda _db, _project_id, _user_id: [group],
+    )
+
+    created = loop_item_provider_router.create(
+        test_db,
+        project,
+        test_user,
+        LoopItemCreate(
+            title="Created for collaboration group",
+            assignee_group_id="group-1",
+        ),
+    )
+
+    assert created.values["assignee_group_id"] == "group-1"
+    assert created.values["assignee_group_name"] == "Delivery team"
+    assert created.internal_item is not None
+    assert created.internal_item.assignee_user_id in {None, 0}
+    assert created.internal_item.assignee_agent_id == ""
+    assert created.internal_item.assignee_team_id is None
+    assert created.internal_item.metadata_json["collaboration_group"] == {
+        "id": "group-1",
+        "name": "Delivery team",
+    }
+    assert _active_execution(test_db, str(created.values["id"])) is None
 
 
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
@@ -837,6 +884,36 @@ def test_assign_response_roundtrip(
 
     assert parsed.assignee_agent_id == bot.id
     assert parsed.execution_state == "queued"
+
+
+def test_external_assignment_preserves_issue_security_label(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _mock_issue(monkeypatch)
+    current = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
+    restricted = external_loop_item_provider.update(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemUpdate(version=current["version"], security_level="related"),
+    )
+    assert restricted["security_level"] == "related"
+
+    assigned = external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemAssign(
+            version=restricted["version"], assignee_type="agent", assignee_id=bot.id
+        ),
+    )
+
+    assert assigned["security_level"] == "related"
+    assert "wegent:security:related" in external_loop_item_provider._labels(
+        external_loop_item_provider._get_issue(project, 1)
+    )
 
 
 def test_unassign_on_gitlab_cancels_robot_run(

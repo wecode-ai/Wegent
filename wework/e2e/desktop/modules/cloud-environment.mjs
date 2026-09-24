@@ -156,21 +156,25 @@ async function resolveBackendRsBinary() {
     )
     return configured
   }
+  const manifestPath = join(repoDir, 'backend-rs', 'Cargo.toml')
+  const metadata = JSON.parse(
+    await commandOutputAsync(
+      'cargo',
+      ['metadata', '--manifest-path', manifestPath, '--no-deps', '--format-version', '1'],
+      { cwd: repoDir }
+    )
+  )
   const binary = join(
-    repoDir,
-    'backend-rs',
-    'target',
+    metadata.target_directory,
     'debug',
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
   if (!(await pathExists(binary))) {
-    await runChecked('cargo', [
-      'build',
-      '--manifest-path',
-      join(repoDir, 'backend-rs', 'Cargo.toml'),
-      '--bin',
-      'wegent-backend-rs',
-    ])
+    await runChecked(
+      'cargo',
+      ['build', '--manifest-path', manifestPath, '--bin', 'wegent-backend-rs'],
+      { cwd: repoDir }
+    )
   }
   return binary
 }

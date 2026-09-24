@@ -660,10 +660,10 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   })
 
   await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_PROMPT)
-  await withTimeout(
-    control.awaitScenarioRequestCount('guidance_scroll', 1),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The guidance scroll scenario did not receive its setup prompt'
+  await control.awaitScenarioRequestCount(
+    'guidance_scroll',
+    1,
+    WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',

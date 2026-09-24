@@ -1442,10 +1442,10 @@ async function selectE2EModel(
   control,
   modelIds = DEFAULT_MODEL_ID,
   modelLabels = DEFAULT_MODEL_LABEL,
-  composerSelector = ''
+  composerSelector = '',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
-  const expectedProviderId = expectedModelProviderId(modelIds)
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

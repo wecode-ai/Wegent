@@ -36,23 +36,31 @@ def test_aitable_project_rejects_access_tokens() -> None:
         )
 
 
-@pytest.mark.parametrize("task_provider", ["github", "gitlab", "dingtalk_aitable"])
-def test_related_task_visibility_rejects_external_providers(
+@pytest.mark.parametrize("task_provider", ["github", "gitlab"])
+def test_issue_security_is_independent_of_provider(
     task_provider: str,
 ) -> None:
     provider_config: dict[str, object]
-    if task_provider == "dingtalk_aitable":
-        provider_config = {"base_id": "base-1", "table_id": "table-1"}
-    else:
-        provider_config = {"repository": "owner/repository"}
+    provider_config = {"repository": "owner/repository"}
 
-    with pytest.raises(
-        ValidationError,
-        match="only available for built-in tasks",
-    ):
+    project = CloudProjectCreate(
+        name="External project",
+        task_provider=task_provider,
+        provider_config=provider_config,
+        visibility="public",
+        public_access={"role": "Viewer"},
+        default_issue_security="related",
+    )
+    assert project.public_access is not None
+    assert project.public_access.role == "Viewer"
+    assert project.default_issue_security == "related"
+
+
+def test_aitable_record_security_remains_with_dingtalk() -> None:
+    with pytest.raises(ValidationError, match="DingTalk table records"):
         CloudProjectCreate(
-            name="External restricted project",
-            task_provider=task_provider,
-            provider_config=provider_config,
-            visibility="public_restricted",
+            name="AI Table",
+            task_provider="dingtalk_aitable",
+            provider_config={"base_id": "base-1", "table_id": "table-1"},
+            default_issue_security="related",
         )

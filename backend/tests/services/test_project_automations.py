@@ -1622,6 +1622,48 @@ async def test_due_scan_ignores_enabled_rule_from_archived_project(
 
 
 @pytest.mark.asyncio
+async def test_due_scan_dispatches_waiting_project_manager_turn(
+    test_db, test_user, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = CloudProject(
+        project_key="MANAGERDRAIN",
+        name="Manager drain",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/manager-drain",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Project manager",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"project_manager": True},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        status="queued",
+        backend_task_id=0,
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.commit()
+    dispatched_runs: list[str] = []
+
+    async def dispatch(_db, _rule, selected_run) -> None:
+        dispatched_runs.append(str(selected_run.id))
+        selected_run.backend_task_id = 42
+
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    assert await project_automation_service.check_due(test_db) == 1
+    assert dispatched_runs == [str(run.id)]
+
+
+@pytest.mark.asyncio
 async def test_workflow_node_run_is_created_once_and_projects_queued_state(
     test_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:

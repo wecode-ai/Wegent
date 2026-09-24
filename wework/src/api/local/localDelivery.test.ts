@@ -43,6 +43,30 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test('loads task context from its known binding without rediscovering the project', async () => {
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'runtime_tasks.context') {
+      return { cloud_project_id: projectRecord.id, loop_item_id: taskRecord.id }
+    }
+    if (method === 'projects.list') return [projectRecord]
+    if (method === 'todos.get') {
+      expect(params).toEqual({ project_id: projectRecord.id, task_id: taskRecord.id })
+      return taskRecord
+    }
+    throw new Error(`Unexpected method: ${method}`)
+  })
+  const api = createLocalDeliveryApi(request)
+
+  await expect(
+    api.findCloudContextForTask({ deviceId: 'local-device', taskId: 'runtime-1' })
+  ).resolves.toMatchObject({ project: { id: projectRecord.id }, loop_item: { id: taskRecord.id } })
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'runtime_tasks.context',
+    'projects.list',
+    'todos.get',
+  ])
+})
+
 describe('local delivery API', () => {
   test('maps persisted local Issue status transitions into the detail model', async () => {
     const statusHistory = [

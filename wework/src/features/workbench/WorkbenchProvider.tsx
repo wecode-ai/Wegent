@@ -1742,7 +1742,9 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     runtimeTasks,
-    lifecycleStore,
+    // Explicit sends own their lifecycle even if navigation hides this provider
+    // while workspace preparation or the executor request is still in flight.
+    lifecycleStore: sharedLifecycleStore,
     projectExecutionMode,
     projectWorktreeBranch,
     isOptionsLocked,

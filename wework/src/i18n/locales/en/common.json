@@ -18,6 +18,10 @@
   "navigation": {
     "home": "Home"
   },
+  "project_ai": {
+    "file_unavailable": "This project executor cannot read the selected file. Use a local project or upload it in the task details.",
+    "model_unavailable": "Could not load models. Please try again later."
+  },
   "common": {
     "loading": "Loading...",
     "cancel": "Cancel",
@@ -3944,6 +3948,9 @@
     "start_follow_up": "Start a new task"
   },
   "todo": {
+    "project_manager": "Project manager",
+    "collaboration_participants_manager_description": "Manage project Agents, the project manager, members and collaboration groups. The manager coordinates Issues; owners execute and deliver them.",
+    "automatic_processing_description": "Manage Issue processing rules and project manager triggers in one place.",
     "human_work_start": "Start work",
     "human_work_submit": "Submit for review",
     "human_work_ai_assist": "Ask AI for help",
@@ -4934,6 +4941,12 @@
   },
   "notifications": {
     "title": "Notifications",
+    "settings": "Notification settings",
+    "settings_requires_cloud": "Task updates can be changed locally. Connect to the cloud for Collaboration and Other notifications.",
+    "channel_in_app": "In-app",
+    "channel_system": "System notification",
+    "channel_im": "IM push",
+    "im_target_required": "Choose an IM conversation from the away-reminder control first.",
     "back": "Back to categories",
     "total_unread": "{{count}} unread",
     "category_tasks": "Task updates",

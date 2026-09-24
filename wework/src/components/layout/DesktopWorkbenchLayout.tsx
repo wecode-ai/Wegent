@@ -190,6 +190,7 @@ export function DesktopWorkbenchLayout({
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
     projectChat,
+    sendRuntimePaneMessage,
     services,
     refreshWorkLists,
     workspaceTabId,
@@ -800,6 +801,7 @@ export function DesktopWorkbenchLayout({
   })
 
   useWorkbenchShellEventHandlers({
+    enabled: routeActive,
     onCreateProjectMode: openProjectFromWorkMenu,
     onBindProjectWorkspace: openProjectWorkspaceBinding,
     onOpenCloudDeviceSettings: openCloudDeviceSettings,
@@ -1186,6 +1188,7 @@ export function DesktopWorkbenchLayout({
                   embedded
                   embeddedTitle="project"
                   startupActive={routeActive}
+                  workspaceActive={routeActive && routeWorkItemsOpen && !settingsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
@@ -1241,6 +1244,7 @@ export function DesktopWorkbenchLayout({
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
                   onCancelRuntimeTask={onCancelRuntimeTask}
+                  sendRuntimePaneMessage={sendRuntimePaneMessage}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}
                   renderLocalProjectImporter={({ mode, projects, onClose, onCreated }) =>

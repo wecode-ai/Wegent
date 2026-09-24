@@ -20,6 +20,8 @@ import type {
   CollaborationProject,
   CollaborationProjectVisibility,
   CollaborationRole,
+  CollaborationWorkspaceRole,
+  CollaborationWorkspaceMember,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -37,6 +39,8 @@ export interface WorkspaceProjectCreateInput {
   description?: string
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   includeDefaultAgent?: boolean
 }
@@ -47,6 +51,8 @@ export interface WorkspaceProjectUpdateInput {
   description?: string
   tags?: string[]
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   boardConfig?: CollaborationProject['board_config']
   cardDisplay?: CollaborationProject['card_display']
@@ -54,6 +60,7 @@ export interface WorkspaceProjectUpdateInput {
   workflowDefinition?: Record<string, unknown>
   collaborationGroups?: import('../types').CollaborationGroup[]
   automaticProcessingRules?: WorkspaceAutomationRule[]
+  projectManager?: WorkspaceProjectManagerConfig
   executionEnvironment?: {
     repositories: Array<{
       name: string
@@ -134,6 +141,7 @@ export interface WorkspaceIssueCreateInput {
 
 export interface WorkspaceIssueUpdateInput {
   version: number
+  securityLevel?: 'open' | 'related'
   title?: string
   description?: string
   status?: string
@@ -192,11 +200,11 @@ export interface WorkspaceUpdateInput {
 
 export interface WorkspaceMemberCreateInput {
   userId: number
-  role?: Exclude<CollaborationRole, 'Owner'>
+  role?: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceMemberUpdateInput {
-  role: Exclude<CollaborationRole, 'Owner'>
+  role: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceAgentCreateInput {
@@ -337,6 +345,73 @@ export interface WorkspaceAutomationRun {
   completedAt?: string | null
   retryable?: boolean
   [key: string]: unknown
+}
+
+export interface WorkspaceProjectManagerTrigger {
+  id: string
+  kind: 'event' | 'schedule'
+  eventType?: 'task.created' | 'task.tag_added' | 'task.status_changed' | null
+  tags: string[]
+  cronExpression?: string | null
+  timezone: string
+  enabled: boolean
+}
+
+export interface WorkspaceProjectManagerConfig {
+  projectId: string
+  version: number
+  enabled: boolean
+  agentId: string
+  prompt: string
+  triggers: WorkspaceProjectManagerTrigger[]
+}
+
+export interface WorkspaceProjectManagerAction {
+  id: string
+  kind: string
+  itemId: string
+  itemVersion?: number
+  approverUserId?: number | null
+  status: 'executed' | 'pending_confirmation' | 'rejected'
+  payload?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface WorkspaceProjectManagerRun extends WorkspaceAutomationRun {
+  actions?: WorkspaceProjectManagerAction[]
+  instruction?: string
+  response?: string | null
+  executionUrl?: string | null
+  runtimeTaskId?: string | null
+  runtimeDeviceId?: string | null
+}
+
+export interface WorkspaceProjectManagerModelSelection {
+  modelName: string
+  modelType?: string | null
+  options?: Record<string, string>
+}
+
+export interface SharedWorkspaceProjectManagerApi {
+  get(projectId: string): Promise<WorkspaceProjectManagerConfig>
+  save(
+    projectId: string,
+    config: Omit<WorkspaceProjectManagerConfig, 'projectId'>
+  ): Promise<WorkspaceProjectManagerConfig>
+  run(
+    projectId: string,
+    message: string,
+    modelSelection?: WorkspaceProjectManagerModelSelection
+  ): Promise<WorkspaceProjectManagerRun>
+  listRuns(projectId: string): Promise<WorkspaceProjectManagerRun[]>
+  getRun(projectId: string, runId: string): Promise<WorkspaceProjectManagerRun>
+  decide(
+    projectId: string,
+    runId: string,
+    actionId: string,
+    approve: boolean,
+    version: number
+  ): Promise<WorkspaceProjectManagerAction>
 }
 
 export interface WorkspaceIncomingHook {
@@ -493,13 +568,13 @@ export interface SharedCollaborationWorkspacesApi {
   create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>
   update(workspaceId: string, input: WorkspaceUpdateInput): Promise<CollaborationWorkspace>
   archive(workspaceId: string, version: number): Promise<void>
-  listMembers(workspaceId: string): Promise<CollaborationMember[]>
-  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationMember>
+  listMembers(workspaceId: string): Promise<CollaborationWorkspaceMember[]>
+  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationWorkspaceMember>
   updateMember(
     workspaceId: string,
     userId: number,
     input: WorkspaceMemberUpdateInput
-  ): Promise<CollaborationMember>
+  ): Promise<CollaborationWorkspaceMember>
   removeMember(workspaceId: string, userId: number): Promise<void>
   listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>
   addAgent(workspaceId: string, input: WorkspaceAgentCreateInput): Promise<CollaborationOwnedAgent>
@@ -823,6 +898,7 @@ export interface SharedWorkspaceApi {
   deliveries: SharedWorkspaceDeliveriesApi
   executions: SharedWorkspaceExecutionsApi
   automations?: SharedWorkspaceAutomationsApi
+  projectManager?: SharedWorkspaceProjectManagerApi
   incomingHooks?: SharedWorkspaceIncomingHooksApi
   automationExecutionCatalog?: SharedWorkspaceAutomationExecutionCatalogApi
   runtimeProfiles: SharedWorkspaceRuntimeProfilesApi

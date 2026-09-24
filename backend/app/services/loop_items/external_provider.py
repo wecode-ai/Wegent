@@ -27,12 +27,11 @@ from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.cloud_project_visibility import explicit_project_member_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -45,6 +44,7 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
 )
+from app.services.loop_items.access import default_issue_security, is_related_item
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 PRIORITY_PREFIX = "wegent:priority:"
 STATUS_PREFIX = "wegent:status:"
 CREATOR_PREFIX = "wegent:creator:"
+SECURITY_PREFIX = "wegent:security:"
 ASSIGNEE_PREFIX = "wegent:assignee:"
 PARENT_MARKER = "Wegent-Parent:"
 EXTERNAL_BOARD_STATUSES = {
@@ -109,9 +110,7 @@ class ExternalLoopItemProvider:
         assignee_type: str | None = None,
         assignee_id: str | None = None,
     ) -> list[dict[str, object]]:
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
         self._require_external(project)
         issues = self._list_issues(project)
@@ -120,7 +119,7 @@ class ExternalLoopItemProvider:
             issues = [
                 issue for issue in issues if assignee_label in self._labels(issue)
             ]
-        return [
+        responses = [
             self._response(
                 db,
                 project,
@@ -131,6 +130,7 @@ class ExternalLoopItemProvider:
             )
             for issue in issues
         ]
+        return [response for response in responses if response["can_view_detail"]]
 
     def list_page(
         self,
@@ -143,9 +143,7 @@ class ExternalLoopItemProvider:
         cursor: str | None,
         limit: int,
     ) -> tuple[list[dict[str, object]], str | None]:
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
         self._require_external(project)
         if item_status not in EXTERNAL_BOARD_STATUSES:
@@ -196,18 +194,19 @@ class ExternalLoopItemProvider:
             next_cursor,
         )
 
+        responses = [
+            self._response(
+                db,
+                project,
+                issue,
+                access,
+                user_id,
+                include_description=False,
+            )
+            for issue in matched
+        ]
         return (
-            [
-                self._response(
-                    db,
-                    project,
-                    issue,
-                    access,
-                    user_id,
-                    include_description=False,
-                )
-                for issue in matched
-            ],
+            [response for response in responses if response["can_view_detail"]],
             next_cursor,
         )
 
@@ -229,9 +228,7 @@ class ExternalLoopItemProvider:
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         response = self._response(db, project, issue, access, user_id)
         if not response["can_view_detail"]:
@@ -249,9 +246,7 @@ class ExternalLoopItemProvider:
 
         if not item_ids:
             return []
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
         self._require_external(project)
         item_id_by_number = {
@@ -281,14 +276,10 @@ class ExternalLoopItemProvider:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
     ) -> dict[str, object]:
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
         self._require_external(project)
-        if not access.is_public_visitor and not has_permission(
-            access.role, BaseRole.Reporter
-        ):
+        if not has_permission(access.role, BaseRole.Developer):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         item_status = values.status or "inbox"
         if item_status not in EXTERNAL_BOARD_STATUSES:
@@ -303,6 +294,7 @@ class ExternalLoopItemProvider:
             values.priority,
             item_status,
             assignee=assignee_label,
+            security_level=default_issue_security(project),
         )
         issue = self._create_issue(
             project,
@@ -356,6 +348,26 @@ class ExternalLoopItemProvider:
                 priority=values.priority,
             )
             db.commit()
+        elif values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                entry
+                for entry in workspace_service.list_project_collaboration_groups(
+                    db, project.id, user_id
+                )
+                if str(entry["id"]) == values.assignee_group_id
+            )
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+                assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
+            db.commit()
         return self._response(db, project, issue, access, user_id)
 
     def attach_gitlab_upload(
@@ -371,8 +383,10 @@ class ExternalLoopItemProvider:
         project, number = self._resolve_project(db, item_id)
         if project.task_provider != "gitlab":
             return None
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Developer)
         issue = self._get_issue(project, number)
+        if not self._response(db, project, issue, access, user_id)["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         description = str(issue.get("description") or "")
         if filename in description:
             attachment = next(
@@ -466,7 +480,7 @@ class ExternalLoopItemProvider:
                 status.HTTP_409_CONFLICT,
                 "Attachments are not supported by this Issue provider",
             )
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        self.get(db, item_id, user_id)
         return self._gitlab_attachments(
             project, item_id, self._get_issue(project, number)
         )
@@ -502,7 +516,7 @@ class ExternalLoopItemProvider:
     ) -> str:
         item_id, url = self._decode_attachment_id(attachment_id)
         project, _ = self._resolve_project(db, item_id)
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        self.get(db, item_id, user_id)
         if project.task_provider != "gitlab":
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO attachment not found")
         return self._absolute_gitlab_url(project, url)
@@ -512,7 +526,7 @@ class ExternalLoopItemProvider:
     ) -> tuple[bytes, str, str]:
         item_id, url = self._decode_attachment_id(attachment_id)
         project, _ = self._resolve_project(db, item_id)
-        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        self.get(db, item_id, user_id)
         try:
             content = delivery_storage.get_bytes(
                 self._external_attachment_key(attachment_id)
@@ -528,9 +542,7 @@ class ExternalLoopItemProvider:
     def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
         item_id, url = self._decode_attachment_id(attachment_id)
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         response = self._response(db, project, issue, access, user_id)
         if not response["can_edit"]:
@@ -660,13 +672,13 @@ class ExternalLoopItemProvider:
         values: LoopItemUpdate,
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         current = self._get_issue(project, number)
         current_response = self._response(db, project, current, access, user_id)
         if not current_response["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        if "security_level" in values.model_fields_set:
+            require_cloud_project_role(db, project.id, user_id, BaseRole.Maintainer)
         payload: dict[str, object] = {}
         dumped = values.model_dump(exclude_unset=True)
         if "title" in dumped:
@@ -689,8 +701,9 @@ class ExternalLoopItemProvider:
             "assignee_user_id",
             "assignee_agent_id",
             "assignee_team_id",
+            "assignee_group_id",
         } & dumped.keys()
-        label_change = {"tags", "priority", "status"} & dumped.keys()
+        label_change = {"tags", "priority", "status", "security_level"} & dumped.keys()
         if label_change or assignee_change:
             tags = (
                 list(values.tags)
@@ -700,6 +713,11 @@ class ExternalLoopItemProvider:
             creator = self._creator_label(self._labels(current))
             if creator:
                 tags.append(creator)
+            security_level = (
+                values.security_level
+                if "security_level" in dumped
+                else current_response["security_level"]
+            )
             if assignee_change:
                 assignee_label = self._assignee_label_for_values(
                     db, project, values, user_id=user_id
@@ -720,6 +738,7 @@ class ExternalLoopItemProvider:
                 values.priority or str(current_response["priority"]),
                 values.status or str(current_response["status"]),
                 assignee=assignee_label,
+                security_level=security_level,
             )
         if "status" in dumped:
             payload["state"] = self._open_state(project)
@@ -755,9 +774,7 @@ class ExternalLoopItemProvider:
         """Remove an external issue from the board by closing it upstream."""
 
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         response = self._base_response(db, project, issue, access, user_id)
         if not response["can_edit"]:
@@ -787,11 +804,30 @@ class ExternalLoopItemProvider:
                     "Robot is not active in this project",
                 )
             return self._assignee_label("agent", agent.id, agent.title or agent.name)
+        if values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, project.id, user_id
+                    )
+                    if str(entry["id"]) == values.assignee_group_id
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            return self._assignee_label("group", str(group["id"]), str(group["name"]))
         if values.assignee_team_id:
             team = runnable_wegent_team(db, user_id, values.assignee_team_id)
             return self._assignee_label("team", str(team.id), team.name)
         if values.assignee_user_id:
-            if values.assignee_user_id not in self._project_member_ids(db, project):
+            if values.assignee_user_id not in explicit_project_member_ids(db, project):
                 raise HTTPException(422, "Assignee is not a member of this project")
             target = db.get(User, values.assignee_user_id)
             return self._assignee_label(
@@ -904,6 +940,25 @@ class ExternalLoopItemProvider:
                 assigner_user_id=user_id,
                 priority=priority,
             )
+        elif values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                entry
+                for entry in workspace_service.list_project_collaboration_groups(
+                    db, project.id, user_id
+                )
+                if str(entry["id"]) == values.assignee_group_id
+            )
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+                assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
         elif values.assignee_user_id:
             target = db.get(User, values.assignee_user_id)
             self._ensure_index_row(
@@ -977,10 +1032,8 @@ class ExternalLoopItemProvider:
         """
 
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
-        if access.is_public_visitor:
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        if access.is_viewer:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         if not has_permission(access.role, BaseRole.Maintainer):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
@@ -989,6 +1042,8 @@ class ExternalLoopItemProvider:
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None
+        group: dict[str, object] | None = None
+        target_user_id: int | None = None
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if (
@@ -1020,7 +1075,7 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            if target_user_id not in self._project_member_ids(db, project):
+            if target_user_id not in explicit_project_member_ids(db, project):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this project",
@@ -1043,6 +1098,28 @@ class ExternalLoopItemProvider:
             team = runnable_wegent_team(db, user_id, target_team_id)
             assignee_label = self._assignee_label("team", str(team.id), team.name)
             assignee_name = team.name
+        elif values.assignee_type == "group":
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, project.id, user_id
+                    )
+                    if str(entry["id"]) == values.assignee_id
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            assignee_label = self._assignee_label(
+                "group", str(group["id"]), str(group["name"])
+            )
+            assignee_name = str(group["name"])
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
@@ -1056,6 +1133,7 @@ class ExternalLoopItemProvider:
                     self._priority(current_labels),
                     self._status(current_labels, str(current.get("state") or "")),
                     assignee=assignee_label,
+                    security_level=self._security_level(current_labels, project),
                 )
             },
         )
@@ -1070,12 +1148,19 @@ class ExternalLoopItemProvider:
                 else (
                     str(team.id)
                     if values.assignee_type == "team" and team is not None
-                    else str(target_user_id)
+                    else (
+                        str(group["id"])
+                        if values.assignee_type == "group" and group is not None
+                        else str(target_user_id)
+                    )
                 )
             ),
             assignee_name=assignee_name,
             user_id=user_id,
         )
+        if group is not None:
+            db.commit()
+            return self._response(db, project, issue, access, user_id)
         from app.services.issue_assignments import issue_assignment_service
 
         target_id = (
@@ -1185,6 +1270,17 @@ class ExternalLoopItemProvider:
             loop_item_service._write_assignment_change(
                 metadata, user_id, "team", assignee_id, assignee_name
             )
+        elif assignee_type == "group":
+            row.assignee_user_id = 0
+            row.assignee_agent_id = ""
+            row.assignee_team_id = None
+            metadata["collaboration_group"] = {
+                "id": assignee_id,
+                "name": assignee_name or "",
+            }
+            loop_item_service._write_assignment_change(
+                metadata, user_id, "group", assignee_id, assignee_name
+            )
         else:
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
             row.assignee_agent_id = ""
@@ -1205,28 +1301,6 @@ class ExternalLoopItemProvider:
         if row is None:
             return
         row.deleted_at = utcnow()
-
-    @staticmethod
-    def _project_member_ids(db: Session, project: CloudProject) -> set[int]:
-        member_ids: set[int] = set()
-        if project.created_by_user_id:
-            member_ids.add(project.created_by_user_id)
-        rows = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == project.id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        for row in rows:
-            try:
-                member_ids.add(int(row.entity_id))
-            except (TypeError, ValueError):
-                continue
-        return member_ids
 
     def approve_run(
         self,
@@ -1374,10 +1448,10 @@ class ExternalLoopItemProvider:
         self, db: Session, item_id: str, user_id: int, body: str
     ) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
+        if not self._response(db, project, issue, access, user_id)["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         require_issue_action(
             access,
             action=IssueAction.COMMENT,
@@ -1390,9 +1464,7 @@ class ExternalLoopItemProvider:
         self, db: Session, item_id: str, user_id: int
     ) -> list[dict[str, object]]:
         project, number = self._resolve_project(db, item_id)
-        access = require_cloud_project_role(
-            db, project.id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
         issue = self._get_issue(project, number)
         if not self._response(db, project, issue, access, user_id)["can_view_detail"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -1443,8 +1515,25 @@ class ExternalLoopItemProvider:
         labels = self._labels(issue)
         creator_id = self._creator_id(labels)
         creator_name = self._creator_name(labels)
-        can_view, can_edit = self._permissions(access, creator_id, user_id)
+        security_level = self._security_level(labels, project)
         number = self._number(issue)
+        item_id = f"{project.project_key}-{number}"
+        assignee = self._assignee_from_labels(labels)
+        related = security_level == "related" and (
+            creator_id == user_id
+            or (
+                assignee is not None
+                and assignee["type"] == "user"
+                and assignee["id"] == str(user_id)
+            )
+            or is_related_item(db, item_id, user_id)
+        )
+        can_view = (
+            has_permission(access.role, BaseRole.Maintainer)
+            or security_level == "open"
+            or related
+        )
+        can_edit = can_view and has_permission(access.role, BaseRole.Developer)
         description = str(issue.get(self._body_key(project)) or "")
         parent_id = self._parent_id(project, description)
         description = "\n".join(
@@ -1462,7 +1551,8 @@ class ExternalLoopItemProvider:
         assignee_agent_name: str | None = None
         assignee_team_id: int | None = None
         assignee_team_name: str | None = None
-        assignee = self._assignee_from_labels(labels)
+        assignee_group_id: str | None = None
+        assignee_group_name: str | None = None
         if assignee is not None:
             if assignee["type"] == "user":
                 try:
@@ -1490,6 +1580,21 @@ class ExternalLoopItemProvider:
                 if assignee_team_name is None and assignee_team_id is not None:
                     team = db.get(Kind, assignee_team_id)
                     assignee_team_name = team.name if team is not None else None
+            elif assignee["type"] == "group":
+                assignee_group_id = assignee["id"]
+                from app.services.workspaces import workspace_service
+
+                group = next(
+                    (
+                        entry
+                        for entry in workspace_service.list_project_collaboration_groups(
+                            db, project.id, user_id
+                        )
+                        if str(entry["id"]) == assignee_group_id
+                    ),
+                    None,
+                )
+                assignee_group_name = str(group["name"]) if group else None
         return {
             "id": f"{project.project_key}-{number}",
             "cloud_project_id": str(project.id),
@@ -1504,6 +1609,8 @@ class ExternalLoopItemProvider:
             "assignee_agent_name": assignee_agent_name,
             "assignee_team_id": assignee_team_id,
             "assignee_team_name": assignee_team_name,
+            "assignee_group_id": assignee_group_id,
+            "assignee_group_name": assignee_group_name,
             "priority": self._priority(labels),
             "due_at": None,
             "sort_order": number,
@@ -1512,6 +1619,7 @@ class ExternalLoopItemProvider:
             "created_by_user_name": creator_name,
             "can_view_detail": can_view,
             "can_edit": can_edit,
+            "security_level": security_level,
             "detail_loaded": include_description,
             "current_delivery_id": None,
             "version": self._derived_version(updated_at),
@@ -1596,15 +1704,6 @@ class ExternalLoopItemProvider:
         if status == "rejected":
             view["rejected_reason"] = getattr(execution, "rejected_reason", None)
         return view
-
-    @staticmethod
-    def _permissions(
-        access: CloudProjectAccess, creator_id: int, user_id: int
-    ) -> tuple[bool, bool]:
-        if access.is_public_visitor:
-            owns = creator_id > 0 and creator_id == user_id
-            return owns, owns
-        return True, has_permission(access.role, BaseRole.Developer)
 
     def _resolve_project(self, db: Session, item_id: str) -> tuple[CloudProject, int]:
         resolved = self._find_project(db, item_id)
@@ -2115,7 +2214,11 @@ class ExternalLoopItemProvider:
         if label is None:
             return None
         parts = label.removeprefix(ASSIGNEE_PREFIX).split(":", 2)
-        if len(parts) < 2 or parts[0] not in {"user", "agent", "team"} or not parts[1]:
+        if (
+            len(parts) < 2
+            or parts[0] not in {"user", "agent", "team", "group"}
+            or not parts[1]
+        ):
             return None
         return {
             "type": parts[0],
@@ -2129,9 +2232,29 @@ class ExternalLoopItemProvider:
             label
             for label in labels
             if not label.startswith(
-                (PRIORITY_PREFIX, STATUS_PREFIX, CREATOR_PREFIX, ASSIGNEE_PREFIX)
+                (
+                    PRIORITY_PREFIX,
+                    STATUS_PREFIX,
+                    CREATOR_PREFIX,
+                    ASSIGNEE_PREFIX,
+                    SECURITY_PREFIX,
+                )
             )
         ]
+
+    @staticmethod
+    def _security_level(labels: list[str], project: CloudProject) -> str:
+        value = next(
+            (
+                label.removeprefix(SECURITY_PREFIX)
+                for label in labels
+                if label.startswith(SECURITY_PREFIX)
+            ),
+            None,
+        )
+        return (
+            value if value in {"open", "related"} else default_issue_security(project)
+        )
 
     @staticmethod
     def _labels_for_write(
@@ -2139,17 +2262,22 @@ class ExternalLoopItemProvider:
         priority: str,
         item_status: str,
         assignee: str | None = None,
+        security_level: str | None = None,
     ) -> list[str]:
         labels = [
             tag
             for tag in tags
-            if not tag.startswith((PRIORITY_PREFIX, STATUS_PREFIX, ASSIGNEE_PREFIX))
+            if not tag.startswith(
+                (PRIORITY_PREFIX, STATUS_PREFIX, ASSIGNEE_PREFIX, SECURITY_PREFIX)
+            )
         ]
         if priority != "none":
             labels.append(f"{PRIORITY_PREFIX}{priority}")
         labels.append(f"{STATUS_PREFIX}{item_status}")
         if assignee:
             labels.append(assignee)
+        if security_level:
+            labels.append(f"{SECURITY_PREFIX}{security_level}")
         return list(dict.fromkeys(labels))
 
     @staticmethod

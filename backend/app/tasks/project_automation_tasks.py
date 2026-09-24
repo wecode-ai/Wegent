@@ -157,6 +157,7 @@ def execute_managed_project_automation(
     team_id: int,
     user_id: int,
     prompt: str,
+    developer_instruction: str = "",
     source: str = "project_automation",
     execution_id: int = 0,
 ) -> dict[str, int | str]:
@@ -183,6 +184,7 @@ def execute_managed_project_automation(
             "team_id": team_id,
             "user_id": user_id,
             "prompt": prompt,
+            "developer_instruction": developer_instruction,
         }
         if source != "project_automation":
             execute_kwargs.update(

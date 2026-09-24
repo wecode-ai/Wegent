@@ -76,11 +76,11 @@ class HumanIssueWorkService:
             return None
         try:
             access = require_cloud_project_role(
-                db, int(item.cloud_project_id), assigner_id, BaseRole.Reporter
+                db, int(item.cloud_project_id), assigner_id, BaseRole.Developer
             )
         except HTTPException:
             return None
-        return assigner_id if not access.is_public_visitor else None
+        return assigner_id if not access.is_viewer else None
 
     def _fallback_reviewer_ids(self, db: Session, item: LoopItem) -> set[int]:
         project = db.get(CloudProject, item.cloud_project_id)
@@ -147,7 +147,7 @@ class HumanIssueWorkService:
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
         require_cloud_project_role(
-            db, int(item.cloud_project_id), user_id, BaseRole.Reporter
+            db, int(item.cloud_project_id), user_id, BaseRole.Developer
         )
         return item
 

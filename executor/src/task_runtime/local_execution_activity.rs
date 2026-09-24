@@ -103,11 +103,17 @@ pub(super) fn create_execution_comment(
     let execution = execution_row(connection, execution_id)?;
     let payload = execution.execution_payload.as_ref().unwrap_or(&Value::Null);
     let trigger = payload.get("trigger_message_id").and_then(Value::as_str);
+    let workflow_task_title = payload
+        .get("workflow_task_title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&execution.task_title);
     let mut metadata = json!({
         "execution_id": execution_id,
         "previous_execution_id": execution.previous_execution_id,
         "trigger_message_id": trigger,
         "workflow_node_id": payload.get("workflow_node_id"),
+        "workflow_task_title": workflow_task_title,
         "automation_role": payload.get("automation_role"),
         "automation_run_id": payload.get("automation_run_id"),
     });
@@ -167,6 +173,14 @@ pub(super) fn ensure_execution_binding(
         .and_then(|payload| payload.get("workflow_node_id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
+    let task_title = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("workflow_task_title"))
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&execution.task_title)
+        .to_owned();
     let metadata = json!({"project_id": execution.cloud_project_id,
         "execution_id": execution_id, "workflow_node_id": node});
     insert_task_binding(
@@ -176,7 +190,7 @@ pub(super) fn ensure_execution_binding(
         &RuntimeTaskAddress {
             device_id: device.clone(),
             task_id: task.clone(),
-            task_title: Some(execution.task_title),
+            task_title: Some(task_title),
             backend_task_id: None,
             model_selection: None,
             workflow_node_id: node,

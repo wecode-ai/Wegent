@@ -236,6 +236,18 @@ export function createDesktopScenario({
         )
         await control.command(
           'click',
+          scoped('[data-testid="cloud-project-visibility-public"]')
+        )
+        await control.command(
+          'click',
+          scoped('[data-testid="cloud-project-public-access-viewer"]')
+        )
+        await control.command(
+          'click',
+          scoped('[data-testid="cloud-project-default-issue-security-related"]')
+        )
+        await control.command(
+          'click',
           scoped('[data-testid="collaboration-project-create-confirm"]')
         )
         project = await waitForApiValue(
@@ -248,6 +260,9 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(project.name, projectName)
+        assert.equal(project.visibility, 'public')
+        assert.equal(project.public_access?.role, 'Viewer')
+        assert.equal(project.default_issue_security, 'related')
         const persistedWorkspace = await request(`/api/v1/workspaces/${workspace.id}`)
         assert.equal(persistedWorkspace.project_count, 1)
         const persistedProjects = await request(`/api/v1/workspaces/${workspace.id}/projects`)

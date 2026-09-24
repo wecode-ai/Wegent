@@ -59,6 +59,7 @@ export interface WeworkAutomationSharedWorkspaceApi {
     NonNullable<SharedWorkspaceApi['automations']>,
     'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
   >
+  projectManager?: SharedWorkspaceApi['projectManager']
   incomingHooks?: Pick<
     NonNullable<SharedWorkspaceApi['incomingHooks']>,
     'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
@@ -424,6 +425,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               task_provider: input.taskProvider,
               visibility: input.visibility,
+              public_access: input.publicAccess,
+              default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
                 DeliveryApi['createCloudProject']
               >[0]['provider_config'],
@@ -441,6 +444,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               tags: input.tags,
               visibility: input.visibility,
+              public_access: input.publicAccess,
+              default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['provider_config'],
@@ -458,6 +463,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
               automatic_processing_rules: input.automaticProcessingRules as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['automatic_processing_rules'],
+              project_manager: input.projectManager as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['project_manager'],
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
@@ -547,6 +555,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_team_id: input.assigneeTeamId,
               due_at: input.dueAt,
               tags: input.tags,
+              security_level: input.securityLevel,
               workflow: input.workflow as Parameters<DeliveryApi['updateLoopItem']>[1]['workflow'],
               execution_config: input.executionConfig as Parameters<
                 DeliveryApi['updateLoopItem']
@@ -801,7 +810,17 @@ export function createWeworkAutomationSharedWorkspaceApi(
       update: delivery.projects.update,
     },
     ...(projectAutomationApi
-      ? { automations: createWeworkAutomationsApi(projectAutomationApi) }
+      ? {
+          automations: createWeworkAutomationsApi(projectAutomationApi),
+          projectManager: {
+            get: projectAutomationApi.getProjectManager,
+            save: projectAutomationApi.saveProjectManager,
+            run: projectAutomationApi.runProjectManager,
+            listRuns: projectAutomationApi.listProjectManagerRuns,
+            getRun: projectAutomationApi.getProjectManagerRun,
+            decide: projectAutomationApi.decideProjectManagerAction,
+          },
+        }
       : {}),
     ...(projectIncomingHookApi
       ? { incomingHooks: createWeworkIncomingHooksApi(projectIncomingHookApi) }
@@ -936,6 +955,8 @@ export function createWeworkSharedWorkspaceApi<
               description: projectInput.description,
               task_provider: projectInput.taskProvider,
               visibility: projectInput.visibility,
+              public_access: projectInput.publicAccess,
+              default_issue_security: projectInput.defaultIssueSecurity,
               provider_config: projectInput.providerConfig,
             })
           )
@@ -1009,6 +1030,14 @@ export function createWeworkSharedWorkspaceApi<
       async retryRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.retryRun(projectId, runId))
       },
+    },
+    projectManager: {
+      get: projectAutomationApi.getProjectManager,
+      save: projectAutomationApi.saveProjectManager,
+      run: projectAutomationApi.runProjectManager,
+      listRuns: projectAutomationApi.listProjectManagerRuns,
+      getRun: projectAutomationApi.getProjectManagerRun,
+      decide: projectAutomationApi.decideProjectManagerAction,
     },
     incomingHooks: {
       ...createWeworkIncomingHooksApi(projectIncomingHookApi),

@@ -2973,7 +2973,7 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
         owner_user_id=test_user.id,
         display_name="Managed AI",
         instruction="Run task",
-        system_prompt="Manage the Issue",
+        developer_instruction="Coordinate the project without executing Issues.",
         model="test-model",
         local_project_id=code_project.id,
     )
@@ -3005,6 +3005,10 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     assert payload["origin"]["automationRole"] == "manager"
     assert payload["origin"]["type"] == "project_automation"
     assert payload["message"] == "Run task"
+    assert (
+        payload["projectInstructions"]
+        == "Coordinate the project without executing Issues."
+    )
     assert payload["additionalContext"] == {}
 
 
@@ -5458,27 +5462,28 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
     assert executor_model_config["api_key"]
     assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
-        assert f"project_id: {project.id}" in payload["message"]
-        assert f"task_id: {item.id}" in payload["message"]
-        assert f"automation_run_id: {run.id}" in payload["message"]
+        assert payload["message"] == "Handle the task"
         assert "AI 管家" not in payload["message"]
         assert "submit_workflow_plan" not in payload["message"]
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in (
-            payload["projectInstructions"]
+        developer_instruction = payload["projectInstructions"]
+        assert (
+            "你是看板的 AI 管家，只负责编排，不执行具体任务。" in developer_instruction
         )
-        assert "submit_workflow_plan" in payload["projectInstructions"]
-        assert "Handle the task" in payload["projectInstructions"]
+        assert "submit_workflow_plan" in developer_instruction
+        assert f"project_id: {project.id}" in developer_instruction
+        assert f"task_id: {item.id}" in developer_instruction
+        assert f"automation_run_id: {run.id}" in developer_instruction
     if executor_type == "workflow_manager_robot":
-        assert f"project_id: {project.id}" in payload["message"]
-        assert f"task_id: {item.id}" in payload["message"]
-        assert f"automation_run_id: {run.id}" in payload["message"]
+        assert payload["message"] == "Coordinate this Issue"
         assert "AI 管家" not in payload["message"]
         assert "submit_workflow_plan" not in payload["message"]
         assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in (
             payload["projectInstructions"]
         )
         assert "submit_workflow_plan" in payload["projectInstructions"]
-        assert "Coordinate this Issue" in payload["projectInstructions"]
+        assert f"project_id: {project.id}" in payload["projectInstructions"]
+        assert f"task_id: {item.id}" in payload["projectInstructions"]
+        assert f"automation_run_id: {run.id}" in payload["projectInstructions"]
         assert payload["origin"]["automationRole"] == "manager"
     if executor_type == "workflow_child_robot":
         assert "Manager-generated child task instruction" in payload["message"]
@@ -6502,7 +6507,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     assert status_history[-1]["trigger"] == "ai_completed"
 
 
-def test_manager_assigns_project_member_without_parsing_final_output(
+def test_manager_assigns_collaboration_group_without_parsing_final_output(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -6554,15 +6559,37 @@ def test_manager_assigns_project_member_without_parsing_final_output(
     test_db.add_all([rule, run, activity])
     test_db.commit()
 
-    project_automation_execution.assign_from_manager(
-        test_db,
-        run_id=str(run.id),
-        user_id=test_user.id,
-        project_id=str(project.id),
-        task_id=item.id,
-        assignee_type="user",
-        assignee_id=str(test_user.id),
-    )
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "members": [],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        assigned = project_automation_execution.assign_from_manager(
+            test_db,
+            run_id=str(run.id),
+            user_id=test_user.id,
+            project_id=str(project.id),
+            task_id=item.id,
+            assignee_type="group",
+            assignee_id="group-1",
+        )
+        repeated = project_automation_execution.assign_from_manager(
+            test_db,
+            run_id=str(run.id),
+            user_id=test_user.id,
+            project_id=str(project.id),
+            task_id=item.id,
+            assignee_type="group",
+            assignee_id="group-1",
+        )
+    assert assigned["assignee_group_id"] == "group-1"
+    assert repeated["assignee_group_id"] == "group-1"
     test_db.refresh(run)
     assert run.status == "running"
     project_automation_execution.finalize_manager_result(
@@ -6573,8 +6600,9 @@ def test_manager_assigns_project_member_without_parsing_final_output(
 
     test_db.refresh(item)
     test_db.refresh(run)
-    assert item.assignee_user_id == test_user.id
+    assert item.assignee_user_id is None
     assert item.assignee_agent_id in (None, "")
+    assert item.metadata_json["collaboration_group"]["id"] == "group-1"
     assert run.status == "succeeded"
     assert (
         test_db.query(LoopItemExecution)

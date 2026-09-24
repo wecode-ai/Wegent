@@ -57,6 +57,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   | 'renderVisualization'
 > {
   messages: WorkbenchMessage[]
+  renderGapAfterMessage?: MessageListProps['renderGapAfterMessage']
   turns?: RuntimeConversationTurn[]
   loading?: boolean
   isWaitingForAssistant?: boolean
@@ -132,6 +133,7 @@ export function areScrollableMessageAreaPropsEqual(
     previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
     previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
     previous.messages !== next.messages ? 'messages' : null,
+    previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
     previous.turns !== next.turns ? 'turns' : null,
     previous.loading !== next.loading ? 'loading' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,

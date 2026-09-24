@@ -4322,6 +4322,149 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["taskId"], "optimistic-local-task");
     assert_eq!(result["workspacePath"], "/tmp/project");
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    assert!(
+        result.get("running").is_none(),
+        "An unknown task must not report an authoritative idle execution"
+    );
+}
+
+#[tokio::test]
+async fn transcript_without_session_preserves_known_terminal_state() {
+    let index_path = temp_runtime_work_index_path("transcript-terminal-without-session");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "failed-before-session".to_owned(),
+        "/tmp/project".to_owned(),
+        "Failed task".to_owned(),
+    );
+    link.status = "failed".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": { "taskId": "failed-before-session", "workspacePath": "/tmp/project" }
+        }))
+        .await
+        .expect("terminal task without a session should return its known state");
+
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"], json!([]));
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn unmaterialized_provider_transcript_returns_local_presentation() {
+    let index_path = temp_runtime_work_index_path("unmaterialized-provider-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Pending task".to_owned(),
+    );
+    link.thread_id = Some("01a0d200-cdaa-75b1-a55c-090a89171c79".to_owned());
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "content": "nihao",
+            "createdAt": 1790229662977_i64,
+            "ensureVisible": true,
+            "attachments": [],
+            "references": [],
+        }),
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                }
+            }
+        }))
+        .await
+        .expect("unmaterialized provider thread should use the local presentation");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(result["messages"][0]["content"], "nihao");
+
+    let navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                },
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("unmaterialized provider navigation should be empty");
+
+    assert_eq!(navigation["success"], true);
+    assert_eq!(navigation["turnNavigation"], json!([]));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn direct_thread_override_bypasses_unmaterialized_local_transcript() {
+    for navigation_only in [false, true] {
+        let index_path = temp_runtime_work_index_path(if navigation_only {
+            "direct-thread-override-navigation"
+        } else {
+            "direct-thread-override-transcript"
+        });
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Pending task".to_owned(),
+        );
+        link.thread_id = Some("linked-thread".to_owned());
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": "runtime-local-pane-1",
+                "content": "local presentation",
+                "createdAt": 1790229662977_i64,
+                "ensureVisible": true,
+                "attachments": [],
+                "references": [],
+            }),
+        );
+        handler.upsert_local_task(link);
+
+        let error = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "runtimeHandle": {
+                        "threadId": "requested-thread"
+                    },
+                    "navigationOnly": navigation_only
+                }
+            }))
+            .await
+            .expect_err("an explicit thread override should read the requested provider thread");
+
+        assert_eq!(error.code, "codex_error");
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[test]

@@ -3892,9 +3892,9 @@ class LoopItemExecutionService:
                 }
                 profile = replace(
                     profile,
-                    instruction=project_automation_execution._managed_user_input(
-                        project=project,
-                        run=run,
+                    instruction=project_automation_execution._manager_user_message(
+                        rule,
+                        run,
                     ),
                     system_prompt=combined_system_prompt,
                     manager_mode=True,
@@ -4018,28 +4018,28 @@ class LoopItemExecutionService:
             run=run,
             context=automation_context,
         )
-        configured_system_prompt = str(
+        configured_developer_instruction = str(
             automation_context.get("system_prompt") or ""
         ).strip()
-        combined_system_prompt = "\n\n".join(
-            part for part in (configured_system_prompt, manager_prompt) if part
+        combined_developer_instruction = "\n\n".join(
+            part for part in (configured_developer_instruction, manager_prompt) if part
         )
         origin_context = self._selection_context(
             execution,
             {
                 **automation_context,
-                "system_prompt": combined_system_prompt,
+                "system_prompt": combined_developer_instruction,
             },
         )
         return (
             WeworkExecutionProfile.for_automation_manager(
                 owner_user_id=owner_user_id,
                 display_name="自定义 AI 调度员",
-                instruction=project_automation_execution._managed_user_input(
-                    project=project,
-                    run=run,
+                instruction=project_automation_execution._manager_user_message(
+                    rule,
+                    run,
                 ),
-                system_prompt=combined_system_prompt,
+                developer_instruction=combined_developer_instruction,
                 model=model,
                 model_type=(
                     selection.get("model_type") or profile_metadata.get("model_type")
