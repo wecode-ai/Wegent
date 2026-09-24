@@ -1186,6 +1186,7 @@ export function DesktopWorkbenchLayout({
                   embedded
                   embeddedTitle="project"
                   startupActive={routeActive}
+                  workspaceActive={routeActive && routeWorkItemsOpen}
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
                   onArchiveRuntimeTasks={onArchiveChatConversations}

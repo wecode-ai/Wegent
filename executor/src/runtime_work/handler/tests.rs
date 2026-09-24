@@ -4324,6 +4324,69 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn unmaterialized_provider_transcript_returns_local_presentation() {
+    let index_path = temp_runtime_work_index_path("unmaterialized-provider-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Pending task".to_owned(),
+    );
+    link.thread_id = Some("01a0d200-cdaa-75b1-a55c-090a89171c79".to_owned());
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "content": "nihao",
+            "createdAt": 1790229662977_i64,
+            "ensureVisible": true,
+            "attachments": [],
+            "references": [],
+        }),
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                }
+            }
+        }))
+        .await
+        .expect("unmaterialized provider thread should use the local presentation");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(result["messages"][0]["content"], "nihao");
+
+    let navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                },
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("unmaterialized provider navigation should be empty");
+
+    assert_eq!(navigation["success"], true);
+    assert_eq!(navigation["turnNavigation"], json!([]));
+
+    let _ = fs::remove_file(index_path);
+}
+
 #[test]
 fn transcript_sync_requires_restore_before_native_thread_exists() {
     let index_path = temp_runtime_work_index_path("transcript-sync-pending-thread");

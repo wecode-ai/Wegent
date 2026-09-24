@@ -1881,6 +1881,95 @@ describe('CloudTodoWorkspace', () => {
     expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
   })
 
+  it('preloads a failed task conversation only once per mounted task address', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 2,
+        loop_item_id: item.id,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: 'runtime-failed-preload',
+        task_title: '失败的会话预加载',
+        backend_task_id: null,
+        linked_at: '2026-08-23T00:01:00Z',
+      },
+    ])
+    const getRuntimeTranscript = vi.fn(async () => {
+      throw new Error('thread not loaded')
+    })
+    workbenchServices.runtimeWorkApi = {
+      ...workbenchServices.runtimeWorkApi,
+      getRuntimeTranscript,
+    } as WorkbenchServices['runtimeWorkApi']
+    const runtimeWork = (updatedAt: number, status?: string) => ({
+      projects: [
+        {
+          project: { id: project.id, name: project.name },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/tmp/wegent',
+              tasks: [
+                {
+                  taskId: 'runtime-failed-preload',
+                  workspacePath: '/tmp/wegent',
+                  title: '失败的会话预加载',
+                  runtime: 'codex' as const,
+                  running: false,
+                  updatedAt,
+                  status,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+    }
+    const view = render(
+      <CloudTodoWorkspace
+        {...props}
+        runtimeWork={runtimeWork(1_700_000_000)}
+        workspaceActive={false}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(getRuntimeTranscript).not.toHaveBeenCalled()
+
+    view.rerender(
+      <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_000)} workspaceActive />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_000)} workspaceActive />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_001)} workspaceActive />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <CloudTodoWorkspace
+        {...props}
+        runtimeWork={runtimeWork(1_700_000_001, 'completed')}
+        workspaceActive
+      />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+  })
+
   it('preserves older cached turns when the board preload transcript is bounded', async () => {
     const workbenchServices = services()
     const address = { deviceId: 'local-device', taskId: 'runtime-bounded' }

@@ -516,6 +516,7 @@ export interface CloudTodoWorkspaceProps {
   embedded?: boolean
   embeddedTitle?: 'workspace' | 'project'
   startupActive?: boolean
+  workspaceActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -669,6 +670,7 @@ export function CloudTodoWorkspace({
   embedded = false,
   embeddedTitle = 'workspace',
   startupActive = false,
+  workspaceActive = true,
   activeProjectRef,
   defaultProjectRequested = false,
   focusedItemId,
@@ -1094,9 +1096,7 @@ export function CloudTodoWorkspace({
   const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
     Record<string, RuntimeGoal | null>
   >({})
-  const runtimeConversationRequestsRef = useRef(new Set<string>())
-  const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
-  const runtimeConversationLoadedSignatureRef = useRef(new Map<string, string>())
+  const runtimeConversationAttemptedAddressesRef = useRef(new Set<string>())
   const runtimeGoalRequestsRef = useRef(new Set<string>())
   // Applies a freshly fetched board snapshot. `boardError` distinguishes a
   // loaded-but-empty project (renders empty columns) from a failed fetch
@@ -3000,6 +3000,7 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     const runtimeWorkApi = services.runtimeWorkApi
     if (
+      !workspaceActive ||
       !runtimeWorkApi?.getRuntimeTranscript ||
       !selectedProjectKey ||
       (selectedProject?.location === 'local' && itemTaskBindingsProjectKey !== selectedProjectKey)
@@ -3014,17 +3015,8 @@ export function CloudTodoWorkspace({
           taskId: binding.task_id,
         })
         const task = runtimeTasksByKey.get(addressKey)
-        const signature = [
-          task?.updatedAt ?? '',
-          task?.completedAt ?? '',
-          task?.status ?? '',
-          task?.turnStatus ?? '',
-        ].join(':')
-        if (runtimeConversationLoadedSignatureRef.current.get(addressKey) === signature) continue
-        const requestKey = `${addressKey}:${signature}`
-        if (runtimeConversationRequestsRef.current.has(requestKey)) continue
-        runtimeConversationRequestsRef.current.add(requestKey)
-        runtimeConversationLatestSignatureRef.current.set(addressKey, signature)
+        if (runtimeConversationAttemptedAddressesRef.current.has(addressKey)) continue
+        runtimeConversationAttemptedAddressesRef.current.add(addressKey)
         void runtimeWorkApi
           .getRuntimeTranscript({
             deviceId: binding.device_id,
@@ -3036,9 +3028,6 @@ export function CloudTodoWorkspace({
             limit: 20,
           })
           .then(transcript => {
-            if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
-              return
-            }
             const projectedTranscript = projectRuntimePaneTranscript(transcript)
             const address = {
               deviceId: binding.device_id,
@@ -3056,7 +3045,6 @@ export function CloudTodoWorkspace({
             } else {
               reconcileRuntimeConversationSnapshot(address, projectedTranscript.turns)
             }
-            runtimeConversationLoadedSignatureRef.current.set(addressKey, signature)
           })
           .catch(error => {
             console.warn('[Wework project board] failed to preload task conversation', {
@@ -3066,12 +3054,6 @@ export function CloudTodoWorkspace({
               },
               error,
             })
-            if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
-              return
-            }
-          })
-          .finally(() => {
-            runtimeConversationRequestsRef.current.delete(requestKey)
           })
       }
     }
@@ -3083,6 +3065,7 @@ export function CloudTodoWorkspace({
     selectedProjectKey,
     selectedProject?.location,
     services.runtimeWorkApi,
+    workspaceActive,
   ])
   useEffect(() => {
     if (

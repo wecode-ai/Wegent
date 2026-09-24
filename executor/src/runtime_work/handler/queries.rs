@@ -333,6 +333,19 @@ impl RuntimeWorkRpcHandler {
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
         if navigation_only {
+            if local_link
+                .as_ref()
+                .is_some_and(provider_transcript_is_unmaterialized)
+            {
+                return Ok(transcript_navigation_response(
+                    local_task_id,
+                    local_link
+                        .as_ref()
+                        .map(|link| link.workspace_path.clone())
+                        .unwrap_or_default(),
+                    Vec::new(),
+                ));
+            }
             let Some(thread_id) = session_id else {
                 return Ok(transcript_navigation_response(
                     local_task_id,
@@ -454,8 +467,18 @@ impl RuntimeWorkRpcHandler {
             link.ephemeral
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
+                || provider_transcript_is_unmaterialized(link)
         }) {
             let mut messages = cached_runtime_transcript_messages(link);
+            let page_messages = messages.clone();
+            attach_user_message_presentations_for_page(
+                &mut messages,
+                user_message_presentations(link),
+                &page_messages,
+                &[],
+                false,
+                false,
+            );
             if conversation_context_only {
                 project_conversation_context_messages(&mut messages);
             }
