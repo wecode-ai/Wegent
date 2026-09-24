@@ -3,6 +3,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
+import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -1433,7 +1434,7 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
-      if (request.headers['x-openai-subagent']) {
+      if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
           const tool = selectShellTool(
