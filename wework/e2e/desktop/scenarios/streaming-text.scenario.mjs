@@ -69,7 +69,8 @@ const SUBAGENT_CHILD_TOOL_TIMEOUT_MS = 10_000
 const SUBAGENT_CHILD_TOOL_START = `${SUBAGENT_CHILD_TOOL_MARKER}_START`
 const SUBAGENT_CHILD_TOOL_COMPLETE = `${SUBAGENT_CHILD_TOOL_MARKER}_COMPLETE`
 const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
-const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
+const SUBAGENT_CHILD_FINAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE'
+const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\n${SUBAGENT_CHILD_FINAL}`
 const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
 const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
@@ -1272,7 +1273,7 @@ export function createDesktopScenario({
     await captureSubagent(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
-      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      text: SUBAGENT_CHILD_FINAL,
       timeoutMs: uiTimeoutMs,
     })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
@@ -1346,7 +1347,7 @@ export function createDesktopScenario({
     )
     await control.command('click', '[data-testid="subagent-overview-item"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
-      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      text: SUBAGENT_CHILD_FINAL,
       timeoutMs: uiTimeoutMs,
     })
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
@@ -1374,6 +1375,11 @@ export function createDesktopScenario({
       ),
       false,
       'The restored child tool leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(SUBAGENT_CHILD_FINAL),
+      false,
+      'The restored child final answer leaked into the root conversation'
     )
     assert.equal(
       (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
