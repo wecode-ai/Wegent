@@ -57,6 +57,29 @@ logger = logging.getLogger(__name__)
 DEFAULT_EMBEDDING_DIM = 1024  # Default vector dimension (OpenAI text-embedding-ada-002)
 MAX_QUERY_LIMIT = 10000  # Maximum records to fetch for aggregation queries
 DEFAULT_TOP_K = 20  # Default top_k for retrieval
+HYBRID_CANDIDATE_MULTIPLIER = 4  # candidate pool = top_k * 4
+HYBRID_MIN_CANDIDATES = 50  # Floor so small top_k still fuses a real pool
+HYBRID_MAX_CANDIDATES = 1000  # Ceiling so top_k=large stays affordable
+
+
+def hybrid_candidate_k(top_k: int) -> int:
+    """
+    Candidate depth the vector store needs to fuse a trustworthy hybrid top_k.
+
+    The fusion candidate pool must be larger than the number of returned
+    records, otherwise a document that one branch did not recall is scored as
+    0 by that branch and drops out of the fused top_k even when it is the best
+    match overall.
+
+    Above the ceiling there is no room left to widen, so the pool stays at
+    top_k: the pre-decoupling store limit, which keeps the caller from silently
+    receiving fewer records than it asked for.
+    """
+    widened = min(
+        max(top_k * HYBRID_CANDIDATE_MULTIPLIER, HYBRID_MIN_CANDIDATES),
+        HYBRID_MAX_CANDIDATES,
+    )
+    return max(top_k, widened)
 
 
 class LazyAsyncMilvusVectorStore(MilvusVectorStore):
@@ -742,20 +765,24 @@ class MilvusBackend(BaseStorageBackend):
                 )
 
         # Create VectorStoreQuery
+        # Only hybrid fusion needs a wider candidate pool; the store limit is
+        # the returned top_k for every other mode.
+        candidate_k = hybrid_candidate_k(top_k) if retrieval_mode == "hybrid" else top_k
         vs_query = VectorStoreQuery(
             query_str=query_str,
             query_embedding=query_embedding,
-            similarity_top_k=top_k,
+            similarity_top_k=candidate_k,
             mode=query_mode,
             filters=query_filters,
         )
 
         logger.info(
-            "[Milvus] retrieve: collection=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, effective_threshold=%s, hybrid_ranker=%s, hybrid_ranker_params=%s, dense_query=%s, sparse_query=%s",
+            "[Milvus] retrieve: collection=%s, mode=%s, query_mode=%s, top_k=%s, candidate_k=%s, score_threshold=%s, effective_threshold=%s, hybrid_ranker=%s, hybrid_ranker_params=%s, dense_query=%s, sparse_query=%s",
             collection_name,
             retrieval_mode,
             query_mode,
             top_k,
+            candidate_k,
             score_threshold,
             0.0 if retrieval_mode == "hybrid" else score_threshold,
             getattr(vector_store, "hybrid_ranker", None),
@@ -792,7 +819,12 @@ class MilvusBackend(BaseStorageBackend):
         # For hybrid search, skip score_threshold because RRF scores are in a different
         # range (0.01-0.05) and the ranking is already optimized by the fusion algorithm
         effective_threshold = 0.0 if retrieval_mode == "hybrid" else score_threshold
-        return self._process_query_results(result, effective_threshold)
+        processed = self._process_query_results(result, effective_threshold)
+        if retrieval_mode == "hybrid":
+            # The widened pool only feeds the fusion step: the caller asked for
+            # top_k records, so keep the best top_k in fused order.
+            processed["records"] = processed["records"][:top_k]
+        return processed
 
     def _build_metadata_filters(
         self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
