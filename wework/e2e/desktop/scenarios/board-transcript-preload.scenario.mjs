@@ -60,8 +60,13 @@ async function waitForRuntimeTask(executorHome, timeoutMs) {
   throw new Error('The board transcript preload fixture did not persist its runtime task')
 }
 
-async function readNewLog(logPath, offset) {
-  return (await readFile(logPath, 'utf8').catch(() => '')).slice(offset)
+async function captureLogBaseline(logPath) {
+  return readFile(logPath, 'utf8').catch(() => '')
+}
+
+async function readNewLog(logPath, baseline) {
+  const contents = await readFile(logPath, 'utf8').catch(() => '')
+  return contents.startsWith(baseline) ? contents.slice(baseline.length) : contents
 }
 
 async function activeBoardContent(control, timeoutMs) {
@@ -174,6 +179,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       )
 
       const executorLogPath = join(resultDir, 'executor.log')
+      const logBaseline = await captureLogBaseline(executorLogPath)
       await restartDesktopApp(async () => {
         const fixture = await waitForRuntimeTask(executorHome, uiTimeoutMs)
         const runtimeHandle = fixture.task.runtime_handle ?? {}
@@ -192,10 +198,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         await writeFile(fixture.indexPath, `${JSON.stringify(fixture.index)}\n`, 'utf8')
       })
 
-      const logOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await new Promise(resolve => setTimeout(resolve, 1_500))
       assert.equal(
-        countTranscriptFailures(await readNewLog(executorLogPath, logOffset)),
+        countTranscriptFailures(await readNewLog(executorLogPath, logBaseline)),
         0,
         'The inactive My Tasks board preloaded a task conversation'
       )
@@ -220,7 +225,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
         }
       )
       await new Promise(resolve => setTimeout(resolve, 2_000))
-      const activeBoardLog = await readNewLog(executorLogPath, logOffset)
+      const activeBoardLog = await readNewLog(executorLogPath, logBaseline)
       assert.equal(
         countTranscriptFailures(activeBoardLog),
         1,

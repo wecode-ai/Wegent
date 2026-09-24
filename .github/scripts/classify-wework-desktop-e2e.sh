@@ -572,7 +572,7 @@ classify_wework_path() {
       return
       ;;
     wework/src/components/layout/DesktopWorkbenchLayout.tsx)
-      select_target "core:board-transcript-preload"
+      select_all_desktop_suites
       return
       ;;
     # Issue comment/reply mention wiring lives in the shared composers and in

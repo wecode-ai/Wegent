@@ -638,12 +638,8 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/CloudTodoWorkspace.tsx"
 
-assert_desktop_case "workbench layout changes select board transcript preload coverage" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-12","name":"Core / shard 12","segments":"board-transcript-preload"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+assert_desktop_case "workbench layout changes retain full desktop coverage" \
+  "$full_desktop_expected" \
   "wework/src/components/layout/DesktopWorkbenchLayout.tsx"
 
 assert_desktop_case "external content import changes select its desktop regression" \

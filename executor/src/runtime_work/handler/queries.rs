@@ -333,9 +333,10 @@ impl RuntimeWorkRpcHandler {
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
         if navigation_only {
-            if local_link
-                .as_ref()
-                .is_some_and(provider_transcript_is_unmaterialized)
+            if !direct_thread_override
+                && local_link
+                    .as_ref()
+                    .is_some_and(provider_transcript_is_unmaterialized)
             {
                 return Ok(transcript_navigation_response(
                     local_task_id,
@@ -467,7 +468,7 @@ impl RuntimeWorkRpcHandler {
             link.ephemeral
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
-                || provider_transcript_is_unmaterialized(link)
+                || (!direct_thread_override && provider_transcript_is_unmaterialized(link))
         }) {
             let mut messages = cached_runtime_transcript_messages(link);
             let page_messages = messages.clone();

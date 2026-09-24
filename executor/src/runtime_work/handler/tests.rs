@@ -4387,6 +4387,54 @@ async fn unmaterialized_provider_transcript_returns_local_presentation() {
     let _ = fs::remove_file(index_path);
 }
 
+#[tokio::test]
+async fn direct_thread_override_bypasses_unmaterialized_local_transcript() {
+    for navigation_only in [false, true] {
+        let index_path = temp_runtime_work_index_path(if navigation_only {
+            "direct-thread-override-navigation"
+        } else {
+            "direct-thread-override-transcript"
+        });
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Pending task".to_owned(),
+        );
+        link.thread_id = Some("linked-thread".to_owned());
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": "runtime-local-pane-1",
+                "content": "local presentation",
+                "createdAt": 1790229662977_i64,
+                "ensureVisible": true,
+                "attachments": [],
+                "references": [],
+            }),
+        );
+        handler.upsert_local_task(link);
+
+        let error = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "runtimeHandle": {
+                        "threadId": "requested-thread"
+                    },
+                    "navigationOnly": navigation_only
+                }
+            }))
+            .await
+            .expect_err("an explicit thread override should read the requested provider thread");
+
+        assert_eq!(error.code, "codex_error");
+        let _ = fs::remove_file(index_path);
+    }
+}
+
 #[test]
 fn transcript_sync_requires_restore_before_native_thread_exists() {
     let index_path = temp_runtime_work_index_path("transcript-sync-pending-thread");
