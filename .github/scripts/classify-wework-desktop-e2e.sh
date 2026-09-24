@@ -36,6 +36,7 @@ core_segments=(
   computer-use
   task-status-sync
   task-board-association
+  task-board-bulk-actions
   core-task-flow
   task-attachments
   window-lifecycle
@@ -152,7 +153,7 @@ core_shards=(
   claude-runtime,temporary-chat,browser-annotation-anchors,conversation-state,dsh-owner-capture
   workspace-attachments,cloud-login-proxy,native-window-chrome,project-automation,fork-provider-preservation,collaboration-local-agent-capabilities
   collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference
-  task-board-association,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development
+  task-board-association,task-board-bulk-actions,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development
 )
 
 validate_core_shards() {
@@ -566,6 +567,12 @@ classify_wework_path() {
       select_target "core:collaboration-issue-comment-notification"
       return
       ;;
+    wework/src/features/todo/TaskBoardView* | \
+      wework/src/features/workbench/runtimeTaskArchive* | \
+      wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs)
+      select_target "core:task-board-bulk-actions"
+      return
+      ;;
     wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
@@ -589,6 +596,7 @@ classify_wework_path() {
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
         select_target "core:collaboration-local-agent-capabilities"
+        select_target "core:task-board-bulk-actions"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
@@ -646,6 +654,7 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
         select_target "core:task-status-sync"
+        select_target "core:task-board-bulk-actions"
       fi
       return
       ;;
