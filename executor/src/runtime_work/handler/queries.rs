@@ -500,7 +500,7 @@ impl RuntimeWorkRpcHandler {
                 running: local_execution_running,
             });
             let pagination = transcript_pagination(&runtime, limit, before_cursor, after_cursor);
-            return Ok(transcript_response(TranscriptResponseInput {
+            let mut response = transcript_response(TranscriptResponseInput {
                 local_task_id,
                 workspace_path,
                 runtime,
@@ -512,7 +512,13 @@ impl RuntimeWorkRpcHandler {
                 conversation_context_only,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
                 turn_navigation: Vec::new(),
-            }));
+            });
+            // Creation may not have registered the task yet. Absence of a local
+            // execution is unknown state, not evidence that the send has settled.
+            if !local_execution_running {
+                response.as_object_mut().unwrap().remove("running");
+            }
+            return Ok(response);
         };
 
         if refresh && !local_execution_running && !direct_thread_override {

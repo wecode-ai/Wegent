@@ -1,5 +1,6 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
+import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 
 import {
   app,
@@ -286,6 +287,16 @@ const pendingEmbeddedBrowserAttachments = new Map<
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'runtime-launch.log')
+)
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('console-message', (_event, _level, message) => {
+    void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+  })
+})
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
 const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()

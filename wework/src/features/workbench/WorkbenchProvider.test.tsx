@@ -9089,70 +9089,93 @@ describe('WorkbenchProvider runtime tasks', () => {
     clearRuntimeConversationCacheForTests()
   })
 
-  test('opens the runtime route and shows thinking while runtime task creation is pending', async () => {
-    const createRuntimeTask =
-      deferred<
-        Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
-      >()
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { id: 7, name: 'Wegent' },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'device-1',
-                  deviceName: 'Project Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [],
-                },
-              ],
-            },
-          ],
-          totalTasks: 0,
-        })
-      ),
-      createRuntimeTask: vi.fn().mockReturnValue(createRuntimeTask.promise),
-    })
-    const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-    })
+  test.each([true, false])(
+    'opens the runtime route and shows thinking while runtime task creation is pending (sync=%s)',
+    async syncRuntimeTaskLifecycle => {
+      const createRuntimeTask =
+        deferred<
+          Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
+        >()
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'device-1',
+                    deviceName: 'Project Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/project-alpha',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+              },
+            ],
+            totalTasks: 0,
+          })
+        ),
+        createRuntimeTask: vi.fn().mockReturnValue(createRuntimeTask.promise),
+      })
+      const services = createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
 
-    renderWorkbench(<ProjectSendProbe />, services)
+      const lifecycleStore = new RuntimeTaskLifecycleStore('pending-create')
+      const view = (sync: boolean) => (
+        <WorkbenchProvider
+          services={services}
+          syncRuntimeTaskLifecycle={sync}
+          lifecycleStore={lifecycleStore}
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        >
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      )
+      const { rerender } = render(view(syncRuntimeTaskLifecycle))
 
-    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
-    await userEvent.click(screen.getByText('select project'))
-    await userEvent.click(screen.getByText('set input'))
-    await userEvent.click(screen.getByText('send'))
+      await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+      await userEvent.click(screen.getByText('select project'))
+      await userEvent.click(screen.getByText('set input'))
+      await userEvent.click(screen.getByText('send'))
 
-    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
-    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
-    expect(request.taskId).toMatch(/^runtime-/)
-    expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
-      deviceId: 'device-1',
-      taskId: request.taskId,
-    })
-    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-      `device-1:${request.taskId}`
-    )
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
-
-    await act(async () => {
-      createRuntimeTask.resolve({
-        accepted: true,
+      await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+      const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+      expect(request.taskId).toMatch(/^runtime-/)
+      expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
         deviceId: 'device-1',
         taskId: request.taskId,
-        workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
       })
-    })
-    await waitFor(() => expect(screen.getByTestId('sending-state')).toHaveTextContent('idle'))
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
-  })
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        `device-1:${request.taskId}`
+      )
+      expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+
+      rerender(view(false))
+      expect(
+        lifecycleStore.getTask({ deviceId: 'device-1', taskId: request.taskId })?.turn.phase
+      ).toBe('submitting')
+      await act(async () => {
+        createRuntimeTask.resolve({
+          accepted: true,
+          deviceId: 'device-1',
+          taskId: request.taskId,
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+        })
+      })
+      expect(
+        lifecycleStore.getTask({ deviceId: 'device-1', taskId: request.taskId })?.turn.phase
+      ).toBe('awaiting')
+      await waitFor(() => expect(screen.getByTestId('sending-state')).toHaveTextContent('idle'))
+      expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    }
+  )
 
   test('clears thinking when a created runtime task transcript is already complete', async () => {
     let createdClientMessageId: string | undefined

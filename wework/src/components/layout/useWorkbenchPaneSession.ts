@@ -6,6 +6,7 @@ import {
 export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-transcript-page'
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 import i18n from '@/i18n'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   compareMessageStyles,
@@ -494,6 +495,27 @@ export function useWorkbenchPaneSession({
         : paneStatus.isBusy,
     [currentRuntimeTask, lifecycleStore, paneStatus.isBusy]
   )
+  const diagnosticTaskId = lifecycleAddress?.taskId
+  const diagnosticDeviceId = lifecycleAddress?.deviceId
+  const diagnosticHasActiveAssistant = Boolean(paneStatus.activeAssistantMessage)
+  useEffect(() => {
+    if (!diagnosticTaskId) return
+    logRuntimeTaskCreateStage('pane-waiting-state', {
+      taskId: diagnosticTaskId,
+      deviceId: diagnosticDeviceId,
+      sendPhase: paneStatus.sendPhase,
+      running: paneStatus.taskExecution.running,
+      waiting: paneStatus.isWaitingForAssistantIndicator,
+      hasActiveAssistant: diagnosticHasActiveAssistant,
+    })
+  }, [
+    diagnosticTaskId,
+    diagnosticDeviceId,
+    paneStatus.sendPhase,
+    paneStatus.taskExecution.running,
+    paneStatus.isWaitingForAssistantIndicator,
+    diagnosticHasActiveAssistant,
+  ])
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
@@ -760,6 +782,14 @@ export function useWorkbenchPaneSession({
         })
       )
       .then(transcript => {
+        logRuntimeTaskCreateStage('pane-transcript-received', {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          cancelled,
+          running: transcript.running ?? null,
+          messageCount: transcript.messages.length,
+          turnCount: transcript.turns.length,
+        })
         if (!cancelled) {
           const preserveActiveTurn =
             (runtimeConversationHydrationHasUpdates(address, hydrationToken) ||

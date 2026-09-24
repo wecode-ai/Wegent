@@ -13,9 +13,9 @@ function serializeDiagnostic(entry: Record<string, unknown>): string {
 
 export function logRuntimeTaskCreateStage(stage: string, details: Record<string, unknown>): void {
   const entry = {
+    timestamp: new Date().toISOString(),
     stage,
     ...details,
   }
-  console.info(LOG_PREFIX, entry)
-  void serializeDiagnostic(entry)
+  console.info(LOG_PREFIX, serializeDiagnostic(entry))
 }

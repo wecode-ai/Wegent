@@ -6,6 +6,7 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
@@ -356,6 +357,21 @@ export class RuntimeTaskLifecycleStore {
     let changed = eventChanged
     const next = machine.getSnapshot()
     if (
+      previous.execution.phase !== next.execution.phase ||
+      previous.turn.phase !== next.turn.phase ||
+      canonicalEvent.type === 'send_accepted'
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-transition', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        event: canonicalEvent.type,
+        previousExecution: previous.execution.phase,
+        execution: next.execution.phase,
+        previousTurn: previous.turn.phase,
+        turn: next.turn.phase,
+      })
+    }
+    if (
       canonicalEvent.type === 'turn_settled' &&
       previous.task?.running === true &&
       import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
@@ -582,6 +598,14 @@ export function createRuntimeTaskLifecycleOwnershipView(
         ? value.bind(target)
         : (...args: unknown[]) => {
             if (!canWrite()) {
+              if (property === 'syncTranscript') {
+                const address = args[0] as RuntimeTaskAddress
+                logRuntimeTaskCreateStage('pane-transcript-write-skipped', {
+                  taskId: address.taskId,
+                  deviceId: address.deviceId,
+                  reason: 'inactive-owner',
+                })
+              }
               return property === 'syncRuntimeTask' ? false : undefined
             }
             return value.apply(target, args)

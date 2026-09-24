@@ -348,6 +348,14 @@ The URL does not contain `workspacePath`. On refresh or shared links, the fronte
 
 New conversation and no-project entry points use the root path or regular conversation path, not placeholder parameters such as `projectId=0`. Project selection state is restored from the runtime workspace reference and the current conversation context.
 
+## New-task send state and diagnostics
+
+After sending, the frontend displays the user message and loads history while the executor may still be preparing a worktree, before registering the LocalTask. When no task link, provider session, or known execution exists, an empty transcript must omit `running` to represent unknown state. Returning `running=false` would prematurely settle the frontend send. Known running and completed states still use explicit booleans.
+
+Explicit sends update the shared `RuntimeTaskLifecycleStore` directly. Switching tabs or hiding the initiating view must not block `sendRequested`, `sendAccepted`, or send-failure updates. Background list and transcript synchronization remain subject to view ownership.
+
+To investigate a blank interval after sending, correlate `deviceId + taskId` between `runtime-launch.log` in the Electron log directory and executor logs. The former records transcript receipt, lifecycle transitions, waiting-indicator state, and `web_contents_id`; executor `runtime worktree stage` entries measure lock waits, preflight, Git worktree creation, and persistence. A backend `running=true` response does not prove that the frontend rendered a waiting indicator: compare both timelines. Message bodies are not required for these diagnostics. Changes to Electron log capture or the executor require restarting the corresponding process; frontend hot reload does not update either process.
+
 ## Compatibility
 
 Wegent-native Task/Subtask flows remain available for existing chat, shared task, and historical task URL paths. Wework sidebar, mobile drawer, project task display, and new task creation use the runtime work API instead of the DB task list or Backend `projects` table.

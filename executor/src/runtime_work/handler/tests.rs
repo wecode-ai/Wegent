@@ -4322,6 +4322,10 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["taskId"], "optimistic-local-task");
     assert_eq!(result["workspacePath"], "/tmp/project");
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    assert!(
+        result.get("running").is_none(),
+        "An unknown task must not report an authoritative idle execution"
+    );
 }
 
 #[test]
