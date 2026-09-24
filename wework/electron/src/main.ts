@@ -68,6 +68,7 @@ import { createSingleFlight, presentWindow } from './host/window-presentation.js
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
+  createStartupReadyHandler,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -1569,7 +1570,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           hideMainWindow: hideMainWindowToBackground,
           dockVisible: () => dockVisible,
-          rendererStartupReady: async source => {
+          rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
             if (!keepE2EWindowInBackground) mainWindow.show()
@@ -1583,7 +1584,7 @@ async function configureDesktopRuntime(): Promise<void> {
               mainWindow.webContents.focus()
             }
             scheduleComputerUseStartup()
-          },
+          }),
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
             return startupSplash?.showError()
