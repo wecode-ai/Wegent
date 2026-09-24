@@ -523,6 +523,67 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("keeps started human work when a queued detail load applies afterward", () => {
+    const pending = {
+      ...issue,
+      assignee_user_id: 1,
+      human_work: {
+        assignment_id: "assignment-1",
+        assignee_user_id: 1,
+        reviewer_user_id: null,
+        submission_message_id: null,
+        submitted_by_user_id: null,
+        state: "none" as const,
+        can_start: true,
+        can_submit: false,
+        can_review: false,
+      },
+    };
+    const started = {
+      ...pending,
+      status: "in_progress",
+      version: pending.version + 1,
+      human_work: {
+        ...pending.human_work,
+        can_start: false,
+        can_submit: true,
+      },
+    };
+    state = {
+      ...state,
+      project,
+      issues: [pending],
+      projectItems: { [project.id]: [pending] },
+      selectedIssue: pending,
+    };
+
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "replace-issue",
+      issue: started,
+    });
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "issue-loaded",
+      issue: pending,
+      attachments: [attachment],
+      comments: [comment],
+      assignments: [],
+      executions: [],
+      preserveAttachments: false,
+      preserveComments: false,
+      preserveAssignments: false,
+    });
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "replace-issue",
+      issue: pending,
+    });
+
+    expect(state.selectedIssue).toEqual(started);
+    expect(state.issues).toEqual([started]);
+    expect(state.projectItems[project.id]).toEqual([started]);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+  });
+
   it("ignores a collection mutation that belongs to another issue", () => {
     const otherIssue = {
       ...issue,
