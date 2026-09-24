@@ -50,46 +50,6 @@ describe('createWebSharedWorkspaceApi', () => {
     }
   )
 
-  it.each(['modelOptions', 'model_options'])(
-    'preserves opaque %s keys when configuring an issue workflow',
-    async optionsKey => {
-      const client = createClient()
-      const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
-      const modelOptions = {
-        weworkCloudModelNamespace: 'team',
-        weworkCloudModelResourceUserId: '7',
-        reasoning_effort: 'medium',
-      }
-      const executionConfig = {
-        executionDeviceId: 'cloud-device',
-        model: 'model',
-        modelType: 'group',
-        [optionsKey]: modelOptions,
-      }
-
-      await api.issues.create('project/1', { title: 'Issue', executionConfig })
-      await api.issues.update('issue/1', {
-        version: 2,
-        workflow: { execution_config: executionConfig },
-      })
-
-      const wireConfig = {
-        execution_device_id: 'cloud-device',
-        model: 'model',
-        model_type: 'group',
-        model_options: modelOptions,
-      }
-      expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/loop-items', {
-        title: 'Issue',
-        execution_config: wireConfig,
-      })
-      expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue%2F1', {
-        version: 2,
-        workflow: { execution_config: wireConfig },
-      })
-    }
-  )
-
   it('requests terminal execution history only when explicitly required', async () => {
     const client = createClient()
     client.get.mockResolvedValue({ items: [] })
@@ -127,7 +87,6 @@ describe('createWebSharedWorkspaceApi', () => {
       title: 'Ship it',
       dueAt: '2026-09-12T00:00:00Z',
       parentId: 'parent-1',
-      executionConfig: { runtimeProfileId: 'profile-1' },
     })
 
     expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', {
@@ -149,43 +108,30 @@ describe('createWebSharedWorkspaceApi', () => {
       title: 'Ship it',
       due_at: '2026-09-12T00:00:00Z',
       parent_id: 'parent-1',
-      execution_config: { runtime_profile_id: 'profile-1' },
     })
   })
 
-  it('maps paged task bindings and workflow plans at the adapter boundary', async () => {
+  it('maps paged task bindings at the adapter boundary', async () => {
     const client = createClient()
-    client.get
-      .mockResolvedValueOnce({
-        items: [],
-        next_cursor: 'cursor-2',
-        task_bindings: [
-          {
-            id: '42',
-            cloud_project_id: '11',
-            loop_item_id: 'issue-1',
-            task_user_id: 7,
-            device_id: 'device-1',
-            task_id: 'task-1',
-            task_title: 'Task',
-            backend_task_id: 99,
-            modelSelection: { model: 'gpt' },
-            workflow_node_id: 'node-1',
-            linked_at: '2026-09-10T00:00:00Z',
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        run_id: 'run-1',
-        issue_id: 'issue-1',
-        stage_id: 'stage-1',
-        plan_version: 2,
-        approval_policy: 'required',
-        status: 'awaiting_approval',
-        summary: 'Plan',
-        items: [{ title: 'Child' }],
-        manager_run: { id: 'manager-1' },
-      })
+    client.get.mockResolvedValue({
+      items: [],
+      next_cursor: 'cursor-2',
+      task_bindings: [
+        {
+          id: '42',
+          cloud_project_id: '11',
+          loop_item_id: 'issue-1',
+          task_user_id: 7,
+          device_id: 'device-1',
+          task_id: 'task-1',
+          task_title: 'Task',
+          backend_task_id: 99,
+          modelSelection: { model: 'gpt' },
+          workflow_node_id: null,
+          linked_at: '2026-09-10T00:00:00Z',
+        },
+      ],
+    })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
     await expect(
@@ -204,33 +150,176 @@ describe('createWebSharedWorkspaceApi', () => {
           taskTitle: 'Task',
           backendTaskId: 99,
           modelSelection: { model: 'gpt' },
-          workflowNodeId: 'node-1',
           linkedAt: '2026-09-10T00:00:00Z',
         },
       ],
     })
-    await expect(api.workflowPlans.get!('issue-1')).resolves.toMatchObject({
-      runId: 'run-1',
-      issueId: 'issue-1',
-      planVersion: 2,
-      status: 'awaiting_approval',
-    })
   })
 
-  it('maps workflow stage context with the shared DTO contract', async () => {
-    const client = createClient()
-    client.get.mockResolvedValue({
-      compiled_task_instruction: 'Run the deployment',
-      source: 'delivery',
+  it('maps the complete Issue Dispatch API contract', async () => {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      configurable: true,
+      value: jest.fn(() => 'idempotency-key'),
     })
+    const client = createClient()
+    const dispatch = {
+      id: 'dispatch-1',
+      project_id: 'project-1',
+      issue_id: 'issue-1',
+      target_type: 'group',
+      target_id: 'group-1',
+      target_name: 'Delivery group',
+      leader_type: 'agent',
+      leader_id: 'agent-manager',
+      leader_name: 'Manager',
+      status: 'active',
+      manager_turn_count: 2,
+      rounds: [
+        {
+          id: 'round-1',
+          sequence: 1,
+          status: 'executing',
+          tasks: [
+            {
+              id: 'task-1',
+              task_title: 'Inspect CPU',
+              instructions: 'Collect two samples',
+              assignee_type: 'agent',
+              assignee_id: 'agent-1',
+              assignee_name: 'Inspector',
+              workflow_stage_id: 'stage-1',
+              status: 'running',
+              summary: '',
+              execution_location: 'local',
+              created_at: '2026-09-24T00:00:00Z',
+              updated_at: '2026-09-24T00:01:00Z',
+            },
+          ],
+          created_at: '2026-09-24T00:00:00Z',
+          updated_at: '2026-09-24T00:01:00Z',
+        },
+      ],
+      created_at: '2026-09-24T00:00:00Z',
+      updated_at: '2026-09-24T00:01:00Z',
+    }
+    client.get
+      .mockResolvedValueOnce({ items: [dispatch] })
+      .mockResolvedValueOnce(dispatch)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            target_type: 'agent',
+            target_id: 'agent-1',
+            name: 'Inspector',
+            execution_location: 'local',
+          },
+          {
+            target_type: 'human',
+            target_id: '7',
+            name: 'Reviewer',
+            execution_location: 'human',
+          },
+        ],
+      })
+      .mockResolvedValue(dispatch)
+    client.post.mockResolvedValue(dispatch)
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
-    await expect(api.workflowPlans.getStageContext('issue-1', 'node-1')).resolves.toEqual({
-      compiledTaskInstruction: 'Run the deployment',
-      source: 'delivery',
+    await expect(api.dispatches.list('issue-1')).resolves.toMatchObject([
+      {
+        id: 'dispatch-1',
+        status: 'active',
+        target: { kind: 'collaboration_group', id: 'group-1' },
+        leaderType: 'agent',
+        leaderId: 'agent-manager',
+        leaderName: 'Manager',
+        managerTurnCount: 2,
+        rounds: [
+          {
+            status: 'executing',
+            tasks: [
+              {
+                title: 'Inspect CPU',
+                status: 'running',
+                executionLocation: 'local',
+              },
+            ],
+          },
+        ],
+      },
+    ])
+    await expect(api.dispatches.get('dispatch-1')).resolves.toMatchObject({
+      id: 'dispatch-1',
     })
+    await expect(api.dispatches.listCandidates('issue-1', 'agent')).resolves.toEqual([
+      {
+        kind: 'agent',
+        id: 'agent-1',
+        name: 'Inspector',
+        description: 'local',
+      },
+    ])
     expect(client.get).toHaveBeenCalledWith(
-      '/v1/loop-items/issue-1/workflow-nodes/node-1/input-context'
+      '/v1/loop-items/issue-1/dispatch-candidates?target_type=agent'
+    )
+    await api.dispatches.create('issue-1', {
+      target: { kind: 'agent', id: 'agent-1' },
+      taskTitle: 'Inspect CPU',
+      instructions: 'Collect two samples',
+    })
+    expect(client.post).toHaveBeenCalledWith(
+      '/v1/loop-items/issue-1/dispatches',
+      expect.objectContaining({
+        target_type: 'agent',
+        target_id: 'agent-1',
+        task_title: 'Inspect CPU',
+        instructions: 'Collect two samples',
+        idempotency_key: expect.any(String),
+      })
+    )
+    await api.dispatches.createRound('dispatch-1', {
+      tasks: [
+        {
+          title: 'Review result',
+          instruction: 'Verify the evidence',
+          target: { kind: 'human', id: '7' },
+          workflowStageId: 'stage-2',
+        },
+      ],
+    })
+    expect(client.post).toHaveBeenCalledWith(
+      '/v1/issue-dispatches/dispatch-1/rounds',
+      expect.objectContaining({
+        tasks: [
+          {
+            task_title: 'Review result',
+            instructions: 'Verify the evidence',
+            assignee_type: 'human',
+            assignee_id: '7',
+            workflow_stage_id: 'stage-2',
+          },
+        ],
+      })
+    )
+    await api.dispatches.cancelTask('task-1')
+    await api.dispatches.retry('dispatch-1')
+    await api.dispatches.decide('dispatch-1', {
+      status: 'in_review',
+      reason: 'Evidence is ready',
+    })
+    await api.dispatches.returnForRework('dispatch-1')
+    expect(client.post).toHaveBeenCalledWith('/v1/issue-dispatch-tasks/task-1/cancel', {})
+    expect(client.post).toHaveBeenCalledWith('/v1/issue-dispatches/dispatch-1/retry', {})
+    expect(client.post).toHaveBeenCalledWith(
+      '/v1/issue-dispatches/dispatch-1/decisions',
+      expect.objectContaining({
+        target_status: 'in_review',
+        reason: 'Evidence is ready',
+      })
+    )
+    expect(client.post).toHaveBeenCalledWith(
+      '/v1/issue-dispatches/dispatch-1/return-for-rework',
+      {}
     )
   })
 

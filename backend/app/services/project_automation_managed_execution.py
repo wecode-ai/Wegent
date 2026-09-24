@@ -253,6 +253,19 @@ class ProjectAutomationManagedExecutionService:
                 "weworkSpaceTaskId": loop_item_id,
             }
         )
+        origin_context = execution.runtime_origin_context
+        dispatch_id = str(origin_context.get("dispatch_id") or "")
+        dispatch_task_id = str(origin_context.get("dispatch_task_id") or "")
+        dispatch_role = str(origin_context.get("dispatch_role") or "")
+        if dispatch_id and dispatch_task_id and dispatch_role:
+            labels.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": dispatch_task_id,
+                    "dispatchRole": dispatch_role,
+                    "managerAgentId": str(origin_context.get("manager_agent_id") or ""),
+                }
+            )
         if model_id:
             labels["modelId"] = model_id
         task_store.update_json(db, task=result.task, payload=task_json)
@@ -322,6 +335,7 @@ class ProjectAutomationManagedExecutionService:
                 team_id=team.id,
                 user_id=owner.id,
                 prompt=normalized_prompt,
+                developer_instruction=str(origin_context.get("system_prompt") or ""),
                 source=handle.source,
                 execution_id=handle.execution_id,
             )

@@ -662,64 +662,6 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
-    pub fn local_automation_assignment_candidates(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .local_automation_assignment_candidates(project_id, task_id, run_id)
-    }
-
-    pub fn submit_local_automation_workflow_plan(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-        plan: &Value,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
-    }
-
-    pub fn submit_local_review_feedback(
-        &self,
-        task_id: &str,
-        version: i64,
-        feedback: &str,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .submit_local_review_feedback(task_id, version, feedback)
-    }
-
-    pub fn report_local_workflow_outcome(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        runtime_task_id: &str,
-        outcome: &Value,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store.report_local_workflow_outcome(
-            project_id,
-            task_id,
-            runtime_task_id,
-            outcome,
-        )
-    }
-
-    pub fn decide_local_automation_workflow_review(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-        decision: &str,
-        summary: &str,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .decide_local_automation_workflow_review(project_id, task_id, run_id, decision, summary)
-    }
-
     pub fn create_chat_agent(
         &self,
         project_id: &str,

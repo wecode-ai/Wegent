@@ -31,7 +31,6 @@ import {
   type CollaborationExecution,
   type SharedWorkspaceApi,
   type WorkspaceDelivery,
-  type WorkspaceWorkflowPlan,
 } from '@wegent/collaboration'
 
 const issue: CollaborationIssue = {
@@ -94,9 +93,7 @@ describe('shared IssueDetail', () => {
     | 'assignments'
     | 'collaborators'
     | 'taskBindings'
-    | 'workflowPlans'
     | 'deliveries'
-    | 'automations'
   >
 
   const member = {
@@ -123,16 +120,6 @@ describe('shared IssueDetail', () => {
     addedByUserId: 1,
     createdAt: '2026-09-10T00:00:00Z',
   }
-  const workflowPlan = (status: WorkspaceWorkflowPlan['status']): WorkspaceWorkflowPlan => ({
-    runId: `run-${status}`,
-    issueId: issue.id,
-    stageId: 'stage-1',
-    planVersion: 1,
-    approvalPolicy: 'required',
-    status,
-    summary: `方案 ${status}`,
-    items: [{ id: 'step-1', title: '实现共享详情' }],
-  })
   const delivery: WorkspaceDelivery = {
     id: 'delivery-1',
     issueId: issue.id,
@@ -185,9 +172,6 @@ describe('shared IssueDetail', () => {
       taskBindings: {
         list: jest.fn().mockResolvedValue([]),
       },
-      workflowPlans: {
-        get: jest.fn().mockResolvedValue(null),
-      },
       deliveries: {
         list: jest.fn().mockResolvedValue([]),
         get: jest.fn().mockResolvedValue(delivery),
@@ -195,9 +179,6 @@ describe('shared IssueDetail', () => {
         addAsset: jest.fn(),
         finalize: jest.fn(),
         discardDraft: jest.fn(),
-      },
-      automations: {
-        runWorkflowNode: jest.fn(),
       },
       ...overrides,
     } as unknown as IssueDetailApi
@@ -295,14 +276,10 @@ describe('shared IssueDetail', () => {
 
   it('loads details only for a changed Issue or API, not changed callbacks', async () => {
     const api = createApi()
-    const aiIssue: CollaborationIssue = {
-      ...issue,
-      workflow: { advancement_policy: 'ai' },
-    }
-    const view = renderDetail(api, { issue: aiIssue })
+    const view = renderDetail(api)
     await act(async () => {})
     for (let index = 0; index < 10; index += 1) {
-      view.rerender(detailView(api, { issue: aiIssue }))
+      view.rerender(detailView(api))
       await act(async () => {})
     }
     const requests = [
@@ -312,11 +289,10 @@ describe('shared IssueDetail', () => {
       api.collaborators.list,
       api.members.list,
       api.agents.list,
-      api.workflowPlans.get,
     ]
     for (const request of requests) expect(request).toHaveBeenCalledTimes(1)
 
-    const nextIssue = { ...aiIssue, id: 'issue-2' }
+    const nextIssue = { ...issue, id: 'issue-2' }
     view.rerender(detailView(api, { issue: nextIssue }))
     await act(async () => {})
     for (const request of requests) expect(request).toHaveBeenCalledTimes(2)
@@ -326,7 +302,6 @@ describe('shared IssueDetail', () => {
     view.rerender(detailView(nextApi, { issue: nextIssue }))
     await act(async () => {})
     expect(nextApi.attachments.list).toHaveBeenCalledTimes(1)
-    expect(nextApi.workflowPlans.get).toHaveBeenCalledWith(nextIssue.id)
   })
 
   it.each([409, 500])('uses the latest callbacks after a %s save failure', async status => {
@@ -1238,254 +1213,5 @@ describe('shared IssueDetail', () => {
     anchorClick.mockRestore()
     delete (URL as Partial<typeof URL>).createObjectURL
     delete (URL as Partial<typeof URL>).revokeObjectURL
-  })
-
-  it('lets a user approve, pause, and resume an AI workflow', async () => {
-    const approve = jest.fn().mockResolvedValue(workflowPlan('running'))
-    const pause = jest.fn().mockResolvedValue(workflowPlan('paused'))
-    const resume = jest.fn().mockResolvedValue(workflowPlan('running'))
-    const replan = jest.fn().mockResolvedValue(workflowPlan('awaiting_approval'))
-    const api = createApi({
-      workflowPlans: {
-        get: jest.fn().mockResolvedValue(workflowPlan('awaiting_approval')),
-        approve,
-        pause,
-        resume,
-        replan,
-      },
-    })
-
-    renderDetail(api, {
-      issue: {
-        ...issue,
-        workflow: {
-          advancement_policy: 'ai',
-          orchestration_status: 'awaiting_approval',
-          nodes: [],
-        },
-      },
-    })
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-workflow-replan'))
-    await waitFor(() => expect(replan).toHaveBeenCalledWith(issue.id))
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-workflow-approve'))
-    await waitFor(() => expect(approve).toHaveBeenCalledWith(issue.id))
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-workflow-pause'))
-    await waitFor(() => expect(pause).toHaveBeenCalledWith(issue.id))
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-workflow-resume'))
-    await waitFor(() => expect(resume).toHaveBeenCalledWith(issue.id))
-  })
-
-  it('reserves AI workflow review decisions for the manager', async () => {
-    const approveReview = jest.fn().mockResolvedValue(workflowPlan('running'))
-    const api = createApi({
-      workflowPlans: {
-        get: jest.fn().mockResolvedValue(workflowPlan('awaiting_review')),
-        approveReview,
-      },
-    })
-
-    renderDetail(api, {
-      issue: {
-        ...issue,
-        workflow: {
-          advancement_policy: 'ai',
-          orchestration_status: 'awaiting_review',
-          nodes: [],
-        },
-      },
-    })
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    expect(await screen.findByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent(
-      '等待管理者判断'
-    )
-    expect(screen.queryByTestId('cloud-todo-workflow-review')).not.toBeInTheDocument()
-    expect(approveReview).not.toHaveBeenCalled()
-  })
-
-  it('runs workflow nodes and completes stage deliverables through the shared cloud chain', async () => {
-    const runningIssue = {
-      ...issue,
-      version: 2,
-      workflow: {
-        advancement_policy: 'manual' as const,
-        nodes: [
-          {
-            id: 'automation-stage',
-            name: '自动检查',
-            depends_on: [],
-            required: true,
-            workspace_policy: 'composer' as const,
-            execution_mode: 'robot' as const,
-            automation_rule_id: 'automation-1',
-            status: 'running' as const,
-          },
-        ],
-      },
-    }
-    const runWorkflowNode = jest.fn().mockResolvedValue({ id: 'run-1' })
-    const getIssue = jest.fn().mockResolvedValue(runningIssue)
-    const onChange = jest.fn()
-    const runApi = createApi({
-      issues: {
-        get: getIssue,
-        create: jest.fn(),
-        update: jest.fn(),
-        assign: jest.fn(),
-      },
-      automations: { runWorkflowNode },
-    })
-    const runView = renderDetail(runApi, {
-      issue: {
-        ...issue,
-        workflow: {
-          advancement_policy: 'manual',
-          nodes: [
-            {
-              id: 'automation-stage',
-              name: '自动检查',
-              depends_on: [],
-              required: true,
-              workspace_policy: 'composer',
-              execution_mode: 'robot',
-              automation_rule_id: 'automation-1',
-              status: 'ready',
-            },
-          ],
-        },
-      },
-      onChange,
-    })
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-run-workflow-node-automation-stage'))
-    await waitFor(() =>
-      expect(runWorkflowNode).toHaveBeenCalledWith(
-        project.id,
-        issue.id,
-        'automation-stage',
-        'automation-1'
-      )
-    )
-    expect(getIssue).toHaveBeenCalledWith(issue.id)
-    expect(onChange).toHaveBeenCalledWith(runningIssue)
-    runView.unmount()
-
-    const completedIssue = {
-      ...issue,
-      version: 3,
-      workflow: {
-        advancement_policy: 'manual' as const,
-        nodes: [],
-      },
-    }
-    const createDelivery = jest.fn().mockResolvedValue({
-      ...delivery,
-      id: 'delivery-draft',
-      status: 'draft',
-    })
-    const finalize = jest.fn().mockResolvedValue(delivery)
-    const decideNode = jest.fn().mockResolvedValue(completedIssue)
-    const completionApi = createApi({
-      issues: {
-        get: jest.fn().mockResolvedValue(completedIssue),
-        create: jest.fn(),
-        update: jest.fn(),
-        assign: jest.fn(),
-      },
-      taskBindings: {
-        list: jest.fn().mockResolvedValue([
-          {
-            id: 1,
-            projectId: project.id,
-            issueId: issue.id,
-            taskUserId: 1,
-            deviceId: 'device-1',
-            taskId: 'task-1',
-            taskTitle: '实现任务',
-            backendTaskId: 7,
-            workflowNodeId: 'review-stage',
-            linkedAt: '2026-09-11T00:00:00Z',
-          },
-        ]),
-      },
-      workflowPlans: {
-        get: jest.fn().mockResolvedValue(null),
-        decideNode,
-      },
-      deliveries: {
-        list: jest.fn().mockResolvedValue([]),
-        get: jest.fn().mockResolvedValue(delivery),
-        create: createDelivery,
-        addAsset: jest.fn(),
-        finalize,
-        discardDraft: jest.fn(),
-      },
-    })
-    renderDetail(completionApi, {
-      issue: {
-        ...issue,
-        workflow: {
-          advancement_policy: 'manual',
-          nodes: [
-            {
-              id: 'review-stage',
-              name: '人工验收',
-              depends_on: [],
-              required: true,
-              workspace_policy: 'composer',
-              execution_mode: 'human',
-              status: 'awaiting_approval',
-              required_deliverables: [
-                {
-                  id: 'report',
-                  name: '验收报告',
-                  description: '',
-                  value_type: 'text',
-                },
-              ],
-            },
-          ],
-        },
-      },
-      onChange,
-    })
-
-    fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    fireEvent.click(await screen.findByTestId('cloud-todo-approve-workflow-node-review-stage'))
-    const deliverable = await screen.findByTestId('workflow-deliverable-input-report')
-    fireEvent.change(deliverable.querySelector('textarea')!, {
-      target: { value: '验收通过' },
-    })
-    fireEvent.click(screen.getByTestId('workflow-stage-completion-submit'))
-
-    await waitFor(() =>
-      expect(createDelivery).toHaveBeenCalledWith(
-        issue.id,
-        expect.objectContaining({
-          sourceTask: expect.objectContaining({
-            deviceId: 'device-1',
-            taskId: 'task-1',
-            backendTaskId: 7,
-          }),
-        })
-      )
-    )
-    expect(finalize).toHaveBeenCalledWith('delivery-draft', {
-      fulfillments: [
-        {
-          requirement_id: 'report',
-          kind: 'text',
-          text: '验收通过',
-        },
-      ],
-    })
-    expect(decideNode).toHaveBeenCalledWith(issue.id, 'review-stage', 'approve', '')
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith(completedIssue))
   })
 })

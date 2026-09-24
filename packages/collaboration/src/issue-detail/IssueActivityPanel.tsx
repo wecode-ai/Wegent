@@ -46,6 +46,7 @@ import type {
 
 import { issueActivityEntries } from "./issueActivityEntries";
 import { activityDisplayBody } from "./activityDisplayBody";
+import { useIssueDispatchController } from "./IssueDispatchPanel";
 
 export function IssueActivityPanel({
   api,
@@ -71,7 +72,7 @@ export function IssueActivityPanel({
     Partial<
       Pick<
         SharedWorkspaceApi,
-        "attachments" | "runtime" | "taskBindings" | "issues"
+        "attachments" | "runtime" | "taskBindings" | "issues" | "dispatches"
       >
     >;
   issue: CollaborationIssue;
@@ -145,6 +146,15 @@ export function IssueActivityPanel({
         : issueActivityEntries(assignments, comments, executions),
     [api.activity, assignments, comments, executions],
   );
+  const dispatch = useIssueDispatchController({
+    api: api.dispatches,
+    issueId: issue.id,
+    desktop: false,
+    translate,
+    onIssueChanged: api.issues && onTaskUpdated
+      ? async () => onTaskUpdated(await api.issues!.get(issue.id))
+      : undefined,
+  });
 
   const content = (
     <IssueMarkdownProvider attachments={api.attachments}>
@@ -153,7 +163,7 @@ export function IssueActivityPanel({
         listTestId="collaboration-comments"
         listRef={scroll.listRef}
         translate={translate}
-        count={entries.length + chat.messages.length}
+        count={entries.length + chat.messages.length + dispatch.activityCount}
         loading={chat.loading}
         error={chat.error ?? cancellation.error}
         emptyDescription={
@@ -165,7 +175,8 @@ export function IssueActivityPanel({
             : translate("activity.task_activity_empty_without_ai")
         }
         tools={
-          api.issues ? (
+          <div className="flex items-center gap-2">
+            {api.issues ? (
             <BrowserIssueActivityTools
               key={issue.id}
               api={{ ...api, issues: api.issues }}
@@ -178,7 +189,9 @@ export function IssueActivityPanel({
               onTaskUpdated={onTaskUpdated}
               translate={translate}
             />
-          ) : undefined
+            ) : null}
+            {dispatch.tools}
+          </div>
         }
         composer={
           api.runtime &&
@@ -225,8 +238,8 @@ export function IssueActivityPanel({
               translate={translate}
               send={async (body, mentions) => {
                 if (api.activity) {
-                  await chat.send(body, undefined, mentions)
-                  return
+                  await chat.send(body, undefined, mentions);
+                  return;
                 }
                 return api.comments.create(issue.id, body);
               }}
@@ -237,6 +250,7 @@ export function IssueActivityPanel({
         }
       >
         <div className="flex flex-col">
+          {dispatch.activity}
           {[
             ...threads.map((thread) => ({
               kind: "thread" as const,
@@ -276,7 +290,6 @@ export function IssueActivityPanel({
                         message,
                         taskBindings,
                         issue.title,
-                        issue.workflow?.nodes,
                         onOpenTaskConversation,
                       )
                     }

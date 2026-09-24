@@ -251,7 +251,6 @@ describe('CollaborationApp project collaboration groups', () => {
         update: jest.fn(),
         remove: jest.fn(),
         runNow: jest.fn(),
-        runWorkflowNode: jest.fn(),
         listRuns: jest.fn().mockResolvedValue([]),
         cancelRun: jest.fn(),
         retryRun: jest.fn(),

@@ -430,7 +430,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared collaboration package selects its desktop checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-tool-roles,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-mention,collaboration-issue-comment-notification"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix,issue-dispatch-unified-board"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round"},{"id":"core-10","name":"Core / shard 10","segments":"issue-dispatch-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-issue-comment-mention,collaboration-issue-comment-notification,issue-dispatch-human"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/CollaborationApp.tsx"
@@ -446,7 +446,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-tool-roles,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"remote-device-onboarding"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-shared-core,collaboration-settings-matrix,issue-dispatch-unified-board"},{"id":"core-9","name":"Core / shard 9","segments":"collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round"},{"id":"core-10","name":"Core / shard 10","segments":"issue-dispatch-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"issue-dispatch-human"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / shard 13","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -582,11 +582,13 @@ wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shar
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
-full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-tool-roles,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix\"/\"segments\":\"conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix,issue-dispatch-unified-board\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll,issue-dispatch-cancellation\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-automation\"/\"segments\":\"project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,board-focus-view,board-transcript-preload\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention\"}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification,issue-dispatch-human\"}"
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
@@ -759,13 +761,13 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
 
-assert_desktop_case "collaboration automation chain scenario selects its core shard" \
+assert_desktop_case "Issue Dispatch scenario selects every dispatch checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"issue-dispatch-unified-board"},{"id":"core-9","name":"Core / shard 9","segments":"issue-dispatch-agent,issue-dispatch-group-round"},{"id":"core-10","name":"Core / shard 10","segments":"issue-dispatch-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"issue-dispatch-human"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs"
+  "wework/e2e/desktop/scenarios/issue-dispatch.scenario.mjs"
 
 assert_desktop_case "collaboration first-use scenario selects its core shard" \
   'wework_desktop_e2e=true
@@ -783,22 +785,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
 
-assert_desktop_case "collaboration local agent capabilities scenario selects its core shard" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-agent-capabilities"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs"
-
-assert_desktop_case "collaboration local tool roles scenario selects its core shard" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-local-tool-roles"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-local-tool-roles.scenario.mjs"
-
 assert_desktop_case "collaboration local executor Issue tools scenario selects its core shard" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -815,13 +801,13 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-settings-matrix.scenario.mjs"
 
-assert_desktop_case "collaboration backend automation changes select the agent automation chain" \
+assert_desktop_case "collaboration backend dispatch changes select all dispatch checkpoints" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"collaboration-agent-automation-chain"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"issue-dispatch-unified-board"},{"id":"core-9","name":"Core / shard 9","segments":"issue-dispatch-agent,issue-dispatch-group-round"},{"id":"core-10","name":"Core / shard 10","segments":"issue-dispatch-cancellation"},{"id":"core-12","name":"Core / shard 12","segments":"issue-dispatch-human"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "backend/app/services/project_automation_execution.py"
+  "backend/app/services/issue_dispatch.py"
 
 assert_desktop_case "project assignment notification E2E changes select assignment coverage" \
   'wework_desktop_e2e=true

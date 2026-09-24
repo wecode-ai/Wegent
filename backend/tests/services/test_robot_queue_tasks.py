@@ -457,6 +457,56 @@ def test_stall_cancel_routes_managed_runs_to_the_chat_runtime() -> None:
     )
 
 
+def test_runtime_cancel_routes_through_execution_target() -> None:
+    """A local Runtime may report a hardware ID that differs from its socket route."""
+
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+    execution = LoopItemExecution(
+        id=13,
+        executor_owner_user_id=9,
+        execution_device_id="app-record-65",
+        runtime_device_id="electron-runtime-device",
+        runtime_task_id="codex-queue-13",
+    )
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"emitted": True, "accepted": True}
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.post.return_value = response
+
+    @contextmanager
+    def _test_session():
+        yield MagicMock()
+
+    with (
+        patch("httpx.Client", return_value=client),
+        patch("app.db.session.get_db_session", _test_session),
+        patch(
+            "app.tasks.robot_queue_tasks.loop_item_execution_service."
+            "confirm_runtime_cancelled"
+        ) as confirm_runtime_cancelled,
+    ):
+        cancelled = emit_runtime_cancels([execution])
+
+    assert cancelled == {13}
+    client.post.assert_called_once()
+    assert client.post.call_args.kwargs["json"] == {
+        "user_id": 9,
+        "device_id": "app-record-65",
+        "method": "runtime.tasks.cancel",
+        "payload": {
+            "taskId": "codex-queue-13",
+            "deviceId": "electron-runtime-device",
+        },
+        "wait_ack": True,
+        "ack_timeout_seconds": 15,
+    }
+    confirm_runtime_cancelled.assert_called_once()
+    assert confirm_runtime_cancelled.call_args.kwargs["execution_id"] == 13
+
+
 async def test_queue_wakeup_only_emits_availability(
     test_db: Session,
     test_user: User,

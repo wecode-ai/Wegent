@@ -2633,10 +2633,7 @@
   font-weight: 500;
 }
 
-.task-detail-workspace-panel .task-detail-activity-order,
-.task-detail-workspace-panel
-  .task-detail-comments-head
-  .task-detail-activity-tools {
+.task-detail-workspace-panel .task-detail-activity-order {
   display: none;
 }
 

@@ -271,6 +271,12 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
 ):
     """The bell files board work a member is pulled into under collaboration."""
 
+    collaboration_kinds = (
+        "mention",
+        "execution",
+        "issue_dispatch_assignment",
+        "issue_dispatch_manager_turn",
+    )
     rows = {
         kind: create_notification(
             test_db,
@@ -280,7 +286,7 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
             body=kind,
             kind=kind,
         )
-        for kind in ("mention", "execution", "message")
+        for kind in (*collaboration_kinds, "message")
     }
     test_db.commit()
     headers = {"Authorization": f"Bearer {test_token}"}
@@ -290,8 +296,7 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
         f"{path}?category=collaboration", headers=headers
     ).json()
     assert {item["id"] for item in collaboration["items"]} == {
-        rows["mention"].id,
-        rows["execution"].id,
+        rows[kind].id for kind in collaboration_kinds
     }
     general = test_client.get(f"{path}?category=general", headers=headers).json()
     assert {item["id"] for item in general["items"]} == {rows["message"].id}

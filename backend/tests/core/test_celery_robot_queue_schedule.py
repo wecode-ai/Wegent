@@ -1,3 +1,5 @@
+import importlib
+
 from celery.schedules import crontab
 
 from app.core.celery_app import build_beat_schedule, celery_app
@@ -27,6 +29,17 @@ def test_beat_schedule_is_empty_when_scheduled_tasks_are_disabled(monkeypatch) -
     monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", False)
 
     assert build_beat_schedule() == {}
+
+
+def test_every_scheduled_task_is_registered_by_its_declaring_module(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "SCHEDULED_TASKS_ENABLED", True)
+
+    for entry in build_beat_schedule().values():
+        task_name = entry["task"]
+        importlib.import_module(task_name.rsplit(".", 1)[0])
+        assert task_name in celery_app.tasks
 
 
 def test_dingtalk_sync_schedule_stays_off_until_an_environment_opts_in(

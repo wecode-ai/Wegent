@@ -9,10 +9,12 @@ core_segments=(
   collaboration-settings-matrix
   collaboration-first-use
   collaboration-group-onboarding
-  collaboration-local-agent-capabilities
-  collaboration-local-tool-roles
   collaboration-local-executor-issue-tools
-  collaboration-agent-automation-chain
+  issue-dispatch-unified-board
+  issue-dispatch-human
+  issue-dispatch-agent
+  issue-dispatch-group-round
+  issue-dispatch-cancellation
   collaboration-issue-comment-mention
   collaboration-issue-comment-notification
   cloud-space-mention
@@ -153,14 +155,14 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
+  conversation-state,send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix,issue-dispatch-unified-board
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-tool-roles,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
-  resilience,environment-panel-scroll
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round
+  resilience,environment-panel-scroll,issue-dispatch-cancellation
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification,issue-dispatch-human
   rendering-extensions
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
@@ -298,6 +300,14 @@ select_cloud_worktree_checkpoints() {
   for segment in "${cloud_worktree_segments[@]}"; do
     select_target "cloud:$segment"
   done
+}
+
+select_issue_dispatch_checkpoints() {
+  select_target "core:issue-dispatch-unified-board"
+  select_target "core:issue-dispatch-human"
+  select_target "core:issue-dispatch-agent"
+  select_target "core:issue-dispatch-group-round"
+  select_target "core:issue-dispatch-cancellation"
 }
 
 select_all_desktop_suites() {
@@ -553,20 +563,12 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-local-agent-capabilities.scenario.mjs)
-      select_target "core:collaboration-local-agent-capabilities"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-local-tool-roles.scenario.mjs)
-      select_target "core:collaboration-local-tool-roles"
-      return
-      ;;
     wework/e2e/desktop/scenarios/collaboration-local-executor-issue-tools.scenario.mjs)
       select_target "core:collaboration-local-executor-issue-tools"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
-      select_target "core:collaboration-agent-automation-chain"
+    wework/e2e/desktop/scenarios/issue-dispatch.scenario.mjs)
+      select_issue_dispatch_checkpoints
       return
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
@@ -619,7 +621,8 @@ classify_wework_path() {
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
-        select_target "core:collaboration-local-agent-capabilities"
+        select_target "core:issue-dispatch-human"
+        select_target "core:issue-dispatch-group-round"
         select_target "core:task-board-bulk-actions"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
@@ -916,10 +919,13 @@ classify_path() {
       select_target "plugins:plugin-marketplace-lifecycle"
       select_target "cloud:plugin-workspace-publication"
       ;;
-    backend/app/schemas/issue_workflow.py | \
+    backend/app/api/endpoints/issue_dispatches.py | \
+      backend/app/schemas/issue_dispatch.py | \
+      backend/app/schemas/issue_workflow.py | \
       backend/app/schemas/project_chat.py | \
       backend/app/schemas/runtime_work.py | \
       backend/app/services/cloud_projects/service.py | \
+      backend/app/services/issue_dispatch*.py | \
       backend/app/services/issue_execution_configuration.py | \
       backend/app/services/loop_item_executions/* | \
       backend/app/services/project_automation_* | \
@@ -928,8 +934,10 @@ classify_path() {
       backend/app/services/project_workflow_projection.py | \
       backend/app/services/runtime_work_service.py | \
       backend/tests/api/test_cloud_projects_api.py | \
+      backend/tests/api/test_issue_dispatches_api.py | \
       backend/tests/schemas/test_issue_workflow.py | \
       backend/tests/services/test_coordinator_configuration.py | \
+      backend/tests/services/test_issue_dispatch*.py | \
       backend/tests/services/test_loop_item_executions.py | \
       backend/tests/services/test_project_automations.py | \
       backend/tests/services/test_project_chat_service.py | \
@@ -945,7 +953,7 @@ classify_path() {
       executor/src/services/skill_deployer.rs | \
       executor/src/task_runtime/model.rs | \
       executor/src/task_runtime/store.rs)
-      select_target "core:collaboration-agent-automation-chain"
+      select_issue_dispatch_checkpoints
       ;;
   esac
 
@@ -1012,10 +1020,8 @@ classify_path() {
       select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
-      select_target "core:collaboration-local-agent-capabilities"
-      select_target "core:collaboration-local-tool-roles"
       select_target "core:collaboration-local-executor-issue-tools"
-      select_target "core:collaboration-agent-automation-chain"
+      select_issue_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
@@ -1023,10 +1029,8 @@ classify_path() {
       select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
-      select_target "core:collaboration-local-agent-capabilities"
-      select_target "core:collaboration-local-tool-roles"
       select_target "core:collaboration-local-executor-issue-tools"
-      select_target "core:collaboration-agent-automation-chain"
+      select_issue_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
       ;;

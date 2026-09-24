@@ -1322,7 +1322,6 @@ describe('Wework collaboration workspace API', () => {
           modelType: 'codex',
           options: {},
         },
-        workflowNodeId: 'node-1',
         bindingType: 'system',
         linkedAt: '2026-09-14T00:00:00Z',
       })
@@ -1340,7 +1339,6 @@ describe('Wework collaboration workspace API', () => {
         modelType: 'codex',
         options: {},
       },
-      workflow_node_id: 'node-1',
       binding_type: 'system',
       linked_at: '2026-09-14T00:00:00Z',
     })
@@ -2352,7 +2350,6 @@ describe('Wework collaboration workspace API', () => {
       update: vi.fn(async () => ({})),
       remove: vi.fn(async () => ({ projectVersion: 2, workflowAutomationId: null })),
       runNow: vi.fn(async () => ({})),
-      runWorkflowNode: vi.fn(async () => ({})),
       listRuns: vi.fn(async () => []),
       cancelRun: vi.fn(async () => ({})),
       retryRun: vi.fn(async () => ({})),
@@ -2375,12 +2372,6 @@ describe('Wework collaboration workspace API', () => {
     await api!.automations!.update('cloud-project', 'automation-1', { version: 1 })
     await api!.automations!.remove('cloud-project', 'automation-1')
     await api!.automations!.runNow('cloud-project', 'automation-1')
-    await api!.automations!.runWorkflowNode(
-      'cloud-project',
-      'issue-1',
-      'workflow-node-1',
-      'automation-1'
-    )
     await api!.automations!.listRuns('cloud-project', 'automation-1')
     await api!.automations!.cancelRun('cloud-project', 'run-1')
     await api!.automations!.retryRun('cloud-project', 'run-1')
@@ -2395,12 +2386,6 @@ describe('Wework collaboration workspace API', () => {
     })
     expect(cloudAutomations.remove).toHaveBeenCalledWith('cloud-project', 'automation-1')
     expect(cloudAutomations.runNow).toHaveBeenCalledWith('cloud-project', 'automation-1')
-    expect(cloudAutomations.runWorkflowNode).toHaveBeenCalledWith(
-      'cloud-project',
-      'issue-1',
-      'workflow-node-1',
-      'automation-1'
-    )
     expect(cloudAutomations.listRuns).toHaveBeenCalledWith('cloud-project', 'automation-1')
     expect(cloudAutomations.cancelRun).toHaveBeenCalledWith('cloud-project', 'run-1')
     expect(cloudAutomations.retryRun).toHaveBeenCalledWith('cloud-project', 'run-1')

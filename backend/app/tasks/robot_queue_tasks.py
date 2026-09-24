@@ -174,8 +174,11 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     for execution in executions:
         runtime_task_id = execution.runtime_task_id or ""
         runtime_device_id = execution.runtime_device_id or ""
+        execution_target_id = (
+            execution.execution_device_id or execution.runtime_device_id or ""
+        )
         owner_user_id = execution.executor_owner_user_id
-        if not runtime_task_id or not runtime_device_id or not owner_user_id:
+        if not runtime_task_id or not execution_target_id or not owner_user_id:
             continue
         try:
             with httpx.Client(
@@ -190,7 +193,7 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
                     },
                     json={
                         "user_id": owner_user_id,
-                        "device_id": runtime_device_id,
+                        "device_id": execution_target_id,
                         "method": "runtime.tasks.cancel",
                         "payload": {
                             "taskId": runtime_task_id,

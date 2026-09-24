@@ -1,7 +1,6 @@
 import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
-  enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
   type TaskExecutionStatus,
   type CloudLoopItemAttachment,
@@ -20,13 +19,6 @@ import {
   type DeliveryDetail,
   type DeliveryFinalizeInput,
 } from '@/api/deliveries'
-import {
-  attachIssueWorkflowDelivery,
-  decideIssueWorkflowNode,
-  reconcileIssueWorkflowForTaskBindings,
-  updateIssueWorkflowForRuntime,
-  workflowBoardStatus,
-} from '@/api/issueWorkflow'
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
@@ -88,7 +80,6 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
-  workflow_node_id?: string | null
   binding_type: 'system' | 'user'
   linked_at: string
 }
@@ -775,18 +766,6 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
     execution_state: record.execution_state ?? null,
-    workflow:
-      record.metadata.workflow &&
-      typeof record.metadata.workflow === 'object' &&
-      !Array.isArray(record.metadata.workflow)
-        ? (record.metadata.workflow as CloudLoopItem['workflow'])
-        : null,
-    execution_config:
-      record.metadata.execution_config &&
-      typeof record.metadata.execution_config === 'object' &&
-      !Array.isArray(record.metadata.execution_config)
-        ? (record.metadata.execution_config as CloudLoopItem['execution_config'])
-        : null,
     local_project_id: localProjectAssociation?.id ?? null,
     local_project_name: localProjectAssociation?.name || null,
     assignee_name:
@@ -1104,8 +1083,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         tags?: string[]
         local_project_id?: number | null
         local_project_name?: string | null
-        workflow?: CloudLoopItem['workflow']
-        execution_config?: CloudLoopItem['execution_config']
         automation_rule_id?: string | null
         assignee_user_id?: number | null
         notify_assignee?: boolean
@@ -1132,8 +1109,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
           ...(data.assignee_user_id !== undefined
             ? { assignee_user_id: data.assignee_user_id }
             : {}),
-          ...(data.workflow ? { workflow: data.workflow } : {}),
-          ...(data.execution_config ? { execution_config: data.execution_config } : {}),
         },
       })
       taskProjects.set(record.id, projectId)
@@ -1335,12 +1310,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
     listLoopItemCollaborators: async () => [],
     addLoopItemCollaborator: async () => unsupported('Task collaborators'),
     removeLoopItemCollaborator: async () => unsupported('Task collaborators'),
-    async bindTask(
-      itemId: string,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null,
-      workflowNodeId?: string | null
-    ) {
+    async bindTask(itemId: string, task: RuntimeTaskAddress, taskTitle?: string | null) {
       const projectId = await resolveProjectId(itemId)
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
@@ -1350,7 +1320,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         task: {
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
-          ...(workflowNodeId ? { workflowNodeId } : {}),
           ...(modelSelection ? { modelSelection } : {}),
         },
       })
@@ -1406,7 +1375,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
             executionStatus,
             bindingType: binding.binding_type,
             loopItemId: binding.loop_item_id,
-            workflowNodeId: binding.workflow_node_id,
           })
           const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
           const projectRecord = projectRecords.find(
@@ -1429,41 +1397,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
           return null
         }
         if (!context.loop_item_id || !context.loop_item) return null
-        const item = context.loop_item
-        if (item.workflow && 'automation_run_id' in item.workflow) return item
-        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
-          return enqueueIssueWorkflowMutation(item.id, async () => {
-            const current = await api.getLoopItem(item.id)
-            if (!current.workflow) return current
-            const bindings = await api.listTaskBindings(item.id)
-            const stageTaskIds = bindings
-              .filter(binding => binding.workflow_node_id === context.workflow_node_id)
-              .map(binding => `${binding.device_id}:${binding.task_id}`)
-            const workflow = updateIssueWorkflowForRuntime(
-              current.workflow,
-              context.workflow_node_id!,
-              executionStatus,
-              `${task.deviceId}:${task.taskId}`,
-              stageTaskIds
-            )
-            const updated = await api.updateLoopItem(current.id, {
-              version: current.version,
-              workflow,
-              status: workflowBoardStatus(workflow),
-            })
-            console.info('[IssueTaskStatusSync] local workflow task status persisted', {
-              deviceId: task.deviceId,
-              taskId: task.taskId,
-              executionStatus,
-              loopItemId: updated.id,
-              workflowNodeId: context.workflow_node_id,
-            })
-            return updated
-          })
-        }
-        // The executor projects native task status from its lifecycle. Delayed
-        // renderer observations must not overwrite a completed, already-read task.
-        return item
+        return context.loop_item
       })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
@@ -1606,26 +1540,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         delivery_id: deliveryId,
         finalize: input,
       })
-      if (delivery.source_task_binding_id) {
-        const bindings = await api.listTaskBindings(delivery.loop_item_id)
-        const binding = bindings.find(candidate => candidate.id === delivery.source_task_binding_id)
-        if (binding?.workflow_node_id) {
-          const item = await api.getLoopItem(delivery.loop_item_id)
-          if (item.workflow) {
-            const workflow = attachIssueWorkflowDelivery(
-              item.workflow,
-              binding.workflow_node_id,
-              deliveryId,
-              input.fulfillments.map(fulfillment => fulfillment.requirement_id)
-            )
-            await api.updateLoopItem(item.id, {
-              version: item.version,
-              workflow,
-              status: workflowBoardStatus(workflow),
-            })
-          }
-        }
-      }
       return finalized
     },
     async discardDraft(deliveryId: string) {
@@ -1637,29 +1551,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
     },
     async getDelivery(deliveryId: string) {
       return request<DeliveryDetail>('deliveries.get', { delivery_id: deliveryId })
-    },
-    async decideWorkflowNode(
-      itemId: string,
-      workflowNodeId: string,
-      action: 'approve' | 'reject' | 'force_advance',
-      reason = '',
-      actorUserId?: number
-    ) {
-      const item = await api.getLoopItem(itemId)
-      if (!item.workflow) throw new Error('Issue has no workflow')
-      const bindings = await api.listTaskBindings(itemId)
-      const workflow = decideIssueWorkflowNode(
-        reconcileIssueWorkflowForTaskBindings(item.workflow, bindings),
-        workflowNodeId,
-        action,
-        actorUserId ?? Number(item.created_by_user_id),
-        reason
-      )
-      return api.updateLoopItem(item.id, {
-        version: item.version,
-        workflow,
-        status: workflowBoardStatus(workflow),
-      })
     },
   }
   return api as unknown as LocalProjectSpaceApi

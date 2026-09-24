@@ -48,9 +48,6 @@ describe("collaboration i18n", () => {
       "todo.collaborators",
       "todo.execution_history",
       "todo.deliveries",
-      "todo.workflow_stage_human_execution",
-      "todo.workflow_node_completed",
-      "todo.workflow_task_count",
     ];
     const english = keys.map((key) => createCollaborationTranslator("en")(key));
     const chinese = keys.map((key) =>

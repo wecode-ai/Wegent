@@ -527,10 +527,6 @@ impl LocalTaskStore {
         let mut metadata = json!({"tags": input.tags});
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
-        } else if manager_run_id.is_none() {
-            if let Some(definition) = project.metadata.get("workflow_definition") {
-                metadata["workflow"] = instantiate_local_workflow(definition)?;
-            }
         }
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
@@ -561,39 +557,6 @@ impl LocalTaskStore {
                 input.assignee_user_id,
             ],
         )?;
-        if metadata.get("workflow").is_some_and(Value::is_object) {
-            metadata["status_history"] = get_item_from(&transaction, &id, "task")?
-                .ok_or(TaskRuntimeError::TaskNotFound)?
-                .metadata["status_history"]
-                .clone();
-            enqueue_ready_local_workflow_stages(
-                &transaction,
-                &id,
-                project_id,
-                input.priority.as_str(),
-                &mut metadata["workflow"],
-            )?;
-            transaction.execute(
-                "UPDATE loop_items
-                 SET metadata = ?1,
-                     status = CASE
-                         WHEN EXISTS (
-                             SELECT 1 FROM loop_item_executions
-                             WHERE loop_item_id = ?2
-                               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-                         ) THEN 'in_progress'
-                         ELSE status
-                     END,
-                     assignee_agent_id = (
-                         SELECT agent_id FROM loop_item_executions
-                         WHERE loop_item_id = ?2
-                           AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-                         ORDER BY id DESC LIMIT 1
-                     )
-                 WHERE id = ?2",
-                params![metadata.to_string(), id],
-            )?;
-        }
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
@@ -817,13 +780,10 @@ impl LocalTaskStore {
         }
         if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if let Some(group_id) = requested_group_id.as_deref() {
-                local_automation::run_collaboration_group(
-                    &transaction,
-                    project_id,
-                    task_id,
-                    group_id,
-                )?;
+            if requested_group_id.is_some() {
+                return Err(TaskRuntimeError::Invalid(
+                    "collaboration Issue execution is not available".to_owned(),
+                ));
             } else if let Some(agent_id) = assignee_agent_id {
                 let agent =
                     get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
@@ -1864,7 +1824,6 @@ impl LocalTaskStore {
             params![runtime_task_id],
             |row| row.get(0),
         )?;
-        mark_local_workflow_stage_running(&connection, execution_id, &timestamp)?;
         connection.execute("UPDATE loop_item_comments SET status='streaming', updated_at=?1 WHERE deleted_at IS NULL AND json_extract(metadata,'$.execution_id')=?2", params![timestamp, execution_id])?;
         execution_row(&connection, execution_id).map(Some)
     }
@@ -2003,25 +1962,6 @@ impl LocalTaskStore {
         if changed != 1 {
             transaction.rollback()?;
             return execution_row(&connection, execution_id).map(Some);
-        }
-        let workflow_advanced =
-            advance_local_workflow_after_execution(&transaction, execution_id, &timestamp)?;
-        if !workflow_advanced {
-            // Non-workflow robot assignments still finish in human review.
-            transaction.execute(
-                "UPDATE loop_items
-                 SET status = 'in_review', sort_order = 0,
-                     metadata = CASE
-                         WHEN cloud_project_id = ?3 THEN metadata
-                         ELSE json_set(metadata, '$.is_unread', json('true'))
-                     END,
-                     version = version + 1, updated_at = ?1
-                 WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
-                   AND assignee_agent_id =
-                       (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
-                   AND status != 'completed'",
-                params![timestamp, execution_id, DEFAULT_WORK_ITEM_PROJECT_ID],
-            )?;
         }
         update_agent_comment(
             &transaction,
@@ -2621,102 +2561,6 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         get_effective_binding(&connection, device_id, task_id)?
             .ok_or(TaskRuntimeError::TaskNotFound)
-    }
-
-    pub fn project_bound_task_status(
-        &self,
-        device_id: &str,
-        task_id: &str,
-        execution_status: &str,
-        observed_at_ms: i64,
-    ) -> Result<usize, TaskRuntimeError> {
-        if observed_at_ms <= 0 {
-            return Err(TaskRuntimeError::Invalid(
-                "runtime task status observation requires a positive timestamp".to_owned(),
-            ));
-        }
-        let next_status = match execution_status {
-            "queued" | "pending" => "pending",
-            "running" => "in_progress",
-            "done" | "completed" | "succeeded" | "failed" | "cancelled" | "canceled"
-            | "interrupted" | "error" => "in_review",
-            "archived" => "completed",
-            _ => {
-                return Err(TaskRuntimeError::Invalid(format!(
-                    "unsupported runtime task status '{execution_status}'"
-                )));
-            }
-        };
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let timestamp = now();
-        let preserve_reviewed = matches!(
-            execution_status,
-            "done"
-                | "completed"
-                | "succeeded"
-                | "failed"
-                | "cancelled"
-                | "canceled"
-                | "interrupted"
-                | "error"
-        );
-        let changed = transaction.execute(
-            "UPDATE loop_items
-             SET status = ?1,
-                 completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
-                 metadata = CASE
-                     WHEN ?5 AND cloud_project_id != ?7
-                         THEN json_set(metadata, '$.is_unread', json('true'))
-                     ELSE metadata
-                 END,
-                 sort_order = 0, version = version + 1, updated_at = ?2
-             WHERE resource_type = 'task'
-               AND id IN (
-                   SELECT loop_item_id
-                   FROM loop_items
-                   WHERE resource_type = 'execution'
-                     AND device_id = ?3 AND task_id = ?4
-                     AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
-                     AND json_extract(metadata, '$.workflow_node_id') IS NULL
-                     AND CAST(COALESCE(
-                         json_extract(metadata, '$.runtime_status_observed_at_ms'),
-                         0
-                     ) AS INTEGER) < ?6
-               )
-               AND status != ?1
-               AND (NOT ?5 OR status NOT IN ('completed', 'in_review'))",
-            params![
-                next_status,
-                timestamp,
-                device_id,
-                task_id,
-                preserve_reviewed,
-                observed_at_ms,
-                DEFAULT_WORK_ITEM_PROJECT_ID
-            ],
-        )?;
-        transaction.execute(
-            "UPDATE loop_items
-             SET metadata = json_set(
-                     COALESCE(metadata, '{}'),
-                     '$.runtime_status_observed_at_ms',
-                     ?1
-                 ),
-                 version = version + 1,
-                 updated_at = ?2
-             WHERE resource_type = 'execution'
-               AND device_id = ?3 AND task_id = ?4
-               AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
-               AND json_extract(metadata, '$.workflow_node_id') IS NULL
-               AND CAST(COALESCE(
-                   json_extract(metadata, '$.runtime_status_observed_at_ms'),
-                   0
-               ) AS INTEGER) < ?1",
-            params![observed_at_ms, timestamp, device_id, task_id],
-        )?;
-        transaction.commit()?;
-        Ok(changed)
     }
 
     pub fn find_system_task_binding(
@@ -4092,113 +3936,6 @@ fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
         .ok_or_else(|| TaskRuntimeError::Invalid("invalid task priority".to_owned()))
 }
 
-fn instantiate_local_workflow(definition: &Value) -> Result<Value, TaskRuntimeError> {
-    let version = definition
-        .get("version")
-        .and_then(Value::as_i64)
-        .unwrap_or(1);
-    let definitions = definition
-        .get("nodes")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let ids = definitions
-        .iter()
-        .filter_map(|node| node.get("id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect::<HashSet<_>>();
-    if ids.len() != definitions.len() {
-        return Err(TaskRuntimeError::Invalid(
-            "workflow node ids must be unique and non-empty".to_owned(),
-        ));
-    }
-    let dependency_map = definitions
-        .iter()
-        .map(|node| {
-            let node_id = node
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let dependencies = node
-                .get("depends_on")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
-            (node_id, dependencies)
-        })
-        .collect::<HashMap<_, _>>();
-    fn visit_workflow_node(
-        node_id: &str,
-        dependencies: &HashMap<String, Vec<String>>,
-        visiting: &mut HashSet<String>,
-        visited: &mut HashSet<String>,
-    ) -> Result<(), TaskRuntimeError> {
-        if visiting.contains(node_id) {
-            return Err(TaskRuntimeError::Invalid(
-                "workflow dependencies must be acyclic".to_owned(),
-            ));
-        }
-        if visited.contains(node_id) {
-            return Ok(());
-        }
-        visiting.insert(node_id.to_owned());
-        for dependency in dependencies.get(node_id).into_iter().flatten() {
-            visit_workflow_node(dependency, dependencies, visiting, visited)?;
-        }
-        visiting.remove(node_id);
-        visited.insert(node_id.to_owned());
-        Ok(())
-    }
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    for node_id in &ids {
-        visit_workflow_node(node_id, &dependency_map, &mut visiting, &mut visited)?;
-    }
-    let mut nodes = Vec::with_capacity(definitions.len());
-    for definition in definitions {
-        let dependencies = definition
-            .get("depends_on")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if dependencies
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|dependency| !ids.contains(dependency))
-        {
-            return Err(TaskRuntimeError::Invalid(
-                "workflow dependency does not exist".to_owned(),
-            ));
-        }
-        let mut node = definition;
-        node["status"] = json!(
-            if node.get("node_type").and_then(Value::as_str) == Some("event")
-                && node.get("role").and_then(Value::as_str) == Some("start")
-            {
-                "completed"
-            } else if dependencies.is_empty() {
-                "ready"
-            } else {
-                "blocked"
-            }
-        );
-        node["task_binding_id"] = Value::Null;
-        node["execution_id"] = Value::Null;
-        nodes.push(node);
-    }
-    let mut workflow = json!({
-        "version": 1,
-        "definition_version": version,
-        "nodes": nodes,
-    });
-    release_local_workflow_nodes(&mut workflow)?;
-    Ok(workflow)
-}
-
 fn local_database_path() -> PathBuf {
     let home = env::var_os("WEGENT_EXECUTOR_HOME")
         .filter(|value| !value.is_empty())
@@ -4656,6 +4393,8 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .collect::<Vec<_>>()
         .join("\n\n");
     let workflow_node_id = stored.get("workflow_node_id").cloned();
+    let dispatch_id = stored.get("dispatch_id").cloned();
+    let dispatch_role = stored.get("dispatch_role").cloned();
     let automation_run_id = stored.get("automation_run_id").cloned();
     let automation_role = stored.get("automation_role").cloned();
     let model_selection = stored.get("modelSelection").and_then(Value::as_object);
@@ -4706,6 +4445,11 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     } else {
         "Codex"
     };
+    let origin_type = if dispatch_id.is_some() {
+        "issue_dispatch"
+    } else {
+        "project_automation"
+    };
     let mut payload = json!({
         "taskId": execution.runtime_task_id,
         "teamId": 0,
@@ -4728,11 +4472,13 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         "additionalSkills": execution.agent_additional_skills,
         "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
         "origin": {
-            "type": "project_automation",
+            "type": origin_type,
             "projectStore": "local",
             "cloudProjectId": execution.cloud_project_id,
             "loopItemId": execution.loop_item_id,
             "workflowNodeId": workflow_node_id,
+            "dispatchId": dispatch_id,
+            "dispatchRole": dispatch_role,
             "run_id": automation_run_id,
             "automationRole": automation_role,
         },
@@ -4745,501 +4491,6 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         payload["projectInstructions"] = json!(project_instructions);
     }
     payload
-}
-
-fn enqueue_ready_local_workflow_stages(
-    connection: &Connection,
-    item_id: &str,
-    project_id: &str,
-    priority: &str,
-    workflow: &mut Value,
-) -> Result<usize, TaskRuntimeError> {
-    if workflow["cancelled"] == true {
-        return Ok(0);
-    }
-    let automation_run_id = workflow.get("automation_run_id").cloned();
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let ready = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
-            node.get("status").and_then(Value::as_str) == Some("ready")
-                && node.get("execution_mode").and_then(Value::as_str) == Some("robot")
-        })
-        .map(|(index, node)| {
-            let node_id = node
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let prompt = node
-                .get("prompt")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let title = node
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let assignee_type = node
-                .get("required_assignee_type")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let assignee_id = node
-                .get("required_assignee_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let automation_role = node
-                .get("automation_role")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let developer_instructions = node
-                .get("developer_instructions")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            (
-                index,
-                node_id,
-                title,
-                prompt,
-                developer_instructions,
-                assignee_type,
-                assignee_id,
-                automation_role,
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut queued = 0;
-    for (
-        index,
-        node_id,
-        title,
-        prompt,
-        developer_instructions,
-        assignee_type,
-        assignee_id,
-        automation_role,
-    ) in ready
-    {
-        if assignee_type != "agent" || assignee_id.is_empty() {
-            return Err(TaskRuntimeError::Invalid(format!(
-                "automated workflow stage '{node_id}' requires an agent assignee"
-            )));
-        }
-        let agent = get_item_from(connection, &assignee_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid(format!(
-                "workflow stage '{node_id}' agent '{assignee_id}' is not active"
-            ))
-        })?;
-        if agent.cloud_project_id.as_deref() != Some(project_id)
-            || agent.status.as_deref() == Some("archived")
-        {
-            return Err(TaskRuntimeError::Invalid(format!(
-                "workflow stage '{node_id}' agent '{assignee_id}' is not active in this project"
-            )));
-        }
-        let message = if prompt.trim().is_empty() {
-            format!("Complete workflow stage {node_id}")
-        } else {
-            prompt
-        };
-        let message = if automation_role == "manager_review" {
-            let mut reports = Vec::new();
-            for child in nodes.iter().filter(|child| {
-                child["automation_role"].as_str() != Some("manager")
-                    && child["automation_role"].as_str() != Some("manager_review")
-            }) {
-                let Some(execution_id) = child["execution_id"].as_i64() else {
-                    continue;
-                };
-                let note: Option<String> = connection
-                    .query_row(
-                        "SELECT execution_note FROM loop_item_executions WHERE id=?1",
-                        [execution_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()?;
-                reports.push(format!(
-                    "{}: {}\nReported outcome: {}",
-                    child["name"].as_str().unwrap_or_default(),
-                    note.unwrap_or_default(),
-                    child.get("outcome").unwrap_or(&Value::Null)
-                ));
-            }
-            format!("{message}\n\nExecutor results:\n{}", reports.join("\n\n"))
-        } else {
-            message
-        };
-        let execution_id = create_local_execution(
-            connection,
-            item_id,
-            project_id,
-            &assignee_id,
-            &agent,
-            priority,
-            json!({
-                "message": message,
-                "system_prompt": developer_instructions,
-                "workflow_node_id": node_id,
-                "workflow_task_title": title,
-                "automation_run_id": automation_run_id,
-                "automation_role": automation_role,
-            }),
-        )?;
-        let execution = execution_row(connection, execution_id)?;
-        nodes[index]["status"] = json!(if execution.status == "pending_approval" {
-            "waiting"
-        } else {
-            "queued"
-        });
-        nodes[index]["execution_id"] = json!(execution_id);
-        queued += 1;
-    }
-    Ok(queued)
-}
-
-fn release_local_workflow_nodes(workflow: &mut Value) -> Result<(), TaskRuntimeError> {
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let completed = nodes
-        .iter()
-        .filter(|node| {
-            matches!(
-                node.get("status").and_then(Value::as_str),
-                Some("completed" | "forced_completed")
-            )
-        })
-        .filter_map(|node| node.get("id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect::<HashSet<_>>();
-    for node in nodes {
-        if node.get("status").and_then(Value::as_str) != Some("blocked") {
-            continue;
-        }
-        let dependencies_complete = node
-            .get("depends_on")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .all(|dependency| completed.contains(dependency));
-        if dependencies_complete {
-            node["status"] = json!("ready");
-        }
-    }
-    Ok(())
-}
-
-fn local_workflow_assignments(
-    connection: &Connection,
-    project_id: &str,
-    workflow: &Value,
-    collaboration_group: &Value,
-) -> Result<Vec<Value>, TaskRuntimeError> {
-    let nodes = workflow["nodes"]
-        .as_array()
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    nodes
-        .iter()
-        .filter(|node| {
-            !matches!(
-                node["automation_role"].as_str(),
-                Some("manager" | "manager_review")
-            ) && node["role"].as_str() != Some("start")
-        })
-        .filter_map(|node| {
-            let assignee_type = node["required_assignee_type"].as_str()?;
-            let assignee_id = node["required_assignee_id"].as_str()?;
-            Some((node, assignee_type, assignee_id))
-        })
-        .map(|(node, assignee_type, assignee_id)| {
-            let assignee_name = if assignee_type == "agent" {
-                get_item_from(connection, assignee_id, "chat_agent")?
-                    .filter(|agent| agent.cloud_project_id.as_deref() == Some(project_id))
-                    .map(map_chat_agent)
-                    .map(|agent| agent.display_name)
-                    .unwrap_or_else(|| assignee_id.to_owned())
-            } else {
-                collaboration_group["members"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .chain(std::iter::once(&collaboration_group["leader"]))
-                    .find(|member| member["id"].as_str() == Some(assignee_id))
-                    .and_then(|member| member["name"].as_str())
-                    .unwrap_or("本地用户")
-                    .to_owned()
-            };
-            Ok(json!({
-                "title": node["name"].as_str().unwrap_or_default(),
-                "assignee_type": assignee_type,
-                "assignee_id": assignee_id,
-                "assignee_name": assignee_name,
-            }))
-        })
-        .collect()
-}
-
-fn mark_local_workflow_stage_running(
-    connection: &Connection,
-    execution_id: i64,
-    timestamp: &str,
-) -> Result<(), TaskRuntimeError> {
-    let execution = execution_row(connection, execution_id)?;
-    let Some(workflow_node_id) = execution
-        .execution_payload
-        .as_ref()
-        .and_then(|payload| payload.get("workflow_node_id"))
-        .and_then(Value::as_str)
-    else {
-        return Ok(());
-    };
-    let Some(mut item) = get_item_from(connection, &execution.loop_item_id, "task")? else {
-        return Ok(());
-    };
-    let Some(nodes) = item
-        .metadata
-        .get_mut("workflow")
-        .and_then(|workflow| workflow.get_mut("nodes"))
-        .and_then(Value::as_array_mut)
-    else {
-        return Ok(());
-    };
-    let Some(node) = nodes
-        .iter_mut()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some(workflow_node_id))
-    else {
-        return Ok(());
-    };
-    if !matches!(
-        node.get("status").and_then(Value::as_str),
-        Some("queued" | "waiting")
-    ) {
-        return Ok(());
-    }
-    node["status"] = json!("running");
-    connection.execute(
-        "UPDATE loop_items
-         SET metadata = ?1, version = version + 1, updated_at = ?2
-         WHERE id = ?3",
-        params![item.metadata.to_string(), timestamp, execution.loop_item_id],
-    )?;
-    Ok(())
-}
-
-fn advance_local_workflow_after_execution(
-    connection: &Connection,
-    execution_id: i64,
-    timestamp: &str,
-) -> Result<bool, TaskRuntimeError> {
-    let execution = execution_row(connection, execution_id)?;
-    let workflow_node_id = execution
-        .execution_payload
-        .as_ref()
-        .and_then(|payload| payload.get("workflow_node_id"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let Some(workflow_node_id) = workflow_node_id else {
-        return Ok(false);
-    };
-    let mut item = get_item_from(connection, &execution.loop_item_id, "task")?
-        .ok_or(TaskRuntimeError::TaskNotFound)?;
-    let collaboration_group = item.metadata["collaboration_group"].clone();
-    let workflow = item
-        .metadata
-        .get_mut("workflow")
-        .filter(|workflow| workflow.is_object())
-        .ok_or_else(|| {
-            TaskRuntimeError::Invalid("workflow execution has no workflow".to_owned())
-        })?;
-    if workflow["cancelled"] == true {
-        return Ok(true);
-    }
-    let review_decision_recorded = workflow["manager_decision"]["status"].as_str().is_some();
-    let managed_by_manager = workflow["automation_run_id"].is_string()
-        && workflow["nodes"].as_array().is_some_and(|nodes| {
-            nodes
-                .iter()
-                .any(|node| node.get("automation_role").and_then(Value::as_str) == Some("manager"))
-        });
-    let nodes = workflow
-        .get_mut("nodes")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let (missing_manager_action, manager_completed) = {
-        let node = nodes
-            .iter_mut()
-            .find(|node| node.get("id").and_then(Value::as_str) == Some(&workflow_node_id))
-            .ok_or_else(|| {
-                TaskRuntimeError::Invalid("workflow execution stage is missing".to_owned())
-            })?;
-        if node.get("required_assignee_type").and_then(Value::as_str) != Some("agent")
-            || node.get("required_assignee_id").and_then(Value::as_str)
-                != Some(execution.agent_id.as_str())
-        {
-            return Err(TaskRuntimeError::Invalid(
-                "workflow execution assignee does not match the stage constraint".to_owned(),
-            ));
-        }
-        let missing_manager_action =
-            if node["automation_role"] == "manager_review" && !review_decision_recorded {
-                Some("AI manager finished without deciding workflow review")
-            } else {
-                None
-            };
-        let manager_completed = node["automation_role"] == "manager";
-        node["status"] = json!(if missing_manager_action.is_some() {
-            "failed"
-        } else {
-            "completed"
-        });
-        node["execution_id"] = json!(execution_id);
-        (missing_manager_action, manager_completed)
-    };
-    if manager_completed && workflow["plan_source"] == "project" {
-        let assignments = local_workflow_assignments(
-            connection,
-            &execution.cloud_project_id,
-            workflow,
-            &collaboration_group,
-        )?;
-        connection.execute(
-            "UPDATE loop_item_comments
-             SET metadata=json_set(metadata, '$.workflow_assignments', json(?1)),
-                 updated_at=?2
-             WHERE deleted_at IS NULL
-               AND json_extract(metadata, '$.execution_id')=?3",
-            params![json!(assignments).to_string(), timestamp, execution_id],
-        )?;
-    }
-    if let Some(error) = missing_manager_action {
-        workflow["error"] = json!(error);
-        connection.execute(
-            "UPDATE loop_item_executions SET status='failed', error_message=?1,
-             termination_reason='manager_action_missing' WHERE id=?2",
-            params![error, execution_id],
-        )?;
-        connection.execute(
-            "UPDATE loop_item_comments
-             SET metadata=json_set(metadata, '$.manager_action_error', ?1)
-             WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id')=?2",
-            params![error, execution_id],
-        )?;
-    }
-    release_local_workflow_nodes(workflow)?;
-    let before_enqueue = workflow.clone();
-    connection.execute_batch("SAVEPOINT advance_local_workflow")?;
-    match enqueue_ready_local_workflow_stages(
-        connection,
-        &execution.loop_item_id,
-        &execution.cloud_project_id,
-        execution.task_priority.as_deref().unwrap_or("none"),
-        workflow,
-    ) {
-        Ok(_) => connection.execute_batch("RELEASE advance_local_workflow")?,
-        Err(TaskRuntimeError::Invalid(error)) => {
-            connection.execute_batch(
-                "ROLLBACK TO advance_local_workflow; RELEASE advance_local_workflow",
-            )?;
-            *workflow = before_enqueue;
-            workflow["error"] = json!(error);
-            for node in workflow["nodes"].as_array_mut().into_iter().flatten() {
-                if node["status"] == "ready" && node["execution_mode"] == "robot" {
-                    node["status"] = json!("failed");
-                }
-            }
-        }
-        Err(error) => return Err(error),
-    }
-    let nodes = workflow["nodes"]
-        .as_array()
-        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    if managed_by_manager {
-        if execution.cloud_project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
-            item.metadata["is_unread"] = json!(true);
-        }
-        connection.execute(
-            "UPDATE loop_items
-             SET metadata = ?1, version = version + 1, updated_at = ?2
-             WHERE id = ?3",
-            params![item.metadata.to_string(), timestamp, execution.loop_item_id],
-        )?;
-        return Ok(true);
-    }
-    let all_required_completed = nodes
-        .iter()
-        .filter(|node| {
-            node.get("required")
-                .and_then(Value::as_bool)
-                .unwrap_or(true)
-                && node.get("role").and_then(Value::as_str) != Some("start")
-        })
-        .all(|node| {
-            matches!(
-                node.get("status").and_then(Value::as_str),
-                Some("completed" | "forced_completed")
-            )
-        });
-    let requires_manager_decision = nodes.iter().any(|node| {
-        matches!(
-            node["automation_role"].as_str(),
-            Some("manager" | "manager_review")
-        )
-    });
-    let manager_decision = workflow["manager_decision"]["status"]
-        .as_str()
-        .map(str::to_owned);
-    let active_agent_id: Option<String> = connection
-        .query_row(
-            "SELECT agent_id FROM loop_item_executions
-             WHERE loop_item_id = ?1
-               AND status IN ('pending_approval', 'queued', 'claimed', 'running')
-             ORDER BY id DESC LIMIT 1",
-            params![execution.loop_item_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if execution.cloud_project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
-        item.metadata["is_unread"] = json!(true);
-    }
-    let status = if requires_manager_decision {
-        if all_required_completed {
-            manager_decision.as_deref().unwrap_or("in_progress")
-        } else {
-            "in_progress"
-        }
-    } else if all_required_completed {
-        "completed"
-    } else if active_agent_id.is_some() {
-        "in_progress"
-    } else {
-        "pending"
-    };
-    connection.execute(
-        "UPDATE loop_items
-         SET status = ?1, assignee_agent_id = ?2, metadata = ?3,
-             completed_at = CASE WHEN ?1 = 'completed' THEN ?4 ELSE NULL END,
-             sort_order = 0, version = version + 1, updated_at = ?4
-         WHERE id = ?5",
-        params![
-            status,
-            active_agent_id,
-            item.metadata.to_string(),
-            timestamp,
-            execution.loop_item_id
-        ],
-    )?;
-    Ok(true)
 }
 
 fn priority_weight(priority: &str) -> i64 {
@@ -5667,20 +4918,6 @@ mod tests {
             .expect("first Runtime event must prove running")
     }
 
-    fn claim_execution(store: &LocalTaskStore) -> LocalExecution {
-        store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("a local execution should be queued")
-    }
-
     #[test]
     fn chat_agent_crud_and_task_assignment_create_execution() {
         let (directory, store, project) = chat_agent_store();
@@ -5838,359 +5075,6 @@ mod tests {
                 .unwrap()
                 .len(),
             1
-        );
-    }
-
-    #[test]
-    fn assigning_a_local_issue_to_a_collaboration_group_starts_its_leader() {
-        let (_directory, store, project) = chat_agent_store();
-        let leader = make_local_agent(&store, &project.id, "auto");
-        let inactive = make_local_agent(&store, &project.id, "auto");
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE loop_items
-                 SET metadata=json_set(metadata,'$.display_name','当前设备智能体')
-                 WHERE id=?1",
-                [&leader.id],
-            )
-            .unwrap();
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE loop_items SET status='disabled' WHERE id=?1",
-                [&inactive.id],
-            )
-            .unwrap();
-        let project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    collaboration_groups: Some(json!([
-                        {
-                            "id": "group-1",
-                            "name": "Delivery team",
-                            "instructions": "Coordinate the work.",
-                            "leader": {"kind": "agent", "id": leader.id},
-                            "members": [
-                                {"kind": "agent", "id": leader.id},
-                                {"kind": "agent", "id": inactive.id}
-                            ],
-                            "stages": []
-                        }
-                    ])),
-                    ..ProjectUpdate::default()
-                },
-            )
-            .unwrap();
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    title: "Ship the feature".to_owned(),
-                    description: "Implement and verify it.".to_owned(),
-                    status: "inbox".to_owned(),
-                    priority: "high".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-
-        let assigned = store
-            .update_task(
-                &project.id,
-                &task.id,
-                TaskUpdate {
-                    version: task.version,
-                    assignee_group_id: Some(Some("group-1".to_owned())),
-                    ..TaskUpdate::default()
-                },
-            )
-            .unwrap();
-
-        assert_eq!(assigned.metadata["collaboration_group"]["id"], "group-1");
-        assert_eq!(assigned.status.as_deref(), Some("inbox"));
-        assert_eq!(
-            assigned.metadata["workflow"]["nodes"][0]["required_assignee_id"],
-            leader.id
-        );
-        assert_eq!(
-            assigned.metadata["workflow"]["nodes"][0]["status"],
-            "queued"
-        );
-        let claimed = store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("the collaboration group leader must be queued");
-        assert_eq!(claimed.agent_id, leader.id);
-        assert_eq!(claimed.agent_name, "当前设备智能体");
-        let payload = claimed.execution_payload.as_ref().unwrap();
-        let message = payload["message"]
-            .as_str()
-            .expect("manager message should be a string");
-        assert_eq!(
-            message,
-            "Issue: Ship the feature\n\nIssue description: Implement and verify it.\n\nProject collaboration rules:\nCoordinate the work."
-        );
-        let developer_instructions = payload["projectInstructions"]
-            .as_str()
-            .expect("manager developer instructions should be a string");
-        assert!(developer_instructions.starts_with("Be careful."));
-        assert!(developer_instructions.contains("You are the AI manager for this Issue."));
-        assert!(developer_instructions.contains("\n\nConfigured project workflow"));
-        assert!(!developer_instructions.contains("\"name\":\"Delivery team\""));
-        assert!(!developer_instructions.contains("\"instructions\":\"Coordinate the work.\""));
-        assert!(developer_instructions.contains("\n\nAutomation instruction:"));
-        assert_eq!(
-            payload["origin"]["automationRole"],
-            Value::String("manager".to_owned())
-        );
-        let run_id = payload["origin"]["run_id"].as_str().unwrap();
-        let candidates = store
-            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
-            .unwrap();
-        assert_eq!(candidates["robots"].as_array().unwrap().len(), 1);
-        assert_eq!(candidates["robots"][0]["name"], "当前设备智能体");
-        assert!(store
-            .submit_local_automation_workflow_plan(
-                &project.id,
-                &task.id,
-                run_id,
-                &json!({"items": [{
-                    "client_key": "missing-prompt",
-                    "title": "Implement",
-                    "description": "Generic project instructions",
-                    "assignee_type": "agent",
-                    "assignee_id": leader.id,
-                }]}),
-            )
-            .is_err());
-        store
-            .submit_local_automation_workflow_plan(
-                &project.id,
-                &task.id,
-                run_id,
-                &json!({
-                    "summary": "Implement the feature.",
-                    "items": [{
-                        "client_key": "implement",
-                        "title": "Implement",
-                        "description": "Make the requested change.",
-                        "prompt": "Implement the requested change and report verification evidence.",
-                        "assignee_type": "agent",
-                        "assignee_id": leader.id,
-                        "rationale": "Uses the current device."
-                    }]
-                }),
-            )
-            .unwrap();
-        let comments = store.list_comments(&project.id, &task.id, 0).unwrap();
-        assert_eq!(
-            comments[0].metadata["workflow_assignments"][0]["assignee_name"],
-            "当前设备智能体"
-        );
-        store
-            .complete_execution(claimed.id, Some("Plan submitted"))
-            .unwrap();
-        assert_eq!(
-            store
-                .get_task(&project.id, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("inbox")
-        );
-        assert!(store
-            .local_automation_assignment_candidates(&project.id, &task.id, run_id)
-            .is_err());
-        let planned = store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("the submitted plan must queue its assigned Agent");
-        assert_eq!(planned.agent_id, leader.id);
-        assert_eq!(
-            planned.execution_payload.as_ref().unwrap()["message"],
-            "Implement the requested change and report verification evidence."
-        );
-        accept_and_start(&store, &planned);
-        store
-            .complete_execution(planned.id, Some("Implementation verified."))
-            .unwrap();
-        assert_eq!(
-            store
-                .get_task(&project.id, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("inbox")
-        );
-        let review = store
-            .claim_next_local_execution(&LocalExecutionClaim {
-                execution_device_id: Some("local-device".to_owned()),
-                runtime_instance_id: "runtime-instance".to_owned(),
-                device_capacity: 1,
-                runtime_active: 0,
-                runtime_active_task_ids: vec![],
-                lease_seconds: 300,
-            })
-            .unwrap()
-            .expect("the AI manager must review executor results");
-        assert_eq!(review.agent_id, leader.id);
-        assert!(review.execution_payload.as_ref().unwrap()["message"]
-            .as_str()
-            .unwrap()
-            .contains("Implementation verified."));
-        accept_and_start(&store, &review);
-        store
-            .decide_local_automation_workflow_review(
-                &project.id,
-                &task.id,
-                run_id,
-                "completed",
-                "Verified the implementation and evidence.",
-            )
-            .unwrap();
-        store
-            .complete_execution(review.id, Some("Accepted"))
-            .unwrap();
-        assert_eq!(
-            store
-                .get_task(&project.id, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("completed")
-        );
-    }
-
-    #[test]
-    fn collaboration_manager_can_keep_the_project_workflow_without_submitting_a_plan() {
-        let (_directory, store, project) = chat_agent_store();
-        let leader = make_local_agent(&store, &project.id, "auto");
-        let worker = make_local_agent(&store, &project.id, "auto");
-        let project = store
-            .update_project(
-                &project.id,
-                ProjectUpdate {
-                    version: project.version,
-                    workflow_definition: Some(json!({
-                        "version": 1,
-                        "nodes": [{
-                            "id": "execute",
-                            "name": "Execute configured work",
-                            "prompt": "Follow the configured project workflow.",
-                            "depends_on": [],
-                            "required": true,
-                            "execution_mode": "robot",
-                            "required_assignee_type": "agent",
-                            "required_assignee_id": worker.id
-                        }]
-                    })),
-                    collaboration_groups: Some(json!([{
-                        "id": "group-1",
-                        "name": "Delivery team",
-                        "instructions": "Coordinate the configured workflow.",
-                        "leader": {"kind": "agent", "id": leader.id},
-                        "members": [{"kind": "agent", "id": worker.id}],
-                        "stages": []
-                    }])),
-                    ..ProjectUpdate::default()
-                },
-            )
-            .unwrap();
-        let task = store
-            .create_task(
-                &project.id,
-                TaskCreate {
-                    title: "Use project workflow".to_owned(),
-                    description: "Do not replace the configured workflow.".to_owned(),
-                    status: "pending".to_owned(),
-                    priority: "high".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: Some(json!({"version": 1, "nodes": []})),
-                },
-            )
-            .unwrap();
-        let assigned = store
-            .update_task(
-                &project.id,
-                &task.id,
-                TaskUpdate {
-                    version: task.version,
-                    assignee_group_id: Some(Some("group-1".to_owned())),
-                    ..TaskUpdate::default()
-                },
-            )
-            .unwrap();
-        assert_eq!(assigned.status.as_deref(), Some("pending"));
-
-        let manager = claim_execution(&store);
-        accept_and_start(&store, &manager);
-        let finished = store
-            .complete_execution(manager.id, Some("The configured workflow is sufficient."))
-            .unwrap()
-            .unwrap();
-        assert_eq!(finished.status, "completed");
-        let comments = store.list_comments(&project.id, &task.id, 0).unwrap();
-        assert_eq!(
-            comments[0].metadata["workflow_assignments"][0]["assignee_name"],
-            worker.display_name
-        );
-        assert_eq!(
-            comments[0].metadata["workflow_assignments"][0]["title"],
-            "Execute configured work"
-        );
-        assert_eq!(
-            store
-                .get_task(&project.id, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("pending")
-        );
-
-        let executor = claim_execution(&store);
-        assert_eq!(executor.agent_id, worker.id);
-        accept_and_start(&store, &executor);
-        store
-            .complete_execution(executor.id, Some("Configured work completed."))
-            .unwrap();
-        assert_eq!(
-            store
-                .get_task(&project.id, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("pending")
-        );
-
-        let review = claim_execution(&store);
-        assert_eq!(review.agent_id, leader.id);
-        assert_eq!(
-            review.execution_payload.as_ref().unwrap()["origin"]["automationRole"],
-            "manager_review"
         );
     }
 
@@ -6591,7 +5475,7 @@ mod tests {
                 .unwrap()
                 .status
                 .as_deref(),
-            Some("in_review")
+            Some("inbox")
         );
     }
 
@@ -6681,7 +5565,7 @@ mod tests {
     }
 
     #[test]
-    fn local_complete_execution_advances_task_to_review() {
+    fn local_complete_execution_does_not_project_issue_status() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent = make_local_agent(&store, &project.id, "auto");
@@ -6735,18 +5619,18 @@ mod tests {
         store.complete_execution(claimed.id, Some("done")).unwrap();
 
         let updated = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(updated.status.as_deref(), Some("in_review"));
+        assert_eq!(updated.status.as_deref(), Some("inbox"));
         assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
-        assert_eq!(updated.metadata["is_unread"], json!(true));
+        assert_eq!(updated.metadata["is_unread"], Value::Null);
         store.mark_task_read(&project.id, &task.id).unwrap();
         store
             .complete_execution(claimed.id, Some("duplicate"))
             .unwrap();
         assert_eq!(
             store.get_task(&project.id, &task.id).unwrap().metadata["is_unread"],
-            json!(false)
+            Value::Null
         );
-        // A new completion marks an already reviewed task unread again.
+        // Completion also preserves an Issue that was already in review.
         let second = store
             .create_task(
                 &project.id,
@@ -6790,7 +5674,7 @@ mod tests {
         store.complete_execution(claimed_second.id, None).unwrap();
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
-        assert_eq!(second_after.metadata["is_unread"], json!(true));
+        assert_eq!(second_after.metadata["is_unread"], Value::Null);
     }
 
     #[test]
@@ -9160,143 +8044,6 @@ mod tests {
             store.find_task_binding("local-device", "runtime-1"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
-    }
-
-    #[test]
-    fn projects_runtime_status_to_bound_issue_without_renderer_writeback() {
-        let (_directory, store) = store();
-        let task = store
-            .create_task(
-                DEFAULT_WORK_ITEM_PROJECT_ID,
-                TaskCreate {
-                    title: "Runtime-owned status".to_owned(),
-                    description: String::new(),
-                    status: "in_review".to_owned(),
-                    priority: "none".to_owned(),
-                    parent_id: None,
-                    tags: vec![],
-                    assignee_user_id: None,
-                    workflow: None,
-                },
-            )
-            .unwrap();
-        store
-            .bind_task(
-                DEFAULT_WORK_ITEM_PROJECT_ID,
-                Some(&task.id),
-                None,
-                RuntimeTaskAddress {
-                    device_id: "local-device".to_owned(),
-                    task_id: "runtime-status-1".to_owned(),
-                    task_title: task.title.clone(),
-                    backend_task_id: None,
-                    model_selection: None,
-                    workflow_node_id: None,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 100,)
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("in_progress")
-        );
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "succeeded", 200,)
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("in_review")
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
-        assert_eq!(
-            store
-                .mark_task_read(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 150,)
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "queued", 175,)
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("in_review")
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .metadata["is_unread"],
-            Value::Null
-        );
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "running", 300,)
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("in_progress")
-        );
-
-        assert_eq!(
-            store
-                .project_bound_task_status("local-device", "runtime-status-1", "archived", 400,)
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            store
-                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
-                .unwrap()
-                .status
-                .as_deref(),
-            Some("completed")
-        );
     }
 
     #[test]

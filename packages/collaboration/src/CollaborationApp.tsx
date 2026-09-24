@@ -73,7 +73,7 @@ export interface CollaborationIssueDetailRenderContext {
   defaultAssistant?: CollaborationHostAdapter["defaultAssistant"];
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
-  onCreateTask?(workflowStep?: string): void;
+  onCreateTask?(): void;
   /** Present only when the host enabled Issue deletion. */
   onDelete?(): void;
 }
@@ -95,11 +95,7 @@ interface CollaborationAppProps {
    * and its message is shown in the confirmation dialog.
    */
   onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
-  onCreateTask?(
-    project: CollaborationProject,
-    issue: CollaborationIssue,
-    workflowStep?: string,
-  ): void;
+  onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
   renderProjectAiComposer?: ComponentProps<
     typeof ProjectAiBoardAssistant
@@ -989,8 +985,7 @@ export function CollaborationApp({
                 },
                 onChange: commands.replaceIssue,
                 onCreateTask: onCreateTask
-                  ? (workflowStep) =>
-                      onCreateTask(project, selectedIssue, workflowStep)
+                  ? () => onCreateTask(project, selectedIssue)
                   : undefined,
                 onDelete:
                   issueDeleteAvailable &&
@@ -1033,8 +1028,7 @@ export function CollaborationApp({
                 }}
                 onCreateTask={
                   onCreateTask
-                    ? (workflowStep) =>
-                        onCreateTask(project, selectedIssue, workflowStep)
+                    ? () => onCreateTask(project, selectedIssue)
                     : undefined
                 }
                 onDelete={

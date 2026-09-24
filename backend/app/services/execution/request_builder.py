@@ -3114,11 +3114,18 @@ Response template:
         """
         from app.services.auth import create_task_token
 
+        task_json = task.json if isinstance(task.json, dict) else {}
+        metadata = task_json.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else {}
+        labels = labels if isinstance(labels, dict) else {}
         return create_task_token(
             task_id=task.id,
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+            dispatch_id=str(labels.get("dispatchId") or "") or None,
+            dispatch_role=str(labels.get("dispatchRole") or "") or None,
+            manager_agent_id=str(labels.get("managerAgentId") or "") or None,
         )
 
     def _generate_skill_identity_token(

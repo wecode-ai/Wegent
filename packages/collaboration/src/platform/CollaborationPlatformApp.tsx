@@ -20,7 +20,6 @@ import {
   Ellipsis,
   FolderPlus,
   FolderOpen,
-  Laptop,
   Monitor,
   SquarePen,
   Plus,
@@ -106,9 +105,6 @@ const platformMessages = {
     archiveProject: "归档项目",
     projectActions: "项目操作",
     allSpaces: "所有空间",
-    localCollaboration: "本地协作",
-    cloudCollaboration: "云端协作",
-    localProjects: "本地项目",
     home: "新建 Issue",
     newConversation: "新建对话",
     teams: "协作小组",
@@ -131,22 +127,22 @@ const platformMessages = {
     chooseSpace: "选择使用空间",
     chooseSpaceHint: "空间只引用资源，不会改变资源的归属或存储位置。",
     chooseResourceOwner: "选择归属",
-    chooseResourceOwnerHint: "选择由个人还是云端空间管理这个资源。",
+    chooseResourceOwnerHint: "选择由个人还是协作空间管理这个资源。",
     localWorkspaceResource: "本地空间",
     localWorkspaceResourceHint: "保存在当前设备的唯一本地空间中，可离线使用。",
-    cloudPersonal: "云端个人资源",
-    cloudPersonalHint: "保存在云端，仅你可见和管理，可跨设备使用。",
-    cloudGroups: "云端组资源",
+    cloudPersonal: "个人资源",
+    cloudPersonalHint: "仅你可见和管理。",
+    cloudGroups: "协作空间",
     cloudGroupsHint: "选择一个组，资源由组成员按权限共同管理。",
-    cloudTeamHint: "保存在云端，由团队成员按权限共同管理。",
+    cloudTeamHint: "由空间成员按权限共同管理。",
     noAvailableSpaces: "暂无可用空间",
-    teamSpaceRequired: "请先创建此归属下的云端空间，再创建协作小组。",
-    loginForCloud: "登录后使用云端资源",
-    loginForCloudHint: "登录 Wegent 账户后，可创建个人或团队的云端资源。",
+    teamSpaceRequired: "请先创建此归属下的协作空间，再创建协作小组。",
+    loginForCloud: "登录后使用共享资源",
+    loginForCloudHint: "登录 Wegent 账户后，可创建个人或团队资源。",
     resourceSaved: "资源已保存",
     bindingsSaved: "空间引用已更新",
-    cloudResources: "云端资源",
-    cloudResourcesHint: "保存在云端，可跨设备和空间复用。",
+    cloudResources: "共享资源",
+    cloudResourcesHint: "可跨设备和空间复用。",
     resourceSettings: "设置",
     deleteAgent: "删除智能体",
     deleteAgentConfirm: "删除后无法恢复，也会从引用它的空间中移除。",
@@ -159,13 +155,7 @@ const platformMessages = {
     addDevice: "添加设备",
     agentsPageHint: "管理可复用的智能体，按需添加到空间参与协作。",
     teamsPageHint: "把成员和智能体组成可分配、可复用的协作单元。",
-    devicesPageHint: "管理运行智能体的本地和云端设备，查看在线状态与运行能力。",
-    localAgentsPageHint: "管理当前设备上的智能体，供本地项目和协作小组复用。",
-    cloudAgentsPageHint: "管理云端智能体，并按需添加到云端空间参与协作。",
-    localTeamsPageHint: "管理当前设备上的协作小组，供本地项目直接分配。",
-    cloudTeamsPageHint: "管理云端协作小组，供所属空间和项目直接分配。",
-    localDevicesPageHint: "查看当前设备的在线状态与运行能力。",
-    cloudDevicesPageHint: "管理云端执行设备，查看在线状态与运行能力。",
+    devicesPageHint: "管理运行智能体的设备，查看在线状态与运行能力。",
     searchAgents: "搜索智能体",
     searchTeams: "搜索协作小组",
     searchDevices: "搜索设备",
@@ -234,7 +224,6 @@ const platformMessages = {
     localStorage: "本地 · 仅当前设备",
     cloudStorage: "云端 · 可跨设备协作",
     localSpaces: "当前设备",
-    cloudSpaces: "云端空间",
     localOnlyHint:
       "当前仅显示本地空间。创建云端空间后即可邀请成员并跨设备协作。",
     joinWorkspace: "加入空间",
@@ -324,9 +313,6 @@ const platformMessages = {
     archiveProject: "Archive project",
     projectActions: "Project actions",
     allSpaces: "All spaces",
-    localCollaboration: "Local collaboration",
-    cloudCollaboration: "Cloud collaboration",
-    localProjects: "Local projects",
     home: "New Issue",
     newConversation: "New conversation",
     teams: "Teams",
@@ -351,29 +337,26 @@ const platformMessages = {
       "A space references the resource without changing its owner or storage location.",
     chooseResourceOwner: "Choose owner",
     chooseResourceOwnerHint:
-      "Choose whether this resource is managed personally or by a cloud space.",
+      "Choose whether this resource is managed personally or by a collaboration space.",
     localWorkspaceResource: "Local space",
     localWorkspaceResourceHint:
       "Stored in this device's single local space and available offline.",
-    cloudPersonal: "Cloud personal resource",
-    cloudPersonalHint:
-      "Stored in the cloud, visible only to you, and available across devices.",
-    cloudGroups: "Cloud group resource",
+    cloudPersonal: "Personal resource",
+    cloudPersonalHint: "Visible only to you.",
+    cloudGroups: "Collaboration spaces",
     cloudGroupsHint:
       "Choose a group. Members manage the resource according to their permissions.",
-    cloudTeamHint:
-      "Stored in the cloud and managed by team members according to permissions.",
+    cloudTeamHint: "Managed by space members according to permissions.",
     noAvailableSpaces: "No spaces available",
     teamSpaceRequired:
-      "Create a cloud space under this owner before creating a team.",
-    loginForCloud: "Sign in to use cloud resources",
+      "Create a collaboration space under this owner before creating a team.",
+    loginForCloud: "Sign in to use shared resources",
     loginForCloudHint:
-      "Sign in to Wegent to create personal or team cloud resources.",
+      "Sign in to Wegent to create personal or team resources.",
     resourceSaved: "Resource saved",
     bindingsSaved: "Space references updated",
-    cloudResources: "Cloud resources",
-    cloudResourcesHint:
-      "Stored in the cloud for reuse across devices and spaces.",
+    cloudResources: "Shared resources",
+    cloudResourcesHint: "Reusable across devices and spaces.",
     resourceSettings: "Settings",
     deleteAgent: "Delete agent",
     deleteAgentConfirm:
@@ -391,19 +374,7 @@ const platformMessages = {
     teamsPageHint:
       "A leader coordinates agents and members, handing work to the right collaborator.",
     devicesPageHint:
-      "Manage local and cloud devices that run agents, and view their online status and runtimes.",
-    localAgentsPageHint:
-      "Manage agents on this device for reuse by local projects and teams.",
-    cloudAgentsPageHint:
-      "Manage cloud agents and add them to cloud spaces when needed.",
-    localTeamsPageHint:
-      "Manage teams on this device for direct assignment in local projects.",
-    cloudTeamsPageHint:
-      "Manage cloud teams for direct assignment in their spaces and projects.",
-    localDevicesPageHint:
-      "Inspect the status and runtime capabilities of this device.",
-    cloudDevicesPageHint:
-      "Manage cloud execution devices and inspect their runtime capabilities.",
+      "Manage devices that run agents, and view their online status and runtimes.",
     searchAgents: "Search agents",
     searchTeams: "Search teams",
     searchDevices: "Search devices",
@@ -481,7 +452,6 @@ const platformMessages = {
     localStorage: "Local · This device only",
     cloudStorage: "Cloud · Cross-device",
     localSpaces: "This device",
-    cloudSpaces: "Cloud spaces",
     localOnlyHint:
       "Only the local space is available. Create a cloud space to invite members and collaborate across devices.",
     joinWorkspace: "Join space",
@@ -678,6 +648,7 @@ function CollaborationPlatformNavigation({
   projects,
   navigationIncomplete,
   onRetryNavigation,
+  canCreateWorkspace,
   onCreateWorkspace,
   onCreateProject,
   onNewConversation,
@@ -692,6 +663,7 @@ function CollaborationPlatformNavigation({
   projects: CollaborationProject[];
   navigationIncomplete: boolean;
   onRetryNavigation(): Promise<void>;
+  canCreateWorkspace: boolean;
   onCreateWorkspace(): void;
   onCreateProject(
     workspaceId: string,
@@ -701,10 +673,7 @@ function CollaborationPlatformNavigation({
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
-  const domainWorkspaces = useMemo(
-    () => workspaces.filter((workspace) => workspace.location === domain),
-    [domain, workspaces],
-  );
+  const domainWorkspaces = workspaces;
   const domainWorkspaceIds = useMemo(
     () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
     [domainWorkspaces],
@@ -755,10 +724,13 @@ function CollaborationPlatformNavigation({
       return new Set([...current, workspaceId]);
     });
   }, [navigationWorkspaces, selectedWorkspaceId]);
-  const openWorkspaceHome = (workspaceId: string) =>
+  const openWorkspaceHome = (
+    workspaceId: string,
+    collaborationDomain: CollaborationDomain,
+  ) =>
     host.navigate({
       platformView: "spaces",
-      collaborationDomain: domain,
+      collaborationDomain,
       workspaceId,
       workspaceView: "home",
       projectId: null,
@@ -782,44 +754,6 @@ function CollaborationPlatformNavigation({
         <>
           <div className="collaboration-platform-brand">
             {messages.collaborationHome}
-          </div>
-          <div
-            className="collaboration-domain-switch"
-            role="group"
-            aria-label={messages.collaborationHome}
-          >
-            {(["local", "cloud"] as const).map((candidate) => (
-              <button
-                type="button"
-                className={domain === candidate ? "active" : undefined}
-                aria-pressed={domain === candidate}
-                data-testid={`collaboration-domain-${candidate}`}
-                key={candidate}
-                onClick={() =>
-                  host.navigate({
-                    platformView: "spaces",
-                    collaborationDomain: candidate,
-                    rootView: "home",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                {candidate === "local" ? (
-                  <Laptop aria-hidden="true" />
-                ) : (
-                  <Cloud aria-hidden="true" />
-                )}
-                <span>
-                  {candidate === "local"
-                    ? messages.localCollaboration
-                    : messages.cloudCollaboration}
-                </span>
-              </button>
-            ))}
           </div>
           <nav
             className="collaboration-primary-navigation"
@@ -956,7 +890,7 @@ function CollaborationPlatformNavigation({
             className="collaboration-workspace-section-title"
             data-testid="collaboration-workspaces-section-title"
           >
-            {domain === "local" ? messages.localProjects : messages.cloudSpaces}
+            {messages.collaborationSpaces}
           </span>
         ) : (
           <button
@@ -970,7 +904,7 @@ function CollaborationPlatformNavigation({
             <ChevronRight aria-hidden="true" />
           </button>
         )}
-        {domain === "cloud" ? (
+        {canCreateWorkspace ? (
           <div className="collaboration-workspace-section-actions">
             <button
               type="button"
@@ -1016,8 +950,6 @@ function CollaborationPlatformNavigation({
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
             const expanded = expandedWorkspaceIds.has(candidate.id);
-            const WorkspaceLocationIcon =
-              candidate.location === "local" ? Laptop : Cloud;
             const candidateProjects =
               projectsByWorkspace.get(candidate.id) ?? [];
             const workspaceActive =
@@ -1049,19 +981,18 @@ function CollaborationPlatformNavigation({
                           : `collaboration-workspace-home-${candidate.id}`
                       }
                       aria-current={workspaceActive ? "page" : undefined}
-                      onClick={() => openWorkspaceHome(candidate.id)}
+                      onClick={() =>
+                        openWorkspaceHome(candidate.id, candidate.location)
+                      }
                     >
                       <span
                         className="collaboration-workspace-folder"
-                        data-location={candidate.location}
-                        data-testid={`collaboration-workspace-location-${candidate.id}`}
                         aria-hidden="true"
                       >
-                        <WorkspaceLocationIcon />
+                        <FolderOpen />
                       </span>
                       <span
                         className="collaboration-workspace-title-block"
-                        data-location={candidate.location}
                         data-testid={`collaboration-workspace-${candidate.id}`}
                       >
                         <span className="collaboration-workspace-title">
@@ -1076,15 +1007,12 @@ function CollaborationPlatformNavigation({
                     >
                       <span
                         className="collaboration-workspace-folder"
-                        data-location={candidate.location}
-                        data-testid={`collaboration-workspace-location-${candidate.id}`}
                         aria-hidden="true"
                       >
-                        <WorkspaceLocationIcon />
+                        <FolderOpen />
                       </span>
                       <span
                         className="collaboration-workspace-title-block"
-                        data-location={candidate.location}
                         data-testid={`collaboration-workspace-${candidate.id}`}
                       >
                         <span className="collaboration-workspace-title">
@@ -1391,15 +1319,13 @@ function ResourceCatalogPage({
     let active = true;
     if (kind !== "teams" || !api.workspaces) return;
     void Promise.all(
-      workspaces
-        .filter((workspace) => workspace.location === domain)
-        .map(
-          async (workspace) =>
-            [
-              workspace.id,
-              await api.workspaces!.listMembers(workspace.id),
-            ] as const,
-        ),
+      workspaces.map(
+        async (workspace) =>
+          [
+            workspace.id,
+            await api.workspaces!.listMembers(workspace.id),
+          ] as const,
+      ),
     )
       .then((entries) => {
         if (active) setWorkspaceMembers(Object.fromEntries(entries));
@@ -1410,7 +1336,7 @@ function ResourceCatalogPage({
     return () => {
       active = false;
     };
-  }, [api, domain, kind, workspaces]);
+  }, [api, kind, workspaces]);
   const participantName = (
     member: CollaborationGroup["leader"],
     workspaceId: string,
@@ -1584,30 +1510,21 @@ function ResourceCatalogPage({
   const pageCopy = {
     agents: {
       title: messages.agents,
-      hint:
-        domain === "local"
-          ? messages.localAgentsPageHint
-          : messages.cloudAgentsPageHint,
+      hint: messages.agentsPageHint,
       search: messages.searchAgents,
       create: messages.createAgent,
       icon: Bot,
     },
     teams: {
       title: messages.teams,
-      hint:
-        domain === "local"
-          ? messages.localTeamsPageHint
-          : messages.cloudTeamsPageHint,
+      hint: messages.teamsPageHint,
       search: messages.searchTeams,
       create: messages.createTeam,
       icon: UsersRound,
     },
     devices: {
       title: messages.devices,
-      hint:
-        domain === "local"
-          ? messages.localDevicesPageHint
-          : messages.cloudDevicesPageHint,
+      hint: messages.devicesPageHint,
       search: messages.searchDevices,
       create: messages.addDevice,
       icon: Monitor,
@@ -1744,15 +1661,14 @@ function ResourceCatalogPage({
     kind === "agents" ? agentRows : kind === "teams" ? teamRows : deviceRows;
   const visibleRows = rows.filter(
     (row) =>
-      row.source === domain &&
-      (domain === "local" || scope === "all" || row.scope === scope) &&
+      (scope === "all" || row.scope === scope) &&
       (!normalizedQuery ||
         `${row.name} ${row.owner} ${row.workspaceNames.join(" ")}`
           .toLocaleLowerCase()
           .includes(normalizedQuery)),
   );
   const PageIcon = pageCopy.icon;
-  const rowsInSource = rows.filter((row) => row.source === domain);
+  const rowsInSource = rows;
   const scopeCounts = {
     all: rowsInSource.length,
     mine: rowsInSource.filter((row) => row.scope === "mine").length,
@@ -1815,31 +1731,29 @@ function ResourceCatalogPage({
 
       <div className="collaboration-resource-catalog-toolbar">
         <div className="collaboration-resource-filter-stack">
-          {domain === "cloud" ? (
-            <div
-              className="collaboration-resource-scope-filter"
-              role="group"
-              aria-label={messages.resourceSource}
-            >
-              {(["all", "mine", "shared"] as const).map((candidate) => (
-                <button
-                  type="button"
-                  className={scope === candidate ? "active" : undefined}
-                  aria-pressed={scope === candidate}
-                  data-testid={`collaboration-${kind}-scope-${candidate}`}
-                  key={candidate}
-                  onClick={() => setScope(candidate)}
-                >
-                  {candidate === "all"
-                    ? messages.allSources
-                    : candidate === "mine"
-                      ? messages.createdByMe
-                      : messages.teamShared}
-                  <em>{scopeCounts[candidate]}</em>
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <div
+            className="collaboration-resource-scope-filter"
+            role="group"
+            aria-label={messages.resourceSource}
+          >
+            {(["all", "mine", "shared"] as const).map((candidate) => (
+              <button
+                type="button"
+                className={scope === candidate ? "active" : undefined}
+                aria-pressed={scope === candidate}
+                data-testid={`collaboration-${kind}-scope-${candidate}`}
+                key={candidate}
+                onClick={() => setScope(candidate)}
+              >
+                {candidate === "all"
+                  ? messages.allSources
+                  : candidate === "mine"
+                    ? messages.createdByMe
+                    : messages.teamShared}
+                <em>{scopeCounts[candidate]}</em>
+              </button>
+            ))}
+          </div>
         </div>
         <label className="collaboration-resource-catalog-search">
           <Search aria-hidden="true" />
@@ -2611,19 +2525,6 @@ function workItemStep(
   item: WorkspaceMyWorkItem,
   messages: PlatformMessages,
 ): string {
-  const nodes = item.workflow?.nodes ?? [];
-  const activeIndex = nodes.findIndex((node) =>
-    [
-      "assigned",
-      "awaiting_approval",
-      "failed",
-      "in_progress",
-      "running",
-    ].includes(node.status),
-  );
-  if (activeIndex >= 0) {
-    return `${activeIndex + 1}/${nodes.length} ${nodes[activeIndex].name}`;
-  }
   if (item.status === "in_review") return messages.waitingReview;
   if (item.execution_state) return item.execution_state.replace(/_/g, " ");
   return item.status.replace(/_/g, " ");
@@ -2686,7 +2587,7 @@ function WorkItemRow({
       </span>
       <span className="collaboration-home-work-step">
         <strong>{workItemStep(item, messages)}</strong>
-        <small>{item.workflow?.orchestration_status ?? item.status}</small>
+        <small>{item.status}</small>
       </span>
       <OperationStateBadge messages={messages} state={status.state} />
       <time dateTime={item.updated_at}>
@@ -3590,13 +3491,7 @@ export function CollaborationPlatformApp({
     host.location.collaborationDomain ??
     state.workspace?.location ??
     (host.capabilities.projectLocation === "local" ? "local" : "cloud");
-  const domainWorkspaces = useMemo(
-    () =>
-      state.workspaces.filter(
-        (workspace) => workspace.location === collaborationDomain,
-      ),
-    [collaborationDomain, state.workspaces],
-  );
+  const domainWorkspaces = state.workspaces;
   const domainWorkspaceIds = useMemo(
     () => new Set(domainWorkspaces.map((workspace) => workspace.id)),
     [domainWorkspaces],
@@ -3667,23 +3562,13 @@ export function CollaborationPlatformApp({
     }
     return [...agents.values()];
   }, [projectWorkspaceAgents, state.agents, state.resources.agents]);
-  const selectedProjectResourceAgents = useMemo(
-    () =>
-      projectResourceAgents.filter((agent) =>
-        projectWorkspace?.location === "local"
-          ? agent.location === "local"
-          : agent.location !== "local",
-      ),
-    [projectResourceAgents, projectWorkspace?.location],
-  );
+  const selectedProjectResourceAgents = projectResourceAgents;
   const defaultProjectAgentResourceIds = useMemo(
     () =>
-      projectWorkspace?.location === "local"
-        ? selectedProjectResourceAgents
-            .filter(isCurrentDeviceCollaborationAgent)
-            .map((agent) => agent.id)
-        : [],
-    [projectWorkspace?.location, selectedProjectResourceAgents],
+      selectedProjectResourceAgents
+        .filter(isCurrentDeviceCollaborationAgent)
+        .map((agent) => agent.id),
+    [selectedProjectResourceAgents],
   );
   const openProject = (project: CollaborationProject) => {
     const workspace =
@@ -4179,7 +4064,7 @@ export function CollaborationPlatformApp({
                 title={messages.noSpaces}
                 description={messages.noSpacesHint}
                 action={
-                  collaborationDomain === "cloud" && canCreateCloudWorkspace ? (
+                  canCreateCloudWorkspace ? (
                     <button
                       type="button"
                       className="collaboration-primary-button"
@@ -4545,6 +4430,7 @@ export function CollaborationPlatformApp({
       projects={state.navigationProjects}
       navigationIncomplete={state.navigationIncomplete}
       onRetryNavigation={commands.reload}
+      canCreateWorkspace={canCreateCloudWorkspace}
       onCreateWorkspace={() => {
         setCreateProjectAfterWorkspace(false);
         setWorkspaceDialogOpen(true);
@@ -4637,9 +4523,7 @@ export function CollaborationPlatformApp({
           messages={messages}
           workspaces={domainWorkspaces}
           cloudAccess={host.cloudAccess}
-          canCreateCloudWorkspace={
-            collaborationDomain === "cloud" && canCreateCloudWorkspace
-          }
+          canCreateCloudWorkspace={canCreateCloudWorkspace}
           onClose={() => setWorkspacePickerOpen(false)}
           onCreateCloudWorkspace={() => {
             setWorkspacePickerOpen(false);
@@ -4748,7 +4632,9 @@ export function CollaborationPlatformApp({
                       ...(await Promise.all(
                         selectedAgents
                           .filter(
-                            (agent) => agent.id !== selectedDefaultAgent?.id,
+                            (agent) =>
+                              agent.id !== selectedDefaultAgent?.id ||
+                              !projectDefaultAgent,
                           )
                           .map(async (agent) => ({
                             resourceId: agent.id,

@@ -31,8 +31,10 @@ fn context_grant_expiring_at(
             "task_id": "contract-test",
             "space_id": space_id,
             "item_id": item_id,
+            "dispatch_id": null,
             "automation_run_id": null,
-            "automation_manager": false,
+            "role": null,
+            "categories": [],
             "expires_at_unix": expires_at_unix
         }))
         .unwrap(),

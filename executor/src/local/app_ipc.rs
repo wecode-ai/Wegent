@@ -226,10 +226,6 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 
-    fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {
-        Box::pin(async {})
-    }
-
     fn handle_codex_app_server_rpc<'a>(
         &'a self,
         _data: Value,
@@ -911,20 +907,7 @@ impl AppIpcServer {
             || method.starts_with("chat_agents.")
             || method.starts_with("executions.")
         {
-            let should_reconcile_before = method == "todos.list";
-            let should_reconcile_after = matches!(method, "todos.bind" | "projects.bind_task");
-            if should_reconcile_before {
-                if let Some(handler) = &self.runtime_work_handler {
-                    handler.reconcile_bound_task_statuses().await;
-                }
-            }
-            let result = handle_task_runtime_request(method, params).await?;
-            if should_reconcile_after {
-                if let Some(handler) = &self.runtime_work_handler {
-                    handler.reconcile_bound_task_statuses().await;
-                }
-            }
-            return Ok(result);
+            return handle_task_runtime_request(method, params).await;
         }
 
         if method.starts_with("runtime.") {
@@ -2484,84 +2467,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .archive_chat_agent(project_id, agent_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
-        }
-        "todos.review_feedback" => runtime
-            .submit_local_review_feedback(
-                required_task_string(&params, "item_id")?,
-                params
-                    .get("version")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?,
-                required_task_string(&params, "feedback")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.cancel" => runtime
-            .cancel_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.retry" => runtime
-            .retry_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.run" => runtime
-            .run_project_automation(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "automation_id")?,
-                params.get("issue_id").and_then(Value::as_str),
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.runs" => serialize_task_value(
-            runtime
-                .list_project_automation_runs(
-                    required_task_string(&params, "project_id")?,
-                    required_task_string(&params, "automation_id")?,
-                )
-                .map_err(task_runtime_error)?,
-        ),
-        "projects.manager.run" => runtime
-            .run_project_manager(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "instruction")?,
-                params.get("model_selection"),
-            )
-            .map_err(task_runtime_error),
-        "projects.manager.runs" => serialize_task_value(
-            runtime
-                .list_project_manager_runs(required_task_string(&params, "project_id")?)
-                .map_err(task_runtime_error)?,
-        ),
-        "projects.manager.decide" => runtime
-            .decide_project_manager_action(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-                required_task_string(&params, "action_id")?,
-                params
-                    .get("approve")
-                    .and_then(Value::as_bool)
-                    .ok_or_else(|| AppIpcError::new("bad_request", "approve is required"))?,
-                params
-                    .get("version")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?,
-            )
-            .map_err(task_runtime_error),
-        "executions.list" => {
-            let project_id = required_task_string(&params, "project_id")?;
-            let agent_id = params.get("agent_id").and_then(Value::as_str);
-            let status = params.get("status").and_then(Value::as_str);
-            let include_terminal = params
-                .get("include_terminal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            serialize_task_value(
-                runtime
-                    .list_executions(project_id, agent_id, status, include_terminal)
-                    .map_err(task_runtime_error)?,
-            )
         }
         "executions.approve" | "executions.reject" => {
             let execution_id = required_task_i64(&params, "execution_id")?;

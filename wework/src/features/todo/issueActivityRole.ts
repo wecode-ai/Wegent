@@ -1,12 +1,8 @@
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
-import type { CloudLoopItem } from '@/api/deliveries'
 
-export function issueActivityRole(message: ProjectChatMessage, task: CloudLoopItem) {
+export function issueActivityRole(message: ProjectChatMessage) {
   if (message.sender.type !== 'agent') return undefined
-  const node = task.workflow?.nodes.find(node => node.id === message.metadata.workflow_node_id)
-  const role =
-    message.metadata.automation_role ??
-    (node && 'automation_role' in node ? node.automation_role : undefined)
+  const role = message.metadata.dispatch_role ?? message.metadata.automation_role
   if (role === 'manager_review') return 'manager_review'
   if (
     role === 'manager' ||

@@ -12,8 +12,6 @@ import {
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
-  mapWorkspaceWorkflowPlanDto,
-  mapWorkspaceWorkflowStageContextDto,
 } from '@wegent/collaboration'
 import type {
   CollaborationAttachment,
@@ -21,6 +19,9 @@ import type {
   CollaborationFile,
   CollaborationIssue,
   CollaborationProject,
+  IssueDispatch,
+  IssueDispatchRound,
+  IssueDispatchTask,
   SharedWorkspaceApi,
   WorkspaceBinaryAccess,
   WorkspaceDeliveryFile,
@@ -210,44 +211,49 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     endpoint: 'GET /v1/loop-items/{id}/tasks',
   },
   {
-    capability: 'workflowPlans.get',
+    capability: 'dispatches.list',
     status: 'supported',
-    endpoint: 'GET /v1/loop-items/{id}/workflow-plan',
+    endpoint: 'GET /v1/loop-items/{id}/dispatches',
   },
   {
-    capability: 'workflowPlans.approve',
+    capability: 'dispatches.get',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/approve',
+    endpoint: 'GET /v1/issue-dispatches/{id}',
   },
   {
-    capability: 'workflowPlans.approveReview',
+    capability: 'dispatches.listCandidates',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/review',
+    endpoint: 'GET /v1/loop-items/{id}/dispatch-candidates',
   },
   {
-    capability: 'workflowPlans.pause',
+    capability: 'dispatches.create',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/pause',
+    endpoint: 'POST /v1/loop-items/{id}/dispatches',
   },
   {
-    capability: 'workflowPlans.resume',
+    capability: 'dispatches.createRound',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/resume',
+    endpoint: 'POST /v1/issue-dispatches/{id}/rounds',
   },
   {
-    capability: 'workflowPlans.replan',
+    capability: 'dispatches.cancelTask',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-plan/replan',
+    endpoint: 'POST /v1/issue-dispatch-tasks/{id}/cancel',
   },
   {
-    capability: 'workflowPlans.decideNode',
+    capability: 'dispatches.retry',
     status: 'supported',
-    endpoint: 'POST /v1/loop-items/{id}/workflow-nodes/{nodeId}/decision',
+    endpoint: 'POST /v1/issue-dispatches/{id}/retry',
   },
   {
-    capability: 'workflowPlans.getStageContext',
+    capability: 'dispatches.decide',
     status: 'supported',
-    endpoint: 'GET /v1/loop-items/{id}/workflow-nodes/{nodeId}/input-context',
+    endpoint: 'POST /v1/issue-dispatches/{id}/decisions',
+  },
+  {
+    capability: 'dispatches.returnForRework',
+    status: 'supported',
+    endpoint: 'POST /v1/issue-dispatches/{id}/return-for-rework',
   },
   {
     capability: 'members.list',
@@ -391,11 +397,6 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     endpoint: 'POST /v1/cloud-projects/{id}/automations/{automationId}/run',
   },
   {
-    capability: 'automations.runWorkflowNode',
-    status: 'supported',
-    endpoint: 'POST /v1/cloud-projects/{id}/loop-items/{issueId}/workflow-nodes/{nodeId}/run',
-  },
-  {
     capability: 'automations.listRuns',
     status: 'supported',
     endpoint: 'GET /v1/cloud-projects/{id}/automations/{automationId}/runs',
@@ -536,6 +537,130 @@ function mapBinaryAccess(row: Record<string, unknown>): WorkspaceBinaryAccess {
   return {
     url: String(row.url ?? ''),
     expiresInSeconds: Number(row.expires_in_seconds ?? 0),
+  }
+}
+
+function mapDispatchTask(
+  row: Record<string, unknown>,
+  dispatchId: string,
+  roundId: string,
+  issueId: string
+): IssueDispatchTask {
+  const status = String(row.status ?? '')
+  const mappedStatus: IssueDispatchTask['status'] =
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'submitted' ||
+    status === 'failed' ||
+    status === 'needs_rework' ||
+    status === 'cancelled'
+      ? status
+      : 'assigned'
+  const taskId = String(row.id ?? '')
+  const summary = String(row.summary ?? '')
+  return {
+    id: taskId,
+    dispatchId,
+    roundId,
+    issueId,
+    title: String(row.task_title ?? ''),
+    instruction: String(row.instructions ?? ''),
+    target: {
+      kind: String(row.assignee_type ?? '') === 'human' ? 'human' : 'agent',
+      id: String(row.assignee_id ?? ''),
+      name: String(row.assignee_name ?? ''),
+    },
+    workflowStageId: row.workflow_stage_id == null ? null : String(row.workflow_stage_id),
+    workflowStageName: null,
+    executionLocation:
+      row.execution_location === 'local' || row.execution_location === 'cloud'
+        ? row.execution_location
+        : null,
+    status: mappedStatus,
+    outcome: ['submitted', 'failed', 'needs_rework', 'cancelled'].includes(status)
+      ? {
+          id: `${taskId}:latest`,
+          dispatchId,
+          roundId,
+          taskId,
+          status:
+            status === 'submitted'
+              ? 'passed'
+              : status === 'needs_rework'
+                ? 'needs_rework'
+                : status === 'cancelled'
+                  ? 'cancelled'
+                  : 'failed',
+          summary,
+          evidence: [],
+          createdAt: String(row.updated_at ?? ''),
+        }
+      : null,
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  }
+}
+
+function mapDispatchRound(
+  row: Record<string, unknown>,
+  dispatchId: string,
+  issueId: string
+): IssueDispatchRound {
+  const roundId = String(row.id ?? '')
+  const state = String(row.status ?? '')
+  return {
+    id: roundId,
+    dispatchId,
+    sequence: Number(row.sequence ?? 0),
+    status:
+      state === 'executing'
+        ? 'executing'
+        : state === 'evaluating'
+          ? 'evaluating'
+          : state === 'closed'
+            ? 'closed'
+            : state === 'cancelled'
+              ? 'cancelled'
+              : 'planning',
+    tasks: Array.isArray(row.tasks)
+      ? row.tasks.map(task =>
+          mapDispatchTask(task as Record<string, unknown>, dispatchId, roundId, issueId)
+        )
+      : [],
+    createdAt: String(row.created_at ?? ''),
+    completedAt: state === 'closed' || state === 'cancelled' ? String(row.updated_at ?? '') : null,
+  }
+}
+
+function mapIssueDispatch(row: Record<string, unknown>): IssueDispatch {
+  const dispatchId = String(row.id ?? '')
+  const issueId = String(row.issue_id ?? '')
+  const targetType = String(row.target_type ?? '')
+  const state = String(row.status ?? '')
+  return {
+    id: dispatchId,
+    projectId: String(row.project_id ?? ''),
+    issueId,
+    target: {
+      kind:
+        targetType === 'group' ? 'collaboration_group' : targetType === 'agent' ? 'agent' : 'human',
+      id: String(row.target_id ?? ''),
+      name: String(row.target_name ?? ''),
+    },
+    leaderType: row.leader_type === 'human' || row.leader_type === 'agent' ? row.leader_type : null,
+    leaderId: row.leader_id == null ? null : String(row.leader_id),
+    leaderName: row.leader_name == null ? null : String(row.leader_name),
+    status: state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'active',
+    rounds: Array.isArray(row.rounds)
+      ? row.rounds.map(round =>
+          mapDispatchRound(round as Record<string, unknown>, dispatchId, issueId)
+        )
+      : [],
+    managerTurnCount: Number(row.manager_turn_count ?? 0),
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+    completedAt:
+      state === 'completed' || state === 'cancelled' ? String(row.updated_at ?? '') : null,
   }
 }
 
@@ -803,59 +928,98 @@ export function createWebSharedWorkspaceApi(
         return response.map(binding => mapWorkspaceTaskBindingDto(binding, projectId))
       },
     },
-    workflowPlans: {
-      async get(issueId) {
-        const response = await client.get<Record<string, unknown> | null>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan`
+    dispatches: {
+      async list(issueId) {
+        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
+          `/v1/loop-items/${encoded(issueId)}/dispatches`
         )
-        return response ? mapWorkspaceWorkflowPlanDto(response) : null
+        return response.items.map(mapIssueDispatch)
       },
-      async approve(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/approve`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async approveReview(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/review`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async pause(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/pause`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async resume(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/resume`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      async replan(issueId) {
-        const response = await client.post<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-plan/replan`,
-          {}
-        )
-        return mapWorkspaceWorkflowPlanDto(response)
-      },
-      decideNode(issueId, workflowNodeId, action, reason) {
-        return client.post(
-          `/v1/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/decision`,
-          { action, reason: reason ?? '' }
-        )
-      },
-      async getStageContext(issueId, workflowNodeId) {
+      async get(dispatchId) {
         const response = await client.get<Record<string, unknown>>(
-          `/v1/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/input-context`
+          `/v1/issue-dispatches/${encoded(dispatchId)}`
         )
-        return mapWorkspaceWorkflowStageContextDto(response)
+        return mapIssueDispatch(response)
+      },
+      async listCandidates(issueId, targetKind) {
+        const wireKind = targetKind === 'collaboration_group' ? 'group' : targetKind
+        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
+          `/v1/loop-items/${encoded(issueId)}/dispatch-candidates?target_type=${encoded(wireKind)}`
+        )
+        return response.items
+          .filter(item => String(item.target_type ?? '') === wireKind)
+          .map(item => ({
+            kind:
+              String(item.target_type ?? '') === 'group'
+                ? ('collaboration_group' as const)
+                : String(item.target_type ?? '') === 'agent'
+                  ? ('agent' as const)
+                  : ('human' as const),
+            id: String(item.target_id ?? ''),
+            name: String(item.name ?? ''),
+            description: String(item.execution_location ?? ''),
+          }))
+      },
+      async create(issueId, input) {
+        const response = await client.post<Record<string, unknown>>(
+          `/v1/loop-items/${encoded(issueId)}/dispatches`,
+          {
+            target_type: input.target.kind === 'collaboration_group' ? 'group' : input.target.kind,
+            target_id: input.target.id,
+            idempotency_key: crypto.randomUUID(),
+            task_title: input.taskTitle,
+            instructions: input.instructions,
+          }
+        )
+        return mapIssueDispatch(response)
+      },
+      async createRound(dispatchId, input) {
+        await client.post<Record<string, unknown>>(
+          `/v1/issue-dispatches/${encoded(dispatchId)}/rounds`,
+          {
+            idempotency_key: crypto.randomUUID(),
+            tasks: input.tasks.map(task => ({
+              task_title: task.title,
+              instructions: task.instruction,
+              assignee_type: task.target.kind,
+              assignee_id: task.target.id,
+              workflow_stage_id: task.workflowStageId ?? null,
+            })),
+          }
+        )
+        return this.get(dispatchId)
+      },
+      async cancelTask(taskId) {
+        const response = await client.post<Record<string, unknown>>(
+          `/v1/issue-dispatch-tasks/${encoded(taskId)}/cancel`,
+          {}
+        )
+        return mapIssueDispatch(response)
+      },
+      async retry(dispatchId) {
+        const response = await client.post<Record<string, unknown>>(
+          `/v1/issue-dispatches/${encoded(dispatchId)}/retry`,
+          {}
+        )
+        return mapIssueDispatch(response)
+      },
+      async decide(dispatchId, input) {
+        const response = await client.post<Record<string, unknown>>(
+          `/v1/issue-dispatches/${encoded(dispatchId)}/decisions`,
+          {
+            idempotency_key: crypto.randomUUID(),
+            target_status: input.status,
+            reason: input.reason,
+          }
+        )
+        return mapIssueDispatch(response)
+      },
+      async returnForRework(dispatchId) {
+        const response = await client.post<Record<string, unknown>>(
+          `/v1/issue-dispatches/${encoded(dispatchId)}/return-for-rework`,
+          {}
+        )
+        return mapIssueDispatch(response)
       },
     },
     members: {
@@ -1030,12 +1194,6 @@ export function createWebSharedWorkspaceApi(
       runNow(projectId, automationId) {
         return client.post(
           `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}/run`
-        )
-      },
-      runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        const query = `automation_id=${encodeURIComponent(automationId)}`
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/run?${query}`
         )
       },
       listRuns(projectId, automationId) {

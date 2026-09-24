@@ -12,7 +12,7 @@ import logging
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Literal
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -50,7 +50,6 @@ from app.schemas.issue_workflow import (
     IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     instantiate_workflow,
-    workflow_node_execution_mode,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_project_visibility import explicit_project_member_ids
@@ -1774,6 +1773,7 @@ class LoopItemService:
         instruction: str | None = None,
         assignment_comment_id: str | None = None,
         commit: bool = True,
+        authorization: Literal["manual", "issue_dispatch"] = "manual",
     ) -> LoopItem:
         """Assign a task to a project member, project robot, or Wegent Team.
 
@@ -1783,8 +1783,13 @@ class LoopItemService:
         queue.
         """
 
+        required_role = (
+            BaseRole.Developer
+            if authorization == "issue_dispatch"
+            else BaseRole.Maintainer
+        )
         access = self._require_internal_task_project(
-            db, project_id, user_id, BaseRole.Maintainer
+            db, project_id, user_id, required_role
         )
         project = access.project
         item = self.get(db, item_id, user_id)
@@ -1804,10 +1809,9 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
                 )
-            access = require_cloud_project_role(
-                db, project_id, user_id, BaseRole.Viewer
-            )
-            if not self._agent_visible_to_user(agent, user_id, access.role):
+            if authorization == "manual" and not self._agent_visible_to_user(
+                agent, user_id, access.role
+            ):
                 raise HTTPException(
                     status.HTTP_403_FORBIDDEN,
                     "Robot is not visible to you",
@@ -2354,18 +2358,6 @@ class LoopItemService:
             .with_for_update()
             .first()
         )
-        if values.workflow_node_id:
-            self._validate_workflow_task_binding(
-                db,
-                item,
-                values.workflow_node_id,
-                (
-                    active
-                    if active is not None and active.loop_item_id == item_id
-                    else None
-                ),
-                allow_automated_stage=allow_automated_stage,
-            )
         if active is not None:
             if active.loop_item_id == item_id:
                 if values.task_title and active.task_title != values.task_title:
@@ -2380,19 +2372,6 @@ class LoopItemService:
                         ),
                         **metadata_updates,
                     }
-                if values.workflow_node_id:
-                    from app.services.workflow_stage_context import (
-                        workflow_stage_context_resolver,
-                    )
-
-                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
-                        workflow_stage_context_resolver.freeze_binding(
-                            active,
-                            stage_snapshot
-                            or workflow_stage_context_resolver.resolve(
-                                db, item=item, target_node_id=values.workflow_node_id
-                            ),
-                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -2415,18 +2394,6 @@ class LoopItemService:
             linked_at=self._now(),
             metadata_json=_task_binding_metadata(values) or None,
         )
-        if values.workflow_node_id:
-            from app.services.workflow_stage_context import (
-                workflow_stage_context_resolver,
-            )
-
-            workflow_stage_context_resolver.freeze_binding(
-                binding,
-                stage_snapshot
-                or workflow_stage_context_resolver.resolve(
-                    db, item=item, target_node_id=values.workflow_node_id
-                ),
-            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:
@@ -2435,47 +2402,6 @@ class LoopItemService:
         else:
             db.flush()
         return binding
-
-    @staticmethod
-    def _validate_workflow_task_binding(
-        db: Session,
-        item: LoopItem,
-        workflow_node_id: str,
-        active_binding: LoopItemTaskBinding | None,
-        *,
-        allow_automated_stage: bool = False,
-    ) -> None:
-        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-        workflow = metadata.get("workflow")
-        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        node = next(
-            (
-                candidate
-                for candidate in nodes or []
-                if isinstance(candidate, dict)
-                and candidate.get("id") == workflow_node_id
-            ),
-            None,
-        )
-        if node is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if workflow_node_execution_mode(node) == "robot" and not allow_automated_stage:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Automated workflow stage does not accept a user task",
-            )
-        if active_binding is None and node.get("status") not in {
-            "ready",
-            "queued",
-            "running",
-            "awaiting_approval",
-            "changes_requested",
-            "failed",
-        }:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Workflow node is not ready",
-            )
 
     def bind_project_task(
         self,

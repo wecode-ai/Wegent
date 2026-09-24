@@ -38,7 +38,6 @@ from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
     DeliveryStorageUnavailableError,
 )
-from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
 
@@ -622,6 +621,101 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert immutable.status_code == 409
 
 
+def test_delivery_response_reads_expired_orm_fields(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Serialize expired delivery"},
+    ).json()["id"]
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "handoff"},
+    )
+    assert draft.status_code == 201
+
+    delivery = test_db.get(Delivery, draft.json()["id"])
+    assert delivery is not None
+    test_db.expire(delivery)
+
+    response = deliveries_endpoint._delivery_response(test_db, delivery)
+
+    assert response.id == delivery.id
+    assert response.loop_item_id == item_id
+    assert response.status == "draft"
+
+
+def test_direct_human_dispatch_delivery_finalize_enters_issue_review(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    issue_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review human delivery"},
+    )
+    assert issue_response.status_code == 201
+    issue_id = issue_response.json()["id"]
+
+    dispatch_response = test_client.post(
+        f"/api/v1/loop-items/{issue_id}/dispatches",
+        headers=_auth(test_token),
+        json={
+            "target_type": "human",
+            "target_id": str(test_user.id),
+            "idempotency_key": "human-delivery-http",
+            "task_title": "Prepare review evidence",
+            "instructions": "Submit the evidence through Delivery.",
+        },
+    )
+    assert dispatch_response.status_code == 201
+    dispatch = dispatch_response.json()
+    task = dispatch["rounds"][0]["tasks"][0]
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{task['linked_item_id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Evidence\nVerified through the Delivery API."},
+    )
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=_auth(test_token),
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["status"] == "delivered"
+    assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
+
+    dispatch_after = test_client.get(
+        f"/api/v1/issue-dispatches/{dispatch['id']}",
+        headers=_auth(test_token),
+    )
+    assert dispatch_after.status_code == 200
+    dispatch_payload = dispatch_after.json()
+    assert dispatch_payload["status"] == "completed"
+    assert dispatch_payload["rounds"][0]["status"] == "closed"
+    assert dispatch_payload["rounds"][0]["tasks"][0]["status"] == "submitted"
+    assert dispatch_payload["rounds"][0]["tasks"][0]["delivery_id"] == delivery_id
+
+    issue_after = test_client.get(
+        f"/api/v1/loop-items/{issue_id}",
+        headers=_auth(test_token),
+    )
+    assert issue_after.status_code == 200
+    assert issue_after.json()["status"] == "in_review"
+
+
 def test_delivery_does_not_accept_human_assigned_issue(
     test_client: TestClient,
     test_token: str,
@@ -720,83 +814,6 @@ def test_developer_assignee_can_attach_evidence_while_working(
         headers=_auth(member_token),
     )
     assert removed.status_code == 204, removed.text
-
-
-def test_workflow_delivery_rejects_empty_fulfillments(
-    test_client: TestClient,
-    test_token: str,
-    test_db: Session,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "backend",
-                    "name": "Backend",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                    "required_deliverables": [
-                        {
-                            "id": "backend-wiki",
-                            "name": "Backend Wiki",
-                            "description": "",
-                            "value_type": "text",
-                        }
-                    ],
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Workflow delivery"},
-    ).json()
-    source_task = {
-        "deviceId": "local-device",
-        "taskId": "backend-task",
-        "taskTitle": "Implement backend",
-        "workflowNodeId": "backend",
-    }
-    binding = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json=source_task,
-    )
-    assert binding.status_code == 201
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Backend", "source_task": source_task},
-    )
-    assert draft.status_code == 201
-    delivery_id = draft.json()["id"]
-
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{delivery_id}/finalize",
-        headers=_auth(test_token),
-        json={"fulfillments": []},
-    )
-
-    assert finalized.status_code == 422
-    assert (
-        finalized.json()["detail"]
-        == "Workflow Delivery must fulfill at least one required deliverable"
-    )
-    detail = test_client.get(
-        f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
-    )
-    assert detail.status_code == 200
-    assert detail.json()["status"] == "draft"
 
 
 def test_pull_request_delivery_creates_change_request_binding(
@@ -968,168 +985,6 @@ def test_project_workflow_is_snapshotted_into_new_issue(
     assert [node["status"] for node in workflow["nodes"]] == ["ready", "blocked"]
 
 
-@pytest.mark.parametrize("target_status", ["pending", "in_review"])
-def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-    target_status: str,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="Develop automatically",
-        description="Start from the Issue workflow",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "workflow",
-            "assignment_mode": "manual",
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.flush()
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "execution_config": {
-                "agent_id": "agent-1",
-                "runtime_profile_id": "runtime-1",
-                "model": "model-1",
-                "workspace_binding": {
-                    "type": "backend_project",
-                    "projectId": delivery_project.id,
-                },
-            },
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "automation",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "none",
-                    "automation_rule_id": str(rule.id),
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Start workflow from board", "status": "inbox"},
-    ).json()
-    dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-
-    response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": target_status},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == target_status
-    assert response.json()["workflow"]["nodes"][0]["status"] == "queued"
-    run = test_db.query(ProjectAutomationRun).one()
-    assert run.task_id == created["id"]
-    dispatch.assert_awaited_once()
-
-
-def test_ai_issue_creation_rejects_missing_configuration_before_persisting(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="AI manager",
-        description="Plan and assign the Issue.",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.created",
-            "event_config": {},
-            "action": "ai_assign",
-            "manager": {"type": "custom"},
-            "runtime": {
-                "source": "fixed_profile",
-                "runtime_profile_id": None,
-            },
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.flush()
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "none",
-            "advancement_policy": "ai",
-            "ai_automation_rule_id": str(rule.id),
-            "nodes": [],
-        },
-    }
-    test_db.commit()
-    dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-
-    created_response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Configure before AI planning", "status": "pending"},
-    )
-
-    assert created_response.status_code == 422
-    detail = created_response.json()["detail"]
-    assert detail["error_code"] == "COORDINATOR_EXECUTION_CONFIG_INCOMPLETE"
-    assert detail["missing_fields"] == ["device", "model"]
-    assert test_db.query(LoopItem).count() == 0
-    assert test_db.query(ProjectAutomationRun).count() == 0
-    dispatch.assert_not_awaited()
-
-    workflow = {
-        **delivery_project.metadata_json["workflow_definition"],
-        "execution_config": {
-            "agent_id": None,
-            "runtime_profile_id": None,
-            "execution_device_id": "local-device",
-            "model": "gpt-5-codex",
-            "model_type": "runtime",
-            "model_options": {},
-            "workspace_binding": {"type": "standalone"},
-        },
-    }
-    started_response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Configured AI planning",
-            "status": "pending",
-            "workflow": workflow,
-        },
-    )
-
-    assert started_response.status_code == 201, started_response.text
-    created = started_response.json()
-    run = test_db.query(ProjectAutomationRun).one()
-    assert run.task_id == created["id"]
-    assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (
-        "gpt-5-codex"
-    )
-    dispatch.assert_awaited_once()
-
-
 def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_client: TestClient,
     test_db: Session,
@@ -1233,226 +1088,6 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     status_event = ingest.await_args_list[1].args[1]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
-
-
-def test_human_assigned_issue_does_not_start_creation_automation(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    matching_rules = MagicMock(return_value=[SimpleNamespace(id="rule-1")])
-    ingest = AsyncMock(return_value=1)
-    should_start_workflow = MagicMock(return_value=True)
-    start_workflow = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.matching_rules",
-        matching_rules,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.project_incoming_hook_service,
-        "ingest_internal",
-        ingest,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "should_start_after_creation",
-        should_start_workflow,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start_workflow,
-    )
-
-    response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Human-owned Issue",
-            "assignee_user_id": delivery_project.created_by_user_id,
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["human_work"] is not None
-    matching_rules.assert_not_called()
-    ingest.assert_not_awaited()
-    should_start_workflow.assert_not_called()
-    start_workflow.assert_not_awaited()
-
-
-def test_status_automation_workflow_is_returned_by_status_update(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-) -> None:
-    rule = ProjectAutomationRule(
-        cloud_project_id=delivery_project.id,
-        title="Bind workflow on processing",
-        description="Attach the canonical workflow before the board decides execution mode.",
-        status="enabled",
-        created_by_user_id=delivery_project.created_by_user_id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.status_changed",
-            "event_config": {
-                "transition": "entered_processing",
-                "runtime_workflow_definition": {
-                    "version": 1,
-                    "stage_mode": "dag",
-                    "advancement_policy": "manual",
-                    "nodes": [
-                        {
-                            "id": "implement",
-                            "name": "Implement",
-                            "execution_mode": "robot",
-                            "execution_config": {
-                                "execution_device_id": "local-device",
-                                "model": "runtime-model",
-                                "workspace_binding": None,
-                            },
-                        }
-                    ],
-                },
-            },
-            "action": "execute",
-            "role": {"source": "generic", "agent_id": None},
-            "runtime": {
-                "source": "runtime_user",
-                "user_id": delivery_project.created_by_user_id,
-            },
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.commit()
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Bind workflow before execution", "status": "inbox"},
-    ).json()
-
-    response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": "in_progress"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "in_progress"
-    assert payload["workflow"]["nodes"][0]["id"] == "implement"
-    assert payload["workflow"]["nodes"][0]["status"] == "ready"
-    assert (
-        payload["workflow"]["nodes"][0]["execution_config"]["workspace_binding"] is None
-    )
-
-
-def test_status_update_requires_one_automation_before_entering_processing(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Choose workflow on processing", "status": "inbox"},
-    ).json()
-    item = test_db.get(LoopItem, created["id"])
-    assert item is not None
-    item.metadata_json = {
-        **(item.metadata_json or {}),
-        "workflow": {
-            "version": 1,
-            "definition_version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "approval_policy": "required",
-            "orchestration_status": "idle",
-            "nodes": [
-                {
-                    "id": "legacy-step",
-                    "name": "Legacy step",
-                    "prompt": "Do not start after selecting a canonical automation",
-                    "execution_mode": "human",
-                    "status": "ready",
-                }
-            ],
-        },
-    }
-    test_db.commit()
-    matching_rules = [
-        SimpleNamespace(id="rule-1", title="Implement", description="Build the change"),
-        SimpleNamespace(id="rule-2", title="Review", description="Review the request"),
-    ]
-    matching = MagicMock(return_value=matching_rules)
-    ingest = AsyncMock(return_value=1)
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.matching_rules",
-        matching,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.project_incoming_hook_service,
-        "ingest_internal",
-        ingest,
-    )
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start,
-    )
-
-    selection_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={"version": created["version"], "status": "pending"},
-    )
-
-    assert selection_response.status_code == 409
-    assert selection_response.json()["detail"] == {
-        "code": "automation_selection_required",
-        "message": "Multiple automations match this Issue",
-        "candidates": [
-            {
-                "id": "rule-1",
-                "name": "Implement",
-                "description": "Build the change",
-            },
-            {
-                "id": "rule-2",
-                "name": "Review",
-                "description": "Review the request",
-            },
-        ],
-    }
-    unchanged = test_client.get(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-    ).json()
-    assert unchanged["status"] == "inbox"
-    assert unchanged["version"] == created["version"]
-    ingest.assert_not_awaited()
-
-    selected_response = test_client.patch(
-        f"/api/v1/loop-items/{created['id']}",
-        headers=_auth(test_token),
-        json={
-            "version": created["version"],
-            "status": "pending",
-            "automation_rule_id": "rule-2",
-        },
-    )
-
-    assert selected_response.status_code == 200
-    assert selected_response.json()["status"] == "pending"
-    start.assert_not_awaited()
-    ingest.assert_awaited_once()
-    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1594,532 +1229,6 @@ def test_tag_update_requires_and_dispatches_one_matching_automation(
     assert event.event_type == "task.tag_added"
     assert event.payload["added_tags"] == ["review"]
     assert ingest.await_args.kwargs["automation_id"] == "rule-2"
-
-
-def test_issue_created_in_inbox_starts_its_existing_workflow(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        deliveries_endpoint.issue_workflow_start_service,
-        "start",
-        start,
-    )
-
-    response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Start inbox workflow",
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "coordinator_prompt": "",
-                "approval_policy": "automatic",
-                "ai_automation_rule_id": "rule-1",
-                "execution_config": None,
-                "orchestration_status": "idle",
-                "active_run_id": None,
-                "active_plan_version": None,
-                "current_stage_id": None,
-                "nodes": [],
-            },
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["status"] == "inbox"
-    start.assert_awaited_once()
-    assert start.await_args.kwargs["item"].id == response.json()["id"]
-
-
-def test_pausing_planning_cancels_active_ai_manager(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Pause planning",
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    test_db.add(issue)
-    test_db.flush()
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=issue,
-        user_id=test_user.id,
-    )
-    manager_run = ProjectAutomationRun(
-        id=f"A{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        parent_id="rule-1",
-        task_id=issue.id,
-        title="AI manager",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
-    )
-    test_db.add(manager_run)
-    test_db.commit()
-    cancel_run = AsyncMock(return_value={"id": manager_run.id, "status": "cancelled"})
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_service,
-        "cancel_run",
-        cancel_run,
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
-        headers=_auth(test_token),
-        json={},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "paused"
-    cancel_run.assert_awaited_once_with(
-        test_db,
-        str(delivery_project.id),
-        manager_run.id,
-        test_user.id,
-    )
-    resume_response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/resume",
-        headers=_auth(test_token),
-        json={},
-    )
-    assert resume_response.status_code == 409
-    assert resume_response.json()["detail"] == "The AI manager is still stopping"
-
-
-def test_pausing_planning_does_not_claim_success_without_runtime_confirmation(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Pause planning without Runtime confirmation",
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    test_db.add(issue)
-    test_db.flush()
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=issue,
-        user_id=test_user.id,
-    )
-    manager_run = ProjectAutomationRun(
-        id=f"A{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        parent_id="rule-1",
-        task_id=issue.id,
-        title="AI manager",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
-    )
-    test_db.add(manager_run)
-    test_db.commit()
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_service,
-        "cancel_run",
-        AsyncMock(
-            side_effect=HTTPException(
-                status_code=502,
-                detail="Runtime did not confirm cancellation",
-            )
-        ),
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
-        headers=_auth(test_token),
-        json={},
-    )
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Runtime did not confirm cancellation"
-    plan = issue_workflow_planning_service.get(
-        test_db,
-        issue_id=issue.id,
-        user_id=test_user.id,
-    )
-    assert plan is not None
-    assert plan.status == "planning"
-
-
-def test_executor_workflow_plan_submission_binds_current_manager_run(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    issue = LoopItem(
-        id=f"I{uuid.uuid4().hex[:10]}",
-        cloud_project_id=delivery_project.id,
-        title="Submit manager plan",
-        status="pending",
-        created_by_user_id=test_user.id,
-    )
-    test_db.add(issue)
-    test_db.commit()
-    plan = WorkflowPlanView(
-        run_id="workflow-run-1",
-        issue_id=issue.id,
-        stage_id="__issue__",
-        plan_version=1,
-        approval_policy="required",
-        status="awaiting_approval",
-        summary="Implement the task.",
-        items=[],
-        manager_run=None,
-    )
-    submit = MagicMock(return_value=plan)
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_execution,
-        "submit_manager_workflow_plan",
-        submit,
-    )
-    published_events: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        deliveries_endpoint,
-        "publish_loop_item_changed",
-        lambda db, *, item, reason, actor_user_id: published_events.append(
-            (item.id, reason)
-        ),
-    )
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan",
-        headers={
-            **_auth(test_token),
-            "X-Wegent-Automation-Run-ID": "automation-run-1",
-        },
-        json={
-            "summary": "Implement the task.",
-            "items": [
-                {
-                    "client_key": "implementation",
-                    "title": "Implement",
-                    "description": "Implement the requested behavior.",
-                    "assignee_type": "agent",
-                    "assignee_id": "agent-1",
-                }
-            ],
-        },
-    )
-
-    assert response.status_code == 200
-    submit.assert_called_once()
-    assert submit.call_args.kwargs["run_id"] == "automation-run-1"
-    assert submit.call_args.kwargs["issue_id"] == issue.id
-    assert published_events == [(issue.id, "workflow_plan_submitted")]
-
-
-def test_workflow_task_binding_requires_a_ready_non_automated_stage(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                },
-                {
-                    "id": "test",
-                    "name": "Test",
-                    "kind": "my_task",
-                    "depends_on": ["develop"],
-                    "required": True,
-                    "workspace_policy": "inherit",
-                },
-                {
-                    "id": "deploy",
-                    "name": "Deploy",
-                    "kind": "automation",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "none",
-                    "automation_rule_id": "rule-1",
-                },
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Workflow binding"},
-    ).json()
-
-    blocked = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "test-task",
-            "workflowNodeId": "test",
-        },
-    )
-    assert blocked.status_code == 409
-
-    automatic = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "deploy-task",
-            "workflowNodeId": "deploy",
-        },
-    )
-    assert automatic.status_code == 422
-
-    first = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "develop-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert first.status_code == 201
-    assert first.json()["workflow_node_id"] == "develop"
-    context = test_client.get(
-        "/api/v1/runtime-tasks/cloud-context",
-        headers=_auth(test_token),
-        params={"device_id": "local-device", "task_id": "develop-task"},
-    )
-    assert context.status_code == 200
-    assert context.json()["workflow_node_id"] == "develop"
-
-    duplicate = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "other-develop-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert duplicate.status_code == 201
-    assert duplicate.json()["workflow_node_id"] == "develop"
-
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["status"] = "awaiting_approval"
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-
-    correction = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "correction-task",
-            "workflowNodeId": "develop",
-        },
-    )
-    assert correction.status_code == 201
-    assert correction.json()["workflow_node_id"] == "develop"
-
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["decision_history"] = [
-        {
-            "action": "reject",
-            "actor_user_id": 1,
-            "reason": "Needs correction",
-            "decided_at": "2026-08-19T02:47:28+00:00",
-        }
-    ]
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-    current = test_client.get(
-        f"/api/v1/loop-items/{item['id']}",
-        headers=_auth(test_token),
-    ).json()
-
-    serialized = test_client.patch(
-        f"/api/v1/loop-items/{item['id']}",
-        headers=_auth(test_token),
-        json={
-            "version": current["version"],
-            "status": current["status"],
-            "workflow": current["workflow"],
-        },
-    )
-    assert serialized.status_code == 200
-
-
-def test_workflow_task_binding_survives_missing_dependency_delivery_content(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    delivery_project.metadata_json = {
-        **(delivery_project.metadata_json or {}),
-        "workflow_definition": {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "develop",
-                    "name": "Develop",
-                    "kind": "my_task",
-                    "depends_on": [],
-                    "required": True,
-                    "workspace_policy": "composer",
-                },
-                {
-                    "id": "deploy",
-                    "name": "Deploy",
-                    "kind": "my_task",
-                    "depends_on": ["develop"],
-                    "dependency_context": {"develop": ["deliveries"]},
-                    "required": True,
-                    "workspace_policy": "inherit",
-                },
-            ],
-        },
-    }
-    test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Missing dependency delivery"},
-    ).json()
-    source_task = {
-        "deviceId": "local-device",
-        "taskId": "develop-task",
-        "taskTitle": "Develop",
-        "workflowNodeId": "develop",
-    }
-    source_binding = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json=source_task,
-    )
-    assert source_binding.status_code == 201
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Develop", "source_task": source_task},
-    ).json()
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{draft['id']}/finalize",
-        headers=_auth(test_token),
-    )
-    assert finalized.status_code == 200
-
-    delivery = test_db.get(Delivery, draft["id"])
-    assert delivery is not None
-    delivery_storage.objects.pop(delivery.markdown_object_key)
-    stored_item = test_db.get(LoopItem, item["id"])
-    assert stored_item is not None
-    metadata = dict(stored_item.metadata_json or {})
-    workflow = dict(metadata["workflow"])
-    nodes = [dict(node) for node in workflow["nodes"]]
-    nodes[0]["status"] = "completed"
-    nodes[1]["status"] = "ready"
-    workflow["nodes"] = nodes
-    metadata["workflow"] = workflow
-    stored_item.metadata_json = metadata
-    test_db.commit()
-
-    response = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/tasks",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "local-device",
-            "taskId": "deploy-task",
-            "workflowNodeId": "deploy",
-        },
-    )
-
-    assert response.status_code == 201
-    assert response.json()["workflow_node_id"] == "deploy"
-    binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
-    assert binding is not None
-    stage_input = binding.metadata_json["workflow_stage_input"]
-    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
-    assert dependency_delivery["id"] == draft["id"]
-    assert dependency_delivery["markdown"] == ""
-    assert dependency_delivery["content_available"] is False
-    context_response = test_client.get(
-        f"/api/v1/loop-items/{item['id']}/workflow-nodes/deploy/input-context",
-        headers=_auth(test_token),
-    )
-    assert context_response.status_code == 200
-    compiled_instruction = context_response.json()["compiled_task_instruction"]
-    assert "## 任务定位" in compiled_instruction
-    assert "## 上游已交付内容" in compiled_instruction
-    assert f'"id": "{draft["id"]}"' in compiled_instruction
 
 
 def test_binding_subscription_backend_task_uses_task_store(

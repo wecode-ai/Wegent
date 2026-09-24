@@ -779,17 +779,7 @@ def instantiate_workflow(
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
     )
-    from app.services.workflow_loop_runtime import advance_loops, advance_root_branches
-
-    advanced = [node.model_dump(mode="json") for node in instance.nodes]
-    advance_loops(advanced)
-    advance_root_branches(advanced)
-    return IssueWorkflowInstance(
-        **{
-            **instance.model_dump(mode="json"),
-            "nodes": advanced,
-        }
-    )
+    return instance
 
 
 class WorkflowPlanItemCreate(BaseModel):

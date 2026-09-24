@@ -16,6 +16,10 @@ export interface WeworkNotificationPayload {
   replyPreview?: string
   status?: string
   executionId?: string
+  action?: string
+  idempotencyKey?: string
+  issueId?: string
+  dispatchTaskId?: string
 }
 
 export interface WeworkNotification {

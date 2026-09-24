@@ -13,12 +13,7 @@ export interface ProjectTaskRuntimeContext {
 
 export interface ProjectTaskRuntimeApi {
   findCloudContextForTask(task: RuntimeTaskAddress): Promise<ProjectTaskRuntimeContext>
-  bindTask(
-    issueId: string,
-    task: RuntimeTaskAddress,
-    taskTitle?: string | null,
-    workflowNodeId?: string | null
-  ): Promise<void>
+  bindTask(issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void>
   unbindCloudContext(task: RuntimeTaskAddress): Promise<void>
   trackProjectTask(
     projectId: string,
@@ -81,8 +76,8 @@ export function createCloudProjectTaskRuntimeApi(
         loop_item: issue ? toCloudLoopItem(issue) : null,
       }
     },
-    bindTask(issueId, task, taskTitle, workflowNodeId) {
-      return port.bindTask(issueId, task, taskTitle, workflowNodeId)
+    bindTask(issueId, task, taskTitle) {
+      return port.bindTask(issueId, task, taskTitle)
     },
     unbindCloudContext(task) {
       return port.unbindCloudContext(task)

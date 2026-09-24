@@ -32,7 +32,6 @@ from app.schemas.delivery import (
     DeliveryFulfillment,
     LoopItemTaskBind,
 )
-from app.schemas.issue_workflow import workflow_node_execution_mode
 from app.schemas.project_incoming_hook import ChangeRequestBindingInput
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
@@ -302,9 +301,8 @@ class DeliveryService:
                 db, item.id, delivery.source_task_binding_id
             )
         assets = self.list_assets(db, delivery.id)
-        workflow_node = self._workflow_node(item, source_binding)
         fulfillments = self._validate_fulfillments(
-            workflow_node,
+            None,
             assets,
             values.fulfillments,
         )
@@ -361,18 +359,11 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
-            if source_binding is not None and source_binding.workflow_node_id:
-                db.flush()
-                self._attach_workflow_delivery(
-                    item,
-                    workflow_node_id=source_binding.workflow_node_id,
-                    delivery_id=delivery.id,
-                )
-                self._complete_automated_node_if_fulfilled(
-                    db,
-                    item,
-                    source_binding.workflow_node_id,
-                )
+            from app.services.human_issue_work import human_issue_work_service
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            dispatch_task = issue_dispatch_service.task_for_linked_item(db, item.id)
+            if dispatch_task is not None:
                 item.current_delivery_id = delivery.id
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
@@ -387,8 +378,6 @@ class DeliveryService:
                     actor_user_id=user_id,
                 )
                 return delivery
-            from app.services.human_issue_work import human_issue_work_service
-
             if human_issue_work_service.is_direct_human_assignment(db, item):
                 item.current_delivery_id = delivery.id
                 item.metadata_json = advance_content_revision(
@@ -455,43 +444,22 @@ class DeliveryService:
             raise
 
     @staticmethod
-    def _workflow_node(
-        item: LoopItem,
-        source_binding: LoopItemTaskBinding | None,
-    ) -> dict[str, Any] | None:
-        if source_binding is None or not source_binding.workflow_node_id:
-            return None
-        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-        workflow = metadata.get("workflow")
-        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        if not isinstance(nodes, list):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
-        node = next(
-            (
-                dict(candidate)
-                for candidate in nodes
-                if isinstance(candidate, dict)
-                and candidate.get("id") == source_binding.workflow_node_id
-            ),
-            None,
-        )
-        if node is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        return node
-
-    @staticmethod
     def _validate_fulfillments(
         node: dict[str, Any] | None,
         assets: list[DeliveryAsset],
         values: list[DeliveryFulfillment],
     ) -> list[dict[str, Any]]:
+        assets_by_id = {asset.id: asset for asset in assets}
         if node is None:
-            if values:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    "Deliverable fulfillments require a workflow stage",
+            serialized: list[dict[str, Any]] = []
+            for fulfillment in values:
+                DeliveryService._validate_fulfillment_assets(
+                    {"value_type": fulfillment.kind},
+                    fulfillment,
+                    assets_by_id,
                 )
-            return []
+                serialized.append(fulfillment.model_dump(mode="json"))
+            return serialized
         requirements = {
             str(requirement.get("id")): requirement
             for requirement in node.get("required_deliverables") or []
@@ -502,7 +470,6 @@ class DeliveryService:
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "Workflow Delivery must fulfill at least one required deliverable",
             )
-        assets_by_id = {asset.id: asset for asset in assets}
         serialized: list[dict[str, Any]] = []
         for fulfillment in values:
             requirement = requirements.get(fulfillment.requirement_id)
@@ -584,39 +551,6 @@ class DeliveryService:
         return False
 
     @staticmethod
-    def _complete_automated_node_if_fulfilled(
-        db: Session,
-        item: LoopItem,
-        workflow_node_id: str,
-    ) -> None:
-        from app.services.project_workflow_projection import apply_workflow_nodes
-        from app.services.workflow_deliverables import missing_requirement_ids
-
-        metadata = dict(item.metadata_json or {})
-        workflow = metadata.get("workflow")
-        raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        if not isinstance(raw_nodes, list):
-            return
-        nodes = [dict(node) if isinstance(node, dict) else {} for node in raw_nodes]
-        node = next(
-            (
-                candidate
-                for candidate in nodes
-                if candidate.get("id") == workflow_node_id
-            ),
-            None,
-        )
-        if (
-            node is None
-            or workflow_node_execution_mode(node) != "robot"
-            or node.get("status") != "awaiting_deliverables"
-            or missing_requirement_ids(db, node, loop_item_id=str(item.id))
-        ):
-            return
-        node["status"] = "completed"
-        apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
-
-    @staticmethod
     def fulfillment_values(delivery: Delivery) -> list[dict[str, Any]]:
         metadata = (
             delivery.metadata_json if isinstance(delivery.metadata_json, dict) else {}
@@ -625,37 +559,6 @@ class DeliveryService:
         if not isinstance(values, list):
             return []
         return [dict(value) for value in values if isinstance(value, dict)]
-
-    @staticmethod
-    def _attach_workflow_delivery(
-        item: LoopItem,
-        *,
-        workflow_node_id: str,
-        delivery_id: str,
-    ) -> None:
-        metadata = dict(item.metadata_json or {})
-        workflow = metadata.get("workflow")
-        raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        if not isinstance(raw_nodes, list):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
-        nodes: list[dict] = []
-        found = False
-        for raw_node in raw_nodes:
-            node = dict(raw_node) if isinstance(raw_node, dict) else {}
-            if node.get("id") == workflow_node_id:
-                delivery_ids = list(node.get("delivery_ids") or [])
-                if delivery_id not in delivery_ids:
-                    delivery_ids.append(delivery_id)
-                node["delivery_ids"] = delivery_ids
-                found = True
-            nodes.append(node)
-        if not found:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        next_workflow = dict(workflow)
-        next_workflow["version"] = int(workflow.get("version") or 1) + 1
-        next_workflow["nodes"] = nodes
-        metadata["workflow"] = next_workflow
-        item.metadata_json = metadata
 
     def list_deliveries(
         self, db: Session, item_id: str, user_id: int

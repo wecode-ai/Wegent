@@ -589,7 +589,6 @@ export function TaskBoardView({
           <CloudTodoBoardCard
             item={item}
             unread={unreadRuntimeTaskKeys.has(getRuntimeTaskReminderKey(item.runtime_address))}
-            processingStatus={item.status !== 'inbox'}
             taskBindings={[taskBinding(item)]}
             onClick={() => {
               onMarkRuntimeTaskRead(item.runtime_address)

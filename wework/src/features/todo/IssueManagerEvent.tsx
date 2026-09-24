@@ -42,7 +42,7 @@ export function IssueManagerEvent({
           ? 'confirmation'
           : assigned
             ? 'assigned'
-            : issueActivityRole(message, task) === 'manager_review'
+            : issueActivityRole(message) === 'manager_review'
               ? 'reviewing'
               : completed
                 ? 'planned'

@@ -4,10 +4,6 @@ import {
   useActivityExecutionBinding,
   useActivityExecutionDisplayStatus,
 } from './useActivityExecutionStatus'
-import {
-  useWorkflowManagerActivity,
-  type ActivityExecutionDetail,
-} from './useWorkflowManagerActivity'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import {
@@ -32,6 +28,7 @@ import {
   executionDisplayStatus,
   isExecutionActive,
   IssueStatusHistoryList,
+  useIssueDispatchController,
   type SharedIssueStatusHistoryEntry,
 } from '@wegent/collaboration'
 import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
@@ -64,7 +61,6 @@ import {
   type ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
@@ -88,6 +84,7 @@ import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 import { statusHistoryLabels } from './statusHistoryLabels'
 import { memberNameById } from './todoShared'
 import type { CloudProjectMember } from '@/api/deliveries'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -105,10 +102,7 @@ interface TaskActivityViewProps {
   // message list and a composer pinned to the bottom
   rail?: boolean
   linear?: boolean
-  workflowManagerRunId?: string | null
   deviceNamesById?: Readonly<Record<string, string>>
-  onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
-  onWorkflowManagerFinished?: () => void
   taskBindings?: LoopItemTaskBinding[]
   statusHistory?: SharedIssueStatusHistoryEntry[]
   projectMembers?: CloudProjectMember[]
@@ -120,6 +114,15 @@ interface TaskActivityViewProps {
   agents?: CollaborationAgent[]
   /** Opens the comment list on this comment and flashes it once. */
   focusedCommentId?: string | null
+}
+
+interface ActivityExecutionDetail {
+  address: RuntimeTaskAddress
+  messageId?: string
+  senderName: string
+  runId: string | null
+  modelName: string | null
+  runStatus: string | null
 }
 
 type TaskCardQueuedReply = RuntimePaneQueuedMessage
@@ -183,10 +186,7 @@ export function TaskActivityView({
   selfManagedExecution = false,
   rail = false,
   linear = false,
-  workflowManagerRunId = null,
   deviceNamesById,
-  onWorkflowManagerExecutionChange,
-  onWorkflowManagerFinished,
   taskBindings = [],
   statusHistory = EMPTY_STATUS_HISTORY,
   projectMembers = [],
@@ -213,6 +213,24 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
+  const dispatchApi = useMemo(
+    () =>
+      projectDeliveryApi && typeof projectDeliveryApi.listIssueDispatches === 'function'
+        ? createWeworkDeliverySharedWorkspaceApi(projectDeliveryApi).dispatches
+        : undefined,
+    [projectDeliveryApi]
+  )
+  const refreshIssueAfterDispatch = useCallback(async () => {
+    if (!projectDeliveryApi?.getLoopItem) return
+    onTaskUpdated?.(await projectDeliveryApi.getLoopItem(task.id))
+  }, [onTaskUpdated, projectDeliveryApi, task.id])
+  const dispatch = useIssueDispatchController({
+    api: dispatchApi,
+    issueId: task.id,
+    desktop: true,
+    translate: activityTranslate,
+    onIssueChanged: refreshIssueAfterDispatch,
+  })
   const [loadedStatusHistory, setLoadedStatusHistory] = useState<{
     taskId: string
     entries: SharedIssueStatusHistoryEntry[]
@@ -401,47 +419,12 @@ export function TaskActivityView({
   )
   const cancellingMessageId = cancellation.stoppingMessageId
   const [error, setError] = useState<string | null>(null)
-  const [workflowCancelTarget, setWorkflowCancelTarget] = useState<{
-    runId: string
-    messageId: string
-  } | null>(null)
-  const [cancellingWorkflow, setCancellingWorkflow] = useState(false)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
   const threadMessages = useMemo(
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
-  const workflowState = task.workflow as
-    | (Record<string, unknown> & { orchestration_status?: string; cancelled?: boolean })
-    | null
-    | undefined
-  const workflowTerminal =
-    workflowState?.cancelled === true ||
-    ['completed', 'failed'].includes(String(workflowState?.orchestration_status ?? ''))
-  const cancellableWorkflowRunId = workflowTerminal
-    ? null
-    : workflowManagerRunId ||
-      [...threadMessages].reverse().find(message => {
-        const role = issueActivityRole(message, task)
-        const status = resolveMessageRunStatus(task.ai_state, message)
-        return (
-          (role === 'manager' || role === 'manager_review') &&
-          isExecutionActive(executionDisplayStatus(status)) &&
-          typeof message.metadata.automation_run_id === 'string'
-        )
-      })?.metadata.automation_run_id
-  const cancellableManagerMessageId =
-    typeof cancellableWorkflowRunId === 'string'
-      ? [...threadMessages].reverse().find(message => {
-          const role = issueActivityRole(message, task)
-          return (
-            (role === 'manager' || role === 'manager_review') &&
-            message.metadata.automation_run_id === cancellableWorkflowRunId
-          )
-        })?.messageId
-      : undefined
-
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
       messages: threadMessages,
@@ -470,57 +453,6 @@ export function TaskActivityView({
     const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)
     return () => window.clearTimeout(timer)
   }, [flashedCommentId])
-
-  useWorkflowManagerActivity({
-    task,
-    messages,
-    workflowManagerRunId,
-    listRef,
-    setExecutionDetail,
-    onWorkflowManagerExecutionChange,
-    onWorkflowManagerFinished,
-  })
-
-  const cancelWorkflow = useCallback(async () => {
-    if (!workflowCancelTarget) return
-    const automationApi =
-      projectLocation === 'local'
-        ? services.projectSpaceDetailServices?.local?.localProjectAutomationApi
-        : (services.projectSpaceDetailServices?.cloud?.projectAutomationApi ??
-          services.projectAutomationApi)
-    if (!automationApi) {
-      setError(activityTranslate('activity.task_activity_stop_workflow_failed'))
-      return
-    }
-    setCancellingWorkflow(true)
-    setError(null)
-    try {
-      await automationApi.cancelRun(String(project.id), workflowCancelTarget.runId)
-      if (projectDeliveryApi?.getLoopItem) {
-        const updated = await projectDeliveryApi.getLoopItem(task.id)
-        onTaskUpdated?.(updated)
-      }
-      setWorkflowCancelTarget(null)
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : activityTranslate('activity.task_activity_stop_workflow_failed')
-      )
-    } finally {
-      setCancellingWorkflow(false)
-    }
-  }, [
-    activityTranslate,
-    onTaskUpdated,
-    project.id,
-    projectDeliveryApi,
-    projectLocation,
-    services.projectAutomationApi,
-    services.projectSpaceDetailServices,
-    task.id,
-    workflowCancelTarget,
-  ])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -696,13 +628,7 @@ export function TaskActivityView({
   }
 
   function taskSummaryForMessage(message: ProjectChatMessage): ExecutionTaskSummary | undefined {
-    return issueTaskSummaryForMessage(
-      message,
-      taskBindings,
-      task.title,
-      task.workflow?.nodes,
-      onOpenTask
-    )
+    return issueTaskSummaryForMessage(message, taskBindings, task.title, onOpenTask)
   }
 
   function deviceNameForMessage(message: ProjectChatMessage): string | null {
@@ -903,16 +829,7 @@ export function TaskActivityView({
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
-      if (
-        issueTimeline &&
-        task.status === 'in_review' &&
-        task.assignee_group_id &&
-        projectDeliveryApi?.submitWorkflowReviewFeedback
-      ) {
-        await projectDeliveryApi.submitWorkflowReviewFeedback(task.id, task.version, text)
-        const updated = await projectDeliveryApi.getLoopItem(task.id)
-        onTaskUpdated?.(updated)
-      } else if (projectLocation !== 'local' && client.executeTaskComment) {
+      if (projectLocation !== 'local' && client.executeTaskComment) {
         const incoming = await client.executeTaskComment({
           projectId: project.id,
           taskId: task.id,
@@ -957,7 +874,7 @@ export function TaskActivityView({
     eventOnly = false,
     hideTime = false
   ) => {
-    const role = issueActivityRole(message, task)
+    const role = issueActivityRole(message)
     const agentRole = role === 'manager' || role === 'manager_review' ? 'manager' : role
     const address = messageRuntimeAddress(message)
     const binding = address
@@ -1018,7 +935,9 @@ export function TaskActivityView({
         listTestId="cloud-task-activity-list"
         listRef={listRef}
         translate={activityTranslate}
-        count={issueTimeline ? activityEntries.length : threadMessages.length}
+        count={
+          (issueTimeline ? activityEntries.length : threadMessages.length) + dispatch.activityCount
+        }
         loading={loading}
         error={cancellation.error}
         emptyDescription={
@@ -1029,18 +948,21 @@ export function TaskActivityView({
             : activityTranslate('activity.task_activity_empty_without_ai')
         }
         tools={
-          <IssueActivityTools
-            task={task}
-            assignedAgent={assignedAgent}
-            canApprove={canApproveCurrentRun}
-            running={sending}
-            translate={activityTranslate}
-            copyText={copyTextToClipboard}
-            onApprove={projectDeliveryApi ? () => void approveTaskRun() : undefined}
-            onReject={projectDeliveryApi ? () => void rejectTaskRun() : undefined}
-            onAccept={projectDeliveryApi ? () => void acceptTask() : undefined}
-            onRun={client ? () => void rerunTaskAi() : undefined}
-          />
+          <div className="flex items-center gap-2">
+            <IssueActivityTools
+              task={task}
+              assignedAgent={assignedAgent}
+              canApprove={canApproveCurrentRun}
+              running={sending}
+              translate={activityTranslate}
+              copyText={copyTextToClipboard}
+              onApprove={projectDeliveryApi ? () => void approveTaskRun() : undefined}
+              onReject={projectDeliveryApi ? () => void rejectTaskRun() : undefined}
+              onAccept={projectDeliveryApi ? () => void acceptTask() : undefined}
+              onRun={client ? () => void rerunTaskAi() : undefined}
+            />
+            {dispatch.tools}
+          </div>
         }
         composer={
           <>
@@ -1120,6 +1042,7 @@ export function TaskActivityView({
       >
         {linear ? (
           <div className="flex flex-col">
+            {dispatch.activity}
             {activityEntries.map(activity => {
               if (activity.kind === 'created') {
                 return (
@@ -1164,7 +1087,7 @@ export function TaskActivityView({
               }
               const card = activity.card
               const rootId = card.root.messageId
-              const role = issueActivityRole(card.root, task)
+              const role = issueActivityRole(card.root)
               if (issueTimeline && (role === 'manager' || role === 'manager_review')) {
                 const address = messageRuntimeAddress(card.root)
                 const binding = address
@@ -1179,20 +1102,6 @@ export function TaskActivityView({
                       task={task}
                       onOpenExecution={
                         binding && onOpenTask ? () => onOpenTask(binding) : undefined
-                      }
-                      onCancel={
-                        cancellableWorkflowRunId &&
-                        cancellableManagerMessageId === card.root.messageId
-                          ? () =>
-                              setWorkflowCancelTarget({
-                                runId: String(cancellableWorkflowRunId),
-                                messageId: card.root.messageId,
-                              })
-                          : undefined
-                      }
-                      cancelling={
-                        cancellingWorkflow &&
-                        workflowCancelTarget?.messageId === card.root.messageId
                       }
                     />
                     {card.replies.map(reply => renderActivityMessage(reply))}
@@ -1289,6 +1198,7 @@ export function TaskActivityView({
                 : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
             }
           >
+            {dispatch.activity}
             {threadMessages.map(message => {
               const runtimeAddress = messageRuntimeAddress(message)
               return (
@@ -1359,21 +1269,6 @@ export function TaskActivityView({
           onClose={() => setExecutionDetail(null)}
         />
       ) : null}
-      <ConfirmDialog
-        open={Boolean(workflowCancelTarget)}
-        title={activityTranslate('activity.task_activity_stop_workflow_title')}
-        description={activityTranslate('activity.task_activity_stop_workflow_description')}
-        cancelLabel={t('common.cancel')}
-        confirmLabel={activityTranslate('activity.task_activity_stop_workflow')}
-        confirmTestId="workflow-cancel-confirm"
-        dialogTestId="workflow-cancel-dialog"
-        destructive
-        pending={cancellingWorkflow}
-        onClose={() => {
-          if (!cancellingWorkflow) setWorkflowCancelTarget(null)
-        }}
-        onConfirm={() => void cancelWorkflow()}
-      />
     </>
   )
 }

@@ -1302,7 +1302,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
         }
       : currentRuntimeTask
-  const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
+  const currentProjectSpaceRuntimeTask = currentRuntimeTask
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const runtimeTaskDescription =
     paneSession.messages.find(message => message.role === 'user')?.content ?? ''
@@ -4627,12 +4627,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
-        experimentalFeaturesEnabled &&
-        currentRuntimeTask &&
-        services?.deliveryApi &&
-        activeDeliveryItem
-          ? openDelivery
-          : undefined
+        currentRuntimeTask && services?.deliveryApi && activeDeliveryItem ? openDelivery : undefined
       }
       todoLabel={
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name

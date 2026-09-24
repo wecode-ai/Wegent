@@ -18,6 +18,7 @@ def _to_camel(value: str) -> str:
 BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
+BotCapabilityMode = Literal["follow_device", "manual"]
 BotRuntime = Literal["codex", "claude_code", "wegent"]
 BotWorkspacePolicy = Literal["project", "git_worktree"]
 WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
@@ -115,6 +116,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     model_options: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
+    capability_mode: BotCapabilityMode = "follow_device"
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
@@ -143,6 +145,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     model_options: dict[str, str] | None = None
     system_prompt: str | None = Field(default=None, max_length=20_000)
     capability_description: str | None = Field(default=None, max_length=2_000)
+    capability_mode: BotCapabilityMode | None = None
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
     execution_environment: BotExecutionEnvironment | None = None
@@ -173,6 +176,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     model_options: dict[str, str]
     system_prompt: str
     capability_description: str
+    capability_mode: BotCapabilityMode
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment

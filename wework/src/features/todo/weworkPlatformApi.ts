@@ -356,14 +356,6 @@ export function createWeworkPlatformApi(
       async runNow(projectId, automationId) {
         return (await projectAutomations(projectId)).runNow(projectId, automationId)
       },
-      async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        return (await projectAutomations(projectId)).runWorkflowNode(
-          projectId,
-          issueId,
-          workflowNodeId,
-          automationId
-        )
-      },
       async listRuns(projectId, automationId) {
         return (await projectAutomations(projectId)).listRuns(projectId, automationId)
       },

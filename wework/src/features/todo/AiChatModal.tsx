@@ -42,7 +42,6 @@ interface AiChatModalProps {
   inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
   initialTaskInput?: string
-  workflowNodeId?: string
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onAddressChange?: (address: RuntimeTaskAddress) => void
   onTaskCreated?: (
@@ -174,7 +173,6 @@ export function AiChatModal({
   inheritFromTask = null,
   taskTitle,
   initialTaskInput = '',
-  workflowNodeId,
   onOpenRuntimeTask,
   onAddressChange,
   onTaskCreated,
@@ -246,10 +244,7 @@ export function AiChatModal({
     },
     []
   )
-  const runtimeContext = useMemo(
-    () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
-    [project, task, workflowNodeId]
-  )
+  const runtimeContext = useMemo(() => buildWorkItemRuntimeContext(project, task), [project, task])
   const executionDeviceName = useMemo(() => {
     const deviceId = initialAddress?.deviceId ?? null
     return getWorkbenchDeviceDisplayName(
@@ -376,6 +371,7 @@ export function AiChatModal({
       return (
         <IssueTaskConversationPanel
           issueId={task?.id}
+          taskTitle={task?.title}
           open={open}
           existingTask={true}
           executionDeviceName={executionDeviceName}
@@ -511,6 +507,7 @@ export function AiChatModal({
     return (
       <IssueTaskConversationPanel
         issueId={task?.id}
+        taskTitle={task?.title}
         open={open}
         existingTask={false}
         onClose={onClose}

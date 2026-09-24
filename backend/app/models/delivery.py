@@ -254,15 +254,39 @@ class ProjectAutomationRun(LoopNode):
 
 
 class ProjectWorkflowRun(LoopNode):
-    """One durable AI planning attempt for an Issue."""
+    """Persisted legacy workflow run rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_run"}
 
 
 class ProjectWorkflowPlanItem(LoopNode):
-    """One proposed concrete child task in a workflow plan version."""
+    """Persisted legacy workflow plan rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
+
+
+class IssueDispatch(LoopNode):
+    """One explicit dispatch of an Issue to a human, agent, or group."""
+
+    __mapper_args__ = {"polymorphic_identity": "issue_dispatch"}
+
+
+class IssueDispatchRound(LoopNode):
+    """One manager-owned concurrent round inside a group dispatch."""
+
+    __mapper_args__ = {"polymorphic_identity": "dispatch_round"}
+
+
+class IssueDispatchTask(LoopNode):
+    """One independently verifiable assignment in a dispatch round."""
+
+    __mapper_args__ = {"polymorphic_identity": "dispatch_task"}
+
+
+class IssueDispatchOutcome(LoopNode):
+    """One idempotent result or delivery reported for a dispatch task."""
+
+    __mapper_args__ = {"polymorphic_identity": "dispatch_outcome"}
 
 
 class ProjectIncomingHook(LoopNode):

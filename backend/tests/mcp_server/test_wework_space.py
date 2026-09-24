@@ -25,7 +25,6 @@ from app.models.delivery import (
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanSubmit
-from app.services.issue_workflow_planning import issue_workflow_planning_service
 
 
 class _SessionContext:
@@ -67,6 +66,80 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
+def test_dispatch_management_tools_require_manager_task_labels(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    labels = {
+        "source": "issue_dispatch_manager",
+        "weworkSpaceProjectId": "1",
+        "weworkSpaceTaskId": "issue-1",
+        "dispatchId": "dispatch-1",
+        "taskId": "manager-turn-1",
+        "dispatchRole": "manager",
+        "managerAgentId": "leader-1",
+    }
+    monkeypatch.setattr(wework_space, "_task_labels", lambda *_args: labels)
+    round_view = SimpleNamespace(
+        model_dump=lambda **_kwargs: {"id": "round-1", "status": "executing"}
+    )
+    round_record = SimpleNamespace(parent_id="dispatch-1")
+    dispatch = SimpleNamespace(id="dispatch-1")
+    monkeypatch.setattr(
+        wework_space.issue_dispatch_service,
+        "create_round",
+        lambda *_args, **kwargs: (
+            round_record
+            if kwargs["actor_agent_id"] == "leader-1"
+            and kwargs["actor_dispatch_role"] == "manager"
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        wework_space.issue_dispatch_service,
+        "round_view",
+        lambda *_args: round_view,
+    )
+    monkeypatch.setattr(
+        wework_space.issue_dispatch_service,
+        "activate",
+        lambda *_args: None,
+    )
+    original_get = test_db.get
+    monkeypatch.setattr(
+        test_db,
+        "get",
+        lambda model, key: (
+            dispatch
+            if model is wework_space.IssueDispatch and key == "dispatch-1"
+            else original_get(model, key)
+        ),
+    )
+
+    result = wework_space.create_dispatch_round(
+        _token(test_user),
+        "round-key",
+        [
+            {
+                "task_title": "Implement",
+                "instructions": "Implement it.",
+                "assignee_type": "agent",
+                "assignee_id": "worker-1",
+            }
+        ],
+    )
+
+    assert result == {"id": "round-1", "status": "executing"}
+    labels["dispatchRole"] = "executor"
+    with pytest.raises(ValueError, match="not a dispatch manager"):
+        wework_space.update_issue_status(
+            _token(test_user),
+            "decision-key",
+            "completed",
+            "Verified.",
+        )
+
+
 def test_local_board_comment_uses_internal_provider(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
@@ -94,6 +167,61 @@ def test_local_board_comment_uses_internal_provider(
     )
 
     assert comment["body"] == "Please check the plan"
+
+
+async def test_finalize_delivery_reports_dispatch_outcome(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    delivery = SimpleNamespace(id="delivery-1")
+    reported: dict[str, object] = {}
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(wework_space, "_forbid_project_manager_tool", lambda *_: None)
+    monkeypatch.setattr(wework_space, "_space_id", lambda *_args: "1")
+    monkeypatch.setattr(
+        wework_space,
+        "_project",
+        lambda *_args: SimpleNamespace(id=1),
+    )
+    monkeypatch.setattr(wework_space, "_item_id", lambda *_args: "DSP-2")
+    monkeypatch.setattr(
+        wework_space,
+        "_read_item",
+        lambda *_args: {"id": "DSP-2", "status": "in_progress"},
+    )
+    monkeypatch.setattr(
+        wework_space,
+        "_delivery_draft_for_binding",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        wework_space.delivery_service,
+        "finalize",
+        lambda *_args, **_kwargs: delivery,
+    )
+    monkeypatch.setattr(
+        wework_space.issue_dispatch_service,
+        "on_delivery_finalized",
+        lambda _db, *, delivery, user_id: reported.update(
+            {"delivery": delivery, "user_id": user_id}
+        ),
+    )
+    monkeypatch.setattr(
+        wework_space,
+        "_delivery_view",
+        lambda _db, value: {"id": value.id},
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+
+    result = await wework_space.finalize_delivery(
+        _token(test_user),
+        "delivery-1",
+    )
+
+    assert result == {"id": "delivery-1"}
+    assert reported == {"delivery": delivery, "user_id": test_user.id}
 
 
 def _workflow_issue(
@@ -324,157 +452,6 @@ def test_project_details_expose_assignable_members(
         }
     ]
     assert details["groups"] == []
-
-
-async def test_ai_manager_submits_structured_plan_for_current_issue(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    manager_run, activity = _manager_run(
-        test_db,
-        project,
-        item,
-        test_user,
-        workflow_run_id=workflow_run.id,
-    )
-    test_db.commit()
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item.id,
-            "project_automation_run_id": str(manager_run.id),
-        },
-    )
-
-    submitted = await wework_space.submit_workflow_plan(
-        _token(test_user),
-        _workflow_plan(robot),
-    )
-
-    test_db.refresh(workflow_run)
-    test_db.refresh(activity)
-    assert submitted["run_id"] == workflow_run.id
-    assert submitted["stage_id"] == "__issue__"
-    assert submitted["items"][0]["stage_id"] == "__issue__"
-    assert submitted["status"] == "awaiting_approval"
-    assert submitted["items"][0]["task_id"] is None
-    assert workflow_run.metadata_json["project_automation_run_id"] == manager_run.id
-    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
-    assert activity.metadata_json["workflow_plan_version"] == 1
-
-
-async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    manager_run, _activity = _manager_run(
-        test_db,
-        project,
-        item,
-        test_user,
-        status="failed",
-        workflow_run_id=workflow_run.id,
-    )
-    test_db.commit()
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item.id,
-            "project_automation_run_id": str(manager_run.id),
-        },
-    )
-
-    with pytest.raises(RuntimeError, match="not active"):
-        await wework_space.submit_workflow_plan(
-            _token(test_user),
-            _workflow_plan(robot),
-        )
-
-    test_db.expire_all()
-    restored = issue_workflow_planning_service.get(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    assert restored is not None
-    assert restored.run_id == workflow_run.id
-    assert restored.status == "planning"
-    assert restored.items == []
-
-
-async def test_workflow_child_reports_one_parent_review_outcome(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    test_db.commit()
-    issue_workflow_planning_service.submit(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-        values=WorkflowPlanSubmit.model_validate(_workflow_plan(robot)),
-    )
-    approved = issue_workflow_planning_service.approve(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    child_id = approved.items[0].task_id
-    assert child_id is not None
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    review_outcomes = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        wework_space.issue_workflow_start_service,
-        "review_outcomes",
-        review_outcomes,
-    )
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
-            "space_id": str(project.id),
-            "item_id": child_id,
-            "board_team_execution_id": "42",
-        },
-    )
-
-    reported = await wework_space.report_workflow_outcome(
-        _token(test_user),
-        "passed",
-        "Implementation and tests passed.",
-    )
-
-    assert reported["issue_id"] == item.id
-    assert reported["status"] == "awaiting_review"
-    assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, item.id).status == "in_progress"
-    review_outcomes.assert_awaited_once()
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

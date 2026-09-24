@@ -24,8 +24,8 @@ describe("issueTaskSummaryForMessage", () => {
       issueTaskSummaryForMessage(
         message({
           automation_role: "executor",
-          workflow_node_id: "execute",
-          workflow_task_title: "检查当前设备磁盘空间",
+          dispatch_task_id: "execute",
+          dispatch_task_title: "检查当前设备磁盘空间",
         }),
         [],
         "看看磁盘",
@@ -44,7 +44,7 @@ describe("issueTaskSummaryForMessage", () => {
         {
           ...message({
             automation_role: "executor",
-            workflow_task_title: "Initial title",
+            dispatch_task_title: "Initial title",
           }),
           runtimeAddress: { deviceId: "device", taskId: "task" },
         },

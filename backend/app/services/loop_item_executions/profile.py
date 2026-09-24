@@ -468,28 +468,14 @@ class WeworkExecutionProfile:
         project_id: str,
         task_id: str,
         execution_id: int,
-        workflow_stage_input: dict[str, Any] | None = None,
     ) -> str:
         if self.manager_mode:
             return self.instruction.strip()
-        from app.services.workflow_stage_context import compiled_workflow_stage_input
-
-        stage_instruction = (
-            str(
-                compiled_workflow_stage_input(workflow_stage_input).get(
-                    "compiled_task_instruction"
-                )
-                or ""
-            )
-            if workflow_stage_input
-            else ""
-        )
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
             execution_id=execution_id,
             execution_prompt=self.execution_prompt,
-            stage_instruction=stage_instruction,
         )
 
     def build_runtime_request(
@@ -570,9 +556,6 @@ class WeworkExecutionProfile:
             project_id=str(project.id),
             task_id=task_id,
             execution_id=execution_id,
-            workflow_stage_input=(
-                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
-            ),
         )
         if origin_context.get("comment_trigger_message_id"):
             prompt = str(origin_context["comment_prompt"])
@@ -593,6 +576,19 @@ class WeworkExecutionProfile:
                 f"{str(getattr(task, 'id', ''))}"
             ),
         }
+        dispatch_id = str(origin_context.get("dispatch_id") or "")
+        dispatch_task_id = str(origin_context.get("dispatch_task_id") or "")
+        dispatch_role = str(origin_context.get("dispatch_role") or "")
+        manager_agent_id = str(origin_context.get("manager_agent_id") or "")
+        if dispatch_id and dispatch_task_id and dispatch_role:
+            origin.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": dispatch_task_id,
+                    "dispatchRole": dispatch_role,
+                    "managerAgentId": manager_agent_id,
+                }
+            )
         if isinstance(workflow_stage_input, dict):
             target_stage = workflow_stage_input.get("target_stage")
             if isinstance(target_stage, dict):

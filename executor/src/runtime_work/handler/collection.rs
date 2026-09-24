@@ -759,7 +759,6 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn upsert_local_task(&self, link: RuntimeTaskLink) {
-        self.project_runtime_link_status(&link);
         self.store.upsert_task(link);
     }
 
@@ -805,9 +804,6 @@ impl RuntimeWorkRpcHandler {
             link.recency_at = started_at.max(link.recency_at.saturating_add(1));
             link.completed_at = None;
         });
-        if let Some(link) = self.local_task_link(&local_task_id) {
-            self.project_runtime_link_status_now(&link);
-        }
         execution_id
     }
 
@@ -899,9 +895,6 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
-        if let Some(link) = self.local_task_link(local_task_id) {
-            self.project_runtime_link_status_now(&link);
-        }
         self.schedule_worktree_prune();
         log_executor_event(
             "runtime work local execution force settled",
@@ -940,9 +933,6 @@ impl RuntimeWorkRpcHandler {
             link.interaction_status = None;
             apply_local_execution_state(link, false, None);
         });
-        if let Some(link) = self.local_task_link(local_task_id) {
-            self.project_runtime_link_status_now(&link);
-        }
         self.schedule_worktree_prune();
         true
     }
@@ -1167,9 +1157,6 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
-        if let Some(link) = self.local_task_link(local_task_id) {
-            self.project_runtime_link_status_now(&link);
-        }
         if status != "running" {
             self.schedule_worktree_prune();
         }

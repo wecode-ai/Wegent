@@ -51,6 +51,7 @@ import { createWeworkProjectAgentConfigurationHost } from '@/features/collaborat
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
+import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -246,12 +247,7 @@ export function toWeworkIssueTaskBinding(binding: WorkspaceTaskBinding): LoopIte
 }
 
 interface IssueRuntimeBindingPort {
-  bindTask(
-    issueId: string,
-    task: RuntimeTaskAddress,
-    taskTitle?: string | null,
-    workflowNodeId?: string | null
-  ): Promise<void>
+  bindTask(issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void>
   unbindTask(issueId: string, task: RuntimeTaskAddress): Promise<void>
 }
 
@@ -358,11 +354,11 @@ export function WeworkSharedProject({
   const [taskComposer, setTaskComposer] = useState<{
     address?: RuntimeTaskAddress
     issue: CollaborationIssue
-    workflowStep?: string
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
   } | null>(null)
   const taskComposerSequenceRef = useRef(0)
+  const acceptedDispatchTaskActions = useRef(new Set<string>())
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
@@ -661,6 +657,72 @@ export function WeworkSharedProject({
     }
   }, [detailServices?.projectChatClient, project.id])
 
+  const openNewTaskConversation = useCallback(
+    async (issue: CollaborationIssue) => {
+      if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const environments = await scopedApi.projects
+        .listExecutionEnvironments(String(project.id))
+        .catch(error => {
+          console.warn('[Wework collaboration] Failed to refresh project execution environments', {
+            projectId: project.id,
+            error,
+          })
+          return null
+        })
+      setTaskComposer({
+        issue,
+        conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
+        taskRequest: projectExecutionEnvironmentTaskRequest(project, {
+          workspace,
+          environments,
+        }),
+      })
+      projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+    },
+    [project, projectHost, runtimePort, scopedApi.projects, workspace]
+  )
+
+  useIssueDispatchNotificationActionRegistration(
+    `collaboration-project:${project.id}`,
+    true,
+    async action => {
+      if (String(action.projectId) !== String(project.id)) {
+        throw new Error('请先打开任务所属项目')
+      }
+      const issue = await scopedApi.issues.get(action.itemId)
+      const existing = (await scopedApi.taskBindings?.list(action.itemId, action.projectId))?.[0]
+      if (existing) {
+        acceptedDispatchTaskActions.current.add(action.idempotencyKey)
+        if (runtimePort) {
+          setTaskComposer({
+            issue,
+            conversationKey: `${issue.id}:${existing.deviceId}:${existing.taskId}`,
+            address: {
+              deviceId: existing.deviceId,
+              taskId: existing.taskId,
+            },
+          })
+          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+          return
+        }
+        if (!onOpenRuntimeTask) throw new Error('当前工作台无法打开个人任务')
+        await onOpenRuntimeTask({
+          deviceId: existing.deviceId,
+          taskId: existing.taskId,
+        })
+        return
+      }
+      if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
+      acceptedDispatchTaskActions.current.add(action.idempotencyKey)
+      try {
+        await openNewTaskConversation(issue)
+      } catch (cause) {
+        acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
+        throw cause
+      }
+    }
+  )
+
   const conversationPanel =
     taskComposer && runtimePort ? (
       <AiChatModal
@@ -676,7 +738,6 @@ export function WeworkSharedProject({
         embedded
         initialTaskInput={taskComposer.issue.description || taskComposer.issue.title}
         initialAddress={taskComposer.address}
-        workflowNodeId={taskComposer.workflowStep}
         onClose={() => setTaskComposer(null)}
         onAddressChange={address => {
           setTaskComposer(current =>
@@ -687,12 +748,7 @@ export function WeworkSharedProject({
         }}
         onOpenRuntimeTask={onOpenRuntimeTask}
         prepareTask={async address => {
-          await runtimePort.bindTask(
-            taskComposer.issue.id,
-            address,
-            taskComposer.issue.title,
-            taskComposer.workflowStep
-          )
+          await runtimePort.bindTask(taskComposer.issue.id, address, taskComposer.issue.title)
           const projectRef = {
             projectStore: project.project_store,
             projectId: String(project.id),
@@ -711,19 +767,12 @@ export function WeworkSharedProject({
             })
           }
         }}
-        onTaskCreated={async address => {
+        onTaskCreated={address => {
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
               ? { ...current, address }
               : current
           )
-          const latest = await api.issues.get(taskComposer.issue.id)
-          if (latest.status === 'inbox') {
-            await api.issues.update(latest.id, {
-              version: latest.version,
-              status: 'pending',
-            })
-          }
           setRefreshProjectRequestKey(value => value + 1)
         }}
       />
@@ -771,29 +820,7 @@ export function WeworkSharedProject({
           issueDeleteEnabled
           onPrepareIssueDelete={prepareIssueDelete}
           onCreateTask={
-            runtimePort
-              ? async (_taskProject, issue, workflowStep) => {
-                  const environments = await scopedApi.projects
-                    .listExecutionEnvironments(String(project.id))
-                    .catch(error => {
-                      console.warn(
-                        '[Wework collaboration] Failed to refresh project execution environments',
-                        { projectId: project.id, error }
-                      )
-                      return null
-                    })
-                  setTaskComposer({
-                    issue,
-                    workflowStep,
-                    conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
-                    taskRequest: projectExecutionEnvironmentTaskRequest(project, {
-                      workspace,
-                      environments,
-                    }),
-                  })
-                  projectHost.navigate({ ...projectHost.location, issueId: issue.id })
-                }
-              : undefined
+            runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
           renderIssueDetail={({
             api: issueApi,
@@ -832,11 +859,6 @@ export function WeworkSharedProject({
                   project={editorProject}
                   allItems={allIssues as unknown as CloudLoopItem[]}
                   projectChatAgentApi={detailServices?.projectChatAgentApi}
-                  projectAutomationApi={
-                    project.project_store === 'local'
-                      ? detailServices?.projectAutomationApi
-                      : undefined
-                  }
                   projectChatClient={detailServices?.projectChatClient}
                   selfManagedExecution={project.project_store === 'local'}
                   currentUserId={userId}
@@ -847,11 +869,7 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
-                  showAdditionalTaskAction={
-                    taskBindings.length > 0 &&
-                    issue.workflow?.advancement_policy !== 'ai' &&
-                    !issue.workflow?.nodes?.length
-                  }
+                  showAdditionalTaskAction={taskBindings.length > 0}
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   taskExecutionStates={issueTaskExecutionStates(
                     taskBindings,
@@ -913,7 +931,6 @@ export function WeworkSharedProject({
                   device_id: binding.deviceId,
                   task_id: binding.taskId,
                   task_title: binding.taskTitle,
-                  workflow_node_id: binding.workflowNodeId,
                   running:
                     runtimeRunningByAddress.get(
                       runtimeConversationKey({
@@ -952,7 +969,6 @@ export function WeworkSharedProject({
                       : onOpenRuntimeTask
                   }
                   display={display}
-                  processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   archiveDisabled={!onDelete}
                   progressDisplay={focused ? 'focused' : 'compact'}
                 />

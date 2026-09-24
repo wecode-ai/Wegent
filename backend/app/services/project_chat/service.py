@@ -154,6 +154,7 @@ _EXECUTION_STATE_FROM_AI_STATUS = {
 BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
+BOT_CAPABILITY_MODE_KEY = "capability_mode"
 BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
 BOT_WORKSPACE_POLICY_KEY = "workspace_policy"
 BOT_RUNTIME_KEY = "runtime"
@@ -165,6 +166,7 @@ BOT_MCP_SERVERS_KEY = "mcp_servers"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
+BOT_DEFAULT_CAPABILITY_MODE = "follow_device"
 BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
@@ -200,6 +202,15 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
     """Read the robot configuration stored in the single-table metadata JSON."""
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    capability_mode = metadata.get(BOT_CAPABILITY_MODE_KEY)
+    if capability_mode not in {"follow_device", "manual"}:
+        has_manual_capabilities = bool(
+            metadata.get("model")
+            or metadata.get(BOT_PLUGINS_KEY)
+            or metadata.get(BOT_ADDITIONAL_SKILLS_KEY)
+            or metadata.get(BOT_MCP_SERVERS_KEY)
+        )
+        capability_mode = "manual" if has_manual_capabilities else "follow_device"
     return {
         "runtime": bot_runtime(row),
         "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
@@ -210,6 +221,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "execution_mode": metadata.get(
             BOT_EXECUTION_MODE_KEY, BOT_DEFAULT_EXECUTION_MODE
         ),
+        "capability_mode": capability_mode,
         "execution_device_id": row.device_id,
         "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
         "plugins": metadata.get(BOT_PLUGINS_KEY, []),
@@ -500,6 +512,7 @@ class ProjectChatService:
             "model_type": request.model_type,
             "model_options": request.model_options,
             "system_prompt": request.system_prompt,
+            BOT_CAPABILITY_MODE_KEY: request.capability_mode,
             BOT_VISIBILITY_KEY: request.visibility,
             BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
             BOT_EXECUTION_MODE_KEY: request.execution_mode,
@@ -601,6 +614,8 @@ class ProjectChatService:
             metadata[BOT_MCP_SERVERS_KEY] = request.mcp_servers
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
+        if request.capability_mode is not None:
+            metadata[BOT_CAPABILITY_MODE_KEY] = request.capability_mode
         if request.visibility is not None:
             metadata[BOT_VISIBILITY_KEY] = request.visibility
         if request.execution_mode is not None:
@@ -1380,11 +1395,6 @@ class ProjectChatService:
             run.status = "running"
         else:
             return
-        from app.services.project_workflow_projection import (
-            sync_automation_workflow_node,
-        )
-
-        sync_automation_workflow_node(db, run)
 
     @staticmethod
     def _streaming_activity_for_runtime(
@@ -1823,6 +1833,7 @@ class ProjectChatService:
 
             if (
                 not external_index
+                and task_metadata.get("dispatch_child") is not True
                 and not human_issue_work_service.is_direct_human_assignment(db, task)
                 and task.status
                 not in {
@@ -1980,9 +1991,10 @@ class ProjectChatService:
         if (
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
+            or task_metadata.get("dispatch_child") is True
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External providers and AI-managed workflow tasks own their status
+            # External providers and dispatch/workflow tasks own their status
             # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
@@ -2204,6 +2216,7 @@ class ProjectChatService:
             "model_type",
             "model_options",
             "system_prompt",
+            "capability_mode",
             "execution_environment",
             "execution_mode",
             "execution_device_id",
@@ -2286,6 +2299,9 @@ class ProjectChatService:
                 else ""
             ),
             capability_description=row.description or "",
+            capability_mode=(
+                config.get("capability_mode") or BOT_DEFAULT_CAPABILITY_MODE
+            ),
             status="archived" if row.status == "archived" else "active",
             visibility=config.get("visibility") or BOT_DEFAULT_VISIBILITY,
             execution_environment=(

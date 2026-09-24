@@ -6,13 +6,11 @@ export function issueTaskSummaryForMessage<
     device_id: string;
     task_id: string;
     task_title?: string | null;
-    workflow_node_id?: string | null;
   },
 >(
   message: ProjectChatMessage,
   bindings: Binding[],
   issueTitle: string,
-  stages: Array<{ id: string; name: string }> | undefined,
   onOpen?: (binding: Binding) => void,
 ): ExecutionTaskSummary | undefined {
   const address = message.runtimeAddress;
@@ -22,13 +20,9 @@ export function issueTaskSummaryForMessage<
     message.metadata.conversation_only === true
   )
     return;
-  const workflowNodeId =
-    typeof message.metadata.workflow_node_id === "string"
-      ? message.metadata.workflow_node_id
-      : undefined;
-  const workflowTaskTitle =
-    typeof message.metadata.workflow_task_title === "string"
-      ? message.metadata.workflow_task_title.trim()
+  const dispatchTaskTitle =
+    typeof message.metadata.dispatch_task_title === "string"
+      ? message.metadata.dispatch_task_title.trim()
       : "";
   const binding =
     address?.deviceId && address.taskId
@@ -38,15 +32,10 @@ export function issueTaskSummaryForMessage<
             candidate.task_id === address.taskId,
         )
       : undefined;
-  const stage = stages?.find(
-    (candidate) =>
-      candidate.id === (binding?.workflow_node_id ?? workflowNodeId),
-  );
-  if (!binding && !stage && !workflowTaskTitle) return;
+  if (!binding && !dispatchTaskTitle) return;
   return {
-    title:
-      binding?.task_title || workflowTaskTitle || stage?.name || issueTitle,
-    stageName: stage?.name ?? null,
+    title: binding?.task_title || dispatchTaskTitle || issueTitle,
+    stageName: null,
     onOpen: binding && onOpen ? () => onOpen(binding) : undefined,
   };
 }

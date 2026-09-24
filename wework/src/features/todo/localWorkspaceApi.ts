@@ -294,7 +294,6 @@ export function createLocalWorkspaceApi(
         throw new Error(locale === 'zh-CN' ? '没有可处理的 Issue' : 'No open Issues to process')
       return runs[0]
     },
-    runWorkflowNode: unavailable,
     listRuns: (projectId, automationId) =>
       detailServices?.localProjectAutomationApi?.listRuns(projectId, automationId) ?? unavailable(),
     cancelRun: (projectId, runId) =>

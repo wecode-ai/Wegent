@@ -836,12 +836,14 @@ class LoopItemExecutionService:
             "model": configured_model or None,
             "model_type": configured_model_type,
             "model_options": configured_model_options,
+            "capability_mode": config.get("capability_mode"),
             "workspace_policy": (profile_metadata.get("workspace_policy") or "project"),
         }
         workspace_binding_required = "workspace_binding" in effective_context
         waiting_runtime = runtime != "wegent" and not runtime_configuration_complete(
             execution_device_id=device_id,
             model=configured_model,
+            require_model=config.get("capability_mode") != "follow_device",
             workspace_binding_required=workspace_binding_required,
             workspace_binding=effective_context.get("workspace_binding"),
         )
@@ -1278,7 +1280,10 @@ class LoopItemExecutionService:
         needs_runtime = not row.team_id and not runtime_configuration_complete(
             execution_device_id=row.execution_device_id,
             model=row.runtime_selection.get("model"),
-            require_model=row.executor_type != "generic_robot",
+            require_model=(
+                row.executor_type != "generic_robot"
+                and row.runtime_selection.get("capability_mode") != "follow_device"
+            ),
             workspace_binding_required="workspace_binding" in origin_context,
             workspace_binding=origin_context.get("workspace_binding"),
         )
@@ -1345,6 +1350,9 @@ class LoopItemExecutionService:
         running = db.get(LoopItemExecution, execution_id)
         if running is None:
             raise RuntimeError("Board Team execution disappeared")
+        from app.services.issue_dispatch import issue_dispatch_service
+
+        issue_dispatch_service.on_execution_running(db, execution=running)
         activity = self._linked_activity(db, running)
         if activity is not None:
             activity.status = "streaming"
@@ -1423,6 +1431,13 @@ class LoopItemExecutionService:
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
         if row.status in TERMINAL_STATUSES:
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_terminal(
+                db,
+                execution=row,
+                summary=note or row.execution_note or row.error_message or "",
+            )
             return row
         if expected_status is not None and row.status != expected_status:
             return row
@@ -1450,6 +1465,13 @@ class LoopItemExecutionService:
             )
             if terminal is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_terminal(
+                db,
+                execution=terminal,
+                summary=note or terminal.execution_note or "",
+            )
             return terminal
 
         now = utcnow()
@@ -1518,7 +1540,7 @@ class LoopItemExecutionService:
                 termination_reason="stall_timeout",
                 commit=commit,
             )
-        return self._transition_terminal(
+        result = self._transition_terminal(
             db,
             execution_id=execution_id,
             terminal_status=STATUS_CANCELLED,
@@ -1530,6 +1552,15 @@ class LoopItemExecutionService:
             termination_reason="runtime_cancel_acknowledged",
             commit=commit,
         )
+        if result is not None and result.status == STATUS_CANCELLED:
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_terminal(
+                db,
+                execution=result,
+                summary=note or result.execution_note or "",
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Capacity-gated claiming
@@ -2461,11 +2492,6 @@ class LoopItemExecutionService:
                 project_id=execution.cloud_project_id,
                 task_id=execution.loop_item_id,
                 execution_id=execution.id,
-                workflow_stage_input=(
-                    origin_context.get("workflow_stage_input")
-                    if isinstance(origin_context.get("workflow_stage_input"), dict)
-                    else None
-                ),
             )
             project_chat_service._set_task_ai_state(
                 db,
@@ -2540,6 +2566,14 @@ class LoopItemExecutionService:
                 execution=result,
                 content=content if content is not None else note,
             )
+        if result is not None and result.status == STATUS_COMPLETED:
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_terminal(
+                db,
+                execution=result,
+                summary=content or note or result.execution_note or "",
+            )
         return result
 
     def fail(
@@ -2568,14 +2602,23 @@ class LoopItemExecutionService:
         """
 
         row = db.get(LoopItemExecution, execution_id)
-        if row is None or row.status in TERMINAL_STATUSES:
+        if row is None:
+            return row
+        if row.status in TERMINAL_STATUSES:
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_terminal(
+                db,
+                execution=row,
+                summary=error or note or row.error_message or "",
+            )
             return row
         now = utcnow()
         should_requeue = requeue_infra or (
             requeue and row.retry_attempt < row.max_retries
         )
         if not should_requeue:
-            return self._transition_terminal(
+            result = self._transition_terminal(
                 db,
                 execution_id=execution_id,
                 terminal_status=STATUS_FAILED,
@@ -2589,6 +2632,15 @@ class LoopItemExecutionService:
                 event_seq=event_seq,
                 termination_reason=termination_reason,
             )
+            if result is not None and result.status == STATUS_FAILED:
+                from app.services.issue_dispatch import issue_dispatch_service
+
+                issue_dispatch_service.on_execution_terminal(
+                    db,
+                    execution=result,
+                    summary=error or note or result.error_message or "",
+                )
+            return result
 
         if requeue and not requeue_infra:
             previous = self._transition_terminal(
@@ -3101,11 +3153,6 @@ class LoopItemExecutionService:
                         run.status = "succeeded"
                         run.completed_at = completed_at
                         run.version += 1
-                        from app.services.project_workflow_projection import (
-                            sync_automation_workflow_node,
-                        )
-
-                        sync_automation_workflow_node(db, run)
                     return activity
                 if (
                     execution.executor_type == "automation_manager"
@@ -3132,11 +3179,6 @@ class LoopItemExecutionService:
                     run.description = description
                     run.completed_at = completed_at
                     run.version += 1
-                    from app.services.project_workflow_projection import (
-                        sync_automation_workflow_node,
-                    )
-
-                    sync_automation_workflow_node(db, run)
         return activity
 
     @staticmethod
@@ -3220,11 +3262,6 @@ class LoopItemExecutionService:
             }:
                 run.status = STATUS_QUEUED
                 run.version += 1
-                from app.services.project_workflow_projection import (
-                    sync_automation_workflow_node,
-                )
-
-                sync_automation_workflow_node(db, run)
         return linked
 
     def _push_activity_after_commit(
@@ -3384,11 +3421,6 @@ class LoopItemExecutionService:
             return
         run.status = status_value
         run.version += 1
-        from app.services.project_workflow_projection import (
-            sync_automation_workflow_node,
-        )
-
-        sync_automation_workflow_node(db, run)
         if commit:
             db.commit()
 
@@ -3414,6 +3446,33 @@ class LoopItemExecutionService:
             except (TypeError, ValueError):
                 pass
         return str(error)
+
+    @staticmethod
+    def _lock_terminal_event_execution(
+        db: Session,
+        *,
+        execution_id: int,
+        event_seq: int | None,
+    ) -> LoopItemExecution | None:
+        """Serialize Runtime terminal events with cancellation acknowledgements.
+
+        Runtime terminal events also update their activity projection. Lock the
+        execution aggregate first so every terminal writer uses the same
+        execution -> activity lock order.
+        """
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == execution_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if execution is None or execution.status in TERMINAL_STATUSES:
+            return None
+        if event_seq is not None and event_seq <= execution.last_event_seq:
+            return None
+        return execution
 
     def handle_runtime_event(
         self,
@@ -3479,6 +3538,13 @@ class LoopItemExecutionService:
             return None
         now = utcnow()
         if terminal is not None:
+            row = self._lock_terminal_event_execution(
+                db,
+                execution_id=row.id,
+                event_seq=event_seq,
+            )
+            if row is None:
+                return None
             self.open_execution_activity(
                 db,
                 execution=row,
@@ -3505,7 +3571,7 @@ class LoopItemExecutionService:
                 error_text = (
                     self._error_text(error_value) if error_value is not None else None
                 )
-                return self._transition_terminal(
+                result = self._transition_terminal(
                     db,
                     execution_id=row.id,
                     terminal_status=STATUS_CANCELLED,
@@ -3519,11 +3585,20 @@ class LoopItemExecutionService:
                     event_seq=event_seq,
                     termination_reason="runtime_cancelled",
                 )
+                if result is not None and result.status == STATUS_CANCELLED:
+                    from app.services.issue_dispatch import issue_dispatch_service
+
+                    issue_dispatch_service.on_execution_terminal(
+                        db,
+                        execution=result,
+                        summary=error_text or result.execution_note or "",
+                    )
+                return result
             if terminal == STATUS_CANCELLED:
                 error_text = (
                     self._error_text(error_value) if error_value is not None else None
                 )
-                return self._transition_terminal(
+                result = self._transition_terminal(
                     db,
                     execution_id=row.id,
                     terminal_status=STATUS_CANCELLED,
@@ -3537,6 +3612,15 @@ class LoopItemExecutionService:
                     event_seq=event_seq,
                     termination_reason="runtime_cancelled",
                 )
+                if result is not None and result.status == STATUS_CANCELLED:
+                    from app.services.issue_dispatch import issue_dispatch_service
+
+                    issue_dispatch_service.on_execution_terminal(
+                        db,
+                        execution=result,
+                        summary=error_text or result.execution_note or "",
+                    )
+                return result
             error_value = error_value or "Runtime task ended with failed"
             return self.fail(
                 db,
@@ -3592,6 +3676,9 @@ class LoopItemExecutionService:
             db.rollback()
             return None
         self._set_automation_run_status(db, row, "running")
+        from app.services.issue_dispatch import issue_dispatch_service
+
+        issue_dispatch_service.on_execution_running(db, execution=row)
         task = db.get(LoopItem, row.loop_item_id)
         task_projection_is_stale = (
             row.executor_type != "automation_manager"
@@ -4457,6 +4544,9 @@ class LoopItemExecutionService:
                 row.started_at = now
             row.version += 1
             self._set_automation_run_status(db, row, "running")
+            from app.services.issue_dispatch import issue_dispatch_service
+
+            issue_dispatch_service.on_execution_running(db, execution=row)
             db.flush()
             self.open_execution_activity(
                 db,

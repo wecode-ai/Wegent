@@ -24,6 +24,7 @@ from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
     CloudProject,
     Delivery,
+    IssueDispatch,
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
@@ -46,14 +47,16 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
-from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
+from app.schemas.issue_dispatch import (
+    IssueDispatchDecisionCreate,
+    IssueDispatchRoundCreate,
+)
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
-from app.services.issue_workflow_planning import issue_workflow_planning_service
-from app.services.issue_workflow_start import issue_workflow_start_service
+from app.services.issue_dispatch import issue_dispatch_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -66,16 +69,13 @@ from app.services.project_manager import (
     is_project_manager_rule,
     project_manager_service,
 )
-from app.services.workflow_deliverables import (
-    fulfilled_requirement_ids,
-    missing_requirement_ids,
-)
-from app.services.workflow_stage_context import workflow_stage_context_resolver
 from app.services.workspaces import workspace_service
 from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
+    "issue_dispatch",
+    "issue_dispatch_manager",
     "project_automation",
     "board_team_assignment",
     "board_team_continuation",
@@ -114,7 +114,27 @@ def _board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
         "item_id": item_id,
         "project_automation_run_id": str(labels.get("projectAutomationRunId") or ""),
         "board_team_execution_id": str(labels.get("boardTeamExecutionId") or ""),
+        "dispatch_id": str(labels.get("dispatchId") or ""),
+        "dispatch_task_id": str(labels.get("taskId") or ""),
+        "dispatch_role": str(labels.get("dispatchRole") or ""),
+        "manager_agent_id": str(labels.get("managerAgentId") or ""),
     }
+
+
+def _dispatch_manager_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
+    """Return the authenticated manager scope encoded by the Runtime Task."""
+
+    if token_info.auth_type != "task" or token_info.task_id is None:
+        raise ValueError("Dispatch management requires Task authentication")
+    context = _board_context(db, token_info)
+    if (
+        context.get("dispatch_role") != "manager"
+        or not context.get("dispatch_id")
+        or not context.get("dispatch_task_id")
+        or not context.get("manager_agent_id")
+    ):
+        raise ValueError("Authenticated Task is not a dispatch manager")
+    return context
 
 
 def _project_manager_run(
@@ -325,6 +345,63 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
 
 
 @mcp_tool(server="wework_space")
+def create_dispatch_round(
+    token_info: MCPAuthInfo,
+    idempotency_key: str,
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assign one concurrent round as the authenticated dispatch manager."""
+
+    with SessionLocal() as db:
+        context = _dispatch_manager_context(db, token_info)
+        values = IssueDispatchRoundCreate.model_validate(
+            {"idempotency_key": idempotency_key, "tasks": tasks}
+        )
+        round_record = issue_dispatch_service.create_round(
+            db,
+            dispatch_id=context["dispatch_id"],
+            user_id=token_info.user_id,
+            values=values,
+            actor_agent_id=context["manager_agent_id"],
+            actor_dispatch_role=context["dispatch_role"],
+        )
+        dispatch = db.get(IssueDispatch, context["dispatch_id"])
+        if dispatch is None:
+            raise ValueError("Issue dispatch disappeared after round creation")
+        result = issue_dispatch_service.round_view(db, round_record).model_dump(
+            mode="json"
+        )
+        issue_dispatch_service.activate(db, dispatch)
+        return result
+
+
+@mcp_tool(server="wework_space")
+def update_issue_status(
+    token_info: MCPAuthInfo,
+    idempotency_key: str,
+    target_status: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Complete a group dispatch with an explicit manager status decision."""
+
+    with SessionLocal() as db:
+        context = _dispatch_manager_context(db, token_info)
+        dispatch = issue_dispatch_service.decide(
+            db,
+            dispatch_id=context["dispatch_id"],
+            user_id=token_info.user_id,
+            values=IssueDispatchDecisionCreate(
+                idempotency_key=idempotency_key,
+                target_status=target_status,
+                reason=reason,
+            ),
+            actor_agent_id=context["manager_agent_id"],
+            actor_dispatch_role=context["dispatch_role"],
+        )
+        return issue_dispatch_service.view(db, dispatch).model_dump(mode="json")
+
+
+@mcp_tool(server="wework_space")
 def list_spaces(token_info: MCPAuthInfo) -> list[dict[str, Any]]:
     """List Backend project spaces available to the authenticated user or Task."""
 
@@ -480,17 +557,6 @@ async def create_board_item(
         from app.services.project_incoming_hooks import project_incoming_hook_service
 
         response = LoopItemResponse.model_validate(created.values)
-        planning_run = None
-        if (
-            created.internal_item is not None
-            and response.workflow
-            and response.workflow.advancement_policy == "ai"
-        ):
-            planning_run = issue_workflow_planning_service.ensure_run(
-                db,
-                issue=created.internal_item,
-                user_id=user.id,
-            )
         if manager_run is not None:
             result = _read_item(
                 db, project, str(created.values["id"]), token_info.user_id
@@ -517,16 +583,6 @@ async def create_board_item(
                         **(
                             {"project_manager_run_id": str(manager_run.id)}
                             if manager_run is not None
-                            else {}
-                        ),
-                        **(
-                            {
-                                "workflow_run_id": planning_run.id,
-                                "workflow_plan_version": (
-                                    planning_run.metadata_json or {}
-                                ).get("plan_version"),
-                            }
-                            if planning_run is not None
                             else {}
                         ),
                     },
@@ -614,177 +670,6 @@ def get_assignment_candidates(
                 for team in teams
             ],
         }
-
-
-@mcp_tool(server="wework_space")
-async def submit_workflow_plan(
-    token_info: MCPAuthInfo,
-    plan: dict[str, Any],
-    space_id: str = "",
-    item_id: str = "",
-) -> dict[str, Any]:
-    """Submit a child-task plan; the server binds its active planning scope."""
-
-    execution_ids: list[int] = []
-    with SessionLocal() as db:
-        _forbid_project_manager_tool(db, token_info)
-        try:
-            project = _project(
-                db, _space_id(db, token_info, space_id), token_info.user_id
-            )
-            resolved_item_id = _item_id(db, token_info, item_id)
-            context = _board_context(db, token_info)
-            run_id = context.get("project_automation_run_id")
-            if (
-                context.get("source") != "project_automation"
-                or not run_id
-                or resolved_item_id != context.get("item_id")
-            ):
-                raise ValueError(
-                    "submit_workflow_plan is only available to the current AI manager"
-                )
-            view = project_automation_execution.submit_manager_workflow_plan(
-                db,
-                run_id=run_id,
-                issue_id=resolved_item_id,
-                user_id=token_info.user_id,
-                values=WorkflowPlanSubmit.model_validate(plan),
-            )
-            if view.approval_policy == "automatic":
-                view = issue_workflow_planning_service.approve(
-                    db,
-                    issue_id=resolved_item_id,
-                    user_id=token_info.user_id,
-                )
-                from app.services.board_team_execution import (
-                    workflow_plan_execution_ids,
-                )
-
-                execution_ids = workflow_plan_execution_ids(db, view)
-            result = {
-                **view.model_dump(mode="json"),
-                "project_id": str(project.id),
-            }
-        except Exception:
-            db.rollback()
-            raise
-    from app.services.board_team_execution import (
-        schedule_board_robot_execution_by_id,
-    )
-
-    for execution_id in execution_ids:
-        try:
-            schedule_board_robot_execution_by_id(execution_id)
-        except Exception:
-            logger.exception(
-                "Workflow plan execution scheduling failed execution_id=%s",
-                execution_id,
-            )
-    if execution_ids:
-        from app.tasks.robot_queue_tasks import consume_queues_background
-
-        await consume_queues_background()
-    return result
-
-
-@mcp_tool(server="wework_space")
-async def report_workflow_outcome(
-    token_info: MCPAuthInfo,
-    verdict: str,
-    summary: str,
-    findings: list[str] | None = None,
-    space_id: str = "",
-    item_id: str = "",
-) -> dict[str, Any]:
-    """Report a planned child task as passed or needing AI replanning."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        resolved_item_id = _item_id(db, token_info, item_id)
-        context = _board_context(db, token_info)
-        if context.get("source") not in {
-            "board_team_assignment",
-            "board_team_continuation",
-        } or resolved_item_id != context.get("item_id"):
-            raise ValueError(
-                "report_workflow_outcome is only available to the current "
-                "workflow child task"
-            )
-        values = WorkflowTaskOutcomeSubmit(
-            verdict=verdict,
-            summary=summary,
-            findings=findings or [],
-        )
-        view = issue_workflow_planning_service.report_outcome(
-            db,
-            child_id=resolved_item_id,
-            user_id=token_info.user_id,
-            values=values,
-        )
-        if view.status == "planning":
-            parent = db.get(LoopItem, view.issue_id)
-            if parent is None:
-                raise ValueError("Workflow parent Issue is unavailable")
-            await issue_workflow_start_service.start(
-                db,
-                item=parent,
-                project=project,
-                user_id=token_info.user_id,
-            )
-        elif view.status == "awaiting_review":
-            parent = db.get(LoopItem, view.issue_id)
-            if parent is None:
-                raise ValueError("Workflow parent Issue is unavailable")
-            await issue_workflow_start_service.review_outcomes(
-                db,
-                item=parent,
-                project=project,
-                user_id=token_info.user_id,
-            )
-        return {
-            **view.model_dump(mode="json"),
-            "project_id": str(project.id),
-        }
-
-
-@mcp_tool(server="wework_space")
-async def decide_workflow_review(
-    token_info: MCPAuthInfo,
-    decision: str,
-    summary: str,
-    space_id: str = "",
-    item_id: str = "",
-) -> dict[str, Any]:
-    """Let the active AI manager decide whether an Issue needs review or is done."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        resolved_item_id = _item_id(db, token_info, item_id)
-        context = _board_context(db, token_info)
-        manager_run_id = context.get("project_automation_run_id")
-        if context.get("source") != "project_automation" or not manager_run_id:
-            raise ValueError("Review decision requires an active AI manager")
-        if resolved_item_id != context.get("item_id"):
-            raise ValueError("Review decision does not match the current Issue")
-        view = project_automation_execution.decide_manager_workflow_review(
-            db,
-            run_id=manager_run_id,
-            issue_id=resolved_item_id,
-            user_id=token_info.user_id,
-            decision=decision,
-            summary=summary,
-        )
-        if view.status == "planning":
-            parent = db.get(LoopItem, view.issue_id)
-            if parent is None:
-                raise ValueError("Workflow parent Issue is unavailable")
-            await issue_workflow_start_service.start(
-                db,
-                item=parent,
-                project=project,
-                user_id=token_info.user_id,
-            )
-        return {**view.model_dump(mode="json"), "project_id": str(project.id)}
 
 
 @mcp_tool(server="wework_space")
@@ -1249,67 +1134,6 @@ def delete_item_attachment(
 
 
 @mcp_tool(server="wework_space")
-def get_delivery_requirements(
-    token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
-) -> dict[str, Any]:
-    """Return the authenticated Task's workflow stage and Delivery requirements."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        resolved_item_id = _item_id(db, token_info, item_id)
-        item = _read_item(db, project, resolved_item_id, token_info.user_id)
-        binding = _delivery_binding(db, token_info, resolved_item_id)
-        workflow = item.get("workflow") or {}
-        node = next(
-            (
-                candidate
-                for candidate in workflow.get("nodes", [])
-                if candidate.get("id") == binding.workflow_node_id
-            ),
-            None,
-        )
-        return {
-            "workflow_node_id": binding.workflow_node_id,
-            "workflow_node": node,
-            "required_deliverables": (node or {}).get("required_deliverables", []),
-            "delivery_ids": (node or {}).get("delivery_ids", []),
-            "fulfilled_requirement_ids": sorted(
-                fulfilled_requirement_ids(db, node or {}, loop_item_id=resolved_item_id)
-            ),
-            "missing_requirement_ids": missing_requirement_ids(
-                db, node or {}, loop_item_id=resolved_item_id
-            ),
-        }
-
-
-@mcp_tool(server="wework_space")
-def get_workflow_stage_context(
-    token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
-) -> dict[str, Any]:
-    """Return the immutable predecessor context for the authenticated stage."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        resolved_item_id = _item_id(db, token_info, item_id)
-        item = db.get(LoopItem, resolved_item_id)
-        if item is None or str(item.cloud_project_id) != str(project.id):
-            raise ValueError("Board item not found")
-        binding = _delivery_binding(db, token_info, resolved_item_id)
-        if not binding.workflow_node_id:
-            raise ValueError("Authenticated Task is not bound to a workflow stage")
-        snapshot = workflow_stage_context_resolver.binding_snapshot(binding)
-        if snapshot is None:
-            snapshot = workflow_stage_context_resolver.resolve(
-                db,
-                item=item,
-                target_node_id=binding.workflow_node_id,
-            )
-            workflow_stage_context_resolver.freeze_binding(binding, snapshot)
-            db.commit()
-        return snapshot
-
-
-@mcp_tool(server="wework_space")
 def create_delivery(
     token_info: MCPAuthInfo,
     markdown: str = "",
@@ -1484,8 +1308,7 @@ async def finalize_delivery(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         item = _read_item(db, project, resolved_item_id, token_info.user_id)
-        issue_status_changed = item.status != "completed"
-        ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
+        issue_status_changed = item.get("status") != "completed"
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
         delivery = delivery_service.finalize(
             db,
@@ -1493,19 +1316,11 @@ async def finalize_delivery(
             token_info.user_id,
             DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
         )
-        db.refresh(item)
-        newly_ready = (
-            issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+        issue_dispatch_service.on_delivery_finalized(
+            db,
+            delivery=delivery,
+            user_id=token_info.user_id,
         )
-        if newly_ready:
-            started = await issue_workflow_start_service.continue_ready_stages(
-                db,
-                item=item,
-                user_id=token_info.user_id,
-                stage_ids=newly_ready,
-            )
-            if started:
-                db.refresh(delivery)
         result = _delivery_view(db, delivery)
     if issue_status_changed:
         from app.tasks.robot_queue_tasks import consume_queues_background

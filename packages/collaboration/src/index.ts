@@ -20,6 +20,7 @@ export * from "./issue-detail";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";
 export * from "./ports/SharedWorkspaceApi";
+export * from "./ports/IssueDispatch";
 export * from "./project-board";
 export * from "./project-agent-config";
 export * from "./project-create";

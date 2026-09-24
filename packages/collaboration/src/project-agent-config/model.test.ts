@@ -64,7 +64,7 @@ describe("project agent configuration model", () => {
     });
   });
 
-  it("uses the project binding payload supplied by a local Agent resource", () => {
+  it("uses the visible Agent name with the supplied project binding payload", () => {
     expect(
       createResourceAgentBindingInput({
         id: "local-agent",
@@ -81,7 +81,7 @@ describe("project agent configuration model", () => {
         },
       }),
     ).toEqual({
-      name: "local-agent",
+      name: "Local Agent",
       runtime: "codex",
       model: null,
     });

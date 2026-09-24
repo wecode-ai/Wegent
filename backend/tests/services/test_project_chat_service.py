@@ -248,6 +248,7 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
         project_id=project.id,
         request=ProjectChatAgentCreate(
             name="Cloud builder",
+            capability_mode="manual",
             execution_environment="cloud",
             execution_device_id="cloud-dev-binding",
             workspace_policy="git_worktree",
@@ -281,6 +282,8 @@ def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
     assert created.workspace_binding.device_workspace_id == workspace.id
     assert created.local_project_id == code_project.id
     assert created.workspace_policy == "git_worktree"
+    assert created.capability_mode == "manual"
+    assert row.metadata_json["capability_mode"] == "manual"
     assert [plugin.id for plugin in created.plugins] == ["github@openai"]
 
 
@@ -456,6 +459,7 @@ def test_project_agent_persists_runtime_skills_and_mcp_servers(
             {
                 "name": "Claude reviewer",
                 "runtime": "claude_code",
+                "capabilityMode": "manual",
                 "additionalSkills": [
                     {"name": "review", "namespace": "default"},
                 ],
@@ -479,6 +483,7 @@ def test_project_agent_persists_runtime_skills_and_mcp_servers(
         "repo": {"command": "node", "args": ["repo-server.mjs"]}
     }
     assert created.runtime == "claude_code"
+    assert created.capability_mode == "manual"
     assert created.additional_skills == [{"name": "review", "namespace": "default"}]
     assert created.mcp_servers == {
         "repo": {"command": "node", "args": ["repo-server.mjs"]}
@@ -494,6 +499,7 @@ def test_project_agent_persists_runtime_skills_and_mcp_servers(
             {
                 "version": created.version,
                 "runtime": "codex",
+                "capabilityMode": "follow_device",
                 "additionalSkills": [],
                 "mcpServers": {
                     "issues": {
@@ -506,6 +512,7 @@ def test_project_agent_persists_runtime_skills_and_mcp_servers(
     )
 
     assert updated.runtime == "codex"
+    assert updated.capability_mode == "follow_device"
     assert updated.additional_skills == []
     assert updated.mcp_servers == {
         "issues": {

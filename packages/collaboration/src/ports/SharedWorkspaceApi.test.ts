@@ -22,7 +22,7 @@ describe("SharedWorkspaceApi boundaries", () => {
       | "attachments"
       | "collaborators"
       | "taskBindings"
-      | "workflowPlans"
+      | "dispatches"
       | "members"
       | "files"
       | "deliveries"
@@ -42,7 +42,7 @@ describe("SharedWorkspaceApi boundaries", () => {
       "attachments",
       "collaborators",
       "taskBindings",
-      "workflowPlans",
+      "dispatches",
       "members",
       "files",
       "deliveries",

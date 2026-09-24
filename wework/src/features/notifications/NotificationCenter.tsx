@@ -34,7 +34,10 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { cn } from '@/lib/utils'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
-import { useNotificationTaskSource } from './NotificationTaskSourceContext'
+import {
+  useIssueDispatchNotificationAction,
+  useNotificationTaskSource,
+} from './NotificationTaskSourceContext'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
@@ -285,6 +288,7 @@ function ConnectedNotificationCenter({
 }) {
   const { t } = useTranslation('common')
   const taskSource = useNotificationTaskSource()
+  const issueDispatchAction = useIssueDispatchNotificationAction()
   const api = useMemo(
     () =>
       baseUrl && token
@@ -500,6 +504,28 @@ function ConnectedNotificationCenter({
           },
         }
       })
+      if (read.payload.action === 'create_personal_task') {
+        const { projectId, itemId, issueId, dispatchTaskId, idempotencyKey } = read.payload
+        if (
+          !issueDispatchAction ||
+          !projectId ||
+          !itemId ||
+          !issueId ||
+          !dispatchTaskId ||
+          !idempotencyKey
+        ) {
+          throw new Error(t('notifications.invalid_link'))
+        }
+        await issueDispatchAction({
+          projectId,
+          itemId,
+          issueId,
+          dispatchTaskId,
+          idempotencyKey,
+        })
+        close()
+        return
+      }
       if (read.url) {
         if (!openWeworkScheme(read.url)) throw new Error(t('notifications.invalid_link'))
         close()
@@ -872,7 +898,11 @@ function ConnectedNotificationCenter({
               {selectedCloudInbox?.items.map(notification => (
                 <NotificationFeedRow
                   key={notification.id}
-                  testId={'wework-notification-' + notification.id}
+                  testId={
+                    notification.payload.action === 'create_personal_task'
+                      ? 'issue-dispatch-notification-create-task'
+                      : 'wework-notification-' + notification.id
+                  }
                   kind={notification.kind}
                   title={notification.title}
                   body={notification.body}
