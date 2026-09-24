@@ -438,16 +438,23 @@ async fn list_cloud_devices(
             executor_version,
             latest_version,
             update_available,
-            client_ip: None,
-            runtime_transfer_host: None,
-            runtime_instance_id: None,
-            app_device_id: None,
             socket_device_id: None,
-            // The store decides what a cloud device advertises. The public
-            // default adds no member (pydantic then renders null).
-            runtime_features: state.cloud_runtime_features.project(&spec, online_state),
+            runtime_features: state
+                .cloud_runtime_features
+                .project(&spec, online_state)
+                .or_else(|| online_state.and_then(project_runtime_features)),
             cloud_config: spec.cloud_config.as_ref().map(OpaqueJson::to_raw_value),
             remote_config: None,
+            client_ip: spec.client_ip.as_ref().map(OpaqueJson::to_raw_value),
+            runtime_transfer_host: spec
+                .runtime_transfer_host
+                .as_ref()
+                .map(OpaqueJson::to_raw_value),
+            runtime_instance_id: spec
+                .runtime_instance_id
+                .as_ref()
+                .map(OpaqueJson::to_raw_value),
+            app_device_id: spec.app_device_id.as_ref().map(OpaqueJson::to_raw_value),
             bind_shell: spec
                 .bind_shell
                 .clone()

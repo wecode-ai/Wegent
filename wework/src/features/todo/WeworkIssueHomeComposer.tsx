@@ -127,7 +127,7 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
             presentation="document"
             value={props.value}
             onChange={props.onChange}
-            onDraftEdit={() => props.onDraftChange?.(input.current?.getValue() ?? props.value)}
+            onDraftEdit={props.onDraftChange}
             onSubmit={value => props.onSubmit(value ?? props.value)}
             disabled={props.disabled}
             requireText
