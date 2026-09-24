@@ -981,6 +981,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'deliveries',
         'executions',
         'automations',
+        'projectManager',
         'incomingHooks',
         'runtimeProfiles',
         'agents',

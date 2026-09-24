@@ -29,6 +29,7 @@ class LoopItemCreate(BaseModel):
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
@@ -47,6 +48,7 @@ class LoopItemCreate(BaseModel):
             value is not None
             for value in (
                 self.assignee_user_id,
+                self.assignee_group_id,
                 self.assignee_agent_id,
                 self.assignee_team_id,
             )

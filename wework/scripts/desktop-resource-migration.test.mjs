@@ -199,6 +199,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
     expect(source).toContain('resolveHarnessRuntimeCachePaths(')
+    expect(source).toContain("join(harnessRuntimeMaterializedRoot, 'runtimes.json')")
+    expect(source).not.toContain(
+      "join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json')"
+    )
     expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
     expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
     expect(harnessRuntimeSource).not.toContain(

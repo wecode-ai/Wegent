@@ -7,6 +7,7 @@ import {
   type SharedWorkspaceApi,
   type WorkspaceAutomationRule,
 } from '@wegent/collaboration'
+import { DEFAULT_PROJECT_MANAGER_PROMPT } from '@wegent/collaboration/project-manage'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   isDefaultWorkItemProject,
@@ -316,6 +317,61 @@ export function createLocalWorkspaceApi(
       loadPlugins: async () => [],
     },
     automations: localAutomations,
+    projectManager: {
+      async get(projectId) {
+        const project = await delivery.projects.get(projectId)
+        return project.project_manager
+          ? {
+              ...project.project_manager,
+              projectId,
+              version: project.version,
+            }
+          : {
+              projectId,
+              version: project.version,
+              enabled: false,
+              agentId: '',
+              prompt: '',
+              triggers: [],
+            }
+      },
+      async save(projectId, config) {
+        const project = await delivery.projects.update(projectId, {
+          version: config.version,
+          projectManager: { ...config, projectId },
+        })
+        return { ...config, projectId, version: project.version }
+      },
+      async run(projectId, message, modelSelection) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.runManager(
+          projectId,
+          message,
+          modelSelection
+        )
+      },
+      async listRuns(projectId) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.listManagerRuns(projectId)
+      },
+      async getRun(projectId, runId) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        const runs = await detailServices.localProjectAutomationApi.listManagerRuns(projectId)
+        const run = runs.find(item => item.id === runId)
+        if (!run) throw new Error('Project AI run was not found')
+        return run
+      },
+      async decide(projectId, runId, actionId, approve, version) {
+        if (!detailServices?.localProjectAutomationApi) return unavailable()
+        return detailServices.localProjectAutomationApi.decideManagerAction(
+          projectId,
+          runId,
+          actionId,
+          approve,
+          version
+        )
+      },
+    },
     ...(automation.incomingHooks
       ? {
           incomingHooks: {
@@ -453,14 +509,32 @@ export function createLocalWorkspaceApi(
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
         const { includeDefaultAgent = true, ...projectInput } = input
-        const project = decorateProject(await delivery.projects.create(projectInput))
+        let project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
-          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
-            console.warn(
-              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
-              error
+          const agent = await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(
+            error => {
+              console.warn(
+                `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+                error
+              )
+              return null
+            }
+          )
+          if (agent) {
+            project = decorateProject(
+              await delivery.projects.update(project.id, {
+                version: project.version,
+                projectManager: {
+                  projectId: project.id,
+                  version: project.version,
+                  enabled: true,
+                  agentId: agent.id,
+                  prompt: DEFAULT_PROJECT_MANAGER_PROMPT,
+                  triggers: [],
+                },
+              })
             )
-          })
+          }
         }
         return project
       },

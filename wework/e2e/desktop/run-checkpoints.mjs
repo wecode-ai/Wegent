@@ -68,6 +68,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
+  'project-space-ai-manager': './scenarios/project-space-ai-manager.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -103,6 +104,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-agent-capabilities',
   'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
+  'project-space-ai-manager',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
   'plugin-development',

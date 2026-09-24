@@ -260,6 +260,7 @@ function Project({
       }
       runtimeWork={runtimeWork}
       runtimePort={{ bindTask: vi.fn(), unbindTask: vi.fn() }}
+      sendRuntimePaneMessage={vi.fn(async () => true)}
       userId={1}
     />
   )

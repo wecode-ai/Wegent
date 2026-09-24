@@ -25,6 +25,7 @@ import type {
   SharedWorkspaceApi,
   WorkspaceAutomationRule,
   WorkspaceIncomingHook,
+  WorkspaceProjectManagerTrigger,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAgent,
@@ -34,6 +35,11 @@ import type {
 } from "../types";
 import { useAutomaticProcessingRules } from "./useAutomaticProcessingRules";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
+import {
+  ProjectManagerTriggerEditor,
+  projectManagerTriggerLabel,
+} from "./ProjectManagerTriggerEditor";
+import { useProjectManagerAutomation } from "./useProjectManagerAutomation";
 
 type TriggerKind = "created" | "tag_added" | "external" | "schedule";
 type TargetKind = "human" | "agent" | "collaboration_group";
@@ -342,11 +348,18 @@ export function ProjectAutomaticProcessing({
   const [actionError, setError] = useState("");
   const [optionsError, setOptionsError] = useState("");
   const [hooksError, setHooksError] = useState("");
+  const managerAutomation = useProjectManagerAutomation(
+    api.projectManager,
+    project.id,
+  );
+  const [managerDraft, setManagerDraft] =
+    useState<WorkspaceProjectManagerTrigger | null>(null);
   const translateRef = useRef(translate);
   translateRef.current = translate;
   const needsHooks = editing && draft.trigger === "external";
   const error =
     actionError ||
+    managerAutomation.error ||
     optionsError ||
     (needsHooks && hooksError) ||
     (rulesError
@@ -365,6 +378,7 @@ export function ProjectAutomaticProcessing({
   useEffect(() => {
     setDraft(EMPTY_DRAFT);
     setEditing(false);
+    setManagerDraft(null);
     setHooks([]);
     setHooksError("");
     setError("");
@@ -563,6 +577,30 @@ export function ProjectAutomaticProcessing({
     setError("");
   }
 
+  function openManagerCreate() {
+    setManagerDraft({
+      id: crypto.randomUUID(),
+      kind: "event",
+      eventType: "task.created",
+      tags: [],
+      timezone: "Asia/Shanghai",
+      enabled: true,
+    });
+  }
+
+  async function saveManagerDraft() {
+    if (!managerDraft || !managerAutomation.config) return;
+    const existing = managerAutomation.config.triggers.some(
+      (item) => item.id === managerDraft.id,
+    );
+    const triggers = existing
+      ? managerAutomation.config.triggers.map((item) =>
+          item.id === managerDraft.id ? managerDraft : item,
+        )
+      : [...managerAutomation.config.triggers, managerDraft];
+    if (await managerAutomation.saveTriggers(triggers)) setManagerDraft(null);
+  }
+
   function selectTrigger(trigger: TriggerKind) {
     const hook = hooks[0];
     const eventType = hook ? (eventTypesForHook(hook)[0] ?? "") : "";
@@ -723,26 +761,43 @@ export function ProjectAutomaticProcessing({
     <ProjectSettingsPage
       actions={
         canManage ? (
-          <button
-            type="button"
-            className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
-            data-testid="automatic-processing-create"
-            onClick={openCreate}
-          >
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            {translate("todo.create_automatic_processing", "新建规则")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="collaboration-primary-button inline-flex shrink-0 items-center gap-1.5"
+              data-testid="automatic-processing-create"
+              onClick={openCreate}
+            >
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              {translate("todo.create_automatic_processing", "新建规则")}
+            </button>
+            {api.projectManager && (
+              <button
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary hover:bg-muted"
+                data-testid="project-ai-add-trigger"
+                disabled={
+                  !managerAutomation.config || managerAutomation.loading
+                }
+                onClick={openManagerCreate}
+                type="button"
+              >
+                {locale === "zh-CN"
+                  ? "项目管理者触发"
+                  : "Project manager trigger"}
+              </button>
+            )}
+          </div>
         ) : undefined
       }
       description={translate(
         "todo.automatic_processing_description",
-        "当 Issue 满足指定条件时，自动交给项目成员、智能体或协作小组。",
+        "统一管理 Issue 自动处理和项目管理者的触发规则。",
       )}
       testId="collaboration-project-automatic-processing-page"
       title={translate("todo.automatic_processing", "自动处理")}
     >
       <div className="space-y-4" data-testid="automatic-processing">
-        {loading ? (
+        {loading || managerAutomation.loading ? (
           <p
             className="py-8 text-center text-sm text-text-muted"
             data-testid="automatic-processing-loading"
@@ -757,8 +812,8 @@ export function ProjectAutomaticProcessing({
               </div>
             ) : null}
 
-            {rules.length ? (
-              <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface/70">
+            {rules.length || managerAutomation.config?.triggers.length ? (
+              <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-background">
                 {rules.map((rule) => {
                   const ruleDraft = draftFromRule(rule);
                   const triggerLabel =
@@ -838,6 +893,72 @@ export function ProjectAutomaticProcessing({
                     </article>
                   );
                 })}
+                {managerAutomation.config?.triggers.map((trigger) => (
+                  <article
+                    className="flex min-h-14 items-center gap-4 px-4 py-3"
+                    data-testid={`project-ai-trigger-${trigger.id}`}
+                    key={trigger.id}
+                  >
+                    <button
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setManagerDraft(trigger)}
+                      type="button"
+                    >
+                      <strong className="block truncate text-sm font-medium text-text-primary">
+                        {locale === "zh-CN" ? "项目管理者" : "Project manager"}
+                      </strong>
+                      <span className="mt-0.5 block truncate text-xs text-text-secondary">
+                        {projectManagerTriggerLabel(trigger, locale)} →{" "}
+                        {locale === "zh-CN"
+                          ? "项目管理者 AI"
+                          : "Project manager AI"}
+                      </span>
+                    </button>
+                    {canManage && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <AutomaticProcessingSwitch
+                          checked={trigger.enabled}
+                          disabled={managerAutomation.saving}
+                          label={translate("todo.enable_rule", "启用规则")}
+                          onChange={() =>
+                            void managerAutomation.saveTriggers(
+                              managerAutomation.config!.triggers.map((item) =>
+                                item.id === trigger.id
+                                  ? { ...item, enabled: !item.enabled }
+                                  : item,
+                              ),
+                            )
+                          }
+                          testId={`project-ai-trigger-row-enabled-${trigger.id}`}
+                        />
+                        <button
+                          aria-label={translate("common.edit", "编辑")}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                          data-testid={`project-ai-trigger-edit-${trigger.id}`}
+                          onClick={() => setManagerDraft(trigger)}
+                          type="button"
+                        >
+                          <Pencil aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                        <button
+                          aria-label={translate("common.delete", "删除")}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10"
+                          data-testid={`project-ai-trigger-remove-${trigger.id}`}
+                          onClick={() =>
+                            void managerAutomation.saveTriggers(
+                              managerAutomation.config!.triggers.filter(
+                                (item) => item.id !== trigger.id,
+                              ),
+                            )
+                          }
+                          type="button"
+                        >
+                          <Trash2 aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                ))}
               </div>
             ) : !editing && !error ? (
               <div className="py-12 text-center text-sm text-text-secondary">
@@ -848,6 +969,16 @@ export function ProjectAutomaticProcessing({
         )}
       </div>
 
+      {managerDraft && (
+        <ProjectManagerTriggerEditor
+          trigger={managerDraft}
+          locale={locale}
+          saving={managerAutomation.saving}
+          onChange={setManagerDraft}
+          onClose={() => setManagerDraft(null)}
+          onSave={() => void saveManagerDraft()}
+        />
+      )}
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
           <form

@@ -7,6 +7,7 @@
 from datetime import datetime
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "e6f1a2b3c4d5"

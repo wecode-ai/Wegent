@@ -66,6 +66,35 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
+def test_local_board_comment_uses_internal_provider(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item = LoopItem(
+        id=f"{project.project_key}-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Coordinate this task",
+        status="pending",
+        priority="medium",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(item)
+    test_db.commit()
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        wework_space,
+        "_board_context",
+        lambda *_: {"space_id": str(project.id), "item_id": item.id},
+    )
+
+    comment = wework_space.add_board_item_comment(
+        _token(test_user), "Please check the plan"
+    )
+
+    assert comment["body"] == "Please check the plan"
+
+
 def _workflow_issue(
     db: Session,
     project: CloudProject,
@@ -292,6 +321,7 @@ def test_project_details_expose_assignable_members(
             "capability": "Builds Python APIs",
         }
     ]
+    assert details["groups"] == []
 
 
 async def test_ai_manager_submits_structured_plan_for_current_issue(

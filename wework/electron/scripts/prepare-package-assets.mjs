@@ -41,10 +41,10 @@ const packageEnvironment = {
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
-const { assetDirectory: harnessRuntimeAssetDirectory } = resolveHarnessRuntimeCachePaths(
-  weworkRoot,
-  packageEnvironment
-)
+const {
+  assetDirectory: harnessRuntimeAssetDirectory,
+  materializedRoot: harnessRuntimeMaterializedRoot,
+} = resolveHarnessRuntimeCachePaths(weworkRoot, packageEnvironment)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
@@ -59,7 +59,7 @@ const [executorPath] = await Promise.all([
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
 const runtimeCatalog = JSON.parse(
-  await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
 )
 const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
   ['core', 'workbench'].includes(runtime.role)
@@ -81,10 +81,14 @@ await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(corePluginSource(weworkRoot, directory), join(corePluginsRoot, corePluginTarget(directory)), {
-    recursive: true,
-    filter: source => !source.endsWith('.test.mjs'),
-  })
+  await cp(
+    corePluginSource(weworkRoot, directory),
+    join(corePluginsRoot, corePluginTarget(directory)),
+    {
+      recursive: true,
+      filter: source => !source.endsWith('.test.mjs'),
+    }
+  )
 }
 if (INTERNAL_CORE_PLUGINS.length > 0) {
   await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))

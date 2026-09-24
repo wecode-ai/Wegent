@@ -18,6 +18,10 @@
   "navigation": {
     "home": "首页"
   },
+  "project_ai": {
+    "file_unavailable": "这个项目执行器无法读取所选文件，请使用本地项目或在任务详情中上传文件。",
+    "model_unavailable": "模型列表加载失败，请稍后重试。"
+  },
   "common": {
     "loading": "加载中...",
     "cancel": "取消",
@@ -3941,6 +3945,9 @@
     "start_follow_up": "开启新任务"
   },
   "todo": {
+    "project_manager": "项目管理者",
+    "collaboration_participants_manager_description": "统一管理项目中的智能体、项目管理者、项目成员和协作小组。项目管理者负责协调 Issue，负责人负责执行与交付。",
+    "automatic_processing_description": "统一管理 Issue 自动处理和项目管理者的触发规则。",
     "human_work_start": "接手处理",
     "human_work_submit": "提交待确认",
     "human_work_ai_assist": "AI 辅助",

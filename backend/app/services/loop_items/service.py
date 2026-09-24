@@ -504,6 +504,7 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
         assign_creator_if_unassigned: bool = True,
+        apply_project_workflow: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -530,12 +531,13 @@ class LoopItemService:
         payload.pop("automation_rule_id", None)
         agent_id = payload.get("assignee_agent_id")
         team_id = payload.get("assignee_team_id")
+        group_id = payload.pop("assignee_group_id", None)
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
         task_metadata["security_level"] = default_issue_security(project)
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
-        elif values.parent_id is None:
+        elif values.parent_id is None and apply_project_workflow:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
@@ -630,6 +632,38 @@ class LoopItemService:
                 str(team.id),
                 team.name,
             )
+        elif group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                (
+                    entry
+                    for entry in workspace_service.list_project_collaboration_groups(
+                        db, cloud_project_id, user_id
+                    )
+                    if str(entry["id"]) == group_id
+                ),
+                None,
+            )
+            if group is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group is not in this project",
+                )
+            payload["assignee_user_id"] = None
+            payload["assignee_agent_id"] = ""
+            payload["assignee_team_id"] = None
+            task_metadata["collaboration_group"] = {
+                "id": str(group["id"]),
+                "name": str(group["name"]),
+            }
+            self._write_assignment_change(
+                task_metadata,
+                user_id,
+                "group",
+                str(group["id"]),
+                str(group["name"]),
+            )
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self._write_assignment_change(
@@ -683,6 +717,8 @@ class LoopItemService:
             assignment_member = ("agent", str(agent_id))
         elif team_id:
             assignment_member = ("team", str(team_id))
+        elif group_id:
+            assignment_member = None
         elif item.assignee_user_id:
             assignment_member = ("user", str(item.assignee_user_id))
         if assignment_member is not None:
@@ -1343,6 +1379,8 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         values: LoopItemUpdate,
+        *,
+        commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         if "security_level" in values.model_fields_set:
@@ -1668,7 +1706,10 @@ class LoopItemService:
                 next_version=values.version + 1,
                 completed_at=updates.get("completed_at"),
             )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         if cancelled_runs:
             from app.services.board_team_execution import (
@@ -1964,6 +2005,18 @@ class LoopItemService:
                 )
                 if assignment_created
                 else []
+            )
+        elif values.assignee_type == "group":
+            return self.update(
+                db,
+                item_id,
+                user_id,
+                LoopItemUpdate(
+                    version=values.version,
+                    assignee_group_id=values.assignee_id,
+                    notify_assignee=values.notify_assignee,
+                ),
+                commit=commit,
             )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
