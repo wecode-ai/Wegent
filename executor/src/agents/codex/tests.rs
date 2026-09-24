@@ -1874,6 +1874,43 @@ fn configured_inference_provider_rejects_the_internal_catalog_provider() {
 }
 
 #[test]
+fn header_overrides_do_not_redefine_builtin_codex_providers() {
+    for provider in ["openai", "amazon-bedrock", "ollama", "lmstudio"] {
+        assert!(
+            header_overrides(
+                provider,
+                Some(&json!({"X-Wegent-Test": "test-value"})),
+                Some("42"),
+                "task-1",
+            )
+            .is_empty(),
+            "built-in provider {provider} must not receive model_providers overrides"
+        );
+    }
+}
+
+#[test]
+fn header_overrides_preserve_custom_provider_headers() {
+    let overrides = header_overrides(
+        "openai-custom",
+        Some(&json!({"X-Wegent-Test": "test-value"})),
+        Some("42"),
+        "task-1",
+    );
+
+    assert!(overrides
+        .iter()
+        .any(|value| value
+            == "model_providers.openai-custom.http_headers.X-Wegent-Test=\"test-value\""));
+    assert!(overrides
+        .iter()
+        .any(|value| value == "model_providers.openai-custom.http_headers.wecode-project=\"42\""));
+    assert!(overrides.iter().any(|value| {
+        value == "model_providers.openai-custom.http_headers.wecode-session-id=\"task-1\""
+    }));
+}
+
+#[test]
 fn codex_launch_config_forwards_web_search_mode() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),

@@ -1235,7 +1235,9 @@ async function main() {
         }`,
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
-        desktopScenario?.modelProviderAuthToml
+        desktopScenario?.modelProviderAuthToml,
+        desktopScenario?.modelProviderId,
+        desktopScenario?.modelId
       )
       await writeFile(
         join(codexHome, 'auth.json'),
