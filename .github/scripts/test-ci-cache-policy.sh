@@ -518,6 +518,11 @@ desktop_warmup_section="$(
     '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
     "$warmup_workflow"
 )"
+desktop_build_section="$(
+  sed -n \
+    '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
+    "$workflow_dir/wework-e2e.yml"
+)"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}'* ]] ||
@@ -529,6 +534,13 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
   [[ "$desktop_warmup_section" =~ dtolnay/rust-toolchain ]]; then
   fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
+fi
+
+if [[ "$desktop_warmup_section" == *'CARGO_PROFILE_DEV_DEBUG'* ]] ||
+  [[ "$desktop_build_section" == *'CARGO_PROFILE_DEV_DEBUG'* ]] ||
+  ! grep -Fq 'strip --strip-debug' \
+    "$script_dir/archive-wework-core-e2e-build.sh"; then
+  fail "Linux Wework builds must reuse the default dev compiler cache and strip archived binaries"
 fi
 
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"

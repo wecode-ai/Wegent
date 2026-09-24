@@ -268,7 +268,6 @@ jobs:
       - name: Build shared Wework desktop E2E runtime
         env:
           CI: true
-          CARGO_PROFILE_DEV_DEBUG: "0"
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"

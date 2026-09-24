@@ -540,7 +540,6 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
-          CARGO_PROFILE_DEV_DEBUG: "0"
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
           CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
