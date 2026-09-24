@@ -265,6 +265,9 @@ jobs:
     if: needs.changes.outputs.wework_target == 'true'
     runs-on: macos-14
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout code
@@ -289,6 +292,16 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.4
+
+      - name: Log in to GHCR with ORAS
+        run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Resolve pnpm store path
         id: pnpm-store
@@ -345,6 +358,25 @@ jobs:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
           key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
 
+      - name: Restore macOS arm64 runtimes from OCI
+        env:
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
+        run: |
+          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+          .github/scripts/restore-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-executor" \
+            wegent-executor \
+            "$EXECUTOR_SOURCE_REF" \
+            "$EXECUTOR_HEAD_REF"
+          .github/scripts/restore-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-backend-rs" \
+            wegent-backend-rs \
+            "$BACKEND_SOURCE_REF" \
+            "$BACKEND_HEAD_REF"
+
       - name: Build Wework Electron E2E application
         env:
           CI: true
@@ -376,6 +408,23 @@ jobs:
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           test -x "$backend_runtime"
+
+      - name: Publish macOS arm64 runtimes to OCI
+        env:
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
+        run: |
+          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+          .github/scripts/publish-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-executor" \
+            "$EXECUTOR_SOURCE_REF" \
+            "$EXECUTOR_HEAD_REF"
+          .github/scripts/publish-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-backend-rs" \
+            "$BACKEND_SOURCE_REF" \
+            "$BACKEND_HEAD_REF"
 
       - name: Save macOS arm64 executor runtime
         if: steps.macos-executor-runtime-cache.outputs.cache-hit != 'true'
