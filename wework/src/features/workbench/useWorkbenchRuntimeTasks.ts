@@ -5,7 +5,6 @@ import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
-import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   RuntimeTaskSummary,
@@ -56,11 +55,7 @@ import {
   completeRuntimeConversationHydration,
   evictRuntimeConversation,
 } from './runtimeConversationCache'
-import {
-  archiveRuntimeTaskAddresses,
-  BULK_RUNTIME_TASK_CONCURRENCY,
-  findFailedRuntimeTaskArchive,
-} from './runtimeTaskArchive'
+import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -238,32 +233,29 @@ export function useWorkbenchRuntimeTasks({
 
   const removeArchivedWorktrees = useCallback(
     async (worktreeTargets: RuntimeTaskWorktreeTarget[]) => {
-      const results = await allSettledWithConcurrency(
-        uniqueRuntimeTaskWorktreeTargets(worktreeTargets),
-        BULK_RUNTIME_TASK_CONCURRENCY,
-        async target => {
+      let succeeded = true
+      for (const target of uniqueRuntimeTaskWorktreeTargets(worktreeTargets)) {
+        try {
           if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
           await services.runtimeWorkApi.deleteWorktree({
             deviceId: target.deviceId,
             path: target.path,
             preserveSnapshot: true,
           })
-        }
-      )
-      for (const result of results) {
-        if (result.status === 'rejected') {
+        } catch (error) {
+          succeeded = false
           dispatch({
             type: 'error_set',
             error:
-              result.reason instanceof Error
+              error instanceof Error
                 ? t('workbench.archive_runtime_task_remove_failed_detail', {
-                    message: result.reason.message,
+                    message: error.message,
                   })
                 : t('workbench.archive_runtime_task_remove_failed'),
           })
         }
       }
-      return results.every(result => result.status === 'fulfilled')
+      return succeeded
     },
     [dispatch, services.runtimeWorkApi, t]
   )

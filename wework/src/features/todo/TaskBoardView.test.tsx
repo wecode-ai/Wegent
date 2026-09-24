@@ -414,6 +414,95 @@ describe('TaskBoardView', () => {
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
   })
 
+  it('discards pending context results from replaced project-space APIs', async () => {
+    const work = runtimeWork()
+    const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-context-api-replacement')
+    lifecycleStore.syncRuntimeWork(work)
+    let resolveOldContexts: (() => void) | undefined
+    const oldContextsReady = new Promise<void>(resolve => {
+      resolveOldContexts = resolve
+    })
+    const oldUpdateLoopItem = vi.fn()
+    const oldApi = {
+      findCloudContextForTask: vi.fn(async ({ taskId }: { taskId: string }) => {
+        await oldContextsReady
+        return {
+          project: {
+            id: 'old-project',
+            project_key: 'OLD',
+            project_store: 'backend',
+          },
+          loop_item: {
+            id: taskId,
+            status: 'completed',
+            version: 1,
+          },
+        }
+      }),
+      updateLoopItem: oldUpdateLoopItem,
+    } as unknown as ProjectSpaceApi
+    const newUpdateLoopItem = vi.fn(
+      async (itemId: string, values: { version: number; status?: string }) => ({
+        id: itemId,
+        status: values.status,
+        version: values.version + 1,
+      })
+    )
+    const newApi = {
+      findCloudContextForTask: vi.fn(async ({ taskId }: { taskId: string }) => ({
+        project: {
+          id: 'new-project',
+          project_key: 'NEW',
+          project_store: 'backend',
+        },
+        loop_item: {
+          id: taskId,
+          status: taskId === 'review-1' ? 'archived' : 'in_review',
+          version: 2,
+        },
+      })),
+      updateLoopItem: newUpdateLoopItem,
+    } as unknown as ProjectSpaceApi
+    const oldApis = [oldApi]
+    const newApis = [newApi]
+    const view = (projectSpaceApis: ProjectSpaceApi[]) => (
+      <TaskBoardView
+        runtimeWork={work}
+        runtimeTaskLifecycle={lifecycleStore.getSnapshot()}
+        unreadRuntimeTaskKeys={new Set()}
+        onCreateTask={vi.fn()}
+        projectSpaceApis={projectSpaceApis}
+        onArchiveRuntimeTasks={vi.fn()}
+        onMarkRuntimeTaskRead={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    const rendered = render(view(oldApis))
+    await waitFor(() => expect(oldApi.findCloudContextForTask).toHaveBeenCalledTimes(2))
+
+    rendered.rerender(view(newApis))
+    await waitFor(() => expect(newApi.findCloudContextForTask).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByText('Review one')).not.toBeInTheDocument())
+
+    await act(async () => {
+      resolveOldContexts?.()
+      await oldContextsReady
+    })
+    expect(screen.queryByText('Review one')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review'))
+    await userEvent.click(screen.getByTestId('task-board-batch-confirm-review-confirm'))
+
+    await waitFor(() =>
+      expect(newUpdateLoopItem).toHaveBeenCalledWith('review-2', {
+        version: 2,
+        status: 'completed',
+      })
+    )
+    expect(oldUpdateLoopItem).not.toHaveBeenCalled()
+  })
+
   it('refreshes a failed local task context before retrying confirmation', async () => {
     const work = runtimeWork()
     const lifecycleStore = new RuntimeTaskLifecycleStore('task-board-refresh-local-context')

@@ -850,20 +850,31 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   let cachedProjectRecords: LocalLoopItemRecord[] | null = null
-  let projectRecordsRequest: Promise<LocalLoopItemRecord[]> | null = null
+  let projectCatalogGeneration = 0
+  let projectRecordsRequest: {
+    generation: number
+    promise: Promise<LocalLoopItemRecord[]>
+  } | null = null
+
+  function invalidateProjectRecords() {
+    projectCatalogGeneration += 1
+    cachedProjectRecords = null
+  }
 
   function loadProjectRecords(refresh = false): Promise<LocalLoopItemRecord[]> {
-    if (projectRecordsRequest) return projectRecordsRequest
     if (!refresh && cachedProjectRecords) return Promise.resolve(cachedProjectRecords)
-    projectRecordsRequest = request<LocalLoopItemRecord[]>('projects.list')
+    const generation = projectCatalogGeneration
+    if (projectRecordsRequest?.generation === generation) return projectRecordsRequest.promise
+    const promise = request<LocalLoopItemRecord[]>('projects.list')
       .then(records => {
-        cachedProjectRecords = records
+        if (projectCatalogGeneration === generation) cachedProjectRecords = records
         return records
       })
       .finally(() => {
-        projectRecordsRequest = null
+        if (projectRecordsRequest?.promise === promise) projectRecordsRequest = null
       })
-    return projectRecordsRequest
+    projectRecordsRequest = { generation, promise }
+    return promise
   }
 
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
@@ -927,7 +938,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         task_provider: data.task_provider ?? 'local',
         provider_config: data.provider_config ?? {},
       })
-      cachedProjectRecords = null
+      invalidateProjectRecords()
       return localProject(record)
     },
     async importLocalCodeProject(data: {
@@ -940,7 +951,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         name: data.name,
         roots: data.roots,
       })
-      cachedProjectRecords = null
+      invalidateProjectRecords()
       return localProject(record)
     },
     async updateCloudProject(
@@ -963,7 +974,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         project_id: projectId,
         project: data,
       })
-      cachedProjectRecords = null
+      invalidateProjectRecords()
       return localProject(record)
     },
     async archiveCloudProject(projectId: CloudProjectId, version: number) {
@@ -971,7 +982,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         project_id: projectId,
         version,
       })
-      cachedProjectRecords = null
+      invalidateProjectRecords()
     },
     async listMyWork() {
       return { items: [] }

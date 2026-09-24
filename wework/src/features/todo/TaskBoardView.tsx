@@ -53,6 +53,10 @@ function runtimeTaskKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}`
 }
 
+function sameProjectSpaceApis(left: ProjectSpaceApi[], right: ProjectSpaceApi[]): boolean {
+  return left.length === right.length && left.every((api, index) => api === right[index])
+}
+
 async function trackDefaultWorkItem(
   candidates: Array<{
     api: ProjectSpaceApi
@@ -140,7 +144,8 @@ export function TaskBoardView({
     () => new Map()
   )
   const taskContextLookupVersions = useRef(new Map<string, number>())
-  const pendingTaskContextLookups = useRef(new Set<string>())
+  const pendingTaskContextLookups = useRef(new Map<string, ProjectSpaceApi[]>())
+  const projectSpaceApisRef = useRef(projectSpaceApis)
   const mountedRef = useRef(true)
   const [batchConfirmItems, setBatchConfirmItems] = useState<RuntimeMyWorkItem[] | null>(null)
   const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
@@ -208,11 +213,21 @@ export function TaskBoardView({
     }
   }, [])
   useEffect(() => {
+    projectSpaceApisRef.current = projectSpaceApis
+  }, [projectSpaceApis])
+  useEffect(() => {
     if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
+    const lookupApis = projectSpaceApis
     const unresolvedItems = reviewItems.filter(item => {
       const key = runtimeTaskKey(item.runtime_address)
-      if (taskContexts.has(key) || pendingTaskContextLookups.current.has(key)) return false
-      pendingTaskContextLookups.current.add(key)
+      const existing = taskContexts.get(key)
+      if (
+        (existing && lookupApis.includes(existing.api)) ||
+        sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)
+      ) {
+        return false
+      }
+      pendingTaskContextLookups.current.set(key, lookupApis)
       return true
     })
     if (unresolvedItems.length === 0) return
@@ -224,16 +239,17 @@ export function TaskBoardView({
         return {
           key,
           lookupVersion,
-          source: await findProjectSpaceContextSourceForTask(
-            projectSpaceApis,
-            item.runtime_address
-          ),
+          source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
         }
       } finally {
-        pendingTaskContextLookups.current.delete(key)
+        if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
+          pendingTaskContextLookups.current.delete(key)
+        }
       }
     }).then(results => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || !sameProjectSpaceApis(projectSpaceApisRef.current, lookupApis)) {
+        return
+      }
       const resolved = results.flatMap(result =>
         result.status === 'fulfilled' &&
         result.value.source.context.loop_item &&
@@ -252,14 +268,15 @@ export function TaskBoardView({
   const items = useMemo(
     () =>
       filteredItems.flatMap(item => {
-        const trackedItem = taskContexts.get(runtimeTaskKey(item.runtime_address))?.context
-          .loop_item
+        const source = taskContexts.get(runtimeTaskKey(item.runtime_address))
+        const trackedItem =
+          source && projectSpaceApis.includes(source.api) ? source.context.loop_item : undefined
         if (trackedItem?.status === 'archived') return []
         return item.status === 'in_review' && trackedItem?.status === 'completed'
           ? [{ ...item, status: 'completed' as const }]
           : [item]
       }),
-    [filteredItems, taskContexts]
+    [filteredItems, projectSpaceApis, taskContexts]
   )
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
@@ -321,6 +338,7 @@ export function TaskBoardView({
       async item => {
         const key = runtimeTaskKey(item.runtime_address)
         let source = taskContexts.get(key)
+        if (source && !projectSpaceApis.includes(source.api)) source = undefined
         if (!source) {
           try {
             source = await findProjectSpaceContextSourceForTask(
