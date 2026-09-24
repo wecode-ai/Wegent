@@ -14,6 +14,7 @@
   "deleteProvider": "删除服务连接",
   "deleteDescription": "从新任务的可选模型中移除“{{name}}”及其 {{count}} 个模型？已有对话不会删除，其他连接和云端模型不受影响。",
   "keyConfigured": "Key 已配置",
+  "missingKey": "本机 Key 不可用，请重新填写",
   "noKey": "未配置 Key",
   "emptyModels": "尚无模型，点击编辑添加。",
   "empty": "添加服务连接后，即可获取或手动添加模型。",

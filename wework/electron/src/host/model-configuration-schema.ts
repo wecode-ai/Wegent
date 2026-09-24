@@ -1,63 +1,23 @@
 import { parseDocument, type Document } from 'yaml'
 
-export const MODEL_API_FORMATS = [
-  'openai-responses',
-  'openai-chat-completions',
-  'anthropic-messages',
-] as const
-export type ModelApiFormat = (typeof MODEL_API_FORMATS)[number]
+import {
+  MODEL_API_FORMATS,
+  type ModelApiFormat,
+  type ModelProvider,
+  type ProviderModel,
+  type ModelConfiguration,
+} from './model-configuration-contract.js'
 
-export interface ProviderModel {
-  id: string
-  model_id: string
-  display_name?: string
-  enabled?: boolean
-  api_format?: ModelApiFormat
-  request_path?: string
-  context_window?: number
-  tool_profile?: 'custom' | 'function' | 'shell'
-  codex_tool_compatibility?: 'native' | 'standard'
-  web_search_mode?: 'disabled' | 'cached' | 'live'
-  image_generation_enabled?: boolean
-  vision_model_config_id?: string
-  provider_profile_id?: string
-  codex_catalog_model_id?: string
-  catalog_entry?: Record<string, unknown>
-  group?: string
-}
-
-export interface ModelProvider {
-  id: string
-  name: string
-  base_url: string
-  api_format: ModelApiFormat
-  request_path?: string
-  models_path?: string
-  api_key?: string
-  api_key_ref?: string
-  models_api_key_header?: 'Authorization' | 'X-Api-Key'
-  enabled?: boolean
-  models: ProviderModel[]
-}
-
-export type PublicModelProvider = Omit<ModelProvider, 'api_key'> & {
-  api_key_configured: boolean
-}
-export interface ModelConfiguration {
-  version: 1
-  providers: ModelProvider[]
-}
-export interface ModelConfigurationSnapshot {
-  path: string
-  revision: string
-  providers: PublicModelProvider[]
-  loadedAt: string
-  error?: string
-}
-export interface ResolvedProviderModel {
-  provider: Omit<ModelProvider, 'models'>
-  model: ProviderModel
-}
+export type {
+  ModelApiFormat,
+  ModelProvider,
+  ProviderModel,
+  PublicModelProvider,
+  ModelConfiguration,
+  ModelConfigurationSnapshot,
+  ResolvedProviderModel,
+} from './model-configuration-contract.js'
+export { MODEL_API_FORMATS } from './model-configuration-contract.js'
 
 const PROVIDER_FIELDS = new Set([
   'id',
@@ -93,30 +53,36 @@ const MODEL_FIELDS = new Set([
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,159}$/
 export const MAX_MODEL_CONFIGURATION_BYTES = 2 * 1024 * 1024
 
+/** Reject a field using its path only, without disclosing values or YAML snippets. */
 function fail(path: string, reason: string): never {
   // Values and YAML snippets can contain credentials. Only report field paths.
   throw new Error(`model.yml: ${path}: ${reason}`)
 }
 
+/** Require a plain configuration object before inspecting its fields. */
 function record(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path, 'expected an object')
   return value as Record<string, unknown>
 }
 
+/** Require and trim a nonempty string without including the value in validation errors. */
 function text(value: unknown, path: string): string {
   if (typeof value !== 'string' || !value.trim()) fail(path, 'expected non-empty text')
   return value.trim()
 }
 
+/** Reject misspelled or unsupported fields instead of silently ignoring configuration. */
 function knownFields(value: Record<string, unknown>, fields: Set<string>, path: string): void {
   if (Object.keys(value).some(key => !fields.has(key))) fail(path, 'unknown field')
 }
 
+/** Validate an optional boolean while preserving an omitted default. */
 function optionalBoolean(value: Record<string, unknown>, key: string, path: string): void {
   if (value[key] !== undefined && typeof value[key] !== 'boolean')
     fail(`${path}.${key}`, 'expected a boolean')
 }
 
+/** Validate an optional setting against the supported protocol or capability values. */
 function optionalEnum(
   value: Record<string, unknown>,
   key: string,
@@ -127,10 +93,12 @@ function optionalEnum(
     fail(`${path}.${key}`, 'unsupported value')
 }
 
+/** Validate a supplied optional string without changing omitted settings. */
 function optionalText(value: Record<string, unknown>, key: string, path: string): void {
   if (value[key] !== undefined) text(value[key], `${path}.${key}`)
 }
 
+/** Accept only absolute API paths that cannot replace the configured origin. */
 function validatePath(value: unknown, path: string): void {
   if (value === undefined) return
   const result = text(value, path)
@@ -139,6 +107,7 @@ function validatePath(value: unknown, path: string): void {
   }
 }
 
+/** Validate one model and its protocol-specific overrides without changing its identity. */
 function validateModel(value: unknown, path: string, provider: ModelProvider): ProviderModel {
   const item = record(value, path)
   knownFields(item, MODEL_FIELDS, path)
@@ -178,6 +147,7 @@ function validateModel(value: unknown, path: string, provider: ModelProvider): P
   return { ...item, id, model_id: (item.model_id as string).trim() } as unknown as ProviderModel
 }
 
+/** Validate and normalize a complete provider document, including cross-provider identities. */
 export function validateModelConfiguration(value: unknown): ModelConfiguration {
   const root = record(value, 'root')
   knownFields(root, new Set(['version', 'providers']), 'root')
@@ -261,6 +231,7 @@ export function validateModelConfiguration(value: unknown): ModelConfiguration {
   return { version: 1, providers }
 }
 
+/** Parse bounded YAML without aliases and report syntax locations without secret excerpts. */
 export function parseModelConfiguration(source: string): {
   document: Document
   config: ModelConfiguration

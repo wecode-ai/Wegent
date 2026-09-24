@@ -24,10 +24,12 @@ interface LoadedConfiguration {
   config: ModelConfiguration
 }
 
+/** Bind a revision to both the selected file path and its exact contents. */
 function digest(path: string, source: string): string {
   return createHash('sha256').update(path).update('\0').update(source).digest('hex')
 }
 
+/** Replace a configuration through an owner-only temporary file in the same directory. */
 async function atomicWrite(path: string, source: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${randomUUID()}.tmp`
@@ -46,11 +48,13 @@ export class ModelConfigurationStore {
   private lastGood: LoadedConfiguration | null = null
   private lastError: string | undefined
 
+  /** Use an application configuration directory and the existing encrypted credential store. */
   constructor(
     private readonly directory: string,
     private readonly secrets: Pick<SecureValueStore, 'get' | 'set' | 'delete'>
   ) {}
 
+  /** Serialize mutations and reads while allowing later operations after a rejected request. */
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operation.then(operation, operation)
     this.operation = result.then(
@@ -60,6 +64,7 @@ export class ModelConfigurationStore {
     return result
   }
 
+  /** Resolve the explicit file binding or the default per-user configuration file. */
   private async boundPath(): Promise<string> {
     try {
       const binding = JSON.parse(
@@ -74,6 +79,7 @@ export class ModelConfigurationStore {
     }
   }
 
+  /** Read and validate a bounded file, allowing an empty initial configuration only when requested. */
   private async load(path: string, allowEmpty: boolean): Promise<LoadedConfiguration> {
     let source: string
     try {
@@ -92,6 +98,7 @@ export class ModelConfigurationStore {
     }
   }
 
+  /** Persist the encrypted recovery snapshot before publishing a new valid configuration. */
   private async accept(loaded: LoadedConfiguration): Promise<void> {
     // Persist only a recovery snapshot, never a second editable configuration.
     // The existing encrypted credential store protects inline keys in this snapshot.
@@ -105,6 +112,19 @@ export class ModelConfigurationStore {
     this.lastError = undefined
   }
 
+  /** Resolve one credential without making unrelated providers or the recovery UI unavailable. */
+  private async credential(provider: ModelProvider): Promise<string | null> {
+    if (provider.api_key) return provider.api_key
+    if (!provider.api_key_ref) return null
+    try {
+      return await this.secrets.get(provider.api_key_ref)
+    } catch {
+      // The settings snapshot reports the key as unavailable; never leak storage error details.
+      return null
+    }
+  }
+
+  /** Expose editable connection metadata and credential availability without plaintext keys. */
   private async publicSnapshot(loaded: LoadedConfiguration): Promise<ModelConfigurationSnapshot> {
     return {
       path: loaded.path,
@@ -116,15 +136,14 @@ export class ModelConfigurationStore {
           const { api_key: key, ...safe } = provider
           return {
             ...safe,
-            api_key_configured: Boolean(
-              key || (provider.api_key_ref && (await this.secrets.get(provider.api_key_ref)))
-            ),
+            api_key_configured: Boolean(key || (await this.credential(provider))),
           }
         })
       ),
     }
   }
 
+  /** Load the selected configuration or retain its last valid snapshot with a visible file error. */
   async read(): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       const path = await this.boundPath()
@@ -181,6 +200,7 @@ export class ModelConfigurationStore {
     })
   }
 
+  /** Validate a selected file before atomically changing the persisted binding. */
   async bind(path: string): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       const canonical = await realpath(path)
@@ -194,6 +214,7 @@ export class ModelConfigurationStore {
     })
   }
 
+  /** Create only a fresh default file; never recreate a missing populated configuration. */
   async ensureFile(): Promise<string> {
     return this.serial(async () => {
       const path = await this.boundPath()
@@ -209,6 +230,7 @@ export class ModelConfigurationStore {
     })
   }
 
+  /** Commit a revision-checked provider document, protect new keys, and retire unused credentials. */
   async save(expectedRevision: string, providers: unknown): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       if (this.lastError) throw new Error('Fix and reload model.yml before saving')
@@ -270,6 +292,19 @@ export class ModelConfigurationStore {
         await atomicWrite(path, source)
         const loaded = { path, source, revision: digest(path, source), config }
         await this.accept(loaded)
+        // Update recovery before retiring old keys, and preserve references still shared by a provider.
+        const retained = new Set(config.providers.map(provider => provider.api_key_ref))
+        const retired = new Set(current.config.providers.map(provider => provider.api_key_ref))
+        for (const reference of retired) {
+          if (reference && !retained.has(reference)) {
+            try {
+              await this.secrets.delete(reference)
+            } catch {
+              // Saving succeeded. Cleanup must not roll back keys that the committed file needs.
+              console.warn('An unused model credential could not be removed from secure storage')
+            }
+          }
+        }
         return this.publicSnapshot(loaded)
       } catch (error) {
         // Do not remove references after a successful file write if backup storage fails.
@@ -287,19 +322,17 @@ export class ModelConfigurationStore {
     })
   }
 
+  /** Resolve usable providers independently; unavailable credentials must not disable other connections. */
   async runtime(): Promise<{ revision: string; models: ResolvedProviderModel[] }> {
     return this.serial(async () => {
       if (!this.lastGood) return { revision: '', models: [] }
       const models: ResolvedProviderModel[] = []
       for (const provider of this.lastGood.config.providers) {
         const { models: entries, ...connection } = provider
-        const key =
-          connection.api_key ??
-          (connection.api_key_ref ? await this.secrets.get(connection.api_key_ref) : null)
-        if (connection.api_key_ref && !key)
-          throw new Error(
-            'A model credential is missing on this device; enter the key in Provider settings'
-          )
+        const key = await this.credential(provider)
+        // Do not expose an authenticated connection as an unauthenticated runtime model.
+        // Keep its public settings row editable so the user can supply a replacement key.
+        if (connection.api_key_ref && !key) continue
         for (const model of entries)
           models.push({ provider: { ...connection, ...(key ? { api_key: key } : {}) }, model })
       }
@@ -307,6 +340,7 @@ export class ModelConfigurationStore {
     })
   }
 
+  /** Fetch model IDs from a validated saved connection or unsaved draft without persisting the draft. */
   async discover(providerId: string, draft?: unknown): Promise<string[]> {
     const connection = await this.serial(async () => {
       const saved = this.lastGood?.config.providers.find(entry => entry.id === providerId)
@@ -334,10 +368,7 @@ export class ModelConfigurationStore {
         }).providers[0]
       }
       if (!provider) throw new Error('Enter the connection address before retrieving models')
-      const apiKey =
-        provider.api_key ??
-        saved?.api_key ??
-        (saved?.api_key_ref ? await this.secrets.get(saved.api_key_ref) : null)
+      const apiKey = provider.api_key ?? (saved ? await this.credential(saved) : null)
       if (saved?.api_key_ref && !apiKey)
         throw new Error('The saved API key is unavailable. Enter it again to retrieve models.')
       return { provider, apiKey }
@@ -401,6 +432,7 @@ export class ModelConfigurationStore {
   }
 }
 
+/** Update changed mapping values while retaining compatible YAML nodes and their comments. */
 function patchMap(document: Document, node: YAMLMap, value: Record<string, unknown>): void {
   for (const pair of [...node.items]) {
     const key = String(pair.key)
@@ -417,6 +449,7 @@ function patchMap(document: Document, node: YAMLMap, value: Record<string, unkno
   }
 }
 
+/** Reconcile an ID-keyed sequence in the requested order while reusing unchanged nodes. */
 function patchSequence(
   document: Document,
   parent: Document | YAMLMap,
@@ -434,6 +467,7 @@ function patchSequence(
   parent.set(key, sequence)
 }
 
+/** Write the provider sequence through the comment-preserving document updater. */
 function patchProviders(document: Document, providers: ModelProvider[]): void {
   patchSequence(
     document,

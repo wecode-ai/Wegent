@@ -5,6 +5,7 @@ import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import { ModelConfigurationStore } from './model-configuration-store.js'
 
+/** Register native provider operations and publish revisions only after successful mutations. */
 export function registerModelConfigurationCapabilities(
   router: HostCapabilityRouter,
   window: () => BrowserWindow | null,
@@ -12,6 +13,7 @@ export function registerModelConfigurationCapabilities(
   events: DesktopHostEventBroker
 ): void {
   let instance: ModelConfigurationStore | null = null
+  /** Lazily share one serialized model configuration service across host capability requests. */
   const store = () =>
     (instance ??= new ModelConfigurationStore(
       join(app.getPath('userData'), 'model-connections'),

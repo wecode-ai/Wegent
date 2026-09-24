@@ -469,20 +469,24 @@ function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
   return new Date(timestamp).toISOString()
 }
 
+/** Read standalone local models that have not been moved into provider configuration. */
 export function listLegacyLocalModelConfigs(): LocalModelConfig[] {
   return readStoredConfigs()
 }
 
+/** Combine legacy models with the provider projection, preferring provider-owned identities. */
 export function listLocalModelConfigs(): LocalModelConfig[] {
   const owned = getProviderModelConfigs()
   const ids = new Set(owned.map(model => model.id))
   return [...readStoredConfigs().filter(model => !ids.has(model.id)), ...owned]
 }
 
+/** Remove only legacy records whose IDs were successfully persisted as provider models. */
 export function removeMigratedLocalModelConfigs(ids: ReadonlySet<string>): void {
   writeStoredConfigs(readStoredConfigs().filter(model => !ids.has(model.id)))
 }
 
+/** Validate and save a standalone model while preventing edits to provider-owned records. */
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
   if (input.id && getProviderModelConfigs().some(model => model.id === input.id)) {
     throw new Error('Edit this model in Provider settings or its YAML file')
@@ -597,6 +601,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   return next
 }
 
+/** Acknowledge matching catalog versions across provider and standalone model sources. */
 export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
   markProviderModelCatalogReady(snapshot)
   const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))

@@ -181,6 +181,140 @@ describe('Provider configuration file store', () => {
   })
 })
 
+describe('Provider credential recovery and retirement', () => {
+  test.each(['missing', 'unreadable'] as const)(
+    'a %s key only excludes that provider and can be repaired after restart',
+    async failure => {
+      const original = new ModelConfigurationStore(directory, secrets)
+      const initial = await original.read()
+      const [relay] = parseModelConfiguration(YAML).config.providers
+      const saved = await original.save(initial.revision, [
+        relay,
+        { ...relay, id: 'healthy', models: [{ id: 'healthy-model', model_id: 'healthy' }] },
+        {
+          ...relay,
+          id: 'local',
+          api_key: undefined,
+          models: [{ id: 'local-model', model_id: 'local' }],
+        },
+      ])
+      const brokenRef = saved.providers[0].api_key_ref!
+      const damagedSecrets = {
+        ...secrets,
+        get: async (key: string) => {
+          if (key === brokenRef) {
+            if (failure === 'unreadable') throw new Error('sensitive storage details')
+            return null
+          }
+          return secrets.get(key)
+        },
+      }
+      const restarted = new ModelConfigurationStore(directory, damagedSecrets)
+      const snapshot = await restarted.read()
+      expect(snapshot.error).toBeUndefined()
+      expect(snapshot.providers).toHaveLength(3)
+      expect(snapshot.providers[0].api_key_configured).toBe(false)
+      expect(snapshot.providers[1].api_key_configured).toBe(true)
+      expect(JSON.stringify(snapshot)).not.toContain('sensitive storage details')
+      expect((await restarted.runtime()).models.map(entry => entry.model.id)).toEqual([
+        'healthy-model',
+        'local-model',
+      ])
+      const request = vi.fn().mockResolvedValue(new Response('{"data":[]}'))
+      vi.stubGlobal('fetch', request)
+      await expect(restarted.discover('relay')).rejects.toThrow(/saved API key/)
+      expect(request).not.toHaveBeenCalled()
+      await restarted.save(
+        snapshot.revision,
+        snapshot.providers.map(provider =>
+          provider.id === 'relay' ? { ...provider, api_key: 'replacement-key' } : provider
+        )
+      )
+      const runtime = await restarted.runtime()
+      expect(runtime.models.map(entry => entry.model.id)).toEqual([
+        'first',
+        'second',
+        'healthy-model',
+        'local-model',
+      ])
+      expect(runtime.models[0].provider.api_key).toBe('replacement-key')
+    }
+  )
+
+  test('rotation and deletion retire only references no remaining provider uses', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const empty = await store.read()
+    let saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
+    const oldRef = saved.providers[0].api_key_ref!
+    saved = await store.save(saved.revision, [
+      ...saved.providers,
+      { ...saved.providers[0], id: 'shared', models: [] },
+    ])
+    saved = await store.save(
+      saved.revision,
+      saved.providers.filter(provider => provider.id !== 'relay')
+    )
+    expect(await secrets.get(oldRef)).toBe('secret-not-for-output')
+    saved = await store.save(saved.revision, [{ ...saved.providers[0], api_key: 'new-key' }])
+    const newRef = saved.providers[0].api_key_ref!
+    expect(await secrets.get(oldRef)).toBeNull()
+    expect(await secrets.get(newRef)).toBe('new-key')
+    expect(values.get('wework-models.last-good')).not.toContain(oldRef)
+    await store.save(saved.revision, [])
+    expect(await secrets.get(newRef)).toBeNull()
+    expect((await store.runtime()).models).toEqual([])
+  })
+
+  test('an external edit during key rotation retains old keys and rolls back staged keys', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const empty = await store.read()
+    const saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
+    const originalSource = await readFile(saved.path, 'utf8')
+    const racingSecrets = {
+      ...secrets,
+      set: async (key: string, value: string) => {
+        await secrets.set(key, value)
+        if (key.startsWith('wework-model-key.'))
+          await writeFile(saved.path, `${originalSource}# external edit\n`)
+      },
+    }
+    const racing = new ModelConfigurationStore(directory, racingSecrets)
+    const before = await racing.read()
+    const previousKeys = [...values.keys()].filter(key => key.startsWith('wework-model-key.'))
+    await expect(
+      racing.save(before.revision, [{ ...before.providers[0], api_key: 'staged-key' }])
+    ).rejects.toThrow(/changed externally/)
+    expect([...values.keys()].filter(key => key.startsWith('wework-model-key.'))).toEqual(
+      previousKeys
+    )
+    expect((await racing.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
+  })
+
+  test('a recovery-backup failure never deletes the key referenced by the committed file', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const empty = await store.read()
+    const saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
+    const faulty = new ModelConfigurationStore(directory, {
+      ...secrets,
+      set: async (key: string, value: string) => {
+        if (key === 'wework-models.last-good' && !value.includes(saved.providers[0].api_key_ref!))
+          throw new Error('backup write failed')
+        await secrets.set(key, value)
+      },
+    })
+    const before = await faulty.read()
+    await expect(
+      faulty.save(before.revision, [{ ...before.providers[0], api_key: 'committed-key' }])
+    ).rejects.toThrow(/backup write failed/)
+    const committed = parseModelConfiguration(await readFile(saved.path, 'utf8')).config
+    expect(await secrets.get(committed.providers[0].api_key_ref!)).toBe('committed-key')
+    expect(await secrets.get(saved.providers[0].api_key_ref!)).toBe('secret-not-for-output')
+    const restarted = new ModelConfigurationStore(directory, secrets)
+    await restarted.read()
+    expect((await restarted.runtime()).models[0].provider.api_key).toBe('committed-key')
+  })
+})
+
 describe('Provider model discovery', () => {
   const draft = {
     base_url: 'https://draft.example/v1/',

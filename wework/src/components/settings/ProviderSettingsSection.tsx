@@ -34,6 +34,7 @@ const FORMATS = ['openai-responses', 'openai-chat-completions', 'anthropic-messa
 
 type ProviderDraft = ModelProvider & { api_key_configured?: boolean }
 
+/** Manage local provider connections without exposing file controls or changing cloud catalogs. */
 export function ProviderSettingsSection() {
   const { t } = useTranslation('modelConnections')
   const { snapshot, error: loadError } = useSyncExternalStore(
@@ -56,6 +57,7 @@ export function ProviderSettingsSection() {
 
   useEffect(() => {
     if (available) void initializeProviderModelConfiguration()
+    /** Refresh the legacy migration count when local model settings change. */
     const refresh = () => setLegacyCount(listLegacyLocalModelConfigs().length)
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refresh)
     return () => window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refresh)
@@ -63,6 +65,7 @@ export function ProviderSettingsSection() {
 
   if (!available) return null
 
+  /** Run a confirmed provider operation with shared pending and error feedback. */
   async function perform(action: () => Promise<void>) {
     setPending(true)
     setError(null)
@@ -75,6 +78,7 @@ export function ProviderSettingsSection() {
     }
   }
 
+  /** Open an empty in-memory connection draft using the current configuration revision. */
   const addProvider = () => {
     if (!snapshot) return
     setEditor({
@@ -88,6 +92,7 @@ export function ProviderSettingsSection() {
       },
     })
   }
+  /** Clone a public connection into an isolated draft so cancellation has no persistence effects. */
   const editProvider = (provider: PublicModelProvider) => {
     if (snapshot) setEditor({ snapshot, provider: structuredClone(provider) })
   }
@@ -221,7 +226,11 @@ export function ProviderSettingsSection() {
               <div className="mt-2 space-y-1 pl-6">
                 <p className="break-all text-xs text-text-secondary">
                   {provider.base_url} · {provider.api_format} ·{' '}
-                  {provider.api_key_configured ? t('keyConfigured') : t('noKey')}
+                  {provider.api_key_configured
+                    ? t('keyConfigured')
+                    : provider.api_key_ref
+                      ? t('missingKey')
+                      : t('noKey')}
                 </p>
                 {provider.models.map(model => (
                   <div
@@ -270,6 +279,7 @@ export function ProviderSettingsSection() {
   )
 }
 
+/** Edit one connection and its models while keeping discovery independent from saving. */
 function ProviderEditor({
   initial,
   snapshot,
@@ -295,6 +305,7 @@ function ProviderEditor({
     },
     []
   )
+  /** Update draft fields and invalidate discovery results when connection settings change. */
   const patch = (value: Partial<ProviderDraft>) => {
     if (
       ['base_url', 'api_key', 'api_format', 'models_path', 'models_api_key_header'].some(
@@ -309,12 +320,14 @@ function ProviderEditor({
     }
     setDraft(current => ({ ...current, ...value }))
   }
+  /** Update a single model draft by stable local ID. */
   const patchModel = (id: string, value: Partial<ProviderModel>) =>
     setDraft(current => ({
       ...current,
       models: current.models.map(model => (model.id === id ? { ...model, ...value } : model)),
     }))
 
+  /** Append one model without duplicating an existing upstream model ID. */
   function appendModel(modelId = '') {
     const model_id = modelId.trim()
     setDraft(current => {
@@ -324,6 +337,7 @@ function ProviderEditor({
     })
   }
 
+  /** Persist this provider against the captured revision and close only after a successful refresh. */
   async function save(event: FormEvent) {
     event.preventDefault()
     setPending(true)
@@ -343,6 +357,7 @@ function ProviderEditor({
     }
   }
 
+  /** Retrieve candidates for the current unsaved connection and discard stale responses. */
   async function discover() {
     const sequence = ++discoverySequence.current
     setDiscovering(true)
@@ -422,7 +437,13 @@ function ProviderEditor({
             className={INPUT}
             type="password"
             autoComplete="new-password"
-            placeholder={draft.api_key_configured ? t('keepKey') : t('optionalKey')}
+            placeholder={
+              draft.api_key_configured
+                ? t('keepKey')
+                : draft.api_key_ref
+                  ? t('missingKey')
+                  : t('optionalKey')
+            }
             value={draft.api_key ?? ''}
             onChange={event => patch({ api_key: event.target.value || undefined })}
           />
@@ -653,6 +674,7 @@ function ProviderEditor({
   )
 }
 
+/** Expose frequently edited model capabilities directly while grouping infrequent protocol controls. */
 function ModelFields({
   model,
   provider,
@@ -777,6 +799,7 @@ function ModelFields({
   )
 }
 
+/** Enable discovery only for HTTP(S) base URLs without embedded credentials or query data. */
 function validDiscoveryUrl(value: string): boolean {
   try {
     const url = new URL(value.trim())

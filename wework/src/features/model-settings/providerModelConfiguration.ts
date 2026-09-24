@@ -16,7 +16,7 @@ import type {
   ProviderModel,
   PublicModelProvider,
   ResolvedProviderModel,
-} from '../../../electron/src/host/model-configuration-schema'
+} from '../../../electron/src/host/model-configuration-contract'
 
 export type { ModelConfigurationSnapshot, ModelProvider, ProviderModel, PublicModelProvider }
 
@@ -29,20 +29,24 @@ const listeners = new Set<() => void>()
 let initialized: Promise<void> | null = null
 let reloadSequence = 0
 
+/** Return the stable snapshot consumed by useSyncExternalStore. */
 export function getProviderConfigurationState(): ProviderConfigurationState {
   return state
 }
+/** Subscribe to configuration changes and return an unsubscribe callback. */
 export function subscribeProviderConfiguration(listener: () => void): () => void {
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
   }
 }
+/** Replace the observable configuration snapshot and notify its subscribers. */
 function publish(snapshot: ModelConfigurationSnapshot | null, error: string | null): void {
   state = { snapshot, error }
   listeners.forEach(listener => listener())
 }
 
+/** Project inherited provider settings into the existing runtime model contract without changing IDs. */
 export function resolveProviderModel(
   entry: ResolvedProviderModel,
   previous?: LocalModelConfig
@@ -114,6 +118,7 @@ export function resolveProviderModel(
   return config
 }
 
+/** Load matching public and runtime revisions, ignoring superseded asynchronous requests. */
 export async function reloadProviderConfiguration(): Promise<void> {
   const sequence = ++reloadSequence
   try {
@@ -142,6 +147,7 @@ export async function reloadProviderConfiguration(): Promise<void> {
   }
 }
 
+/** Initialize the desktop configuration once and subscribe to native revision notifications. */
 export function initializeProviderModelConfiguration(): Promise<void> {
   if (!isElectronRuntime()) return Promise.resolve()
   initialized ??= (async () => {
@@ -153,6 +159,7 @@ export function initializeProviderModelConfiguration(): Promise<void> {
   return initialized
 }
 
+/** Save through the native service and refresh the derived model catalog after persistence. */
 export async function saveProviderConfiguration(
   revision: string,
   providers: Array<ModelProvider | PublicModelProvider>
@@ -162,11 +169,13 @@ export async function saveProviderConfiguration(
   if (state.error) throw new Error(state.error)
 }
 
+/** Bind a selected file through the host and reload only when selection succeeds. */
 export async function chooseProviderConfiguration(): Promise<void> {
   const result = await invokeDesktopHost('modelConfiguration.choose')
   if (result) await reloadProviderConfiguration()
 }
 
+/** Preserve the legacy model identity, protocol overrides, and capability catalog during migration. */
 function modelToFile(config: LocalModelConfig): ProviderModel {
   return {
     id: config.id,
@@ -188,6 +197,7 @@ function modelToFile(config: LocalModelConfig): ProviderModel {
   }
 }
 
+/** Group only identical connection credentials and protocols into shared providers. */
 export function groupLegacyModels(configs: LocalModelConfig[]): ModelProvider[] {
   const groups = new Map<string, ModelProvider>()
   for (const config of configs) {
@@ -217,6 +227,7 @@ export function groupLegacyModels(configs: LocalModelConfig[]): ModelProvider[] 
   return JSON.parse(JSON.stringify([...groups.values()])) as ModelProvider[]
 }
 
+/** Persist migrated providers before removing their legacy records, preserving existing IDs. */
 export async function migrateLegacyProviderModels(
   snapshot: ModelConfigurationSnapshot
 ): Promise<void> {

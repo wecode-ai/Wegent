@@ -60,6 +60,18 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
+  test('keeps a provider with a missing device key editable and allows replacement', async () => {
+    snapshot.providers[0].api_key_ref = 'wework-model-key.missing'
+    snapshot.providers[0].api_key_configured = false
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-api-key')).toBeEnabled()
+    await user.type(screen.getByTestId('provider-api-key'), 'replacement-key')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()?.[0].api_key).toBe('replacement-key'))
+    expect(screen.queryByTestId('provider-settings-error')).not.toBeInTheDocument()
+  })
+
   test('hides file controls, batch input and the extra capabilities gate', async () => {
     await openEditor()
     for (const id of [

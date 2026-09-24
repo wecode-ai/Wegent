@@ -14,6 +14,7 @@
   "deleteProvider": "Delete connection",
   "deleteDescription": "Remove “{{name}}” and its {{count}} models from new selections? Existing conversations are not deleted. No other provider or cloud model is changed.",
   "keyConfigured": "Key configured",
+  "missingKey": "API key unavailable on this device; enter it again",
   "noKey": "No key",
   "emptyModels": "No models yet. Edit this connection to add models.",
   "empty": "Add a connection, then fetch or manually add models.",
