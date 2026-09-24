@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -23,7 +23,8 @@ struct Intent {
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
     cursor: usize,
-    retry_delay: Duration,
+    retry_signal: Option<PathBuf>,
+    retry_signal_value: Option<Vec<u8>>,
 }
 
 impl Default for Reconciler {
@@ -31,10 +32,8 @@ impl Default for Reconciler {
         Self {
             retries: HashMap::new(),
             cursor: 0,
-            retry_delay: super::e2e_duration(
-                "WEWORK_E2E_PLUGIN_ACCOUNT_RETRY_DELAY_MS",
-                Duration::from_secs(60),
-            ),
+            retry_signal: super::e2e_retry_signal(),
+            retry_signal_value: None,
         }
     }
 }
@@ -45,6 +44,7 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
+        self.consume_retry_signal();
         let ids = installed_ids(home)?;
         // Rotate batches so an unavailable source never starves a later plugin.
         let selected: Vec<_> = ids
@@ -101,7 +101,22 @@ impl Reconciler {
     fn record(&mut self, key: (u64, String), _succeeded: bool) {
         // Missing/locked credentials remain local. Retry after login without
         // repeatedly prompting the OS on every scheduler tick.
-        self.retries.insert(key, Instant::now() + self.retry_delay);
+        self.retries
+            .insert(key, Instant::now() + Duration::from_secs(60));
+    }
+
+    fn consume_retry_signal(&mut self) {
+        let Some(path) = self.retry_signal.as_ref() else {
+            return;
+        };
+        let Ok(value) = fs::read(path) else {
+            return;
+        };
+        if self.retry_signal_value.as_ref() == Some(&value) {
+            return;
+        }
+        self.retry_signal_value = Some(value);
+        self.retries.clear();
     }
 }
 
@@ -152,6 +167,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(installed_ids(home.path()).unwrap(), vec![12]);
+    }
+
+    #[test]
+    fn e2e_retry_signal_clears_cooldowns_only_when_it_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let signal = home.path().join("retry.signal");
+        let key = (12, "mail".to_owned());
+        let mut reconciler = Reconciler {
+            retries: HashMap::from([(key.clone(), Instant::now() + Duration::from_secs(60))]),
+            cursor: 0,
+            retry_signal: Some(signal.clone()),
+            retry_signal_value: None,
+        };
+
+        fs::write(&signal, "1").unwrap();
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.is_empty());
+
+        reconciler
+            .retries
+            .insert(key.clone(), Instant::now() + Duration::from_secs(60));
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.contains_key(&key));
+
+        fs::write(signal, "2").unwrap();
+        reconciler.consume_retry_signal();
+        assert!(reconciler.retries.is_empty());
     }
 
     #[cfg(unix)]

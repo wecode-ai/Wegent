@@ -12,6 +12,7 @@ import {
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   createLocalCollaborationProject,
+  selectWhenOptionAvailable,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 
@@ -214,9 +215,12 @@ export async function createDesktopScenario({
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: AGENT_NAME,
       })
-      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
-        value: MODEL_NAME,
-      })
+      await selectWhenOptionAvailable(
+        control,
+        '[data-testid="cloud-project-chat-agent-model"]',
+        MODEL_NAME,
+        uiTimeoutMs
+      )
       await control.command(
         'click',
         '[data-testid="cloud-project-chat-agent-editor-advanced-toggle"]'

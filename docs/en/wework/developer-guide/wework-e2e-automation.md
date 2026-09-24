@@ -345,7 +345,8 @@ between external clients and the gateway.
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
 
 The `plugin-account-auth` scenario uses shorter scheduling intervals only when
-an E2E reconciliation marker is configured; production retains the 15-second
+an E2E reconciliation marker is configured and emits one precise retry signal
+after the test changes credential state. Production retains the 15-second
 automatic synchronization period and 60-second failure backoff. The DWS manual
 revocation assertion no longer sleeps for a fixed 32 seconds. It waits for two
 completed reconciliation markers from the real Executor while continuously
