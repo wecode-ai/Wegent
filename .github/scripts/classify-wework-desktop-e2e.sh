@@ -152,18 +152,18 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
+  send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
-  resilience,environment-panel-scroll
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools
+  resilience,environment-panel-scroll,collaboration-shared-core
   workspace-attachments,automation-lifecycle,collaboration-settings-matrix
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention
-  rendering-extensions
+  rendering-extensions,collaboration-agent-automation-chain,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
 )
 
