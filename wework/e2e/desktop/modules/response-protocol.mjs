@@ -369,7 +369,9 @@ function readRawRequestBody(request) {
     })
     request.once('end', () => {
       const body = Buffer.concat(chunks)
-      resolvePromise((body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8'))
+      resolvePromise(
+        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+      )
     })
     request.once('error', reject)
   })
@@ -654,13 +656,13 @@ function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
 
-function selectShellToolCommand(request, command, workspacePath) {
+function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
       cmd: command,
       workdir: workspacePath,
-      yield_time_ms: 1000,
+      yield_time_ms: yieldTimeMs,
     })
   }
   if (tools.some(tool => tool?.name === 'shell_command')) {

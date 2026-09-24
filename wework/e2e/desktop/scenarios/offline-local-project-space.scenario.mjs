@@ -6,6 +6,7 @@ import {
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
   selectCollaborationDomain,
+  selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -311,9 +312,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })
-      await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
-        value: MODEL_NAME,
-      })
+      await selectWhenOptionAvailable(
+        control,
+        '[data-testid="cloud-project-chat-agent-model"]',
+        MODEL_NAME,
+        uiTimeoutMs
+      )
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
         timeoutMs: uiTimeoutMs,
       })

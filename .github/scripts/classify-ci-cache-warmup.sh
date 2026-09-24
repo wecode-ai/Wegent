@@ -25,6 +25,13 @@ classify_path() {
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
+    .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/publish-wework-core-e2e-build-oci.sh | \
+      .github/scripts/resolve-wework-core-e2e-build-ref.sh | \
+      .github/scripts/restore-oci-runtime-binary.sh | \
+      .github/scripts/restore-wework-core-e2e-build-oci.sh)
+      changed[wework_target]=true
+      ;;
     .github/scripts/resolve-executor-e2e-runtime.sh)
       changed[docker]=true
       ;;
@@ -48,8 +55,10 @@ classify_path() {
       ;;
     .github/claude-code-cli/* | frontend/src/* | package.json | \
       pnpm-workspace.yaml | \
-      frontend/package.json | wework/package.json | packages/*/package.json)
+      frontend/package.json | wework/package.json | packages/*/package.json | \
+      packages/chat-core/*)
       changed[node]=true
+      changed[wework_target]=true
       ;;
     pnpm-lock.yaml | wework/electron/package.json | \
       wework/electron/pnpm-lock.yaml)
@@ -66,7 +75,7 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
-    backend-rs/Cargo.lock)
+    backend-rs/* | wework/resources/* | wework/scripts/* | wework/src/*)
       changed[wework_target]=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
@@ -76,6 +85,7 @@ classify_path() {
     executor/*)
       changed[docker]=true
       changed[executor_rust]=true
+      changed[wework_target]=true
       ;;
     frontend/e2e/fixtures/claudecode-executor/* | shared/assets/*)
       changed[docker]=true

@@ -796,8 +796,6 @@ describe('BufferedChatInput', () => {
         </div>
       </>
     )
-    dispatchPendingWorkbenchComposerFocusRequest()
-
     await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
   })
 

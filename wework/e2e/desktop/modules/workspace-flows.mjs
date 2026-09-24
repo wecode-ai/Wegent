@@ -81,6 +81,13 @@ export async function waitForTestIdByText(
   )
 }
 
+export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
+  await control.command('waitFor', `${selector} option[value="${value}"]`, {
+    timeoutMs,
+  })
+  await control.command('select', selector, { value })
+}
+
 async function waitForNativeCollaborationPlatform(
   control,
   contentSelector,

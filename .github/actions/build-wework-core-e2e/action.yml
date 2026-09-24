@@ -1,0 +1,80 @@
+name: Build Wework desktop Core E2E artifact
+description: Build and archive the shared Linux desktop runtime used by Wework E2E shards
+
+inputs:
+  executor-image:
+    description: Content-addressed Executor runtime image
+    required: true
+  backend-rs-image:
+    description: Content-addressed Rust backend runtime image
+    required: true
+  save-cache:
+    description: Whether writable dependency caches may be saved
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node workspace
+      uses: ./.github/actions/setup-node-workspace
+      with:
+        save-cache: ${{ inputs.save-cache }}
+        setup-toolchain: "false"
+
+    - name: Install Wework Electron dependencies
+      shell: bash
+      run: pnpm --dir wework/electron install --frozen-lockfile
+
+    - name: Restore bundled Codex cache
+      id: bundled-codex-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ~/.cache/wegent/codex
+        key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+    - name: Restore Rust runtimes and build shared Wework desktop E2E runtime
+      shell: bash
+      env:
+        EXECUTOR_IMAGE: ${{ inputs.executor-image }}
+        BACKEND_RS_IMAGE: ${{ inputs.backend-rs-image }}
+        GITHUB_TOKEN: ${{ github.token }}
+        OCI_RUNTIME_WAIT_SECONDS: "420"
+        CI: true
+        WEWORK_E2E_PREBUILT_EXECUTOR_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-executor
+        WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS: "420"
+        WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
+      run: |
+        mkdir -p .ci-artifacts
+        .github/scripts/restore-oci-runtime-binary.sh \
+          "$EXECUTOR_IMAGE" \
+          /app/executor \
+          .ci-artifacts/wegent-executor &
+        executor_pid=$!
+        .github/scripts/restore-oci-runtime-binary.sh \
+          "$BACKEND_RS_IMAGE" \
+          /app/wegent-backend-rs \
+          .ci-artifacts/wegent-backend-rs &
+        backend_pid=$!
+
+        status=0
+        pnpm --filter wework ai:verify:electron:build || status=$?
+        if ! wait "$executor_pid"; then status=1; fi
+        if ! wait "$backend_pid"; then status=1; fi
+        if ((status == 0)); then
+          test -x wework/electron/release/WeWork-linux-x64/WeWork
+          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
+          test -x .ci-artifacts/wegent-backend-rs
+        fi
+        exit "$status"
+
+    - name: Save bundled Codex cache
+      if: inputs.save-cache == 'true' && steps.bundled-codex-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ~/.cache/wegent/codex
+        key: ${{ steps.bundled-codex-cache.outputs.cache-primary-key }}
+
+    - name: Archive Wework desktop Core E2E build
+      shell: bash
+      run: .github/scripts/archive-wework-core-e2e-build.sh

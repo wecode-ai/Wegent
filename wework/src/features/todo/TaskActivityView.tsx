@@ -111,6 +111,13 @@ type TaskCardQueuedReply = RuntimePaneQueuedMessage
 /** How long a comment keeps the "you were sent here" highlight. */
 const COMMENT_FLASH_MS = 2000
 
+function isVersionConflict(cause: unknown): boolean {
+  if (!cause || typeof cause !== 'object') return false
+  if ('status' in cause && cause.status === 409) return true
+  if ('code' in cause && cause.code === 'version_conflict') return true
+  return 'errorCode' in cause && cause.errorCode === 'version_conflict'
+}
+
 export function TaskActivityView({
   client,
   project,
@@ -519,10 +526,23 @@ export function TaskActivityView({
     if (!projectDeliveryApi) return
     setError(null)
     try {
-      const updated = await projectDeliveryApi.updateLoopItem(task.id, {
-        version: task.version,
-        status: 'completed',
-      })
+      let updated: CloudLoopItem
+      try {
+        updated = await projectDeliveryApi.updateLoopItem(task.id, {
+          version: task.version,
+          status: 'completed',
+        })
+      } catch (cause) {
+        if (!isVersionConflict(cause)) throw cause
+        const latest = await projectDeliveryApi.getLoopItem(task.id)
+        updated =
+          latest.status === 'completed'
+            ? latest
+            : await projectDeliveryApi.updateLoopItem(task.id, {
+                version: latest.version,
+                status: 'completed',
+              })
+      }
       onTaskUpdated?.(updated)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('workbench.task_activity_accept_failed'))

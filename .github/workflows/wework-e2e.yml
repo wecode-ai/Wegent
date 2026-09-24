@@ -40,6 +40,8 @@ jobs:
     outputs:
       browser_image: ${{ steps.image.outputs.browser-ref }}
       desktop_image: ${{ steps.image.outputs.desktop-ref }}
+      executor_image: ${{ steps.runtime.outputs.executor-ref }}
+      backend_rs_image: ${{ steps.runtime.outputs.backend-rs-ref }}
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
@@ -125,6 +127,24 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Resolve shared Rust E2E runtimes
+        if: steps.classify.outputs.wework_desktop_e2e == 'true'
+        id: runtime
+        env:
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+        run: |
+          runtime_output="$(mktemp)"
+          GITHUB_OUTPUT="$runtime_output" \
+            SOURCE_DIGEST="$EXECUTOR_SOURCE_DIGEST" \
+            .github/scripts/resolve-executor-e2e-runtime.sh
+          executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
+          test -n "$executor_image"
+          {
+            echo "executor-ref=$executor_image"
+            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish Wework browser E2E image
         if: steps.browser-image-check.outputs.exists == 'false'
@@ -218,78 +238,56 @@ jobs:
         uses: actions/checkout@v4
         with:
           filter: blob:none
+          persist-credentials: false
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
         with:
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-          setup-toolchain: "false"
+          version: 1.3.1
 
-      - name: Install Wework Electron dependencies
-        run: pnpm --dir wework/electron install --frozen-lockfile
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore bundled Codex cache
-        id: bundled-codex-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/codex
-          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
-
-      - name: Restore shared Wework Electron E2E build dependencies
-        id: wework-desktop-cargo-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
-
-      - name: Build Wework Electron E2E application
+      - name: Log in to GHCR with ORAS
+        run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
         env:
-          CI: true
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
-        run: |
-          pnpm --filter wework ai:verify:electron:build
-          test -x wework/electron/release/WeWork-linux-x64/WeWork
-          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
+          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Build Rust Backend E2E gateway
+      - name: Resolve shared Wework desktop E2E build
+        id: shared-build
         env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
+          DESKTOP_IMAGE: ${{ needs.changes.outputs.desktop_image }}
+          EXECUTOR_IMAGE: ${{ needs.changes.outputs.executor_image }}
+          BACKEND_RS_IMAGE: ${{ needs.changes.outputs.backend_rs_image }}
         run: |
-          cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
           mkdir -p .ci-artifacts
-          cp "$CARGO_TARGET_DIR/debug/wegent-backend-rs" .ci-artifacts/wegent-backend-rs
-          chmod 0755 .ci-artifacts/wegent-backend-rs
+          reference_output="$(mktemp)"
+          GITHUB_OUTPUT="$reference_output" \
+            .github/scripts/resolve-wework-core-e2e-build-ref.sh \
+            "$GITHUB_REPOSITORY_OWNER" \
+            "$DESKTOP_IMAGE" \
+            "$EXECUTOR_IMAGE" \
+            "$BACKEND_RS_IMAGE"
+          reference="$(sed -n 's/^reference=//p' "$reference_output")"
+          test -n "$reference"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
 
-      - name: Save shared Wework Electron E2E build dependencies
-        if: github.ref == 'refs/heads/main' && steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+          set +e
+          .github/scripts/restore-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-core-e2e-build.tar.zst \
+            "$reference"
+          restore_status=$?
+          set -e
+          case "$restore_status" in
+            0) echo "cache-hit=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "cache-hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$restore_status" ;;
+          esac
+
+      - name: Build shared Wework desktop E2E artifact
+        if: steps.shared-build.outputs.cache-hit != 'true'
+        uses: ./.github/actions/build-wework-core-e2e
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            ~/.cache/electron
-          key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
-
-      - name: Save bundled Codex cache
-        if: github.ref == 'refs/heads/main' && steps.bundled-codex-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wegent/codex
-          key: ${{ steps.bundled-codex-cache.outputs.cache-primary-key }}
-
-      - name: Archive Wework desktop Core E2E build
-        run: .github/scripts/archive-wework-core-e2e-build.sh
+          executor-image: ${{ needs.changes.outputs.executor_image }}
+          backend-rs-image: ${{ needs.changes.outputs.backend_rs_image }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Upload Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
@@ -358,31 +356,12 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
-
-      - name: Restore Wework desktop Core E2E build
-        id: restore-core-e2e-build
-        continue-on-error: true
-        run: .github/scripts/restore-wework-core-e2e-build.sh
-
-      - name: Clear incomplete Wework desktop Core E2E build
-        if: steps.restore-core-e2e-build.outcome == 'failure'
-        run: rm -rf .ci-artifacts
-
-      - name: Retry Wework desktop Core E2E build download
-        if: steps.restore-core-e2e-build.outcome == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
 
-      - name: Restore retried Wework desktop Core E2E build
-        if: steps.restore-core-e2e-build.outcome == 'failure'
+      - name: Restore Wework desktop Core E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Set up Collaboration frontend
@@ -399,7 +378,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -789,31 +768,12 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
-
-      - name: Restore shared Wework desktop E2E build
-        id: restore-cloud-e2e-build
-        continue-on-error: true
-        run: .github/scripts/restore-wework-core-e2e-build.sh
-
-      - name: Clear incomplete shared Wework desktop E2E build
-        if: steps.restore-cloud-e2e-build.outcome == 'failure'
-        run: rm -rf .ci-artifacts
-
-      - name: Retry shared Wework desktop E2E build download
-        if: steps.restore-cloud-e2e-build.outcome == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
 
-      - name: Restore retried shared Wework desktop E2E build
-        if: steps.restore-cloud-e2e-build.outcome == 'failure'
+      - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Restore shared Python dependencies
@@ -839,16 +799,46 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
+          WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
+
+          dws_pid=""
+          if [[ "$WEWORK_E2E_SEGMENTS" == *plugin-account-auth* ]]; then
+            rm -rf "$WEWORK_E2E_DWS_FIXTURE_DIR"
+            mkdir -p "$WEWORK_E2E_DWS_FIXTURE_DIR"
+            (
+              status=0
+              uv run --no-project python \
+                wework/e2e/desktop/fixtures/dws-account-auth.py \
+                prepare \
+                --output "$WEWORK_E2E_DWS_FIXTURE_DIR/dws-native.zip" \
+                --helper-output "$WEWORK_E2E_DWS_FIXTURE_DIR/store-helper" ||
+                status=$?
+              if [[ "$status" -eq 0 ]]; then
+                touch "$WEWORK_E2E_DWS_FIXTURE_DIR/ready"
+              else
+                echo "$status" > "$WEWORK_E2E_DWS_FIXTURE_DIR/failed"
+              fi
+              exit "$status"
+            ) &
+            dws_pid=$!
+          fi
+
+          status=0
           node wework/e2e/desktop/run-checkpoints.mjs \
-            --parallel-segments "$WEWORK_E2E_SEGMENTS"
+            --parallel-segments "$WEWORK_E2E_SEGMENTS" ||
+            status=$?
+          if [[ -n "$dws_pid" ]]; then
+            wait "$dws_pid" || status=$?
+          fi
+          exit "$status"
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
@@ -901,31 +891,12 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            wework-desktop-core-e2e-build \
-            .ci-artifacts
-
-      - name: Restore shared Wework desktop E2E build
-        id: restore-other-e2e-build
-        continue-on-error: true
-        run: .github/scripts/restore-wework-core-e2e-build.sh
-
-      - name: Clear incomplete shared Wework desktop E2E build
-        if: steps.restore-other-e2e-build.outcome == 'failure'
-        run: rm -rf .ci-artifacts
-
-      - name: Retry shared Wework desktop E2E build download
-        if: steps.restore-other-e2e-build.outcome == 'failure'
         uses: actions/download-artifact@v4
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
 
-      - name: Restore retried shared Wework desktop E2E build
-        if: steps.restore-other-e2e-build.outcome == 'failure'
+      - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
@@ -1081,6 +1052,9 @@ jobs:
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
     env:
       CI: true
 
@@ -1090,13 +1064,55 @@ jobs:
         with:
           filter: blob:none
 
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Log in to GHCR with ORAS
+        run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Resolve shared macOS Wework E2E build
+        id: macos-build
+        env:
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+        run: |
+          mkdir -p .ci-artifacts
+          reference_output="$(mktemp)"
+          GITHUB_OUTPUT="$reference_output" \
+            .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
+            "$GITHUB_REPOSITORY_OWNER" \
+            "$EXECUTOR_SOURCE_DIGEST" \
+            "$BACKEND_RS_SOURCE_DIGEST"
+          reference="$(sed -n 's/^reference=//p' "$reference_output")"
+          test -n "$reference"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+
+          set +e
+          .github/scripts/restore-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-macos-e2e-build.tar.zst \
+            "$reference"
+          restore_status=$?
+          set -e
+          case "$restore_status" in
+            0) echo "cache-hit=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "cache-hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$restore_status" ;;
+          esac
+
       - name: Set up Rust
+        if: steps.macos-build.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Set up sccache
+        if: steps.macos-build.outputs.cache-hit != 'true'
         uses: ./.github/actions/setup-sccache
 
       - name: Set up pnpm
+        if: steps.macos-build.outputs.cache-hit != 'true'
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
       - name: Set up Node.js
@@ -1104,11 +1120,19 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Set up macOS Inspector backend runtime
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
       - name: Resolve pnpm store path
+        if: steps.macos-build.outputs.cache-hit != 'true'
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Restore shared macOS pnpm store
+        if: steps.macos-build.outputs.cache-hit != 'true'
         id: macos-pnpm-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -1119,18 +1143,51 @@ jobs:
             ${{ runner.os }}-pnpm-store-v1-
 
       - name: Install dependencies
+        env:
+          INSTALL_MACOS_INSPECTOR_DEPENDENCIES: ${{ github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+          MACOS_BUILD_CACHE_HIT: ${{ steps.macos-build.outputs.cache-hit }}
         run: |
-          pnpm install --frozen-lockfile
-          pnpm --dir wework/electron install --frozen-lockfile
+          status=0
+          if [[ "$MACOS_BUILD_CACHE_HIT" != "true" ]]; then
+            pnpm install --frozen-lockfile &
+            workspace_pid=$!
+            pnpm --dir wework/electron install --frozen-lockfile &
+            electron_pid=$!
+          fi
+
+          if [[ "$INSTALL_MACOS_INSPECTOR_DEPENDENCIES" == "true" ]]; then
+            brew install redis libmagic mysql &
+            brew_pid=$!
+            uv sync --project backend --frozen &
+            backend_pid=$!
+          fi
+
+          if [[ "$MACOS_BUILD_CACHE_HIT" != "true" ]]; then
+            if ! wait "$workspace_pid"; then status=1; fi
+            if ! wait "$electron_pid"; then status=1; fi
+          fi
+          if [[ "$INSTALL_MACOS_INSPECTOR_DEPENDENCIES" == "true" ]]; then
+            if ! wait "$brew_pid"; then status=1; fi
+            if ! wait "$backend_pid"; then status=1; fi
+          fi
+          if ((status != 0)); then exit "$status"; fi
+
+          if [[ "$INSTALL_MACOS_INSPECTOR_DEPENDENCIES" == "true" ]]; then
+            redis-server --version
+            mysqld --version
+            uv run --project backend python -c \
+              "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
+          fi
 
       - name: Save shared macOS pnpm store
-        if: github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'
+        if: steps.macos-build.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
 
       - name: Restore shared Wework Electron build dependencies
+        if: steps.macos-build.outputs.cache-hit != 'true'
         id: wework-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -1138,33 +1195,116 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/Library/Caches/electron
-          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-app-v2-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
+            ${{ runner.os }}-wework-electron-app-v2-
             ${{ runner.os }}-wework-electron-app-v1-
 
-      - name: Prepare bundled sidecars
-        working-directory: ./wework
+      - name: Restore macOS arm64 executor runtime
+        if: steps.macos-build.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+
+      - name: Restore macOS arm64 Rust backend runtime
+        if: steps.macos-build.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+
+      - name: Restore macOS arm64 runtimes from OCI
+        if: steps.macos-build.outputs.cache-hit != 'true'
+        env:
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
-          codex_bin="$(find -L "$PWD/resources/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
-          test -n "$codex_bin"
-          echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
-          echo "WEWORK_E2E_CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
+          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+          .github/scripts/restore-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-executor" \
+            wegent-executor \
+            "$EXECUTOR_SOURCE_REF" \
+            "$EXECUTOR_HEAD_REF"
+          .github/scripts/restore-macos-e2e-runtime-oci.sh \
+            "$runtime_root/wegent-backend-rs" \
+            wegent-backend-rs \
+            "$BACKEND_SOURCE_REF" \
+            "$BACKEND_HEAD_REF"
 
       - name: Build Wework Electron E2E application
+        if: steps.macos-build.outputs.cache-hit != 'true'
         env:
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
+          WEWORK_BACKEND_RS_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
+          WEWORK_EXECUTOR_PROFILE: release
         run: |
-          pnpm --filter wework ai:verify:electron:build
-          app_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
-          executor_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"
+          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+          executor_runtime="$runtime_root/wegent-executor"
+          backend_runtime="$runtime_root/wegent-backend-rs"
+
+          .github/scripts/build-macos-e2e-runtimes.sh \
+            "$executor_runtime" \
+            "$backend_runtime" &
+          runtimes_pid=$!
+          WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime" \
+            WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS="900" \
+            CARGO_BUILD_TARGET=aarch64-apple-darwin \
+            pnpm --filter wework ai:verify:electron:build &
+          wework_pid=$!
+
+          status=0
+          wait "$wework_pid" || status=$?
+          wait "$runtimes_pid" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
+
+          test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
+          test -x "$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"
+          test -x "$backend_runtime"
+
+      - name: Archive and publish shared macOS Wework E2E build
+        if: steps.macos-build.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: |
+          .github/scripts/archive-wework-macos-e2e-build.sh
+          .github/scripts/publish-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-macos-e2e-build.tar.zst \
+            "${{ steps.macos-build.outputs.reference }}"
+
+      - name: Restore shared macOS Wework E2E build
+        if: steps.macos-build.outputs.cache-hit == 'true'
+        run: .github/scripts/restore-wework-macos-e2e-build.sh
+
+      - name: Configure shared macOS Wework E2E build
+        run: |
+          if [[ "${{ steps.macos-build.outputs.cache-hit }}" == "true" ]]; then
+            build_root="$PWD/.ci-artifacts/wework-macos-e2e-build"
+            app_bundle="$build_root/WeWork.app"
+            backend_rs_bin="$build_root/wegent-backend-rs"
+          else
+            app_bundle="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app"
+            backend_rs_bin="$HOME/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs"
+          fi
+          app_bin="$app_bundle/Contents/MacOS/WeWork"
+          executor_bin="$app_bundle/Contents/Resources/bin/wegent-executor"
+          codex_bin="$app_bundle/Contents/Resources/codex/vendor/aarch64-apple-darwin/bin/codex"
           test -x "$app_bin"
           test -x "$executor_bin"
-          echo "WEWORK_E2E_APP_BIN=$app_bin" >> "$GITHUB_ENV"
-          echo "WEWORK_E2E_EXECUTOR_BIN=$executor_bin" >> "$GITHUB_ENV"
+          test -x "$codex_bin"
+          test -x "$backend_rs_bin"
+          {
+            echo "CODEX_BIN=$codex_bin"
+            echo "WEWORK_E2E_CODEX_BIN=$codex_bin"
+            echo "WEWORK_E2E_APP_BIN=$app_bin"
+            echo "WEWORK_E2E_EXECUTOR_BIN=$executor_bin"
+            echo "WEWORK_E2E_BACKEND_RS_BIN=$backend_rs_bin"
+          } >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1176,49 +1316,28 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop:memory
 
-      - name: Set up macOS Inspector backend runtime
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
-        uses: ./.github/actions/setup-python-uv-cache
-        with:
-          python-version: "3.12"
-
-      - name: Install macOS Inspector backend dependencies
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
-        run: |
-          brew install redis libmagic mysql
-          redis-server --version
-          mysqld --version
-          uv sync --project backend --frozen
-          uv run --project backend python -c "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
-
       - name: Run Wework desktop macOS Inspector E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
           CI: true
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --parallel-segments browser-toolbar-actions,tray-lifecycle
-
-      - name: Run Wework desktop macOS browser annotation overlay E2E
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
-        env:
-          CI: true
-        run: |
-          test -x "$CODEX_BIN"
-          test -x "$WEWORK_E2E_APP_BIN"
-          test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --segment browser-annotation-design
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          node wework/e2e/desktop/run-checkpoints.mjs \
+            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
 
       - name: Save shared Wework Electron build dependencies
-        if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
+        if: steps.macos-build.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
+            backend-rs/target
             ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
