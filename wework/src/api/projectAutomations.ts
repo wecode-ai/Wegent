@@ -195,10 +195,14 @@ export function createProjectAutomationApi(client: HttpClient) {
         config
       )
     },
-    runProjectManager(projectId: string, message: string) {
+    runProjectManager(
+      projectId: string,
+      message: string,
+      modelSelection?: import('@wegent/collaboration').WorkspaceProjectManagerModelSelection
+    ) {
       return client.post<WorkspaceProjectManagerRun>(
         `/v1/cloud-projects/${projectId}/project-manager/runs`,
-        { message }
+        { message, modelSelection }
       )
     },
     listProjectManagerRuns(projectId: string) {

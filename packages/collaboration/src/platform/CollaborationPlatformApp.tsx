@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -3409,6 +3415,9 @@ export function CollaborationPlatformApp({
   onCreateTask,
   onReady,
   renderProject,
+  renderProjectAiComposer,
+  renderProjectAiConversation,
+  onOpenProjectAiTask,
   renderShell,
   sidebarFooter,
 }: {
@@ -3424,6 +3433,15 @@ export function CollaborationPlatformApp({
   ): void;
   onReady?(): void;
   renderProject?(context: CollaborationProjectRendererContext): React.ReactNode;
+  renderProjectAiComposer?: ComponentProps<
+    typeof CollaborationApp
+  >["renderProjectAiComposer"];
+  renderProjectAiConversation?: ComponentProps<
+    typeof CollaborationApp
+  >["renderProjectAiConversation"];
+  onOpenProjectAiTask?: ComponentProps<
+    typeof CollaborationApp
+  >["onOpenProjectAiTask"];
   renderShell?(shell: {
     main: React.ReactNode;
     sidebar: React.ReactNode;
@@ -3963,6 +3981,9 @@ export function CollaborationPlatformApp({
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
+          renderProjectAiComposer={renderProjectAiComposer}
+          renderProjectAiConversation={renderProjectAiConversation}
+          onOpenProjectAiTask={onOpenProjectAiTask}
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           locale={locale}

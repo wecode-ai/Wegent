@@ -2516,6 +2516,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             .run_project_manager(
                 required_task_string(&params, "project_id")?,
                 required_task_string(&params, "instruction")?,
+                params.get("model_selection"),
             )
             .map_err(task_runtime_error),
         "projects.manager.runs" => serialize_task_value(

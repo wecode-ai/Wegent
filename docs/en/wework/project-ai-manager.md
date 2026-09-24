@@ -6,13 +6,15 @@ sidebar_position: 9
 
 A project space enables one project AI by default. It inspects the project board, creates Issues, assigns owners, tracks progress, and proposes adjustments. Issue assignees own execution, status progress, and delivery. The manager cannot delete Issues or change project settings or membership.
 
-Click **Project AI** at the bottom of the board to expand the same composer used in task details and view the conversation and replies. Open related Issues directly from the conversation, or choose a task through “Open Issue.” New projects enable project AI automatically when an eligible Agent is available. Local spaces prefer the current device Agent; cloud spaces require a project Agent backed by a Wegent Team. If none is available, choose one in **Project settings → Project AI**. Instructions, triggers, and the on/off switch are also there. Local spaces continue to work offline.
+Click **Project AI** at the bottom of the board to expand the task composer. Interacting with any composer control pins the panel open until its close button is clicked. Messages use the task conversation renderer; linked Issues open their details, and the upper right button opens the full task. New projects enable project AI automatically when an eligible Agent is available. Local spaces prefer the current device Agent; cloud spaces require a project Agent backed by a Wegent Team. Configure the manager Agent, instructions, and on/off switch under **Project settings → Collaboration members → Project manager**, the last member tab. Local spaces continue to work offline.
 
 ## Triggers and conversation
 
-The manager can have multiple triggers: Issue creation, tag addition, status changes, and Cron schedules. Members can start a conversation from the board entry. Owners and Maintainers can request Issue changes. Other members can query and discuss; the server rejects writes from their conversations.
+Configure multiple manager triggers under **Project settings → Automatic processing**: Issue creation, tag addition, status changes, and Cron schedules. Members can start a conversation from the board entry. Owners and Maintainers can request Issue changes. Other members can query and discuss; the server rejects writes from their conversations.
 
-Automatic processing remains a separate feature. Saving overlapping event triggers returns a conflict, and runtime selection allows only one manager for the same event. Issues created by the manager do not trigger the manager again.
+Ordinary automation rules and manager triggers appear together under Automatic processing. Saving overlapping event triggers returns a conflict, and runtime selection starts only one rule for an event. Issues created by the manager do not trigger the manager again.
+
+Manual conversations and event triggers both create ordinary task executions. Cloud runs are scheduled in the background while Wework is closed; local projects run on the local executor. Manager runs are serialized per project and show distinct waiting, running, completed, and failed states.
 
 ## Issue boundaries
 

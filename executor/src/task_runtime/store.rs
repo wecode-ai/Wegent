@@ -5054,15 +5054,27 @@ mod tests {
             .unwrap();
 
         let run = store
-            .run_project_manager(&project.id, "Summarize open Issues")
+            .run_project_manager(
+                &project.id,
+                "Summarize open Issues",
+                Some(&json!({"modelName":"gpt-6-sol","modelType":"public","options":{}})),
+            )
+            .unwrap();
+        let follow_up = store
+            .run_project_manager(&project.id, "Plan the next Issue", None)
             .unwrap();
         let executions = store
             .list_executions(&project.id, None, None, false)
             .unwrap();
 
         assert_eq!(run["taskTitle"], project.name.as_deref().unwrap());
-        assert_eq!(executions.len(), 1);
+        assert_eq!(follow_up["status"], "queued");
+        assert_eq!(executions.len(), 2);
         assert_eq!(executions[0].task_title, project.name.as_deref().unwrap());
+        assert_eq!(
+            executions[0].execution_payload.as_ref().unwrap()["modelSelection"]["modelName"],
+            "gpt-6-sol"
+        );
     }
 
     #[test]
@@ -5088,7 +5100,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let run = store.run_project_manager(&project.id, "Plan work").unwrap();
+        let run = store
+            .run_project_manager(&project.id, "Plan work", None)
+            .unwrap();
         let input = serde_json::from_value(json!({"title":"New work"})).unwrap();
 
         let issue = store
@@ -5215,7 +5229,7 @@ mod tests {
             .unwrap();
 
         let run = store
-            .run_project_manager(&project.id, "Summarize open Issues")
+            .run_project_manager(&project.id, "Summarize open Issues", None)
             .unwrap();
 
         assert_eq!(run["status"], "failed");
@@ -5246,7 +5260,7 @@ mod tests {
             )
             .unwrap();
         let run = store
-            .run_project_manager(&project.id, "Summarize open Issues")
+            .run_project_manager(&project.id, "Summarize open Issues", None)
             .unwrap();
         let run_id = run["id"].as_str().unwrap();
         let proposal = store

@@ -493,7 +493,12 @@ class ProjectManagerService:
         return rule
 
     async def run_now(
-        self, db: Session, project_id: str, user_id: int, message: str
+        self,
+        db: Session,
+        project_id: str,
+        user_id: int,
+        message: str,
+        model_selection: dict | None = None,
     ) -> dict:
         access = require_cloud_project_role(
             db, int(project_id), user_id, BaseRole.Reporter
@@ -514,6 +519,7 @@ class ProjectManagerService:
         run.metadata_json = {
             **metadata(run),
             "instruction_override": message,
+            "model_selection": model_selection,
             "read_only": not has_permission(access.role, BaseRole.Maintainer),
             "requested_by_user_id": user_id,
         }
@@ -553,6 +559,7 @@ class ProjectManagerService:
             {
                 **project_automation_service._run_view(row, rule_metadata={}),
                 "instruction": metadata(row).get("instruction_override"),
+                "execution_url": self._execution_url(row),
             }
             for row in rows
         ]
@@ -581,10 +588,19 @@ class ProjectManagerService:
             **project_automation_service._run_view(run, rule_metadata=metadata(rule)),
             "actions": metadata(run).get("manager_actions") or [],
             "instruction": metadata(run).get("instruction_override"),
+            "execution_url": self._execution_url(run),
             "response": (
                 activity.content if activity and run.status == "succeeded" else None
             ),
         }
+
+    @staticmethod
+    def _execution_url(run: ProjectAutomationRun) -> str | None:
+        if not run.backend_task_id:
+            return None
+        from app.core.config import settings
+
+        return f"{settings.FRONTEND_URL.rstrip('/')}/tasks?taskId={run.backend_task_id}"
 
 
 project_manager_service = ProjectManagerService()

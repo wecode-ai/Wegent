@@ -80,7 +80,7 @@ export function ProjectChatComposerSurface({
       className={
         presentation === 'document'
           ? 'relative w-full rounded-2xl border border-border/60 bg-background shadow-sm focus-within:border-focus/70 transition-colors'
-          : 'relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
+          : 'relative w-full rounded-[26px] bg-background shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
       }
     >
       {workBar}

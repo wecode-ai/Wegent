@@ -203,7 +203,7 @@ pub(super) fn on_event_with_origin(
                     continue;
                 }
             }
-            run_for_manager(connection, &project, "event", Some(task_id), None)?;
+            run_for_manager(connection, &project, "event", Some(task_id), None, None)?;
             return Ok(());
         }
     }
@@ -241,6 +241,7 @@ fn run_for_manager(
     trigger: &str,
     issue_id: Option<&str>,
     instruction: Option<&str>,
+    model_selection: Option<&Value>,
 ) -> Result<Value, TaskRuntimeError> {
     let config = manager(project);
     if config["enabled"] != true {
@@ -260,11 +261,10 @@ fn run_for_manager(
         connection.execute("INSERT INTO loop_items (id, resource_type, cloud_project_id, metadata, created_at, updated_at) VALUES (?1, 'automation_run', ?2, ?3, ?4, ?4)", params![run_id, project.id, run.to_string(), stamp])?;
         return Ok(run);
     };
-    let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM loop_item_executions WHERE loop_item_id=?1 AND status IN ('queued','pending_approval','claimed','running','cancel_requested'))", [&project.id], |row| row.get(0))?;
     let run_id = format!("local-manager-run-{}", Uuid::new_v4());
     let stamp = now();
-    let run = json!({"id":run_id,"automationId":"project-manager","projectId":project.id,"projectManager":true,"trigger":trigger,"issueId":issue_id,"instruction":instruction,"taskId":project.id,"taskTitle":project.name,"status":if active {"skipped"} else {"queued"},"createdAt":stamp,"updatedAt":stamp,"completedAt":if active {Some(stamp.clone())} else {None},"actions":[]});
-    if !active {
+    let run = json!({"id":run_id,"automationId":"project-manager","projectId":project.id,"projectManager":true,"trigger":trigger,"issueId":issue_id,"instruction":instruction,"taskId":project.id,"taskTitle":project.name,"status":"queued","createdAt":stamp,"updatedAt":stamp,"completedAt":null,"actions":[]});
+    {
         let prompt = format!("You are the project-level AI manager. Coordinate Issues, never claim their delivery. Use wework_space tools to inspect this project. Project ID: {}. Run ID: {}. Event Issue: {}. For assigned Issues, coordinate in comments; changing the assignee or active Issue status/scope requires human approval.\n\nProject instructions: {}\n\nCurrent request: {}", project.id, run_id, issue_id.unwrap_or(""), text(config, "prompt"), instruction.unwrap_or(""));
         create_local_execution(
             connection,
@@ -273,7 +273,7 @@ fn run_for_manager(
             agent_id,
             &agent,
             "none",
-            json!({"message":prompt,"automation_run_id":run_id,"automation_role":"manager"}),
+            json!({"message":prompt,"automation_run_id":run_id,"automation_role":"manager","modelSelection":model_selection}),
         )?;
     }
     connection.execute("INSERT INTO loop_items (id, resource_type, cloud_project_id, metadata, created_at, updated_at) VALUES (?1, 'automation_run', ?2, ?3, ?4, ?4)", params![run_id, project.id, run.to_string(), stamp])?;
@@ -857,7 +857,7 @@ impl LocalTaskStore {
                         .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?
                         .map(|stamp| stamp.with_timezone(&Utc));
                     if previous.is_some_and(|due| due <= current_time) {
-                        run_for_manager(&transaction, &project, "scheduled", None, None)?;
+                        run_for_manager(&transaction, &project, "scheduled", None, None, None)?;
                     }
                     if !project.metadata["automation_schedule"].is_object() {
                         project.metadata["automation_schedule"] = json!({});
@@ -909,6 +909,7 @@ impl LocalTaskStore {
         &self,
         project_id: &str,
         instruction: &str,
+        model_selection: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
         if instruction.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid(
@@ -919,7 +920,14 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
-        let run = run_for_manager(&transaction, &project, "manual", None, Some(instruction))?;
+        let run = run_for_manager(
+            &transaction,
+            &project,
+            "manual",
+            None,
+            Some(instruction),
+            model_selection,
+        )?;
         transaction.commit()?;
         Ok(run)
     }
@@ -936,12 +944,12 @@ impl LocalTaskStore {
         records.into_iter().map(|record| {
             let mut run: Value = serde_json::from_str(&record)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            let state: Option<(String, Option<String>, Option<String>)> = connection.query_row(
-                "SELECT status, completed_at, execution_note FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
+            let state: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>)> = connection.query_row(
+                "SELECT status, completed_at, execution_note, runtime_task_id, COALESCE(runtime_device_id, execution_device_id) FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
                 [text(&run, "id")],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             ).optional()?;
-            if let Some((status, completed_at, response)) = state {
+            if let Some((status, completed_at, response, runtime_task_id, runtime_device_id)) = state {
                 run["status"] = json!(match status.as_str() {
                     "completed" | "succeeded" => "succeeded",
                     "failed" => "failed",
@@ -951,6 +959,8 @@ impl LocalTaskStore {
                 });
                 if let Some(completed_at) = completed_at { run["completedAt"] = json!(completed_at); }
                 if status == "completed" || status == "succeeded" { run["response"] = json!(response); }
+                run["runtimeTaskId"] = json!(runtime_task_id);
+                run["runtimeDeviceId"] = json!(runtime_device_id);
             }
             Ok(run)
         }).collect()

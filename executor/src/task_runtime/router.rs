@@ -758,9 +758,10 @@ impl TaskRuntime {
         &self,
         project_id: &str,
         instruction: &str,
+        model_selection: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
         self.local_store
-            .run_project_manager(project_id, instruction)
+            .run_project_manager(project_id, instruction, model_selection)
     }
 
     pub fn list_project_manager_runs(

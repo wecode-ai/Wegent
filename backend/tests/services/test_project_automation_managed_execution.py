@@ -140,6 +140,11 @@ async def test_managed_dispatch_creates_real_task_with_board_labels(monkeypatch)
         loop_item_id="board-task-1",
         automation_run_id="run-1",
         project_chat_message_id="message-1",
+        model_selection={
+            "modelName": "gpt-6-sol",
+            "modelType": "public",
+            "options": {"reasoning_effort": "medium"},
+        },
     )
 
     assert handle == ManagedTeamExecutionHandle(task_id=41, subtask_id=43)
@@ -147,6 +152,9 @@ async def test_managed_dispatch_creates_real_task_with_board_labels(monkeypatch)
     assert params.device_id is None
     assert params.source == "project_automation"
     assert params.auto_delete_executor == "true"
+    assert params.model_id == "gpt-6-sol"
+    assert params.force_override_bot_model_type == "public"
+    assert params.model_options == {"reasoning_effort": "medium"}
     assert create_chat_task.await_args.kwargs["message"] == "Triage this board event"
     labels = task.json["metadata"]["labels"]
     assert labels == {

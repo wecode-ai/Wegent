@@ -154,7 +154,15 @@ async def run_project_manager(
     current_user: User = Depends(get_current_user),
 ) -> ProjectManagerRunView:
     return await project_manager_service.run_now(
-        db, project_id, current_user.id, values.message
+        db,
+        project_id,
+        current_user.id,
+        values.message,
+        (
+            values.model_selection.model_dump(by_alias=True)
+            if values.model_selection
+            else None
+        ),
     )
 
 

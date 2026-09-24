@@ -28,6 +28,7 @@ import {
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type WorkspaceTaskBinding,
+  type WorkspaceProjectManagerRun,
 } from '@wegent/collaboration'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -79,6 +80,9 @@ import {
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { AiChatModal } from './AiChatModal'
+import { openExternalUrl } from '@/lib/external-links'
+import { ProjectAiDesktopComposer } from './ProjectAiDesktopComposer'
+import { ProjectAiDesktopConversation } from './ProjectAiDesktopConversation'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { projectBoundRuntimeTaskStatuses } from './runtimeMyWork'
@@ -107,6 +111,21 @@ const initialLocation: CollaborationPlatformLocation = {
   issueId: null,
 }
 const PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
+
+function openProjectManagerTask(
+  run: WorkspaceProjectManagerRun,
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+) {
+  if (run.runtimeTaskId && run.runtimeDeviceId) {
+    void Promise.resolve(
+      onOpenRuntimeTask?.({ deviceId: run.runtimeDeviceId, taskId: run.runtimeTaskId })
+    ).catch(error => console.error('[Wework] Failed to open project manager task', error))
+  } else if (run.executionUrl) {
+    void openExternalUrl(run.executionUrl).catch(error =>
+      console.error('[Wework] Failed to open project manager task', error)
+    )
+  }
+}
 
 function issueTaskExecutionStates(
   bindings: WorkspaceTaskBinding[],
@@ -631,6 +650,18 @@ export function WeworkSharedProject({
     >
       <div className="min-w-0 flex-1">
         <CollaborationApp
+          renderProjectAiConversation={conversationProps => (
+            <ProjectAiDesktopConversation {...conversationProps} />
+          )}
+          onOpenProjectAiTask={run => openProjectManagerTask(run, onOpenRuntimeTask)}
+          renderProjectAiComposer={composerProps => (
+            <ProjectAiDesktopComposer
+              {...composerProps}
+              services={services}
+              projectId={composerProps.project.id}
+              projectStore={composerProps.project.project_store}
+            />
+          )}
           api={scopedApi}
           initialProject={project}
           host={projectHost}
@@ -1043,6 +1074,18 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         />
       )}
       <CollaborationPlatformApp
+        renderProjectAiConversation={conversationProps => (
+          <ProjectAiDesktopConversation {...conversationProps} />
+        )}
+        onOpenProjectAiTask={run => openProjectManagerTask(run, props.onOpenRuntimeTask)}
+        renderProjectAiComposer={composerProps => (
+          <ProjectAiDesktopComposer
+            {...composerProps}
+            services={props.services}
+            projectId={composerProps.project.id}
+            projectStore={composerProps.project.project_store}
+          />
+        )}
         api={platformApi}
         refreshKey={String(Boolean(props.startupActive))}
         navigationApis={navigationApis}

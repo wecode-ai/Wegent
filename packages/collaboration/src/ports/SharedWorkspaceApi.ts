@@ -374,6 +374,15 @@ export interface WorkspaceProjectManagerRun extends WorkspaceAutomationRun {
   actions?: WorkspaceProjectManagerAction[]
   instruction?: string
   response?: string | null
+  executionUrl?: string | null
+  runtimeTaskId?: string | null
+  runtimeDeviceId?: string | null
+}
+
+export interface WorkspaceProjectManagerModelSelection {
+  modelName: string
+  modelType?: string | null
+  options?: Record<string, string>
 }
 
 export interface SharedWorkspaceProjectManagerApi {
@@ -382,7 +391,11 @@ export interface SharedWorkspaceProjectManagerApi {
     projectId: string,
     config: Omit<WorkspaceProjectManagerConfig, 'projectId'>
   ): Promise<WorkspaceProjectManagerConfig>
-  run(projectId: string, message: string): Promise<WorkspaceProjectManagerRun>
+  run(
+    projectId: string,
+    message: string,
+    modelSelection?: WorkspaceProjectManagerModelSelection
+  ): Promise<WorkspaceProjectManagerRun>
   listRuns(projectId: string): Promise<WorkspaceProjectManagerRun[]>
   getRun(projectId: string, runId: string): Promise<WorkspaceProjectManagerRun>
   decide(

@@ -1,5 +1,6 @@
 """Project manager boundaries shared by manual and event runs."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +48,7 @@ def test_manager_run_detail_exposes_request_and_reply(
         task_id=str(project.id),
         source="manual",
         status="succeeded",
+        backend_task_id=123,
         created_by_user_id=test_user.id,
         metadata_json={"instruction_override": "Summarize the board"},
     )
@@ -64,6 +66,50 @@ def test_manager_run_detail_exposes_request_and_reply(
 
     assert detail["instruction"] == "Summarize the board"
     assert detail["response"] == "Three Issues remain open."
+    assert detail["execution_url"].endswith("/tasks?taskId=123")
+
+
+def test_manager_runs_wait_for_earlier_project_turn(test_db, test_user) -> None:
+    project = CloudProject(
+        project_key="MANAGERQUEUE",
+        name="Manager queue",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/manager-queue",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Project manager",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"project_manager": True},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    first = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        status="queued",
+        created_by_user_id=test_user.id,
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    second = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        status="pending",
+        created_by_user_id=test_user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    test_db.add(first)
+    test_db.flush()
+    test_db.add(second)
+    test_db.commit()
+
+    assert project_automation_execution._project_manager_waiting(test_db, second)
+    first.status = "succeeded"
+    test_db.flush()
+    assert not project_automation_execution._project_manager_waiting(test_db, second)
 
 
 def test_approved_manager_assignment_schedules_after_commit(

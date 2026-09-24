@@ -102,6 +102,31 @@ class AutomationRunFactory(Protocol):
 class ProjectAutomationExecution:
     """Turn one persisted automation run into one concrete executor run."""
 
+    @staticmethod
+    def _project_manager_waiting(db: Session, run: ProjectAutomationRun) -> bool:
+        from app.services.project_manager import is_project_manager_rule
+
+        active = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == run.cloud_project_id,
+                ProjectAutomationRun.status.in_(["pending", "queued", "running"]),
+                ProjectAutomationRun.id != run.id,
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .all()
+        )
+        for other in active:
+            rule = db.get(ProjectAutomationRule, other.parent_id)
+            if rule is None or not is_project_manager_rule(rule):
+                continue
+            if other.backend_task_id or (other.created_at, other.id) < (
+                run.created_at,
+                run.id,
+            ):
+                return True
+        return False
+
     @trace_async(
         span_name="project_automation.execution.dispatch",
         tracer_name="backend.project_automation",
@@ -121,6 +146,16 @@ class ProjectAutomationExecution:
             project = db.get(CloudProject, rule.cloud_project_id)
             if owner is None or project is None:
                 raise RuntimeError("Automation owner or project is unavailable")
+            from app.services.project_manager import is_project_manager_rule
+
+            if is_project_manager_rule(rule):
+                db.query(CloudProject).filter(
+                    CloudProject.id == project.id
+                ).with_for_update().one()
+                if self._project_manager_waiting(db, run):
+                    run.status = "queued"
+                    db.commit()
+                    return
             run_metadata = metadata(run)
             if not text(run_metadata.get("task_origin")):
                 run_metadata["task_origin"] = (
@@ -1079,6 +1114,7 @@ class ProjectAutomationExecution:
             loop_item_id=str(run.task_id),
             automation_run_id=str(run.id),
             project_chat_message_id=activity.message_id,
+            model_selection=metadata(run).get("model_selection"),
         )
         db.expire_all()
         refreshed_run = db.get(ProjectAutomationRun, run.id)

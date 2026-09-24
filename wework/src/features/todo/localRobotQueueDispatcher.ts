@@ -6,8 +6,9 @@ import type { RuntimeTaskCreateRequest } from '@/types/api'
 const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
 const LOCAL_QUEUE_HEARTBEAT_INTERVAL_MS = 60_000
-const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
+const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 15_000
 const LOCAL_QUEUE_LEASE_SECONDS = 300
+const LOCAL_QUEUE_CLAIM_LEASE_SECONDS = 60
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -119,7 +120,8 @@ function startQueueDispatcher(services: WorkbenchServices, source: 'local' | 'cl
   const claimNext = async (deviceId: string) => {
     const claim = {
       execution_device_id: deviceId,
-      lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
+      lease_seconds:
+        source === 'local' ? LOCAL_QUEUE_CLAIM_LEASE_SECONDS : LOCAL_QUEUE_LEASE_SECONDS,
     }
     if (source === 'cloud') {
       const execution = await cloudExecutionApi!.claimNext(claim)

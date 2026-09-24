@@ -432,7 +432,6 @@ export type ProjectSettingsSectionId =
   | 'collaboration-participants'
   | 'environments'
   | 'automatic-processing'
-  | 'project-ai'
 
 export interface CollaborationLocation {
   projectId: string | null

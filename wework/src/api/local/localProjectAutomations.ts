@@ -9,10 +9,15 @@ export function createLocalProjectAutomationApi(
   runtime: NonNullable<WorkbenchServices['runtimeWorkApi']>
 ) {
   return {
-    runManager(projectId: string, instruction: string) {
+    runManager(
+      projectId: string,
+      instruction: string,
+      modelSelection?: import('@wegent/collaboration').WorkspaceProjectManagerModelSelection
+    ) {
       return request<WorkspaceProjectManagerRun>('projects.manager.run', {
         project_id: projectId,
         instruction,
+        model_selection: modelSelection,
       })
     },
     listManagerRuns(projectId: string) {

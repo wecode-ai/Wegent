@@ -342,9 +342,13 @@ export function createLocalWorkspaceApi(
         })
         return { ...config, projectId, version: project.version }
       },
-      async run(projectId, message) {
+      async run(projectId, message, modelSelection) {
         if (!detailServices?.localProjectAutomationApi) return unavailable()
-        return detailServices.localProjectAutomationApi.runManager(projectId, message)
+        return detailServices.localProjectAutomationApi.runManager(
+          projectId,
+          message,
+          modelSelection
+        )
       },
       async listRuns(projectId) {
         if (!detailServices?.localProjectAutomationApi) return unavailable()

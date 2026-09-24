@@ -98,6 +98,7 @@ class ProjectAutomationManagedExecutionService:
         automation_run_id: str,
         project_chat_message_id: str,
         model_id: str | None = None,
+        model_selection: dict | None = None,
     ) -> ManagedTeamExecutionHandle:
         """Create a real Task/Subtask and dispatch it without a device route."""
 
@@ -110,7 +111,10 @@ class ProjectAutomationManagedExecutionService:
         params = TaskCreationParams(
             message=normalized_prompt,
             title=title.strip() or "AI managed automation",
-            model_id=model_id,
+            model_id=(model_selection or {}).get("modelName") or model_id,
+            force_override_bot_model=bool(model_selection),
+            force_override_bot_model_type=(model_selection or {}).get("modelType"),
+            model_options=(model_selection or {}).get("options"),
             task_type="chat",
             source="project_automation",
             auto_delete_executor="true",

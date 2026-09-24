@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 
 from app.schemas.project_automation import ProjectAutomationRunView
 from app.schemas.project_chat import ProjectChatSchema
+from app.schemas.runtime_work import RuntimeModelSelection
 
 
 class ProjectManagerTrigger(ProjectChatSchema):
@@ -58,6 +59,7 @@ class ProjectManagerConfigView(ProjectManagerConfig):
 
 class ProjectManagerInstruction(ProjectChatSchema):
     message: str = Field(min_length=1, max_length=100_000)
+    model_selection: RuntimeModelSelection | None = None
 
 
 class ProjectManagerDecision(ProjectChatSchema):
@@ -83,6 +85,7 @@ class ProjectManagerActionView(ProjectChatSchema):
 class ProjectManagerRunView(ProjectAutomationRunView):
     trigger_type: Literal["manual", "schedule", "event", "workflow"] | None = None
     instruction: str | None = None
+    execution_url: str | None = None
 
 
 class ProjectManagerRunDetail(ProjectManagerRunView):

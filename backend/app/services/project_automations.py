@@ -1525,6 +1525,25 @@ class ProjectAutomationService:
             db.refresh(run)
             await project_automation_execution.dispatch(db, rule, run)
             dispatched += 1
+        from app.services.project_manager import is_project_manager_rule
+
+        waiting_runs = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.status.in_(["pending", "queued"]),
+                ProjectAutomationRun.backend_task_id == 0,
+            )
+            .order_by(ProjectAutomationRun.created_at, ProjectAutomationRun.id)
+            .limit(500)
+            .all()
+        )
+        for run in waiting_runs:
+            rule = db.get(ProjectAutomationRule, run.parent_id)
+            if rule is None or not is_project_manager_rule(rule):
+                continue
+            await project_automation_execution.dispatch(db, rule, run)
+            if run.backend_task_id:
+                dispatched += 1
         return dispatched
 
     @staticmethod
