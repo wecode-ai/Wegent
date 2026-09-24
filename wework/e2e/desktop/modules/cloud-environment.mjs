@@ -149,13 +149,22 @@ async function startMysqlServer(logPath) {
 async function resolveBackendRsBinary() {
   const configured = process.env.WEWORK_E2E_BACKEND_RS_BIN?.trim()
   if (configured) {
-    assert.ok(await pathExists(configured), `Configured backend-rs binary does not exist: ${configured}`)
+    assert.ok(
+      await pathExists(configured),
+      `Configured backend-rs binary does not exist: ${configured}`
+    )
     return configured
   }
+  const manifestPath = join(repoDir, 'backend-rs', 'Cargo.toml')
+  const metadata = JSON.parse(
+    await commandOutputAsync(
+      'cargo',
+      ['metadata', '--manifest-path', manifestPath, '--no-deps', '--format-version', '1'],
+      { cwd: repoDir }
+    )
+  )
   const binary = join(
-    repoDir,
-    'backend-rs',
-    'target',
+    metadata.target_directory,
     'debug',
     process.platform === 'win32' ? 'wegent-backend-rs.exe' : 'wegent-backend-rs'
   )
@@ -163,7 +172,7 @@ async function resolveBackendRsBinary() {
     await runChecked('cargo', [
       'build',
       '--manifest-path',
-      join(repoDir, 'backend-rs', 'Cargo.toml'),
+      manifestPath,
       '--bin',
       'wegent-backend-rs',
     ])
