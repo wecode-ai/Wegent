@@ -22,6 +22,7 @@ import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
+import { parseRuntimeRemoteProjectStateId } from '@/lib/runtime-project-state'
 import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
@@ -1575,9 +1576,21 @@ async function resolveLocalRuntimeTaskWorkspace(
   }
 
   const projects = runtimeWork?.projects ?? []
+  const requestedProjectKey = data.runtimeProjectKey?.trim()
+  const remoteProjectIdentity = requestedProjectKey
+    ? parseRuntimeRemoteProjectStateId(requestedProjectKey)
+    : null
+  const executorProjectKey =
+    remoteProjectIdentity?.hostId === localDeviceId
+      ? remoteProjectIdentity.projectKey
+      : requestedProjectKey
+  const resolvedProjectData =
+    executorProjectKey && executorProjectKey !== data.runtimeProjectKey
+      ? { ...data, runtimeProjectKey: executorProjectKey }
+      : data
   const selectedProject = projects.find(project => {
     if (data.projectId != null && project.project.id === data.projectId) return true
-    return Boolean(data.runtimeProjectKey && project.project.key === data.runtimeProjectKey)
+    return Boolean(executorProjectKey && project.project.key === executorProjectKey)
   })
   const selectedWorkspace =
     selectedProject?.deviceWorkspaces.find(
@@ -1596,10 +1609,10 @@ async function resolveLocalRuntimeTaskWorkspace(
           workspace.available
       )
   if (selectedWorkspace) {
-    return { ...data, workspacePath: selectedWorkspace.workspacePath }
+    return { ...resolvedProjectData, workspacePath: selectedWorkspace.workspacePath }
   }
   const rootPath = selectedProject?.project.roots?.[0]?.path
-  if (rootPath) return { ...data, workspacePath: rootPath }
+  if (rootPath) return { ...resolvedProjectData, workspacePath: rootPath }
   if (data.projectId != null || data.deviceWorkspaceId != null || data.runtimeProjectKey) {
     const binding =
       data.projectId != null
