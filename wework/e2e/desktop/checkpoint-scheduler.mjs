@@ -1,16 +1,32 @@
 export async function runWithCheckpointResources({ checkpoints, workerCount, resourceFor, run }) {
+  const resourcesByCheckpoint = new Map(
+    checkpoints.map(checkpoint => {
+      const configuredResources = resourceFor(checkpoint)
+      const resources = Array.isArray(configuredResources)
+        ? configuredResources
+        : configuredResources
+          ? [configuredResources]
+          : []
+      return [checkpoint, [...new Set(resources)]]
+    })
+  )
   const constrainedResources = new Set()
   const resourceCounts = new Map()
   for (const checkpoint of checkpoints) {
-    const resource = resourceFor(checkpoint)
-    if (!resource) continue
-    const count = (resourceCounts.get(resource) ?? 0) + 1
-    resourceCounts.set(resource, count)
-    if (count > 1) constrainedResources.add(resource)
+    for (const resource of resourcesByCheckpoint.get(checkpoint)) {
+      const count = (resourceCounts.get(resource) ?? 0) + 1
+      resourceCounts.set(resource, count)
+      if (count > 1) constrainedResources.add(resource)
+    }
   }
   const pending = [
-    ...checkpoints.filter(checkpoint => constrainedResources.has(resourceFor(checkpoint))),
-    ...checkpoints.filter(checkpoint => !constrainedResources.has(resourceFor(checkpoint))),
+    ...checkpoints.filter(checkpoint =>
+      resourcesByCheckpoint.get(checkpoint).some(resource => constrainedResources.has(resource))
+    ),
+    ...checkpoints.filter(
+      checkpoint =>
+        !resourcesByCheckpoint.get(checkpoint).some(resource => constrainedResources.has(resource))
+    ),
   ]
   const activeResources = new Set()
   const waiters = new Set()
@@ -23,14 +39,14 @@ export async function runWithCheckpointResources({ checkpoints, workerCount, res
   const nextCheckpoint = async () => {
     while (pending.length > 0) {
       const index = pending.findIndex(checkpoint => {
-        const resource = resourceFor(checkpoint)
-        return !resource || !activeResources.has(resource)
+        const resources = resourcesByCheckpoint.get(checkpoint)
+        return resources.every(resource => !activeResources.has(resource))
       })
       if (index >= 0) {
         const [checkpoint] = pending.splice(index, 1)
-        const resource = resourceFor(checkpoint)
-        if (resource) activeResources.add(resource)
-        return { checkpoint, resource }
+        const resources = resourcesByCheckpoint.get(checkpoint)
+        for (const resource of resources) activeResources.add(resource)
+        return { checkpoint, resources }
       }
       await new Promise(resolve => waiters.add(resolve))
     }
@@ -44,7 +60,7 @@ export async function runWithCheckpointResources({ checkpoints, workerCount, res
       try {
         await run(item.checkpoint)
       } finally {
-        if (item.resource) activeResources.delete(item.resource)
+        for (const resource of item.resources) activeResources.delete(resource)
         wakeWorkers()
       }
     }

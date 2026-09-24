@@ -17,9 +17,11 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
-  ['collaboration-shared-core', 'collaboration-runtime'],
-  ['collaboration-settings-matrix', 'collaboration-runtime'],
-  ['collaboration-issue-comment-notification', 'collaboration-runtime'],
+  ['resilience', ['desktop-runtime-intensive']],
+  ['environment-panel-scroll', ['desktop-runtime-intensive']],
+  ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-settings-matrix', ['collaboration-runtime']],
+  ['collaboration-issue-comment-notification', ['collaboration-runtime']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
