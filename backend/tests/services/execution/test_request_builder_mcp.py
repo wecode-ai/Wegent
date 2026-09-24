@@ -115,7 +115,7 @@ class TestExtractSkillMcpToList:
         result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
 
         assert len(result) == 1
-        assert result[0]["name"] == "4c72508_imageFetchServer"
+        assert result[0]["name"] == "image-toolkit_imageFetchServer"
         assert result[0]["type"] == "streamable-http"
         assert result[0]["url"] == "http://mcp.example.com/fetch-image"
         assert result[0]["headers"]["Authorization"] == "Bearer token123"
@@ -140,8 +140,8 @@ class TestExtractSkillMcpToList:
 
         assert len(result) == 2
         names = [s["name"] for s in result]
-        assert "4c72508_imageFetchServer" in names
-        assert "4c72508_nanoBananaServer" in names
+        assert "image-toolkit_imageFetchServer" in names
+        assert "image-toolkit_nanoBananaServer" in names
 
     def test_multiple_skills_with_mcps(self):
         configs = [
@@ -168,8 +168,8 @@ class TestExtractSkillMcpToList:
 
         assert len(result) == 2
         names = [s["name"] for s in result]
-        assert "4c72508_imageServer" in names
-        assert "e6684f6_kbServer" in names
+        assert "image-toolkit_imageServer" in names
+        assert "knowledge-base_kbServer" in names
 
     def test_mixed_skills_with_and_without_mcp(self):
         configs = [
@@ -187,7 +187,7 @@ class TestExtractSkillMcpToList:
         result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
 
         assert len(result) == 1
-        assert result[0]["name"] == "339a925_server1"
+        assert result[0]["name"] == "with-mcp_server1"
 
     def test_invalid_mcp_servers_type_skipped(self):
         configs = [{"name": "bad-skill", "mcpServers": "not-a-dict"}]
@@ -563,7 +563,7 @@ class TestPrepareMcpForCodingExecutor:
         assert len(mcp) == 2
         names = [s["name"] for s in mcp]
         assert "ghost-server" in names
-        assert "830fad2_skillServer" in names
+        assert "my-skill_skillServer" in names
         # All types should be normalized to http
         for s in mcp:
             assert s["type"] == "http"
@@ -591,7 +591,7 @@ class TestPrepareMcpForCodingExecutor:
         builder._prepare_mcp_for_coding_executor(bot_config, skill_configs)
 
         assert len(bot_config["mcp_servers"]) == 1
-        assert bot_config["mcp_servers"][0]["name"] == "830fad2_server1"
+        assert bot_config["mcp_servers"][0]["name"] == "my-skill_server1"
         assert bot_config["mcp_servers"][0]["type"] == "http"
 
     @patch.object(
@@ -688,12 +688,12 @@ class TestPrepareMcpForCodingExecutor:
 
         assert bot_config["mcp_servers"] == [
             {
-                "name": "830fad2_remote",
+                "name": "my-skill_remote",
                 "type": "streamable-http",
                 "url": "${{backend_url}}/mcp/skill",
                 "headers": {"Authorization": "Bearer ${{auth_token}}"},
             },
-            {"name": "830fad2_local", "command": "node", "args": ["skill-server.js"]},
+            {"name": "my-skill_local", "command": "node", "args": ["skill-server.js"]},
         ]
 
 

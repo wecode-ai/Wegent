@@ -25,7 +25,7 @@ def test_skill_mcp_config_cannot_override_resolved_name() -> None:
 
     assert servers == [
         {
-            "name": "92d551f_docs",
+            "name": "demo-skill_docs",
             "url": "https://example.test/mcp",
         }
     ]
@@ -40,8 +40,8 @@ def test_long_skill_names_keep_servers_distinct_within_tool_name_budget() -> Non
                 "mcpServers": {"wegent-interactive-form-question": config},
             }
             for skill_name in (
-                "prompts-to-movie-stepped",
-                "prompts-to-movie-stepped-v2",
+                "a" * 24,
+                "b" * 24,
             )
         ]
     )
