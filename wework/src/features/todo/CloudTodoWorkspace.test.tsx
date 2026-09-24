@@ -5354,7 +5354,7 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.click(await screen.findByTestId('cloud-todo-column-add-pending'))
     await user.click(await screen.findByTestId('workspace-issue-input'))
     await user.paste('Pending AI Issue')
-    await user.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(await screen.findByTestId('workspace-issue-submit'))
 
     expect(await screen.findByTestId('issue-execution-config-dialog')).toBeVisible()
     expect(workbenchServices.deliveryApi.createLoopItem).toHaveBeenCalledWith('11', {
@@ -5408,7 +5408,7 @@ describe('CloudTodoWorkspace', () => {
     delete workbenchServices.projectSpaceDetailServices?.cloud
     await user.click(screen.getByTestId('workspace-issue-input'))
     await user.paste('Unavailable AI Issue')
-    await user.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(await screen.findByTestId('workspace-issue-submit'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
     expect(screen.queryByTestId('issue-execution-config-dialog')).not.toBeInTheDocument()

@@ -11,13 +11,7 @@ interface Props {
   onOpenTask?(run: WorkspaceProjectManagerRun): void
 }
 
-export function ProjectAiDesktopConversation({
-  runs,
-  issues,
-  locale,
-  onOpenIssue,
-  onOpenTask,
-}: Props) {
+export function ProjectAiDesktopConversation({ runs, issues, locale, onOpenIssue }: Props) {
   const { messages, runsByResponse } = useMemo(() => {
     const messages: WorkbenchMessage[] = []
     const runsByResponse = new Map<string, WorkspaceProjectManagerRun>()
@@ -65,8 +59,8 @@ export function ProjectAiDesktopConversation({
       isWaitingForAssistant={runs.some(run => run.status === 'running')}
       initialScrollPosition="latest"
       scrollTestId="project-ai-conversation-history"
-      className="min-h-0"
-      scrollerClassName="max-h-72 overflow-x-hidden"
+      className="!flex-none"
+      scrollerClassName="!h-auto max-h-64 overflow-x-hidden"
       virtualize={false}
       renderGapAfterMessage={message => {
         const run = runsByResponse.get(message.id)
@@ -81,10 +75,9 @@ export function ProjectAiDesktopConversation({
         const linked = [
           ...new Map([...mentioned, ...actions].map(issue => [issue.id, issue])).values(),
         ]
-        if (!linked.length && !(run.executionUrl || (run.runtimeTaskId && run.runtimeDeviceId)))
-          return null
+        if (!linked.length) return null
         return (
-          <div className="flex flex-wrap gap-2 px-5 pb-2">
+          <div className="flex flex-wrap gap-2 px-6 pb-3">
             {linked.map(issue => (
               <button
                 key={issue.id}
@@ -96,16 +89,6 @@ export function ProjectAiDesktopConversation({
                 #{issue.sequence_number} {issue.title}
               </button>
             ))}
-            {onOpenTask && (run.executionUrl || (run.runtimeTaskId && run.runtimeDeviceId)) && (
-              <button
-                type="button"
-                data-testid={`project-ai-open-task-${run.id}`}
-                className="rounded-lg border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-                onClick={() => onOpenTask(run)}
-              >
-                {locale === 'zh-CN' ? '完整任务 ↗' : 'Full task ↗'}
-              </button>
-            )}
           </div>
         )
       }}

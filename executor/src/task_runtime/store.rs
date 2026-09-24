@@ -1290,7 +1290,7 @@ impl LocalTaskStore {
                     e.execution_scope, e.observed_state, e.sync_state,
                     e.claimed_at, e.start_requested_at, e.observed_at,
                     e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                    COALESCE(t.title, t.name), t.status, t.priority,
+                    COALESCE(t.title, t.name, ''), t.status, t.priority,
                     a.name, a.title, a.metadata, e.runtime_instance_id
              FROM loop_item_executions e
              LEFT JOIN loop_items t ON t.id = e.loop_item_id
@@ -4475,7 +4475,7 @@ fn execution_row(
                 e.execution_scope, e.observed_state, e.sync_state,
                 e.claimed_at, e.start_requested_at, e.observed_at,
                 e.cancel_requested_at, e.last_event_seq, e.termination_reason,
-                COALESCE(t.title, t.name), t.status, t.priority,
+                COALESCE(t.title, t.name, ''), t.status, t.priority,
                 a.name, a.title, a.metadata, e.runtime_instance_id
          FROM loop_item_executions e
          LEFT JOIN loop_items t ON t.id = e.loop_item_id

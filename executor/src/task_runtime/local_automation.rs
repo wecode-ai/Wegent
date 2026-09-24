@@ -2,6 +2,14 @@
 use super::*;
 use crate::runtime_work::automations::{next_run_after, AutomationSchedule};
 
+type ProjectManagerExecutionState = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
@@ -944,7 +952,7 @@ impl LocalTaskStore {
         records.into_iter().map(|record| {
             let mut run: Value = serde_json::from_str(&record)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            let state: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>)> = connection.query_row(
+            let state: Option<ProjectManagerExecutionState> = connection.query_row(
                 "SELECT status, completed_at, execution_note, runtime_task_id, COALESCE(runtime_device_id, execution_device_id) FROM loop_item_executions WHERE json_extract(execution_payload,'$.automation_run_id')=?1 ORDER BY id DESC LIMIT 1",
                 [text(&run, "id")],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),

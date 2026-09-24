@@ -290,7 +290,7 @@ export function ProjectAiBoardAssistant({
   return (
     <div
       ref={root}
-      className="pointer-events-none absolute bottom-4 left-4 right-4 z-20 mx-auto flex max-w-3xl justify-center"
+      className="pointer-events-none absolute bottom-5 left-6 right-6 z-20 mx-auto flex max-w-2xl justify-center"
       data-testid="project-ai-board-assistant"
       data-pinned={pinned}
       onMouseEnter={() => onHover(true)}
@@ -316,8 +316,8 @@ export function ProjectAiBoardAssistant({
             data-testid="project-ai-conversation"
             className="flex max-h-[min(68vh,46rem)] flex-col gap-2"
           >
-            {hasConversation && <div className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
-              <div className="flex h-11 items-center gap-2 border-b border-border px-4 text-sm">
+            {hasConversation && <div className="overflow-hidden rounded-2xl border border-border/80 bg-background shadow-lg">
+              <div className="flex h-10 items-center gap-2 border-b border-border/70 px-4 text-sm">
                 <Bot className="h-4 w-4" aria-hidden="true" />
                 <span className="flex-1 font-medium">{copy.title}</span>
                 <button
@@ -343,7 +343,7 @@ export function ProjectAiBoardAssistant({
                       );
                     if (run) onOpenTask?.(run);
                   }}
-                  className="rounded-lg p-1.5 hover:bg-muted disabled:opacity-35"
+                  className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-35"
                 >
                   <ExternalLink className="h-4 w-4" />
                 </button>
@@ -352,14 +352,14 @@ export function ProjectAiBoardAssistant({
                   data-testid="project-ai-close-conversation"
                   aria-label={copy.close}
                   onClick={closeConversation}
-                  className="rounded-lg p-1.5 hover:bg-muted"
+                  className="rounded-lg p-1.5 text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
               {runs.length > 0 && (
                 <div
-                  className="max-h-72"
+                  className="max-h-64"
                   data-testid="project-ai-conversation-messages"
                   aria-live="polite"
                 >

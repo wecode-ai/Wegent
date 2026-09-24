@@ -30,6 +30,10 @@ const executorBinary = join(
 )
 const executorArgs = process.argv.slice(2)
 const expectedParentPid = process.ppid
+const lifecycleFd = (() => {
+  const value = Number.parseInt(process.env.WEGENT_APP_LIFECYCLE_FD ?? '', 10)
+  return Number.isInteger(value) && value >= 3 ? value : null
+})()
 
 let child = null
 let buildProcess = null
@@ -132,10 +136,15 @@ function startChild() {
     throw new Error(`executor binary was not created: ${executorBinary}`)
   }
 
+  const stdio = ['pipe', 'inherit', 'inherit']
+  if (lifecycleFd !== null) {
+    while (stdio.length <= lifecycleFd) stdio.push('ignore')
+    stdio[lifecycleFd] = lifecycleFd
+  }
   const nextChild = spawn(executorBinary, executorArgs, {
     cwd: executorDir,
     env: process.env,
-    stdio: ['pipe', 'inherit', 'inherit'],
+    stdio,
   })
   child = nextChild
   nextChild.once('spawn', () => {
