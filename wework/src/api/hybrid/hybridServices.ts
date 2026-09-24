@@ -1486,6 +1486,7 @@ export function createHybridWorkbenchServices(
       },
     },
     branchNameApi: localServices.branchNameApi,
+    textGenerationApi: localServices.textGenerationApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,

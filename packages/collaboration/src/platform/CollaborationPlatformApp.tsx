@@ -595,7 +595,13 @@ function workspaceAgentRecord(
 ): WorkspaceProjectAgent {
   const teamId = agent.team_id;
   if (teamId == null) {
-    throw new Error("Workspace Agent is missing team_id");
+    return {
+      ...agent,
+      id: agent.id,
+      runtime: agent.runtime ?? "codex",
+      status: agent.status === "unavailable" ? "archived" : "active",
+      version: agent.version ?? 1,
+    };
   }
   return {
     ...agent,
@@ -632,14 +638,19 @@ function createWorkspaceAgentConfigurationApi(
       },
       async update(_scopeId, agentId) {
         const teamId = Number(agentId);
-        if (!Number.isFinite(teamId)) {
-          throw new Error("Workspace Agent id must be a team id");
-        }
         const current = (await workspaces.listAgents(workspaceId)).find(
-          (agent) => agent.team_id === teamId,
+          (agent) =>
+            (Number.isFinite(teamId) && agent.team_id === teamId) ||
+            agent.id === agentId,
         );
         if (!current) throw new Error("Workspace Agent was not found");
-        await workspaces.removeAgent(workspaceId, teamId);
+        if (current.team_id != null) {
+          await workspaces.removeAgent(workspaceId, current.team_id);
+        } else if (api.resources?.removeAgent) {
+          await api.resources.removeAgent(current);
+        } else {
+          throw new Error("Workspace Agent cannot be removed");
+        }
         return {
           ...workspaceAgentRecord(current),
           status: "archived",
@@ -1987,7 +1998,9 @@ function ResourceCatalogPage({
                     <Settings aria-hidden="true" />
                   </button>
                 }
-                {kind === "agents" ? (
+                {kind === "agents" &&
+                agents.find((agent) => agent.id === row.id)?.deletable !==
+                  false ? (
                   <button
                     type="button"
                     className="collaboration-resource-settings-button"
@@ -3292,30 +3305,6 @@ function RootTeamEditor({
       currentUserId={host.currentUser?.id}
       commands={commands}
       agentActions={{
-        ...(workspace.location === "local" &&
-        !agents.some(isCurrentDeviceCollaborationAgent) &&
-        host.projectAgentConfiguration?.createDefaultLocalAgent
-          ? {
-              createDefault: async () => {
-                const id =
-                  await host.projectAgentConfiguration!
-                    .createDefaultLocalAgent!();
-                const nextAgents = await api.workspaces!.listAgents(
-                  workspace.id,
-                );
-                setAgents(nextAgents);
-                const created = nextAgents.find(
-                  (agent) => String(agent.team_id ?? agent.id) === id,
-                );
-                if (!created) {
-                  throw new Error(
-                    "Created collaboration group agent was not found",
-                  );
-                }
-                return created;
-              },
-            }
-          : {}),
         ...(workspace.location === "cloud" &&
         host.projectAgentConfiguration?.renderAgentCreator
           ? {
@@ -3657,6 +3646,15 @@ export function CollaborationPlatformApp({
           : agent.location !== "local",
       ),
     [projectResourceAgents, projectWorkspace?.location],
+  );
+  const defaultProjectAgentResourceIds = useMemo(
+    () =>
+      projectWorkspace?.location === "local"
+        ? selectedProjectResourceAgents
+            .filter(isCurrentDeviceCollaborationAgent)
+            .map((agent) => agent.id)
+        : [],
+    [projectWorkspace?.location, selectedProjectResourceAgents],
   );
   const openProject = (project: CollaborationProject) => {
     const workspace =
@@ -4655,20 +4653,13 @@ export function CollaborationPlatformApp({
                   },
                   members: projectWorkspaceMembers,
                   agents: selectedProjectResourceAgents,
+                  defaultAgentResourceIds: defaultProjectAgentResourceIds,
                   groups: projectWorkspaceGroups,
                   executionEnvironments: state.resources.execution_environments,
-                  createDefaultAgent:
-                    projectWorkspace.location === "local" &&
-                    host.projectAgentConfiguration?.createDefaultLocalAgent
-                      ? async () => {
-                          const resourceId =
-                            await host.projectAgentConfiguration!
-                              .createDefaultLocalAgent!();
-                          await commands.reload();
-                          setProjectResourceRefreshKey((value) => value + 1);
-                          return resourceId;
-                        }
-                      : undefined,
+                  loadCollaborationGroupGenerationModels:
+                    host.loadProjectCollaborationGroupGenerationModels,
+                  generateCollaborationGroupDraft:
+                    host.generateProjectCollaborationGroupDraft,
                   configure: async (project, selection) => {
                     const existingMembers = await api.members.list(project.id);
                     const existingMemberIds = new Set(
@@ -4691,65 +4682,68 @@ export function CollaborationPlatformApp({
                           ),
                       ),
                     ]);
-                    const createdAgents = await Promise.all(
-                      selectedAgents.map(async (agent) => ({
-                        resourceId: agent.id,
-                        projectAgent: await api.agents.create(
-                          project.id,
-                          createResourceAgentBindingInput(agent),
-                        ),
-                      })),
+                    const selectedDefaultAgent = selectedAgents.find(
+                      isCurrentDeviceCollaborationAgent,
                     );
-                    if (!selection.leaderId) return;
+                    const projectDefaultAgent = selectedDefaultAgent
+                      ? (await api.agents.list(project.id)).find(
+                          isCurrentDeviceCollaborationAgent,
+                        )
+                      : undefined;
+                    const createdAgents = [
+                      ...(selectedDefaultAgent && projectDefaultAgent
+                        ? [
+                            {
+                              resourceId: selectedDefaultAgent.id,
+                              projectAgent: projectDefaultAgent,
+                            },
+                          ]
+                        : []),
+                      ...(await Promise.all(
+                        selectedAgents
+                          .filter(
+                            (agent) => agent.id !== selectedDefaultAgent?.id,
+                          )
+                          .map(async (agent) => ({
+                            resourceId: agent.id,
+                            projectAgent: await api.agents.create(
+                              project.id,
+                              createResourceAgentBindingInput(agent),
+                            ),
+                          })),
+                      )),
+                    ];
+                    const groupDraft = selection.collaborationGroupDraft;
+                    if (!groupDraft) return;
                     if (!api.projects.createCollaborationGroup) {
                       throw new Error(
                         locale === "zh-CN"
-                          ? "当前项目不支持设置负责人"
-                          : "This project does not support an owner",
+                          ? "当前项目不支持创建协作小组"
+                          : "This project does not support collaboration groups",
                       );
                     }
-                    const currentUserId =
-                      project.current_user_id ??
-                      host.currentUser?.id ??
-                      project.created_by_user_id;
-                    const participants = [
-                      {
-                        kind: "human" as const,
-                        id: String(currentUserId),
-                      },
-                      ...selection.memberUserIds.map((userId) => ({
-                        kind: "human" as const,
-                        id: String(userId),
-                      })),
-                      ...createdAgents.map(({ projectAgent }) => ({
-                        kind: "agent" as const,
+                    const mapParticipant = (
+                      participant: typeof groupDraft.leader,
+                    ) => {
+                      if (participant.kind === "human") {
+                        return participant;
+                      }
+                      const projectAgent = createdAgents.find(
+                        ({ resourceId }) => resourceId === participant.id,
+                      )?.projectAgent;
+                      if (!projectAgent) {
+                        throw new Error(
+                          locale === "zh-CN"
+                            ? "协作小组中的智能体未成功加入项目"
+                            : "An Agent in the group was not added to the project",
+                        );
+                      }
+                      return {
+                        ...participant,
                         id: String(projectAgent.id),
-                      })),
-                    ].filter(
-                      (participant, index, candidates) =>
-                        candidates.findIndex(
-                          (candidate) =>
-                            candidate.kind === participant.kind &&
-                            candidate.id === participant.id,
-                        ) === index,
-                    );
-                    const [leaderKind, leaderSourceId] =
-                      selection.leaderId.split(":", 2);
-                    const leader =
-                      leaderKind === "agent"
-                        ? {
-                            kind: "agent" as const,
-                            id: String(
-                              createdAgents.find(
-                                ({ resourceId }) =>
-                                  resourceId === leaderSourceId,
-                              )?.projectAgent.id ?? "",
-                            ),
-                          }
-                        : {
-                            kind: "human" as const,
-                            id: leaderSourceId,
-                          };
+                      };
+                    };
+                    const leader = mapParticipant(groupDraft.leader);
                     if (!leader.id) {
                       throw new Error(
                         locale === "zh-CN"
@@ -4758,10 +4752,19 @@ export function CollaborationPlatformApp({
                       );
                     }
                     await api.projects.createCollaborationGroup(project.id, {
-                      name: projectCreateLabels[locale].defaultGroupName,
+                      name: groupDraft.name,
+                      description: groupDraft.description,
+                      instructions: groupDraft.instructions,
                       leader,
-                      members: participants,
+                      members: groupDraft.members.map(mapParticipant),
                       coordinationMode: "manager",
+                      stages: groupDraft.stages.map((stage) => ({
+                        ...stage,
+                        assignee: stage.assignee
+                          ? mapParticipant(stage.assignee)
+                          : null,
+                      })),
+                      executionRequirements: groupDraft.executionRequirements,
                     });
                   },
                 }

@@ -33,6 +33,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'browser-annotation-design': './scenarios/embedded-browser-annotation.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
+  'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
@@ -62,6 +63,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-capabilities':
     './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
+  'collaboration-local-executor-issue-tools':
+    './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
@@ -91,11 +94,13 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-capabilities',
+  'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
   'plugin-development',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
+  'codex-invalid-launch-cwd',
   'executor-stream-recovery',
   'transcript-sync',
   'running-conversation-history',

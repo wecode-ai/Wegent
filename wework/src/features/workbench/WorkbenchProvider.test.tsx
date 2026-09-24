@@ -1471,6 +1471,22 @@ function ProjectSendProbe({
       </button>
       <button
         type="button"
+        onClick={() =>
+          void paneSession.send(undefined, {
+            cloudProjectId: '841738010351776815',
+            origin: {
+              type: 'board_task',
+              cloudProjectId: '841738010351776815',
+              loopItemId: 'ISSUE-1',
+              projectStore: 'backend',
+            },
+          })
+        }
+      >
+        send goal with project space
+      </button>
+      <button
+        type="button"
         onClick={() => {
           const project =
             workbench.state.currentProject ??
@@ -7680,7 +7696,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
 
-    await userEvent.click(screen.getByText('send'))
+    await userEvent.click(screen.getByText('send goal with project space'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
@@ -7699,6 +7715,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceWorkspaceId: 11,
         deviceId: 'device-1',
         message: '修复 CI',
+        cloudProjectId: '841738010351776815',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: '841738010351776815',
+          loopItemId: 'ISSUE-1',
+          projectStore: 'backend',
+        },
         initialGoal: {
           objective: '修复 CI',
           status: 'active',

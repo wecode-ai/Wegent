@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.user import User
 from app.schemas.kind import Bot, Model
+from app.services.adapters.public_model import is_public_model_allowed_for_user
 from app.services.capability_reference_service import get_referenced_capability
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
@@ -877,6 +879,12 @@ def _find_model_with_namespace(
     )
 
     if public_model and public_model.json:
+        # Enforce the public model user whitelist: only listed users may use it.
+        user = db.query(User).filter(User.id == user_id).first()
+        if not is_public_model_allowed_for_user(
+            public_model.json, user.user_name if user else None
+        ):
+            raise ValueError(f"Model '{model_name}' is restricted to whitelisted users")
         logger.info(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )

@@ -12,9 +12,7 @@ logger = logging.getLogger(__name__)
 
 SKILL_CODE_LENGTH = 7
 MAX_SERVER_NAME_LENGTH = 24
-MAX_RUNTIME_SERVER_NAME_LENGTH = (
-    SKILL_CODE_LENGTH + 1 + MAX_SERVER_NAME_LENGTH
-)
+MAX_RUNTIME_SERVER_NAME_LENGTH = SKILL_CODE_LENGTH + 1 + MAX_SERVER_NAME_LENGTH
 _INVALID_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_-]")
 _HEX_DIGIT_TO_LETTER = str.maketrans("0123456789", "ghijklmnop")
 
@@ -39,9 +37,7 @@ def _compact_server_name(server_name: str) -> str:
     compact_server = _sanitize_name(server_name, "server")
     if len(compact_server) > MAX_SERVER_NAME_LENGTH:
         prefix_length = MAX_SERVER_NAME_LENGTH - SKILL_CODE_LENGTH - 1
-        compact_server = (
-            f"{compact_server[:prefix_length]}_{_short_code(server_name)}"
-        )
+        compact_server = f"{compact_server[:prefix_length]}_{_short_code(server_name)}"
     return compact_server
 
 

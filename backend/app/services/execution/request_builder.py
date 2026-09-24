@@ -2646,7 +2646,9 @@ Response template:
         Each skill may declare mcpServers in dict format. This converts them
         to list format. When the skill name already matches the server name,
         keep the bare server name so tool calls can reference the natural MCP
-        server identifier without an extra prefix.
+        server identifier without an extra prefix. Otherwise keep readable
+        names when they fit, using a stable seven-character Skill code for
+        longer names. Server names are capped at 24 characters.
 
         Args:
             skill_configs: List of resolved skill config dicts

@@ -297,6 +297,15 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
+function newestIssue(
+  current: CollaborationIssue | null | undefined,
+  incoming: CollaborationIssue,
+): CollaborationIssue {
+  return current?.id === incoming.id && current.version > incoming.version
+    ? current
+    : incoming;
+}
+
 function mergeReorderIssues(
   current: CollaborationIssue[],
   incoming: CollaborationIssue[],
@@ -306,7 +315,7 @@ function mergeReorderIssues(
   return [
     ...incoming.map((issue) => {
       const existing = currentById.get(issue.id);
-      return existing && existing.version > issue.version ? existing : issue;
+      return newestIssue(existing, issue);
     }),
     ...current.filter((issue) => !incomingIds.has(issue.id)),
   ];
@@ -490,7 +499,7 @@ export function collaborationWorkspaceControllerReducer(
     case "issue-loaded":
       return {
         ...state,
-        selectedIssue: action.issue,
+        selectedIssue: newestIssue(state.selectedIssue, action.issue),
         attachments:
           action.preserveAttachments &&
           state.selectedIssue?.id === action.issue.id
@@ -599,16 +608,20 @@ export function collaborationWorkspaceControllerReducer(
         ...state,
         selectedIssue:
           state.selectedIssue?.id === action.issue.id
-            ? action.issue
+            ? newestIssue(state.selectedIssue, action.issue)
             : state.selectedIssue,
         issues: state.issues.map((item) =>
-          item.id === action.issue.id ? action.issue : item,
+          item.id === action.issue.id ? newestIssue(item, action.issue) : item,
         ),
         projectItems: {
           ...state.projectItems,
           [action.issue.cloud_project_id]: (
             state.projectItems[action.issue.cloud_project_id] ?? []
-          ).map((item) => (item.id === action.issue.id ? action.issue : item)),
+          ).map((item) =>
+            item.id === action.issue.id
+              ? newestIssue(item, action.issue)
+              : item,
+          ),
         },
       };
     case "remove-issue": {
@@ -1227,10 +1240,7 @@ export function createCollaborationWorkspaceControllerCommands({
         ]);
         if (revision !== selectedIssueLoadRevision) return null;
         const currentIssue = getSelectedIssue();
-        const resolvedIssue =
-          currentIssue?.id === issue.id && currentIssue.version > issue.version
-            ? currentIssue
-            : issue;
+        const resolvedIssue = newestIssue(currentIssue, issue);
         dispatch({
           type: "issue-loaded",
           issue: resolvedIssue,

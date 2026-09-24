@@ -13,6 +13,7 @@ import { ResourceDestinationDialog } from "./ResourceDestinationDialog";
 import { collaborationMessages, type CollaborationLocale } from "../i18n";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createSharedAgentBindingInput } from "../project-agent-config";
+import type { ProjectCreateCollaborationGroupGenerationEvent } from "../project-create";
 import type {
   CollaborationAssignment,
   CollaborationGroup,
@@ -654,6 +655,13 @@ async function flush() {
   });
 }
 
+async function waitForUi(milliseconds: number) {
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  });
+  await flush();
+}
+
 async function render(ui: ReactNode) {
   await act(async () => {
     root.render(ui);
@@ -742,6 +750,8 @@ function PlatformHarness({
   renderProject,
   workspaceOwnerOptions,
   defaultAssistant,
+  generateProjectCollaborationGroupDraft,
+  loadProjectCollaborationGroupGenerationModels,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   api: SharedWorkspaceApi;
@@ -758,6 +768,8 @@ function PlatformHarness({
   renderProject?(context: CollaborationProjectRendererContext): ReactNode;
   workspaceOwnerOptions?: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
   defaultAssistant?: CollaborationPlatformHostAdapter["defaultAssistant"];
+  generateProjectCollaborationGroupDraft?: CollaborationPlatformHostAdapter["generateProjectCollaborationGroupDraft"];
+  loadProjectCollaborationGroupGenerationModels?: CollaborationPlatformHostAdapter["loadProjectCollaborationGroupGenerationModels"];
   capabilities?: CollaborationPlatformHostAdapter["capabilities"];
 }) {
   const [location, setLocation] = useState(start);
@@ -773,6 +785,8 @@ function PlatformHarness({
     notify,
     workspaceOwnerOptions,
     defaultAssistant,
+    generateProjectCollaborationGroupDraft,
+    loadProjectCollaborationGroupGenerationModels,
   };
   return (
     <>
@@ -1005,6 +1019,28 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       container.querySelector(
         `[data-testid="collaboration-agents-row-${agent.id}"]`,
+      ),
+    ).toBeNull();
+  });
+  it("does not expose deletion for a protected agent resource", async () => {
+    const protectedAgent = {
+      ...agent,
+      id: "default-local-agent",
+      name: "当前设备智能体",
+      deletable: false,
+    };
+    const { api } = createApi({
+      initialResources: {
+        agents: [protectedAgent],
+        execution_environments: [],
+      },
+    });
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-primary-agents"));
+
+    expect(
+      container.querySelector(
+        `[data-testid="collaboration-agents-delete-${protectedAgent.id}"]`,
       ),
     ).toBeNull();
   });
@@ -1794,7 +1830,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
-  it("creates and selects a local Agent inside the shared project creation flow", async () => {
+  it("defaults to the local Agent and lets the user remove and add it again", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
       initialProjects: [],
@@ -1807,26 +1843,21 @@ describe("CollaborationPlatformApp real component flow", () => {
       ...agent,
       id: "local-agent-1",
       team_id: undefined,
-      name: "空白智能体",
+      name: "当前设备智能体",
       location: "local",
       owner_id: localWorkspace.id,
       owner_name: localWorkspace.name,
       project_binding_input: {
-        name: "blank-agent",
-        displayName: "空白智能体",
+        name: "current-device-agent",
+        displayName: "当前设备智能体",
         runtime: "codex",
         model: null,
       },
     };
-    let resourceAgents: CollaborationOwnedAgent[] = [];
     api.resources!.list = vi.fn(async () => ({
-      agents: resourceAgents,
+      agents: [localAgent],
       execution_environments: [environment],
     }));
-    const createDefaultLocalAgent = vi.fn(async () => {
-      resourceAgents = [localAgent];
-      return localAgent.id;
-    });
     api.agents.create = vi.fn(async () => localAgent);
 
     await render(
@@ -1838,18 +1869,17 @@ describe("CollaborationPlatformApp real component flow", () => {
           workspaceLocations: ["local"],
         }}
         start={{ ...initialLocation, collaborationDomain: "local" }}
-        projectAgentConfiguration={
-          {
-            createDefaultLocalAgent,
-          } as CollaborationPlatformHostAdapter["projectAgentConfiguration"]
-        }
       />,
     );
 
     expect(container.textContent).not.toContain("下一步再选择保存在本地或云端");
     await chooseBlankProjectCreation();
-    expect(container.textContent).toContain("协作方式");
+    expect(container.textContent).toContain("项目协作者");
     expect(container.textContent).toContain("我");
+    expect(container.textContent).toContain("当前设备智能体");
+    expect(
+      container.querySelector('[aria-label="取消 当前设备智能体"]'),
+    ).not.toBeNull();
     expect(container.textContent).not.toContain("小组负责人");
     expect(
       container.querySelector(
@@ -1857,16 +1887,23 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
     expect(container.textContent).not.toContain(environment.name);
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="取消 当前设备智能体"]',
+      )!,
+    );
+    expect(container.textContent).not.toContain("当前设备智能体");
     await click(byTestId("collaboration-project-create-add-collaborator"));
     expect(
-      portalByTestId("collaboration-project-create-default-agent").textContent,
-    ).toContain("创建默认协作小组");
-    await click(portalByTestId("collaboration-project-create-default-agent"));
-    await flush();
-    await flush();
-    expect(createDefaultLocalAgent).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain(localAgent.name);
-    expect(container.textContent).not.toContain("默认协作小组");
+      document.body.querySelector(
+        '[data-testid="collaboration-project-create-default-agent"]',
+      ),
+    ).toBeNull();
+    expect(document.body.textContent).toContain("当前设备智能体");
+    await click(
+      portalByTestId(`collaboration-project-create-agent-${localAgent.id}`),
+    );
+    expect(container.textContent).toContain("当前设备智能体");
 
     await change(
       byTestId("collaboration-project-name-input") as HTMLInputElement,
@@ -1874,13 +1911,359 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await click(byTestId("collaboration-project-create-confirm"));
 
-    expect(api.agents.create).toHaveBeenCalledWith(
-      project.id,
-      localAgent.project_binding_input,
+    expect(api.projects.create).toHaveBeenCalledWith(
+      expect.objectContaining({ includeDefaultAgent: true }),
     );
+    expect(api.agents.create).not.toHaveBeenCalled();
   });
 
-  it("does not select an existing Agent when project resources finish loading", async () => {
+  it("does not include the default local Agent after the user removes it", async () => {
+    const defaultAgent: CollaborationOwnedAgent = {
+      ...agent,
+      id: "default-local-agent",
+      team_id: undefined,
+      name: "当前设备智能体",
+      location: "local",
+      owner_id: localWorkspace.id,
+      owner_name: localWorkspace.name,
+      project_binding_input: {
+        name: "current-device-agent",
+        displayName: "当前设备智能体",
+        runtime: "codex",
+        model: null,
+      },
+    };
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+      initialResources: {
+        agents: [defaultAgent],
+        execution_environments: [],
+      },
+    });
+    api.resources!.list = vi.fn(async () => ({
+      agents: [defaultAgent],
+      execution_environments: [],
+    }));
+
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          workspaceLocations: ["local"],
+        }}
+        start={{ ...initialLocation, collaborationDomain: "local" }}
+      />,
+    );
+    await chooseBlankProjectCreation();
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="取消 当前设备智能体"]',
+      )!,
+    );
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      project.name,
+    );
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.projects.create).toHaveBeenCalledWith(
+      expect.objectContaining({ includeDefaultAgent: false }),
+    );
+    expect(api.agents.create).not.toHaveBeenCalled();
+  });
+
+  it("recommends a group for two Agents and shows the working lead after applying AI division", async () => {
+    const agents = [
+      agent,
+      { ...agent, id: "agent-2", team_id: 12, name: "设计智能体" },
+    ];
+    const generateProjectCollaborationGroupDraft = vi.fn(
+      async (
+        input,
+        onProgress?: (phase: "preparing" | "generating") => void,
+        onEvent?: (
+          event: ProjectCreateCollaborationGroupGenerationEvent,
+        ) => void,
+      ) => {
+        onProgress?.("generating");
+        onEvent?.({
+          type: "participant_started",
+          kind: "agent",
+          id: input.agents[0]!.id,
+          leader: true,
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+        onEvent?.({
+          type: "participant_delta",
+          kind: "agent",
+          id: input.agents[0]!.id,
+          delta: "协调任务并完成核心开发",
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+        onEvent?.({
+          type: "participant_started",
+          kind: "agent",
+          id: input.agents[1]!.id,
+          leader: false,
+        });
+        onEvent?.({
+          type: "participant_delta",
+          kind: "agent",
+          id: input.agents[1]!.id,
+          delta: "负责交互设计",
+        });
+        onEvent?.({
+          type: "principle",
+          text: "负责人拆解、执行并汇总",
+        });
+        onEvent?.({
+          type: "stage",
+          id: "planning",
+          name: "目标澄清与任务拆解",
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        return {
+          name: "产品交付小组",
+          description: "协调产品交付",
+          instructions: "负责人拆解、执行并汇总",
+          leader: {
+            kind: "agent" as const,
+            id: input.agents[0]!.id,
+            responsibility: "协调任务并完成核心开发",
+          },
+          members: [
+            {
+              kind: "human" as const,
+              id: String(input.currentUser.id),
+              responsibility: "确认目标并验收",
+            },
+            ...input.agents.slice(1).map((candidate) => ({
+              kind: "agent" as const,
+              id: candidate.id,
+              responsibility: "专项执行",
+            })),
+          ],
+          stages: [
+            {
+              id: "delivery",
+              name: "协同交付",
+              description: "完成实现和验收",
+              assignee: {
+                kind: "agent" as const,
+                id: input.agents[0]!.id,
+                responsibility: "协调任务并完成核心开发",
+              },
+            },
+          ],
+          executionRequirements: { requiredTags: [] },
+        };
+      },
+    );
+    const { api } = createApi({
+      initialProjects: [],
+      initialResources: {
+        agents,
+        execution_environments: [],
+      },
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+        generateProjectCollaborationGroupDraft={
+          generateProjectCollaborationGroupDraft
+        }
+        loadProjectCollaborationGroupGenerationModels={async () => ({
+          models: [
+            {
+              modelName: "gpt-5.6-sol",
+              modelType: "runtime",
+              displayName: "GPT-5.6 Sol",
+            },
+          ],
+          defaultSelection: {
+            modelName: "gpt-5.6-sol",
+            modelType: "runtime",
+          },
+        })}
+      />,
+    );
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    for (const candidate of agents) {
+      await click(byTestId("collaboration-project-create-add-collaborator"));
+      await click(
+        portalByTestId(`collaboration-project-create-agent-${candidate.id}`),
+      );
+    }
+
+    expect(
+      byTestId("collaboration-project-create-group-recommendation").textContent,
+    ).toContain("建议组织成协作小组");
+    await click(byTestId("collaboration-project-create-organize-group"));
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-create-model-picker"]',
+      ),
+    ).toBeNull();
+    expect(
+      portalByTestId("collaboration-project-create-model-picker").textContent,
+    ).toContain("组织协作小组");
+    expect(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).parentElement?.classList.contains("z-system"),
+    ).toBe(true);
+    expect(
+      portalByTestId(
+        "collaboration-project-create-generation-agent-attachments",
+      ).textContent,
+    ).toContain("设计智能体");
+    expect(
+      portalByTestId(
+        "collaboration-project-create-generation-agent-attachments",
+      ).textContent,
+    ).toContain("我");
+    expect(portalByTestId("model-selector-button").textContent).toContain(
+      "GPT-5.6 Sol",
+    );
+    await click(portalByTestId("model-selector-button"));
+    expect(
+      portalByTestId("model-selector-menu").parentElement?.classList.contains(
+        "z-system-popover",
+      ),
+    ).toBe(true);
+    await click(portalByTestId("model-selector-button"));
+    await click(portalByTestId("collaboration-project-create-generate-group"));
+    expect(
+      document.body.querySelector(
+        '[data-testid="collaboration-project-create-generation-instructions"]',
+      ),
+    ).toBeNull();
+    expect(
+      portalByTestId("collaboration-project-create-generation-progress")
+        .textContent,
+    ).toContain("AI 正在分析项目并生成分工");
+    expect(
+      portalByTestId("collaboration-project-create-assignment-queue")
+        .textContent,
+    ).toContain("AI 正在自动安排");
+    expect(
+      portalByTestId("collaboration-project-create-assignment-queue")
+        .textContent,
+    ).toContain("完成后会加入下方小组");
+    expect(
+      portalByTestId("collaboration-project-create-generation-workflow")
+        .textContent,
+    ).toContain("正在形成执行流程");
+    expect(document.body.querySelectorAll(".is-excited")).toHaveLength(0);
+    expect(
+      document.body.querySelector(".is-human-standing")?.textContent,
+    ).toContain("我");
+    await waitForUi(500);
+    expect(
+      portalByTestId("collaboration-project-create-generation-progress")
+        .textContent,
+    ).toContain("负责人拆解、执行并汇总");
+    expect(
+      portalByTestId("collaboration-project-create-generation-workflow")
+        .textContent,
+    ).toContain("目标澄清与任务拆解");
+    expect(document.body.querySelectorAll(".is-excited")).toHaveLength(1);
+    expect(document.body.querySelector(".is-excited")?.textContent).toContain(
+      "协调任务并完成核心开发",
+    );
+    await waitForUi(300);
+    expect(
+      portalByTestId("collaboration-project-create-group-editor").textContent,
+    ).toContain("AI 分工建议");
+    expect(
+      document.body.querySelector(
+        '[data-testid="collaboration-project-create-generation-progress"]',
+      ),
+    ).toBeNull();
+    expect(
+      document.body
+        .querySelector('[aria-label="编辑分工 小组名称"]')
+        ?.closest(".collaboration-project-create-hover-editable")
+        ?.classList.contains("is-edit-affordance-visible"),
+    ).toBe(true);
+    await click(portalByTestId("collaboration-project-create-group-name"));
+    expect(
+      document.body.querySelector('input[aria-label="编辑分工 小组名称"]'),
+    ).not.toBeNull();
+    expect(
+      portalByTestId("collaboration-project-create-model-picker").textContent,
+    ).toContain("保存后仍可在项目设置中更新");
+    expect(document.body.querySelector(".is-result")).toBeNull();
+    expect(
+      document.body.querySelector('[aria-label="Codex 产品工程师 编辑分工"]'),
+    ).not.toBeNull();
+    const roster = portalByTestId("collaboration-project-create-group-roster");
+    expect(
+      roster.querySelector(".collaboration-group-roster-item:first-child")
+        ?.textContent,
+    ).toContain("负责人");
+    expect(
+      roster.querySelector(".collaboration-group-roster-item:first-child")
+        ?.textContent,
+    ).toContain("Codex 产品工程师");
+    await click(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Codex 产品工程师 编辑分工"]',
+      )!,
+    );
+    const responsibilityEditor =
+      document.body.querySelector<HTMLTextAreaElement>(
+        '[aria-label="Codex 产品工程师 编辑分工"]',
+      );
+    expect(
+      responsibilityEditor?.classList.contains(
+        "collaboration-project-create-inline-textarea",
+      ),
+    ).toBe(true);
+    expect(
+      responsibilityEditor?.closest(
+        ".collaboration-project-create-duty-bubble",
+      ),
+    ).not.toBeNull();
+    await click(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="编辑分工 分配原则"]',
+      )!,
+    );
+    await change(
+      document.body.querySelector<HTMLTextAreaElement>(
+        '[aria-label="编辑分工 分配原则"]',
+      )!,
+      "负责人参与实现，成员及时反馈阻塞",
+    );
+    expect(
+      portalByTestId("collaboration-project-create-group-instructions")
+        .textContent,
+    ).toContain("负责人参与实现，成员及时反馈阻塞");
+    expect(generateProjectCollaborationGroupDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationInstructions:
+          expect.stringContaining("负责人需要参与实际工作"),
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+    await click(portalByTestId("collaboration-project-create-apply-group"));
+
+    expect(
+      byTestId("collaboration-project-create-group-summary").textContent,
+    ).toContain("产品交付小组");
+    expect(
+      byTestId("collaboration-project-create-group-summary").textContent,
+    ).toContain("负责人 · 协调并执行");
+  });
+
+  it("selects only the default local Agent when project resources finish loading", async () => {
     const existingAgent: CollaborationOwnedAgent = {
       ...agent,
       id: "existing-local-agent",
@@ -1889,6 +2272,17 @@ describe("CollaborationPlatformApp real component flow", () => {
       location: "local",
       owner_id: localWorkspace.id,
       owner_name: localWorkspace.name,
+    };
+    const defaultAgent: CollaborationOwnedAgent = {
+      ...existingAgent,
+      id: "default-local-agent",
+      name: "当前设备智能体",
+      project_binding_input: {
+        name: "current-device-agent",
+        displayName: "当前设备智能体",
+        runtime: "codex",
+        model: null,
+      },
     };
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
@@ -1900,7 +2294,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
     let exposeExistingAgent = false;
     api.resources!.list = vi.fn(async () => ({
-      agents: exposeExistingAgent ? [existingAgent] : [],
+      agents: exposeExistingAgent ? [existingAgent, defaultAgent] : [],
       execution_environments: [],
     }));
 
@@ -1921,8 +2315,17 @@ describe("CollaborationPlatformApp real component flow", () => {
     await flush();
 
     expect(container.textContent).not.toContain(existingAgent.name);
+    expect(container.textContent).toContain(defaultAgent.name);
+    expect(
+      container.querySelector(`[aria-label="取消 ${defaultAgent.name}"]`),
+    ).not.toBeNull();
     await click(byTestId("collaboration-project-create-add-collaborator"));
-    expect(document.body.textContent?.includes(existingAgent.name)).toBe(false);
+    expect(document.body.textContent).toContain(existingAgent.name);
+    expect(
+      document.body.querySelector(
+        `[data-testid="collaboration-project-create-agent-${existingAgent.id}"]`,
+      ),
+    ).not.toBeNull();
     expect(
       document.body.querySelector(
         '[data-testid="collaboration-project-create-default-agent"]',
@@ -3846,11 +4249,24 @@ describe("CollaborationPlatformApp real component flow", () => {
   });
 
   it("keeps member invitations out of local workspace onboarding and settings", async () => {
+    const localAgent: CollaborationOwnedAgent = {
+      ...agent,
+      id: "local-default-agent",
+      team_id: undefined,
+      name: "当前设备智能体",
+      location: "local",
+      owner_id: localWorkspace.id,
+      owner_name: localWorkspace.name,
+      deletable: false,
+      runtime: "codex",
+      version: 1,
+    };
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
       initialProjects: [],
       initialIssues: [],
     });
+    vi.mocked(api.workspaces!.listAgents).mockResolvedValue([localAgent]);
     await render(
       <PlatformHarness
         api={api}
@@ -3887,6 +4303,14 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       container.querySelector(
         '[data-testid="collaboration-workspace-member-invite"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId(`project-agent-row-${localAgent.id}`).textContent,
+    ).toContain("当前设备智能体");
+    expect(
+      container.querySelector(
+        `[data-testid="project-agent-archive-${localAgent.id}"]`,
       ),
     ).toBeNull();
   });
@@ -4039,7 +4463,30 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(portalButtonWithText(collaborationGroup.name));
     expect(container.textContent).toContain(member.user_name);
     expect(container.textContent).toContain(agent.name);
-    expect(container.textContent).not.toContain(collaborationGroup.name);
+    expect(container.textContent).toContain(collaborationGroup.name);
+    expect(container.textContent).toContain("负责人 · 协调并执行");
+    expect(container.textContent).not.toContain("undefined");
+    await click(byTestId("collaboration-project-create-edit-group"));
+    expect(
+      portalByTestId("collaboration-project-create-model-picker").textContent,
+    ).toContain(collaborationGroup.name);
+    expect(
+      portalByTestId("collaboration-project-create-group-roster").textContent,
+    ).toContain(agent.name);
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>('[aria-label="取消"]')!,
+    );
+    expect(
+      document.body.querySelector(
+        '[data-testid="collaboration-project-create-model-picker"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId<HTMLButtonElement>("collaboration-project-create-confirm")
+        .disabled,
+    ).toBe(false);
     await click(byTestId("collaboration-project-create-confirm"));
 
     expect(api.members.add).toHaveBeenCalledWith(
@@ -4054,9 +4501,53 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledWith(
       project.id,
       expect.objectContaining({
+        name: collaborationGroup.name,
         leader: { kind: "human", id: String(member.user_id) },
       }),
     );
+  });
+
+  it("turns an imported group into custom collaboration after a participant is removed", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialGroups: [collaborationGroup],
+    });
+    api.members.list = emptyAsync([]);
+    api.agents.create = vi.fn(async () => agent);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(portalButtonWithText(collaborationGroup.name));
+    await click(
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent === "恢复独立协作",
+      )!,
+    );
+    await click(
+      container.querySelector<HTMLButtonElement>(
+        `[aria-label="取消 ${member.user_name}"]`,
+      )!,
+    );
+    expect(container.textContent).not.toContain(member.user_name);
+    expect(container.textContent).toContain(agent.name);
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      project.name,
+    );
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.members.add).not.toHaveBeenCalled();
+    expect(api.agents.create).toHaveBeenCalledWith(
+      project.id,
+      createSharedAgentBindingInput(agent),
+    );
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled();
   });
 
   it("preselects the current online local device for a new cloud project", async () => {

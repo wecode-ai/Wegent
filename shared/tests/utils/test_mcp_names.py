@@ -48,10 +48,13 @@ def test_long_names_use_a_stable_compact_code() -> None:
 
     assert len(compact_name) == 32
     assert compact_name[0].isalpha()
-    assert resolve_skill_mcp_name(
-        "a" * 24,
-        "wegent-interactive-form-question",
-    ) == compact_name
+    assert (
+        resolve_skill_mcp_name(
+            "a" * 24,
+            "wegent-interactive-form-question",
+        )
+        == compact_name
+    )
 
 
 def test_provider_skill_keeps_its_unprefixed_name() -> None:

@@ -541,6 +541,8 @@ describe('Wework collaboration workspace API', () => {
 
   it('resolves an imported runtime project to its local collaboration project', async () => {
     const localDeliveryApi = createLocalDeliveryApi()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const ensureDefault = vi.fn().mockRejectedValue(new Error('agent unavailable'))
     render(
       createElement(WeworkCollaborationPlatform, {
         user: {
@@ -552,6 +554,16 @@ describe('Wework collaboration workspace API', () => {
         services: {
           projectSpaceApis: {
             local: localDeliveryApi,
+          },
+          projectSpaceDetailServices: {
+            local: {
+              ...createLocalDetailServices(),
+              localProjectChatAgentApi: {
+                list: vi.fn(async () => []),
+                ensureDefault,
+                create: vi.fn(),
+              },
+            },
           },
         } as never,
         renderLocalProjectImporter: ({ mode, projects, onCreated }) =>
@@ -595,6 +607,18 @@ describe('Wework collaboration workspace API', () => {
       name: 'Local project',
       roots: ['/workspace/imported'],
     })
+    expect(ensureDefault).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        name: 'current-device-agent',
+        model: null,
+      })
+    )
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('imported project local-project'),
+      expect.any(Error)
+    )
+    warning.mockRestore()
   })
 
   it('resolves an imported project by workspace root when the runtime key is an alias', async () => {
@@ -802,6 +826,13 @@ describe('Wework collaboration workspace API', () => {
       ...createLocalDetailServices(),
       localProjectChatAgentApi: {
         list: vi.fn(async () => []),
+        ensureDefault: vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
+          id: 'LA-default',
+          projectId: 'default-work-items',
+          status: 'active',
+          version: 1,
+          ...input,
+        })),
         create: createLocalAgent,
         update: vi.fn(),
       },
@@ -913,7 +944,7 @@ describe('Wework collaboration workspace API', () => {
     await waitFor(() =>
       expect(
         screen.getByTestId('collaboration-app-resource-names-local-project')
-      ).toBeEmptyDOMElement()
+      ).toHaveTextContent('当前设备智能体')
     )
     expect(listCloudResources).not.toHaveBeenCalled()
 
@@ -2033,6 +2064,114 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
+  it('automatically adds the default local Agent to a newly created local project', async () => {
+    const ensureDefault = vi.fn(async (projectId: string, input: Record<string, unknown>) => ({
+      id: `LA-${projectId}`,
+      projectId,
+      status: 'active',
+      version: 1,
+      ...input,
+    }))
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
+    }
+    const details = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn(async () => []),
+        ensureDefault,
+        create: vi.fn(),
+        update: vi.fn(),
+        archive: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, details)!
+
+    await expect(api.projects.create({ name: 'New local' })).resolves.toMatchObject({
+      id: 'new-local',
+      workspace_id: 'wework-local-workspace',
+    })
+    expect(ensureDefault).toHaveBeenCalledWith(
+      'new-local',
+      expect.objectContaining({
+        name: 'current-device-agent',
+        model: null,
+        capabilityMode: 'follow_device',
+      })
+    )
+  })
+
+  it('does not add the default local Agent when local project creation opts out', async () => {
+    const ensureDefault = vi.fn()
+    const createCloudProject = vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' })
+    const details = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn(async () => []),
+        ensureDefault,
+        create: vi.fn(),
+        update: vi.fn(),
+        archive: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(
+      {
+        ...createLocalDeliveryApi(),
+        createCloudProject,
+      },
+      1,
+      'admin',
+      null,
+      details
+    )!
+
+    await api.projects.create({
+      name: 'New local',
+      includeDefaultAgent: false,
+    })
+
+    expect(createCloudProject).toHaveBeenCalledWith(
+      expect.not.objectContaining({ includeDefaultAgent: expect.anything() })
+    )
+    expect(ensureDefault).not.toHaveBeenCalled()
+  })
+
+  it('keeps a created local project when default-Agent provisioning fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const ensureDefault = vi.fn().mockRejectedValue(new Error('agent unavailable'))
+    const details = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn(async () => []),
+        ensureDefault,
+        create: vi.fn(),
+        update: vi.fn(),
+        archive: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(
+      {
+        ...createLocalDeliveryApi(),
+        createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
+      },
+      1,
+      'admin',
+      null,
+      details
+    )!
+
+    await expect(api.projects.create({ name: 'New local' })).resolves.toMatchObject({
+      id: 'new-local',
+      name: 'New local',
+    })
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('project new-local'),
+      expect.any(Error)
+    )
+    warning.mockRestore()
+  })
+
   it('exposes local project execution environments through the shared project contract', async () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),
@@ -2408,10 +2547,22 @@ describe('Wework collaboration workspace API', () => {
       status: 'active',
       executionDeviceId: 'local-device',
     }
+    const defaultAgent = {
+      ...localAgent,
+      id: 'LA-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+    }
+    const agents = [localAgent]
     const detailServices = {
       ...createLocalDetailServices(),
       localProjectChatAgentApi: {
-        list: vi.fn().mockResolvedValue([localAgent]),
+        list: vi.fn(async () => agents),
+        ensureDefault: vi.fn(async () => {
+          agents.push(defaultAgent)
+          return defaultAgent
+        }),
+        create: vi.fn(),
       },
     } as unknown as ProjectSpaceDetailServices
     const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
@@ -2428,6 +2579,12 @@ describe('Wework collaboration workspace API', () => {
           status: 'available',
           execution_environment_ids: ['device:local-device'],
         },
+        {
+          id: 'LA-default',
+          agent_id: 'current-device-agent',
+          name: '当前设备智能体',
+          deletable: false,
+        },
       ],
     })
     await expect(api?.workspaces?.listAgents('wework-local-workspace')).resolves.toMatchObject([
@@ -2438,14 +2595,28 @@ describe('Wework collaboration workspace API', () => {
         owner_id: 'wework-local-workspace',
         owner_name: '本地空间',
       },
+      {
+        id: 'LA-default',
+        agent_id: 'current-device-agent',
+        name: '当前设备智能体',
+        deletable: false,
+      },
     ])
     expect(detailServices.localProjectChatAgentApi?.list).toHaveBeenCalledWith(
       DEFAULT_WORK_ITEM_PROJECT_ID
     )
   })
 
-  it('does not create a default Agent while reading the local resource catalog', async () => {
-    const ensureDefault = vi.fn()
+  it('ensures a default Agent while reading the local resource catalog', async () => {
+    const defaultAgent = {
+      id: 'LA-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+      runtime: 'codex',
+      status: 'active',
+      version: 1,
+    }
+    const ensureDefault = vi.fn(async () => defaultAgent)
     const listModels = vi.fn()
     const detailServices = {
       ...createLocalDetailServices(),
@@ -2455,30 +2626,144 @@ describe('Wework collaboration workspace API', () => {
       localProjectChatAgentApi: {
         list: vi.fn().mockResolvedValue([]),
         ensureDefault,
+        create: vi.fn(),
       },
     } as unknown as ProjectSpaceDetailServices
     const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)
 
-    await expect(api?.resources?.list()).resolves.toMatchObject({ agents: [] })
-    expect(ensureDefault).not.toHaveBeenCalled()
+    await expect(api?.resources?.list()).resolves.toMatchObject({
+      agents: [
+        {
+          id: 'LA-default',
+          agent_id: 'current-device-agent',
+          deletable: false,
+        },
+      ],
+    })
+    expect(ensureDefault).toHaveBeenCalledWith(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      expect.objectContaining({
+        name: 'current-device-agent',
+        model: null,
+        capabilityMode: 'follow_device',
+      })
+    )
     expect(listModels).not.toHaveBeenCalled()
   })
 
-  it('keeps local Agent resources local when cloud resource loading fails', async () => {
+  it('keeps the local resource catalog available when default-Agent provisioning fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const detailServices = {
       ...createLocalDetailServices(),
       localProjectChatAgentApi: {
-        list: vi.fn().mockResolvedValue([
-          {
-            id: 'LA-local',
-            name: '本地代码助手',
-            capabilityDescription: '处理本地代码',
-            systemPrompt: 'Work locally.',
-            runtime: 'codex',
-            status: 'active',
-            executionDeviceId: 'local-device',
-          },
-        ]),
+        list: vi.fn().mockRejectedValue(new Error('list unavailable')),
+        ensureDefault: vi.fn().mockRejectedValue(new Error('agent unavailable')),
+        create: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+
+    await expect(api.resources!.list()).resolves.toMatchObject({ agents: [] })
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local Agents', expect.any(Error))
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to ensure the default local Agent',
+      expect.any(Error)
+    )
+    warning.mockRestore()
+  })
+
+  it('shares one default-Agent bootstrap across concurrent local resource reads', async () => {
+    const pending = deferred<{
+      id: string
+      name: string
+      displayName: string
+      runtime: string
+      status: string
+      version: number
+    }>()
+    const ensureDefault = vi.fn(() => pending.promise)
+    const detailServices = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn().mockResolvedValue([]),
+        ensureDefault,
+        create: vi.fn(),
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+
+    const resources = api.resources!.list()
+    const workspaceAgents = api.workspaces!.listAgents('wework-local-workspace')
+    pending.resolve({
+      id: 'LA-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+      runtime: 'codex',
+      status: 'active',
+      version: 1,
+    })
+
+    await expect(Promise.all([resources, workspaceAgents])).resolves.toHaveLength(2)
+    expect(ensureDefault).toHaveBeenCalledOnce()
+  })
+
+  it('does not allow deleting the default local Agent', async () => {
+    const archive = vi.fn()
+    const update = vi.fn()
+    const defaultAgent = {
+      id: 'LA-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+      runtime: 'codex',
+      status: 'active',
+      version: 1,
+    }
+    const detailServices = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn().mockResolvedValue([defaultAgent]),
+        ensureDefault: vi.fn(),
+        create: vi.fn(),
+        archive,
+        update,
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, 'admin', null, detailServices)!
+    const [resource] = (await api.resources!.list()).agents
+
+    await expect(api.resources!.removeAgent!(resource)).rejects.toThrow('默认本地智能体不能删除')
+    await expect(
+      api.agents.update('local-project', defaultAgent.id, {
+        version: 1,
+        status: 'archived',
+      })
+    ).rejects.toThrow('默认本地智能体不能停用')
+    expect(archive).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('keeps local Agent resources local when cloud resource loading fails', async () => {
+    const localAgent = {
+      id: 'LA-local',
+      name: '本地代码助手',
+      capabilityDescription: '处理本地代码',
+      systemPrompt: 'Work locally.',
+      runtime: 'codex',
+      status: 'active',
+      executionDeviceId: 'local-device',
+    }
+    const defaultAgent = {
+      ...localAgent,
+      id: 'LA-default',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+    }
+    const detailServices = {
+      ...createLocalDetailServices(),
+      localProjectChatAgentApi: {
+        list: vi.fn().mockResolvedValue([localAgent]),
+        ensureDefault: vi.fn(async () => defaultAgent),
+        create: vi.fn(),
       },
     } as unknown as ProjectSpaceDetailServices
     const api = createWeworkPlatformApi(
@@ -2497,7 +2782,10 @@ describe('Wework collaboration workspace API', () => {
     )
 
     await expect(api?.resources?.list()).resolves.toMatchObject({
-      agents: [{ id: 'LA-local', location: 'local' }],
+      agents: [
+        { id: 'LA-local', location: 'local' },
+        { id: 'LA-default', location: 'local', deletable: false },
+      ],
     })
   })
 

@@ -201,13 +201,12 @@ export default function ChatInput({
 
   // Measure badge width for text-indent
   useEffect(() => {
-    if (badgeRef.current && badge) {
-      // Add some margin (6px = mr-1.5)
-      setBadgeWidth(badgeRef.current.offsetWidth + 8)
-    } else {
-      setBadgeWidth(0)
+    const nextBadgeWidth = badgeRef.current && badge ? badgeRef.current.offsetWidth + 8 : 0
+    // The parent recreates the badge while typing; only dispatch real layout changes.
+    if (nextBadgeWidth !== badgeWidth) {
+      setBadgeWidth(nextBadgeWidth)
     }
-  }, [badge])
+  }, [badge, badgeWidth])
 
   // Helper function to extract text with preserved newlines from contentEditable
   const getTextWithNewlines = useCallback((element: HTMLElement): string => {

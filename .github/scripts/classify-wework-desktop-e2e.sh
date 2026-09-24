@@ -10,6 +10,7 @@ core_segments=(
   collaboration-first-use
   collaboration-group-onboarding
   collaboration-local-agent-capabilities
+  collaboration-local-executor-issue-tools
   collaboration-agent-automation-chain
   cloud-space-mention
   priority-filter
@@ -40,6 +41,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-invalid-launch-cwd
   running-conversation-history
   running-plan-history
   codex-notification-isolation
@@ -149,12 +151,12 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-agent-automation-chain
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
-  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
+  runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
@@ -549,6 +551,10 @@ classify_wework_path() {
       select_target "core:collaboration-local-agent-capabilities"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-local-executor-issue-tools.scenario.mjs)
+      select_target "core:collaboration-local-executor-issue-tools"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-agent-automation-chain.scenario.mjs)
       select_target "core:collaboration-agent-automation-chain"
       return
@@ -798,6 +804,10 @@ classify_wework_path() {
       select_target "core:runtime-task-queue"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-invalid-launch-cwd.scenario.mjs)
+      select_target "core:codex-invalid-launch-cwd"
+      return
+      ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
       return
@@ -964,6 +974,7 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-agent-capabilities"
+      select_target "core:collaboration-local-executor-issue-tools"
       select_target "core:collaboration-agent-automation-chain"
       select_target "cloud:cloud-device-lifecycle"
       ;;
@@ -973,9 +984,16 @@ classify_path() {
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-agent-capabilities"
+      select_target "core:collaboration-local-executor-issue-tools"
       select_target "core:collaboration-agent-automation-chain"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
+      select_all_desktop_suites
+      ;;
+    backend-rs/* | backend-rs/** | \
+      wework/e2e/desktop/modules/cloud-environment.mjs | \
+      wework/e2e/desktop/modules/task-flow-main.mjs | \
+      wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \

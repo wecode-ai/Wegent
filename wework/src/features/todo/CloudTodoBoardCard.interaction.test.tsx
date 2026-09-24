@@ -45,6 +45,29 @@ const minimalDisplay = {
 
 describe('board progress activation', () => {
   it.each(['drop', 'tasks', 'task-summary'])(
+    'opens Issue details from the %s area in collaboration',
+    async area => {
+      const onClick = vi.fn()
+      render(
+        <CloudTodoBoardCard
+          item={item}
+          taskBindings={progressBindings}
+          display={minimalDisplay}
+          onClick={onClick}
+          onArchive={vi.fn()}
+          processingStatus={false}
+          issueDetailOnly
+        />
+      )
+      const suffix = area === 'task-summary' ? '-85' : ''
+      await userEvent.click(screen.getByTestId(`cloud-todo-card-${area}-WEG-85${suffix}`))
+      expect(onClick).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('cloud-todo-card-open-task-WEG-85')).not.toBeInTheDocument()
+    }
+  )
+
+  it.each(['drop', 'tasks', 'task-summary'])(
     'opens the lightweight progress preview from the %s area',
     async area => {
       const onClick = vi.fn()

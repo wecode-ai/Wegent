@@ -53,6 +53,7 @@ def test_long_skill_names_keep_servers_distinct_within_tool_name_budget() -> Non
 
 
 def test_skill_code_collision_prevents_silent_server_overwrite(monkeypatch) -> None:
+    """Force a hash collision and preserve both server configurations."""
     short_code = mcp_names._short_code
     monkeypatch.setattr(
         mcp_names,
@@ -61,14 +62,15 @@ def test_skill_code_collision_prevents_silent_server_overwrite(monkeypatch) -> N
     )
     configs = [
         {"name": name, "mcpServers": {"docs": {"url": f"https://example.test/{name}"}}}
-        for name in ("skill-one", "skill-two")
+        for name in ("skill-one-" + "x" * 30, "skill-two-" + "x" * 30)
     ]
 
     servers = extract_skill_mcp_servers(configs)
 
+    assert servers[0]["name"] == "abcdefg_docs"
     assert len({server["name"] for server in servers}) == 2
     assert [server["url"] for server in servers] == [
-        "https://example.test/skill-one",
-        "https://example.test/skill-two",
+        f"https://example.test/skill-one-{'x' * 30}",
+        f"https://example.test/skill-two-{'x' * 30}",
     ]
     assert extract_skill_mcp_servers(configs) == servers

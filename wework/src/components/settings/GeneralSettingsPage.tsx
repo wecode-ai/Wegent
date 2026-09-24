@@ -688,6 +688,10 @@ export function GeneralSettingsPage() {
                         data-testid={`general-fixed-tab-startup-${tab.id}`}
                         disabled={loading || saving}
                         aria-pressed={startupWorkspaceTabId === tab.id}
+                        aria-label={t(
+                          'workbench.general_settings_startup_workspace_tab',
+                          '设为启动标签页'
+                        )}
                         onClick={() => void saveFixedWorkspaceTabs(fixedWorkspaceTabs, tab.id)}
                         className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted md:h-6 md:w-6"
                         title={t(

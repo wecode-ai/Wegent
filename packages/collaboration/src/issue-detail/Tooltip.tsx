@@ -128,6 +128,7 @@ export function Tooltip({
   return (
     <span
       ref={triggerRef}
+      data-tooltip-trigger
       className={cn("group relative inline-flex shrink-0", className)}
       onPointerEnter={scheduleShow}
       onPointerLeave={hide}
