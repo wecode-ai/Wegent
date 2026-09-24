@@ -23,6 +23,7 @@ core_segments=(
   project-assignment-notification
   offline-local-project-space
   board-focus-view
+  board-transcript-preload
   cloud-context-resilience
   cloud-login-proxy
   core-dsh-plugin-management
@@ -158,7 +159,7 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,collaboration-issue-comment-mention,collaboration-issue-comment-notification
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification
   rendering-extensions
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
@@ -567,6 +568,14 @@ classify_wework_path() {
       select_target "core:board-focus-view"
       return
       ;;
+    wework/e2e/desktop/scenarios/board-transcript-preload.scenario.mjs)
+      select_target "core:board-transcript-preload"
+      return
+      ;;
+    wework/src/components/layout/DesktopWorkbenchLayout.tsx)
+      select_all_desktop_suites
+      return
+      ;;
     # Issue comment/reply mention wiring lives in the shared composers and in
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
@@ -611,6 +620,9 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
         select_target "core:collaboration-first-use"
+      fi
+      if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
+        select_target "core:board-transcript-preload"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
         select_target "core:cloud-context-resilience"

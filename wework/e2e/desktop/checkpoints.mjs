@@ -27,6 +27,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-assignment-notification',
   'offline-local-project-space',
   'board-focus-view',
+  'board-transcript-preload',
   'cloud-context-resilience',
   'cloud-login-proxy',
   'core-dsh-plugin-management',
