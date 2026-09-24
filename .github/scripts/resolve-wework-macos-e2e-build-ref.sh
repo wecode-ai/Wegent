@@ -7,7 +7,7 @@ if (($# != 3)); then
   exit 2
 fi
 
-repository_owner="${1,,}"
+repository_owner="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
 executor_source_digest="$2"
 backend_rs_source_digest="$3"
 manifest="$(mktemp)"
