@@ -510,6 +510,12 @@ jobs:
           source .venv/bin/activate
           uv pip install -e ../shared
 
+      - name: Prepare Chat Shell tokenizers
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+          ../.github/scripts/prepare-chat-shell-tokenizers.sh
+
       - name: Download frontend E2E build
         env:
           ACTIONS_ARTIFACT_WAIT_SECONDS: "300"
@@ -907,6 +913,12 @@ jobs:
           uv sync
           source .venv/bin/activate
           uv pip install -e ../shared
+
+      - name: Prepare Chat Shell tokenizers
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+          ../.github/scripts/prepare-chat-shell-tokenizers.sh
 
       - name: Install executor manager dependencies
         working-directory: ./executor_manager
