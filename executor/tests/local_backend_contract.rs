@@ -133,7 +133,6 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
 async fn standalone_runner_reports_actual_dynamic_gateway_port() {
     let _env_lock = ENV_LOCK.lock().await;
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
-    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
 

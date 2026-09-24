@@ -23,9 +23,6 @@ from app.schemas.device import DeviceType
 
 DEFAULT_REMOTE_DEVICE_IMAGE = "ghcr.io/wecode-ai/wegent-device:latest"
 DEFAULT_REMOTE_DEVICE_BACKEND_URL = ""
-DEFAULT_REMOTE_DEVICE_PUBLIC_BASE_URL = (
-    f"http://localhost:{EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT}"
-)
 DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
     "https://github.com/wecode-ai/Wegent/releases/latest/download/"
     "local_executor_install.sh"
@@ -43,7 +40,6 @@ class RemoteDeviceCommandContext:
     """Inputs shared by remote device startup command providers."""
 
     container_name: str
-    client_origin: str | None
     request_scheme: str
     request_netloc: str
     request_headers: Dict[str, str]
@@ -150,7 +146,11 @@ def _strip_api_suffix(url: str) -> str:
 
 
 def _build_process_start_command(env: Dict[str, str], install_url: str) -> str:
-    env_lines = [f"export {key}={shlex.quote(value)}" for key, value in env.items()]
+    env_lines = [
+        f"export {key}={shlex.quote(value)}"
+        for key, value in env.items()
+        if key != "DEVICE_SESSION_GATEWAY_PORT"
+    ]
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -209,52 +209,6 @@ class DefaultRemoteDeviceCommandProvider:
         host = context.request_headers.get("host", context.request_netloc)
         return f"{context.request_scheme}://{host}"
 
-    def _absolute_url(
-        self, value: str | None, context: RemoteDeviceCommandContext
-    ) -> str | None:
-        if not value or not value.strip():
-            return None
-        normalized = value.strip()
-        parsed = urlparse(normalized)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return normalized
-        if normalized.startswith("/"):
-            return f"{self._get_backend_url(context).rstrip('/')}{normalized}"
-        return None
-
-    def _origin_from_headers(self, context: RemoteDeviceCommandContext) -> str | None:
-        origin = context.request_headers.get("origin")
-        if origin:
-            return origin
-        referer = context.request_headers.get("referer")
-        if not referer:
-            return None
-        parsed = urlparse(referer)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}"
-        return None
-
-    def _resolve_public_base_url(self, context: RemoteDeviceCommandContext) -> str:
-        candidate = (
-            context.client_origin
-            or self._origin_from_headers(context)
-            or self._get_backend_url(context)
-        )
-        candidate = self._absolute_url(candidate, context) or self._get_backend_url(
-            context
-        )
-        parsed = urlparse(candidate)
-        host = parsed.hostname
-        if not host or parsed.scheme not in {"http", "https"}:
-            return DEFAULT_REMOTE_DEVICE_PUBLIC_BASE_URL
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        return _validate_generated_url(
-            f"http://{host}:{EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT}",
-            "public_base_url",
-            allowed_schemes={"http", "https"},
-        )
-
     def build(self, context: RemoteDeviceCommandContext) -> RemoteDeviceCommandResult:
         image = _validate_public_image(
             os.getenv("REMOTE_DEVICE_DOCKER_IMAGE", DEFAULT_REMOTE_DEVICE_IMAGE)
@@ -269,7 +223,6 @@ class DefaultRemoteDeviceCommandProvider:
             "socket_url",
             allowed_schemes={"http", "https", "ws", "wss"},
         )
-        public_base_url = self._resolve_public_base_url(context)
         env = {
             "DEVICE_TYPE": DeviceType.REMOTE.value,
             "DEVICE_ID": context.device_id,
@@ -282,22 +235,16 @@ class DefaultRemoteDeviceCommandProvider:
             "WEGENT_BACKEND_URL": backend_url,
             "WEGENT_SOCKET_URL": socket_url,
             "WEGENT_AUTH_TOKEN": context.auth_token,
-            "DEVICE_PUBLIC_BASE_URL": public_base_url,
             "DEVICE_SESSION_GATEWAY_PORT": str(EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT),
         }
         docker_env = {
             key: value
             for key, value in env.items()
-            if key not in {"DEVICE_PUBLIC_BASE_URL", "DEVICE_SESSION_GATEWAY_PORT"}
+            if key != "DEVICE_SESSION_GATEWAY_PORT"
         }
         env_lines = [
             f"  -e {key}={shlex.quote(value)} \\" for key, value in docker_env.items()
         ]
-        public_url = urlparse(public_base_url)
-        public_host = public_url.hostname or "localhost"
-        if ":" in public_host and not public_host.startswith("["):
-            public_host = f"[{public_host}]"
-        public_origin = f"{public_url.scheme}://{public_host}"
         lines = [
             (
                 'DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-'
@@ -314,10 +261,6 @@ class DefaultRemoteDeviceCommandProvider:
             [
                 *env_lines,
                 '  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \\',
-                (
-                    f"  -e DEVICE_PUBLIC_BASE_URL={shlex.quote(public_origin)}:"
-                    '"$DEVICE_SESSION_GATEWAY_PORT" \\'
-                ),
                 '  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \\',
                 f"  -v {shlex.quote(context.container_name)}-home:/home/wegent/.wecode/wegent-executor \\",
                 f"  {shlex.quote(image)}",

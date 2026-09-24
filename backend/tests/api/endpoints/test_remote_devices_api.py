@@ -62,9 +62,7 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
 
     response = await remote_devices.create_docker_start_command(
         request=_FakeRequest(host="localhost:8000"),
-        body=remote_devices.CreateDockerRemoteDeviceRequest(
-            client_origin="http://localhost:1420",
-        ),
+        body=remote_devices.CreateDockerRemoteDeviceRequest(),
         db=test_db,
         current_user=test_user,
     )
@@ -87,7 +85,6 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert response.env["WEGENT_EXECUTOR_HOME_ID"] == response.device_id
     assert response.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
-    assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
     assert response.env["DEVICE_SESSION_GATEWAY_PORT"] == "17888"
     assert response.image == "ghcr.io/wecode-ai/wegent-device:latest"
     assert (
@@ -99,10 +96,6 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
         in response.command
     )
     assert (
-        '-e DEVICE_PUBLIC_BASE_URL=http://localhost:"$DEVICE_SESSION_GATEWAY_PORT"'
-        in response.command
-    )
-    assert (
         '-p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT"'
         in response.command
     )
@@ -110,9 +103,10 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert [command.kind for command in response.commands] == ["docker", "process"]
     assert response.commands[0].command == response.command
     assert "local_executor_install.sh" in response.commands[1].command
-    assert (
-        "DEVICE_PUBLIC_BASE_URL=http://localhost:17888" in response.commands[1].command
-    )
+    assert "DEVICE_PUBLIC_BASE_URL" not in response.command
+    assert "DEVICE_PUBLIC_BASE_URL" not in response.commands[1].command
+    # Exactly one assignment, so a caller-supplied port is not clobbered.
+    assert response.commands[1].command.count("DEVICE_SESSION_GATEWAY_PORT=") == 1
     assert (
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true"
         in response.commands[0].command
@@ -158,21 +152,18 @@ async def test_create_docker_start_command_uses_current_system_urls(
 
     response = await remote_devices.create_docker_start_command(
         request=_FakeRequest(host="backend.example.com", scheme="https"),
-        body=remote_devices.CreateDockerRemoteDeviceRequest(
-            client_origin="https://app.example.com",
-        ),
+        body=remote_devices.CreateDockerRemoteDeviceRequest(),
         db=test_db,
         current_user=test_user,
     )
 
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
     assert response.env["WEGENT_SOCKET_URL"] == "wss://socket.example.com"
-    assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://app.example.com:17888"
     assert "--add-host host.docker.internal:host-gateway" not in response.command
 
 
 @pytest.mark.asyncio
-async def test_create_docker_start_command_keeps_client_origin_optional(
+async def test_create_docker_start_command_falls_back_to_request_host(
     monkeypatch,
     test_db,
     test_user,
@@ -186,7 +177,6 @@ async def test_create_docker_start_command_keeps_client_origin_optional(
 
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
     assert response.env["WEGENT_SOCKET_URL"] == "https://backend.example.com"
-    assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://backend.example.com:17888"
 
 
 def _provider_context(
@@ -194,7 +184,6 @@ def _provider_context(
 ) -> RemoteDeviceCommandContext:
     return RemoteDeviceCommandContext(
         container_name=container_name,
-        client_origin="https://app.example.com",
         request_scheme="https",
         request_netloc="backend.example.com",
         request_headers={"host": "backend.example.com"},

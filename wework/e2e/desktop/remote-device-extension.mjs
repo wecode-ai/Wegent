@@ -20,6 +20,11 @@ const publicRemoteDeviceE2EExtension = {
     )
     assert.ok(command.includes('-e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT"'))
     assert.ok(command.includes('-p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT"'))
+    assert.equal(
+      command.includes('DEVICE_PUBLIC_BASE_URL='),
+      false,
+      'The public remote Docker command still requires a manually configured IDE URL'
+    )
   },
 }
 
