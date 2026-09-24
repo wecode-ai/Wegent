@@ -12,6 +12,7 @@ interface PendingWorkbenchComposerFocus {
 }
 
 const WORKBENCH_COMPOSER_FOCUS_TTL_MS = 2_000
+const WORKBENCH_COMPOSER_FOCUS_RETRY_MS = 16
 let pendingWorkbenchComposerFocus: PendingWorkbenchComposerFocus | null = null
 
 export function focusComposerAtEnd(element: HTMLElement | null | undefined) {
@@ -102,6 +103,9 @@ function dispatchUntilWorkbenchComposerFocusConsumed(pending: PendingWorkbenchCo
   window.requestAnimationFrame(() => {
     if (getPendingWorkbenchComposerFocus() !== pending || pending.consumers.size > 0) return
     dispatchPendingWorkbenchComposerFocusRequest()
-    dispatchUntilWorkbenchComposerFocusConsumed(pending)
+    window.setTimeout(
+      () => dispatchUntilWorkbenchComposerFocusConsumed(pending),
+      WORKBENCH_COMPOSER_FOCUS_RETRY_MS
+    )
   })
 }

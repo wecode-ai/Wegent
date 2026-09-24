@@ -1950,7 +1950,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return window.location.origin
     case 'restartCoreDsh':
       await flushDesktopLocalStoragePersistence()
-      await invokeDesktopHost('runtime.restartCoreDsh')
       return ''
     case 'setEmbeddedBrowserLocalStorageItem':
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
@@ -2941,6 +2940,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'restartCoreDsh') {
+          // A Core DSH restart replaces this renderer, so acknowledge the
+          // command before starting it. The scenario verifies the replacement
+          // through the next control-client ready event.
+          await invokeDesktopHost('runtime.restartCoreDsh')
+          return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
           return
