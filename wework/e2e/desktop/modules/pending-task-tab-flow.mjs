@@ -18,7 +18,7 @@ export async function verifyPendingTaskAcrossTabs({ control, workspacePath }) {
   await createSingleRootLocalProject(control, workspacePath, 'pending-task-tab')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('click', '[data-testid="execution-mode-button"]')
-  await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="execution-mode-git-worktree-button"]')
   const scenario = 'worktree_status_hold'
   control.holdScenarioResponse(scenario)
   control.setScenario(scenario)

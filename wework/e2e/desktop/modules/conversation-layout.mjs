@@ -1071,7 +1071,7 @@ async function verifyWorktreeCreationStatus({
   await captureVerificationScreenshot(control, 'worktree-status-01-project-ready.png')
 
   await control.command('click', '[data-testid="execution-mode-button"]')
-  await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="execution-mode-git-worktree-button"]')
   await control.command('waitFor', '[data-testid="execution-mode-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
