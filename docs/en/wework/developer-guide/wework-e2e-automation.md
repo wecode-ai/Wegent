@@ -148,9 +148,10 @@ by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. Core uses thirteen fixed GitHub
 Actions matrix jobs and Cloud uses ten. Every job runs its
-checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
-contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The twenty-three Core and Cloud
+up to three isolated checkpoints concurrently, shortening each shard's critical
+path without adding runners. Checkpoints that share the Collaboration cloud
+runtime remain serialized through an exclusive resource lock so real Electron,
+WebView, and Executor stacks cannot contaminate one another. The twenty-three Core and Cloud
 matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
@@ -164,9 +165,10 @@ the Harness runtime, Node execution runtime, and Executor concurrently; the
 Harness preparation owns the single DSH application Vite build so the same
 frontend is not compiled twice. Every Core and Cloud shard downloads and reuses
 that artifact instead of rebuilding Vite, Electron, and Executor. Desktop shards
-start without waiting for the build job to finish and poll for the shared
-artifact after preparing their own dependencies. This overlaps shard setup with
-the single package build without adding matrix jobs or dropping checkpoints.
+start only after the shared build succeeds and download it directly through the
+GitHub artifact action. This prevents many runners from sitting idle while
+polling during the build, allowing Lint, Tests, and Platform E2E to acquire
+runners promptly without adding matrix jobs or dropping checkpoints.
 Both the Rust gateway and Executor use debug profiles so E2E does not spend time
 on unused release optimization. Test artifacts also disable dev-profile
 debuginfo because diagnostics do not retain those symbols; generating and then
@@ -341,6 +343,14 @@ the local Rust-to-Python fallback connection and does not disable keep-alive
 between external clients and the gateway.
 
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
+
+The `plugin-account-auth` scenario uses shorter scheduling intervals only when
+an E2E reconciliation marker is configured; production retains the 15-second
+automatic synchronization period and 60-second failure backoff. The DWS manual
+revocation assertion no longer sleeps for a fixed 32 seconds. It waits for two
+completed reconciliation markers from the real Executor while continuously
+asserting that the grant remains revoked, so the optimization removes idle time
+without dropping account migration, cloud execution, or revocation coverage.
 
 The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 

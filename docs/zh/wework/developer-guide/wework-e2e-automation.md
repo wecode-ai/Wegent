@@ -144,8 +144,9 @@ checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fix
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
 完整 Core 套件固定使用 13 个 GitHub Actions matrix job，Cloud 套件使用 10 个；每个 job
-串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
-GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
+最多并行运行 3 个彼此隔离的 checkpoint，在不增加 runner 数量的前提下缩短分片
+关键路径。共享同一协作云端运行时的 checkpoint 通过资源锁保持串行，避免真实
+Electron、WebView 和 Executor 栈互相污染。
 跨 runner 的 23 个 Core/Cloud matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
@@ -154,9 +155,10 @@ Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint �
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
 Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
 构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
-执行 Vite、Electron 和 Executor 构建。桌面分片不依赖构建 job 完成才启动，而是在
-准备自身依赖后轮询共享 artifact；这会把分片初始化与唯一一次打包重叠起来，但不会
-增加 matrix job 数量或减少任何 checkpoint。Rust gateway 和 Executor 都以 debug
+执行 Vite、Electron 和 Executor 构建。桌面分片依赖共享构建成功后才启动，并通过
+GitHub artifact action 直接下载产物；这避免大量 runner 在构建期间空占资源轮询，
+让 Lint、Tests 和 Platform E2E 能及时获得 runner，同时不增加 matrix job 数量或
+减少任何 checkpoint。Rust gateway 和 Executor 都以 debug
 profile 构建，避免为 E2E 产物执行无用的 release 优化；测试产物还会关闭 dev
 profile 的 debuginfo，因为诊断 artifact 不保留这些符号，生成后再剥离只会延长
 冷构建。Rust 构建同时复用由 `main`
@@ -290,6 +292,11 @@ upstream unavailable`。让本地启动器的上游连接生命周期覆盖整�
 不改变外部客户端到 gateway 的连接复用。
 
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
+
+`plugin-account-auth` 场景使用仅在 E2E 标记文件启用时生效的调度间隔，生产环境仍
+保持 15 秒自动同步周期和 60 秒失败退避。DWS 手工撤销验证不再固定等待 32 秒，而是
+等待真实 Executor 写出两次已完成的 reconciliation 标记，并在期间持续断言授权没有
+被自动恢复；因此缩短的是空等时间，不是账号迁移、云端执行或撤销覆盖。
 
 GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright 缓存后加载预构建 Docker 镜像。该 job 必须先删除不使用的 hosted-runner SDK（.NET、Android、GHC 和 CodeQL）并记录磁盘用量，为镜像解压保留稳定空间；清理逻辑不得删除正在运行的 MySQL 或 Redis service 镜像。
 
