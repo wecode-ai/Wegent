@@ -37,6 +37,7 @@ export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   previewPinned?: boolean
   onPreviewPinnedChange?: (pinned: boolean) => void
   previewDisabled?: boolean
+  showOpenTaskAction?: boolean
   dragEnabled?: boolean
   unread?: boolean
   onMarkRead?: () => void
@@ -61,6 +62,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   previewPinned,
   onPreviewPinnedChange,
   previewDisabled = false,
+  showOpenTaskAction = true,
   onMarkRead,
   unread,
   progressTaskBindings = [],
@@ -245,7 +247,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
               />
             </span>
           ) : null}
-          {progressTaskBindings.length > 0 && openItem ? (
+          {showOpenTaskAction && progressTaskBindings.length > 0 && openItem ? (
             <span className="absolute bottom-2 right-2 z-20">
               <Tooltip
                 label={t('todo.open_task_page_named', '打开任务页：{{title}}', {

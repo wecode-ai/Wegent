@@ -10,10 +10,7 @@ import type {
   CollaborationGroup,
   CollaborationMember,
 } from "../types";
-import {
-  isCurrentDeviceCollaborationAgent,
-  WorkspaceCollaborationGroupsConfiguration,
-} from "../platform/WorkspaceResourceConfiguration";
+import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
 
 export function ProjectCollaborationGroups({
@@ -77,37 +74,9 @@ export function ProjectCollaborationGroups({
   }, [agents]);
 
   const projectGroupIds = new Set(groups.map((group) => group.id));
-  const hasCurrentDeviceAgent = availableAgents.some(
-    isCurrentDeviceCollaborationAgent,
-  );
-  const findAgent = (
-    projectAgents: CollaborationAgent[],
-    id: string,
-  ): CollaborationAgent => {
-    const agent = projectAgents.find(
-      (candidate) => String(candidate.team_id ?? candidate.id) === id,
-    );
-    if (!agent) {
-      throw new Error("Created collaboration group agent was not found");
-    }
-    return agent;
-  };
   const agentActions =
     canManage && agentConfiguration
       ? {
-          ...(location === "local" &&
-          !hasCurrentDeviceAgent &&
-          agentConfiguration.createDefaultLocalAgent
-            ? {
-                createDefault: async () => {
-                  const id =
-                    await agentConfiguration.createDefaultLocalAgent!(
-                      projectId,
-                    );
-                  return findAgent(await reload(), id);
-                },
-              }
-            : {}),
           ...((location === "local" &&
             agentConfiguration.renderLocalAgentCreator) ||
           (location === "cloud" && agentConfiguration.renderAgentCreator)

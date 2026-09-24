@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.health import probe_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -650,6 +651,11 @@ def create_app():
         lifespan=lifespan,
     )
 
+    # Keep frequent probes ahead of business routes. With an empty API prefix,
+    # the existing database-aware /health route must retain precedence.
+    if settings.API_PREFIX:
+        app.include_router(probe_router)
+
     logger = _logger
 
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
@@ -913,6 +919,8 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    if not settings.API_PREFIX:
+        app.include_router(probe_router)
 
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools
@@ -984,29 +992,3 @@ def create_socketio_asgi_app():
 
 # Combined ASGI app (Socket.IO + FastAPI)
 app = create_socketio_asgi_app()
-
-
-# MIGRATION-CANDIDATE(api="GET /"): remove after final confirmation.
-# Root path (registered on FastAPI app)
-# @_fastapi_app.get("/")
-# async def root():
-#     """
-#     Root path, returns API information
-#     """
-#     return {
-#         "name": settings.PROJECT_NAME,
-#         "version": settings.VERSION,
-#         "api_prefix": settings.API_PREFIX,
-#         "docs_url": f"{settings.API_PREFIX}/docs",
-#         "socketio_path": "/socket.io",
-#     }
-
-
-# Health check endpoint (registered on FastAPI app)
-@_fastapi_app.get("/health")
-async def health():
-    """
-    Health check endpoint for container orchestration and load balancers.
-    Returns a simple status indicating the service is running.
-    """
-    return {"status": "healthy"}

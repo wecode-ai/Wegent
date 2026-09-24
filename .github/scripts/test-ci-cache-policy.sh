@@ -88,6 +88,8 @@ executor_lock="${warmup_all_false/docker=false/docker=true}"
 executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
+backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
+assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
@@ -472,9 +474,14 @@ if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
   fail "Wework desktop E2E must identify its root container as a Claude Code sandbox"
 fi
 
+if ! grep -Fq 'mysql-server' "$wework_desktop_image" ||
+  ! grep -Fq 'mysqld --version' "$wework_desktop_image"; then
+  fail "Wework desktop E2E image must provide a runnable MySQL server"
+fi
+
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-electron-e2e-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
+wework_target_key='wework-electron-e2e-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''backend-rs/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
   fail "Wework E2E and warmup must share the Electron build cache"

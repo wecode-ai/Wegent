@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import type { WorkspaceProjectCreateInput } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationGroup,
+  CollaborationGroupMember,
   CollaborationExecutionEnvironment,
   CollaborationMember,
   CollaborationOwnedAgent,
@@ -27,8 +28,82 @@ export interface ProjectCreateResourceSelection {
   memberUserIds: number[];
   agentResourceIds: string[];
   executionEnvironmentDeviceIds: number[];
-  leaderId: string;
+  collaborationGroupDraft: ProjectCreateCollaborationGroupDraft | null;
 }
+
+export interface ProjectCreateCollaborationGroupDraft {
+  name: string;
+  description: string;
+  instructions: string;
+  leader: CollaborationGroupMember;
+  members: CollaborationGroupMember[];
+  stages: Array<{
+    id: string;
+    name: string;
+    description: string;
+    assignee: CollaborationGroupMember | null;
+  }>;
+  executionRequirements: {
+    requiredTags: string[];
+  };
+}
+
+export interface ProjectCreateCollaborationGroupDraftInput {
+  projectName: string;
+  projectDescription: string;
+  generationInstructions: string;
+  currentUser: {
+    id: number;
+    name: string;
+  };
+  members: CollaborationMember[];
+  agents: CollaborationOwnedAgent[];
+  modelSelection: ProjectCreateGenerationModelSelection;
+}
+
+export interface ProjectCreateGenerationModelSelection {
+  modelName: string;
+  modelType?: "public" | "user" | "group" | "runtime" | null;
+  options?: Record<string, string>;
+}
+
+export interface ProjectCreateGenerationModel extends ProjectCreateGenerationModelSelection {
+  displayName: string;
+}
+
+export interface ProjectCreateGenerationModelCatalog {
+  models: ProjectCreateGenerationModel[];
+  defaultSelection: ProjectCreateGenerationModelSelection | null;
+}
+
+export type ProjectCreateGenerationProgressPhase = "preparing" | "generating";
+
+export type ProjectCreateCollaborationGroupGenerationEvent =
+  | {
+      type: "group";
+      name: string;
+    }
+  | {
+      type: "participant_started";
+      kind: "human" | "agent";
+      id: string;
+      leader: boolean;
+    }
+  | {
+      type: "participant_delta";
+      kind: "human" | "agent";
+      id: string;
+      delta: string;
+    }
+  | {
+      type: "principle";
+      text: string;
+    }
+  | {
+      type: "stage";
+      id: string;
+      name: string;
+    };
 
 export interface ProjectCreateResourceSetup {
   location: ProjectCreateLocation;
@@ -38,9 +113,15 @@ export interface ProjectCreateResourceSetup {
   };
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
+  defaultAgentResourceIds?: string[];
   groups: CollaborationGroup[];
   executionEnvironments?: CollaborationExecutionEnvironment[];
-  createDefaultAgent?(): Promise<string>;
+  loadCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
+  generateCollaborationGroupDraft?(
+    input: ProjectCreateCollaborationGroupDraftInput,
+    onProgress?: (phase: ProjectCreateGenerationProgressPhase) => void,
+    onEvent?: (event: ProjectCreateCollaborationGroupGenerationEvent) => void,
+  ): Promise<ProjectCreateCollaborationGroupDraft>;
   configure(
     project: CollaborationProject,
     selection: ProjectCreateResourceSelection,
@@ -68,6 +149,7 @@ export interface ProjectCreateHostAdapter {
 }
 
 export interface ProjectCreateLabels {
+  locale: "zh-CN" | "en";
   title: string;
   name: string;
   namePlaceholder: string;
@@ -111,13 +193,51 @@ export interface ProjectCreateLabels {
   collaborators: string;
   currentUser: string;
   addCollaborator: string;
-  createDefaultAgent: string;
-  defaultGroupName: string;
-  createDefaultAgentDescription: string;
   importGroupDescription: string;
   availableAgents: string;
   availableGroups: string;
   noAvailableCollaborators: string;
+  groupRecommendationTitle: string;
+  groupRecommendationDescription: string;
+  keepDirectCollaboration: string;
+  organizeAsGroup: string;
+  createCollaborationGroup: string;
+  generatingGroup: string;
+  groupDraftTitle: string;
+  groupName: string;
+  groupLeader: string;
+  leaderWorks: string;
+  specialistWorks: string;
+  setAsLeader: string;
+  generatedWorkflow: string;
+  editResponsibilities: string;
+  supplementResponsibility: string;
+  supplementAllocationPrinciples: string;
+  removeGroup: string;
+  applyGroup: string;
+  groupGenerationUnavailable: string;
+  generationModel: string;
+  generationModelLoading: string;
+  generationModelRequired: string;
+  selectGenerationModel: string;
+  generationRequest: string;
+  generationRequestPlaceholder: string;
+  generationRequestDefault: string;
+  selectedGenerationAgents: string;
+  agentAttachment: string;
+  memberAttachment: string;
+  standingInGroup: string;
+  generateResponsibilities: string;
+  preparingGenerationModel: string;
+  generatingResponsibilities: string;
+  generationElapsed: string;
+  waitingForAssignment: string;
+  automaticAssignmentHint: string;
+  formingGroup: string;
+  liveGeneration: string;
+  allocationPrinciples: string;
+  generatingWorkflow: string;
+  groupSettingsHint: string;
   cancel: string;
   create: string;
   creating: string;

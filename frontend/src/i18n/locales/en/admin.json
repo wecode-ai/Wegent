@@ -523,7 +523,8 @@
       "advanced": "Advanced",
       "standard": "Standard",
       "wework_available": "wework available",
-      "wework_unavailable": "wework unavailable"
+      "wework_unavailable": "wework unavailable",
+      "whitelisted": "Whitelisted"
     },
     "columns": {
       "id": "ID",
@@ -546,7 +547,12 @@
       "config_placeholder": "Enter model configuration as JSON",
       "is_visible": "Visible to users",
       "is_advanced": "Advanced Model",
-      "is_wework_available": "Available in wework"
+      "is_wework_available": "Available in wework",
+      "allowed_users": "User whitelist",
+      "allowed_users_placeholder": "Enter usernames, separated by commas",
+      "allowed_users_hint": "Separate multiple usernames with commas (full-width or half-width); only takes effect when the whitelist switch is on",
+      "allowed_users_enabled": "Whitelist only",
+      "allowed_users_enabled_hint": "When enabled, only whitelisted users can see and use this model; an empty list denies everyone"
     },
     "confirm": {
       "delete_title": "Delete Model",

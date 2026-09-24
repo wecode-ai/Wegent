@@ -1627,6 +1627,112 @@ async fn runtime_tasks_keep_subscription_between_turns_and_release_it_on_archive
 }
 
 #[tokio::test]
+async fn runtime_tasks_reload_a_generic_codex_thread_when_project_space_is_bound() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-project-space-upgrade-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-project-space-upgrade-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-project-space-upgrade-log", "jsonl");
+    let fake_codex = write_fake_codex_persistent_two_turns(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-project-space-upgrade",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 5201,
+                    "subtask_id": 6201,
+                    "prompt": "first turn",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("generic task creation should be accepted");
+    wait_for_thread_mapping(
+        &handler,
+        "local-task-project-space-upgrade",
+        "thread-persistent",
+    )
+    .await;
+    wait_until_task_idle(&handler, "local-task-project-space-upgrade").await;
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "taskId": "local-task-project-space-upgrade",
+                "workspacePath": "/tmp/project",
+                "message": "read the bound Issue attachment",
+                "executionRequest": {
+                    "task_id": 5201,
+                    "subtask_id": 6202,
+                    "prompt": "read the bound Issue attachment",
+                    "project_workspace_path": "/tmp/project",
+                    "origin": {
+                        "type": "board_task",
+                        "projectStore": "local",
+                        "cloudProjectId": "space-1",
+                        "loopItemId": "issue-1"
+                    },
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("bound follow-up should be accepted");
+    assert_eq!(sent["accepted"], true);
+    wait_for_turn_count(&log_path, 2).await;
+    wait_until_task_idle(&handler, "local-task-project-space-upgrade").await;
+
+    let calls = read_json_lines(&log_path);
+    let unsubscribe_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("the retained generic-thread subscription should be released");
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("the bound task should resume its Codex thread");
+    assert!(
+        unsubscribe_index < resume_index,
+        "the thread must be unsubscribed before resume applies the project-space override"
+    );
+    let resume_call = &calls[resume_index];
+    assert_eq!(
+        resume_call["params"]["config"]["mcp_servers.wework_space.enabled"],
+        true
+    );
+    assert!(resume_call["params"]["developerInstructions"]
+        .as_str()
+        .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:")));
+}
+
+#[tokio::test]
 async fn runtime_tasks_share_one_codex_app_server_across_handlers() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

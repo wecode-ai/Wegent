@@ -46,6 +46,8 @@ import {
   type DesktopSidebarAccountSettingsOptions,
 } from '@/components/layout/DesktopSidebarAccount'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
+import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
@@ -54,6 +56,12 @@ import type {
   ProjectSpaceDetailServices,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
+import { getNewChatModelSelection } from '@/features/workbench/workbenchProviderHelpers'
+import {
+  defaultNewChatModelSelection,
+  modelSelectionIdentityOptions,
+} from '@/features/workbench/runtimeModelSelection'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import type {
   DeviceInfo,
   ProjectWithTasks,
@@ -382,8 +390,7 @@ export function WeworkSharedProject({
         project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
         project.project_store === 'local' ? detailServices?.modelApi : undefined,
         services.pluginApi,
-        services.deviceApi,
-        locale
+        services.deviceApi
       ),
     }),
     [
@@ -402,7 +409,6 @@ export function WeworkSharedProject({
       services.localProjectChatAgentApi,
       services.pluginApi,
       setLocation,
-      locale,
       workspace.id,
     ]
   )
@@ -829,18 +835,7 @@ export function WeworkSharedProject({
                   archiveLabel={t('todo.delete_issue', '删除任务')}
                   onMarkRead={onMarkRead}
                   previewDisabled={previewDisabled}
-                  onOpenRuntimeTask={
-                    runtimePort
-                      ? address => {
-                          setTaskComposer({
-                            issue,
-                            address,
-                            conversationKey: `${issue.id}:${address.deviceId}:${address.taskId}`,
-                          })
-                          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
-                        }
-                      : onOpenRuntimeTask
-                  }
+                  issueDetailOnly
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   archiveDisabled={!onDelete}
@@ -897,8 +892,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
         props.services.pluginApi,
-        props.services.deviceApi,
-        locale
+        props.services.deviceApi
       ),
     [
       props.services.agentResourceApi,
@@ -906,7 +900,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       props.services.projectSpaceDetailServices?.local?.modelApi,
       props.services.pluginApi,
       props.services.localProjectChatAgentApi,
-      locale,
     ]
   )
   useEffect(() => {
@@ -1121,6 +1114,33 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
           defaultAssistant,
+          loadProjectCollaborationGroupGenerationModels: async () => {
+            const response = await props.services.modelApi.listModels()
+            const models = response.data.filter(
+              model => model.isActive !== false && !model.compatibilityDisabled
+            )
+            const defaultSelection =
+              getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
+            return {
+              models: models.map(model => ({
+                modelName: model.name,
+                modelType: model.type,
+                displayName: getModelDisplayLabel(model),
+                options: {
+                  ...getDefaultModelOptions(model),
+                  ...modelSelectionIdentityOptions(model),
+                },
+              })),
+              defaultSelection,
+            }
+          },
+          generateProjectCollaborationGroupDraft: (input, onProgress, onEvent) =>
+            generateCollaborationGroupDraft({
+              input,
+              textGenerationApi: props.services.textGenerationApi,
+              onProgress,
+              onEvent,
+            }),
           location,
           capabilities: {
             automation: true,
@@ -1285,6 +1305,21 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                       name: projectName,
                       roots: workspaceRoots,
                     })
+                    const localAgentApi =
+                      props.services.projectSpaceDetailServices?.local?.localProjectChatAgentApi ??
+                      props.services.localProjectChatAgentApi
+                    if (localAgentApi) {
+                      await ensureDefaultLocalAgent(
+                        localAgentApi,
+                        String(importedProject.id),
+                        locale
+                      ).catch(error => {
+                        console.warn(
+                          `[Wework] Failed to ensure the default local Agent for imported project ${importedProject.id}`,
+                          error
+                        )
+                      })
+                    }
                     await onImported({
                       ...importedProject,
                       workspace_id: LOCAL_WORKSPACE_ID,

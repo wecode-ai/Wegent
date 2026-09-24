@@ -517,6 +517,17 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
 }
 
 #[test]
+fn codex_app_server_uses_codex_home_as_working_directory() {
+    let codex_home = unique_test_path("wework-codex-app-server-cwd");
+    let command = codex_app_server_command("codex", &codex_home, &CodexLaunchConfig::default());
+
+    assert_eq!(
+        command.as_std().get_current_dir(),
+        Some(codex_home.as_path())
+    );
+}
+
+#[test]
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {
@@ -4238,6 +4249,34 @@ fn codex_thread_binds_project_space_through_context_grant() {
     assert!(!serialized.contains("runtime-task-1"));
     assert!(!serialized.contains("space-1"));
     assert!(!serialized.contains("issue-1"));
+}
+
+#[test]
+fn codex_thread_exposes_project_space_to_issue_automation_executor() {
+    let mut request = ExecutionRequest {
+        task_id: "runtime-executor-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "origin".to_owned(),
+        json!({
+            "type": "project_automation",
+            "cloudProjectId": "space-1",
+            "loopItemId": "issue-1",
+            "run_id": "run-1",
+        }),
+    );
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
+    );
 }
 
 #[test]

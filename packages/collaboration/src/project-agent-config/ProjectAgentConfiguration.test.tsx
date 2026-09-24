@@ -578,6 +578,20 @@ describe("ProjectAgentConfiguration", () => {
     ).toBeNull();
   });
 
+  it("does not expose archive for a protected project agent", async () => {
+    const { api, update } = createApi({
+      agents: [projectAgent({ deletable: false })],
+    });
+    await render(api);
+
+    expect(
+      document.querySelector(
+        '[data-testid="project-agent-archive-project-agent-1"]',
+      ),
+    ).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("keeps project Agent management available without workspace resources", async () => {
     const { api } = createApi({ workspaceAgents: [] });
     await render(api);

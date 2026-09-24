@@ -32,7 +32,7 @@ interface BufferedChatInputProps extends ChatInputProps {
   inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
   insertion?: BufferedChatInputInsertion | null
-  onDraftEdit?: () => void
+  onDraftEdit?: (draft: string) => void
 }
 
 const DRAFT_FLUSH_DELAY_MS = 300
@@ -274,7 +274,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       draftRef.current = nextDraft
       if (programmaticUpdateDepthRef.current === 0) {
         draftEditVersionRef.current += 1
-        onDraftEdit?.()
+        onDraftEdit?.(nextDraft)
       }
       if (isComposingRef.current) {
         cancelPendingFlush()

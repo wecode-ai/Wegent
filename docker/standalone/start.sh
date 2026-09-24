@@ -17,13 +17,21 @@ mkdir -p /app/data
 export CODEX_HOME="${CODEX_HOME:-/app/data/codex}"
 mkdir -p "$CODEX_HOME"
 mkdir -p /app/data/redis
+MYSQL_PORT=${MYSQL_PORT:-3306}
+MYSQL_DATA_DIR=${MYSQL_DATA_DIR:-/app/data/mysql}
+mkdir -p "$MYSQL_DATA_DIR"
 mkdir -p /workspace/projects
 mkdir -p /workspace/chats
 mkdir -p /workspace/worktrees
 
-# Set absolute path for SQLite database.
-# Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
-export DATABASE_URL="sqlite:////app/data/wegent.db"
+# Standalone uses an embedded MySQL server. The old SQLite database file is
+# intentionally left untouched and is not migrated.
+export MYSQL_PORT MYSQL_DATA_DIR
+export DATABASE_URL="mysql+pymysql://root@127.0.0.1:${MYSQL_PORT}/task_manager"
+export DB_AUTO_MIGRATE=false
+export INIT_DATA_ENABLED=true
+export INIT_DATA_DIR=/app/init_data
+export BUILTIN_PLUGINS_DIR=/app/init_data/plugins
 
 # Set default ports if not specified.
 BACKEND_PORT=${BACKEND_PORT:-8000}
@@ -168,6 +176,27 @@ stop_pid() {
     fi
 }
 
+wait_for_mysql() {
+    echo "      Waiting for MySQL to be ready..."
+    for i in $(seq 1 60); do
+        if mysqladmin --protocol=tcp --host=127.0.0.1 --port="$MYSQL_PORT" \
+            --user=root --connect-timeout=2 ping --silent >/dev/null 2>&1; then
+            echo "      MySQL is ready (PID: ${MYSQL_PID})"
+            return
+        fi
+        if ! kill -0 "$MYSQL_PID" 2>/dev/null; then
+            echo "      ERROR: MySQL exited before becoming ready"
+            tail -n 80 "$MYSQL_DATA_DIR/error.log" 2>/dev/null || true
+            exit 1
+        fi
+        sleep 1
+    done
+    echo "      ERROR: MySQL failed to start within 60 seconds"
+    tail -n 80 "$MYSQL_DATA_DIR/error.log" 2>/dev/null || true
+    kill "$MYSQL_PID" 2>/dev/null || true
+    exit 1
+}
+
 report_process() {
     local service_name="$1"
     local pid="$2"
@@ -222,32 +251,57 @@ for i in {1..30}; do
 done
 
 # ========================================
-# Step 2: Initialize Database
+# Step 2: Start MySQL and initialize database
 # ========================================
 cd /app/backend
 
-if [ ! -f /app/data/wegent.db ]; then
-    echo "[2/8] Initializing SQLite database..."
-    # env.py will detect fresh database and use Base.metadata.create_all()
-    # then stamp to head, bypassing old MySQL-specific migrations.
-    alembic upgrade head
-    echo "      Database initialized successfully"
-else
-    echo "[2/8] Database exists, checking for migrations..."
-    alembic upgrade head
-    echo "      Database migrations applied"
+echo "[2/8] Starting MySQL..."
+mkdir -p /run/mysqld
+if [ ! -d "$MYSQL_DATA_DIR/mysql" ]; then
+    chown -R mysql:mysql "$MYSQL_DATA_DIR"
+    mysqld --initialize-insecure --user=mysql --datadir="$MYSQL_DATA_DIR"
 fi
+chown mysql:mysql /run/mysqld
+mysqld \
+    --user=mysql \
+    --datadir="$MYSQL_DATA_DIR" \
+    --bind-address=127.0.0.1 \
+    --port="$MYSQL_PORT" \
+    --socket=/run/mysqld/mysqld.sock \
+    --pid-file=/run/mysqld/mysqld.pid \
+    --log-error="$MYSQL_DATA_DIR/error.log" \
+    --skip-log-bin &
+MYSQL_PID=$!
+wait_for_mysql
+
+mysql --protocol=tcp --host=127.0.0.1 --port="$MYSQL_PORT" --user=root \
+    --execute="CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+
+echo "      Applying MySQL schema migrations..."
+alembic upgrade head
+echo "      MySQL schema is ready"
 
 # ========================================
 # Step 3: Start Backend
 # ========================================
 echo "[3/8] Starting Backend (port ${BACKEND_PORT})..."
-cd /app/backend
+PYTHON_UPSTREAM_PORT=${WEGENT_PYTHON_UPSTREAM_PORT:-8004}
 uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port ${BACKEND_PORT} \
+    --host 127.0.0.1 \
+    --port "$PYTHON_UPSTREAM_PORT" \
     --workers 1 \
-    --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT:-600} &
+    --timeout-graceful-shutdown "${GRACEFUL_SHUTDOWN_TIMEOUT:-600}" &
+PYTHON_BACKEND_PID=$!
+wait_for_http "Python Backend" "http://127.0.0.1:${PYTHON_UPSTREAM_PORT}/health" 60 "$PYTHON_BACKEND_PID" true
+
+export WEGENT_RS_LISTEN_HOST=0.0.0.0
+export WEGENT_RS_LISTEN_PORT="$BACKEND_PORT"
+export WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:${PYTHON_UPSTREAM_PORT}"
+export BREEZE_LOG_DIR="${BREEZE_LOG_DIR:-${LOG_DIR:-/app/data/logs/backend}/rust}"
+(
+    cd /app/backend-rs
+    exec /app/wegent-backend-rs
+) &
 BACKEND_PID=$!
 
 wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/health" 60 "$BACKEND_PID" true
@@ -347,7 +401,7 @@ echo "  Redis:           localhost:6379 (embedded)"
 echo ""
 echo "  Data directory:      /app/data"
 echo "  Workspace directory: /workspace"
-echo "  Database:            /app/data/wegent.db"
+echo "  Database:            /app/data/mysql"
 echo "  Redis data:          /app/data/redis"
 echo ""
 echo "=========================================="
@@ -366,6 +420,8 @@ shutdown() {
     stop_pid "Frontend" "${FRONTEND_PID:-}"
     stop_pid "Standalone Executor" "${EXECUTOR_PID:-}"
     stop_pid "Backend" "${BACKEND_PID:-}"
+    stop_pid "Python Backend" "${PYTHON_BACKEND_PID:-}"
+    stop_pid "MySQL" "${MYSQL_PID:-}"
 
     if [ -n "${REDIS_PID:-}" ]; then
         echo "  Stopping Redis (PID: ${REDIS_PID})..."
@@ -377,6 +433,8 @@ shutdown() {
     wait "${FRONTEND_PID:-}" 2>/dev/null || true
     wait "${EXECUTOR_PID:-}" 2>/dev/null || true
     wait "${BACKEND_PID:-}" 2>/dev/null || true
+    wait "${PYTHON_BACKEND_PID:-}" 2>/dev/null || true
+    wait "${MYSQL_PID:-}" 2>/dev/null || true
     wait "${REDIS_PID:-}" 2>/dev/null || true
 
     echo "  All services stopped"
@@ -389,7 +447,7 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Keep Container Running
 # ========================================
 set +e
-WAIT_PIDS=("$REDIS_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")
+WAIT_PIDS=("$REDIS_PID" "$MYSQL_PID" "$PYTHON_BACKEND_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")
 if [ -n "${EXECUTOR_PID:-}" ]; then
     WAIT_PIDS+=("$EXECUTOR_PID")
 fi
@@ -401,7 +459,9 @@ echo ""
 echo "WARNING: A service has exited unexpectedly (exit code: ${EXIT_CODE})"
 
 report_process "Redis" "$REDIS_PID"
+report_process "MySQL" "$MYSQL_PID"
 report_process "Backend" "$BACKEND_PID"
+report_process "Python Backend" "$PYTHON_BACKEND_PID"
 report_process "Standalone Executor" "$EXECUTOR_PID"
 report_process "Frontend" "$FRONTEND_PID"
 report_process "Nginx" "$NGINX_PID"

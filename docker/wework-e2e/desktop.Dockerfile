@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
     libxss1 \
+    mysql-server \
     openbox \
     python3 \
     python3-venv \
@@ -56,5 +57,6 @@ RUN node --version \
   && pnpm --version \
   && python3 --version \
   && uv --version \
+  && mysqld --version \
   && rustc --version \
   && cargo --version

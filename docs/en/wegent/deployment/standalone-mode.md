@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## Overview
 
-Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker. Interactive macOS installs default to a host executor so Claude Code or Codex can execute macOS system commands; Linux and non-interactive installs default to the in-container executor.
+Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, MySQL, and Redis into one Docker image. It is intended for quick evaluation and small trusted environments, and only requires Docker. Interactive macOS installs default to a host executor so Claude Code or Codex can execute macOS system commands; Linux and non-interactive installs default to the in-container executor.
 
 After startup, standalone automatically creates an executor API key for the `admin` user and registers devices according to the selected executor mode: the container executor registers as a built-in cloud device, the host executor registers as a local device, and Wework can use available devices directly for coding tasks. The default container workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees; the host executor uses `~/.wegent-executor/workspace`.
 
@@ -27,7 +27,7 @@ When using the container executor, coding tasks execute directly inside the same
 | Resource Usage | High | Medium |
 | Scalability | Good | Limited |
 | Task Isolation | Sandbox/cloud device | Container or host, depending on executor mode |
-| Database | MySQL | SQLite |
+| Database | MySQL | Embedded MySQL |
 | Redis | External | Embedded |
 | Wework | Separate desktop app or Web | Built-in Wework Web |
 | Use Case | Production | Dev/Test/Small-scale |
@@ -181,7 +181,7 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 | `WEGENT_BIN_DIR` | Directory where the installer writes the `wegent-standalone` management command | `~/.local/bin` |
 | `WEGENT_STANDALONE_STATE_FILE` | Persistent state file read by `wegent-standalone` | `~/.wegent/standalone/config.env` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
-| `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
+| `DATABASE_URL` | Database connection URL | `mysql+pymysql://root@127.0.0.1:3306/task_manager` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `OPENAI_API_KEY` | OpenAI API key | - |
@@ -190,7 +190,7 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 
 Service state is stored in `/app/data`:
 
-- `wegent.db`: SQLite database file
+- `mysql/`: embedded MySQL data files
 - `redis/`: Redis persistence data (AOF and RDB)
 - `standalone_executor_token`: admin API key used by the standalone executor registration
 - `standalone-executor/`: container executor local state
@@ -268,10 +268,11 @@ If you need to build the image yourself:
 
 ## Important Notes
 
-### SQLite Limitations
+### Database Initialization and Upgrades
 
-1. **Concurrent Writes**: SQLite is not suitable for high-concurrency writes; use it for single-user or small-scale usage
-2. **Data Backup**: Regularly back up `/app/data/wegent.db` and `/workspace`
+- On first startup, standalone creates the MySQL database, applies the Alembic schema, and imports the built-in initialization data.
+- Upgrading from an older release does not migrate `/app/data/wegent.db` to MySQL. The old file is left in place but is no longer used; the upgraded database is initialized for the current version.
+- Regularly back up `/app/data/mysql/`, `/app/data/redis/`, and `/workspace`.
 
 ### Embedded Redis
 
@@ -291,7 +292,7 @@ The standalone image includes embedded Redis:
 
 If you need to migrate to standard mode:
 
-1. Export SQLite data
+1. Export the data you need from standalone's MySQL database
 2. Back up projects and worktrees under `/workspace`
 3. Import data into MySQL
 4. Update configuration to use standard deployment or separate cloud devices

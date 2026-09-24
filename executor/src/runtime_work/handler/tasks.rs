@@ -9,11 +9,44 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         request.ephemeral = true;
-        let turn = self
-            .codex_app_server
-            .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
-            .await
-            .map_err(|error| AppIpcError::new("model_transport_failed", error))?;
+        let local_task_id = request.task_id.clone();
+        let stream_request = request.clone();
+        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
+        let mut turn_future = Box::pin(self.codex_app_server.run_turn_with_cancel(
+            request,
+            CodexAppServerTurnOptions {
+                notifications: Some(notification_tx),
+                ..CodexAppServerTurnOptions::default()
+            },
+        ));
+        let mut event_mapper = CodexNotificationEventMapper::default();
+        let result = loop {
+            tokio::select! {
+                result = &mut turn_future => break result,
+                message = notification_rx.recv() => {
+                    let Some(message) = message else {
+                        break turn_future.await;
+                    };
+                    event_mapper.map(
+                        &self.event_tx,
+                        &self.device_id,
+                        &local_task_id,
+                        &stream_request,
+                        message,
+                    );
+                }
+            }
+        };
+        while let Ok(message) = notification_rx.try_recv() {
+            event_mapper.map(
+                &self.event_tx,
+                &self.device_id,
+                &local_task_id,
+                &stream_request,
+                message,
+            );
+        }
+        let turn = result.map_err(|error| AppIpcError::new("model_transport_failed", error))?;
         match turn.outcome {
             ExecutionOutcome::Completed { content } => Ok(json!({"content": content})),
             ExecutionOutcome::Failed { message } => {

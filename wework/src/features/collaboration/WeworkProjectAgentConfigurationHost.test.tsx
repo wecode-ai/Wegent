@@ -94,48 +94,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(host.renderAgentEditor).toBeTypeOf('function')
   })
 
-  it('creates the default local Agent from the current device model', async () => {
-    const defaultAgent = {
-      id: 'local-agent-default',
-      name: 'current-device-agent',
-      displayName: '当前设备智能体',
-    }
-    const ensureDefault = vi.fn(async () => defaultAgent)
-    const localAgentApi = {
-      list: vi.fn(async () => []),
-      ensureDefault,
-      create: vi.fn(),
-    }
-    const localModelApi = {
-      listModels: vi.fn(async () => ({
-        data: [
-          {
-            name: 'gpt-5',
-            displayName: 'GPT-5',
-            type: 'public',
-            namespace: 'default',
-          },
-        ],
-      })),
-    }
-    const host = createWeworkProjectAgentConfigurationHost(
-      undefined,
-      localAgentApi as never,
-      localModelApi as never
-    )
-
-    await expect(host.createDefaultLocalAgent?.()).resolves.toBe(defaultAgent.id)
-    expect(ensureDefault).toHaveBeenCalledWith(
-      DEFAULT_WORK_ITEM_PROJECT_ID,
-      expect.objectContaining({
-        name: 'current-device-agent',
-        displayName: '当前设备智能体',
-        model: 'gpt-5',
-        capabilityMode: 'follow_device',
-      })
-    )
-  })
-
   it('uses the real unified resource creator contract and returns the created Team reference', async () => {
     const onCreated = vi.fn(async () => undefined)
     const createAgent = vi.fn(async () => ({

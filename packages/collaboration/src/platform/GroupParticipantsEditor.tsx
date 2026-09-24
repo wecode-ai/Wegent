@@ -6,6 +6,7 @@ import { useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { Bot, UserRound, Plus, Check, Copy, X } from "lucide-react";
 import type { CollaborationGroup } from "../types";
+import { CollaborationGroupRoster } from "./CollaborationGroupRoster";
 
 export type GroupCandidate = {
   value: string;
@@ -15,7 +16,7 @@ export type GroupCandidate = {
 };
 
 export type GroupAgentAction = {
-  id: "create-default" | "create" | "copy";
+  id: "create" | "copy";
   label: string;
   description: string;
   onSelect(): void;
@@ -296,62 +297,45 @@ export function GroupParticipantsEditor({
           />
         </div>
         <div className="collaboration-group-selected-people">
-          {selectedParticipants.map((candidate) => {
-            const isLeader = candidate.value === leader;
-            return (
-              <div
-                key={candidate.value}
-                className="collaboration-group-person-card"
-                data-leader={isLeader || undefined}
-                data-testid={
-                  isLeader ? "collaboration-group-leader" : undefined
-                }
-              >
-                <div className="collaboration-group-person-toolbar">
-                  <Identity candidate={candidate} locale={locale} />
-                  {isLeader ? null : responsibility(candidate)}
-                  <span className="collaboration-group-person-actions">
-                    {isLeader ? (
-                      <span
-                        className="collaboration-group-leader-badge"
-                        data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
-                      >
-                        <Check size={14} aria-hidden="true" />
-                        {messages.leader}
-                      </span>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="collaboration-group-people-action collaboration-group-make-leader"
-                          aria-label={`${messages.makeLeader} ${candidate.name}`}
-                          title={messages.makeLeader}
-                          data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
-                          onClick={() => onLeaderChange(candidate)}
-                        >
-                          <span
-                            className="collaboration-group-leader-indicator"
-                            aria-hidden="true"
-                          />
-                          {messages.leader}
-                        </button>
-                        <button
-                          type="button"
-                          className="collaboration-group-people-action"
-                          aria-label={`${messages.remove} ${candidate.name}`}
-                          title={`${messages.remove} ${candidate.name}`}
-                          data-testid={`collaboration-group-remove-member-${candidate.kind}-${candidate.id}`}
-                          onClick={() => onMemberChange(candidate, false)}
-                        >
-                          <X size={16} aria-hidden="true" />
-                        </button>
-                      </>
-                    )}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          <CollaborationGroupRoster
+            locale={locale}
+            participants={selectedParticipants.map((candidate) => ({
+              ...candidate,
+              leader: candidate.value === leader,
+              className: "collaboration-group-person-card",
+            }))}
+            renderResponsibility={(candidate) => responsibility(candidate)}
+            renderActions={(candidate) =>
+              candidate.leader ? null : (
+                <span className="collaboration-group-person-actions">
+                  <button
+                    type="button"
+                    className="collaboration-group-people-action collaboration-group-make-leader"
+                    aria-label={`${messages.makeLeader} ${messages[candidate.kind]} ${candidate.name}`}
+                    title={messages.makeLeader}
+                    data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
+                    onClick={() => onLeaderChange(candidate)}
+                  >
+                    <span
+                      className="collaboration-group-leader-indicator"
+                      aria-hidden="true"
+                    />
+                    {messages.leader}
+                  </button>
+                  <button
+                    type="button"
+                    className="collaboration-group-people-action"
+                    aria-label={`${messages.remove} ${messages[candidate.kind]} ${candidate.name}`}
+                    title={`${messages.remove} ${candidate.name}`}
+                    data-testid={`collaboration-group-remove-member-${candidate.kind}-${candidate.id}`}
+                    onClick={() => onMemberChange(candidate, false)}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </span>
+              )
+            }
+          />
           {!selectedParticipants.length && (
             <p className="collaboration-group-people-empty">{messages.empty}</p>
           )}

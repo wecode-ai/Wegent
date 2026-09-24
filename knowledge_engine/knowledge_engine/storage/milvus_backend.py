@@ -19,7 +19,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.base.embeddings.base import BaseEmbedding
-from llama_index.core.schema import BaseNode
+from llama_index.core.schema import BaseNode, MetadataMode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 from llama_index.core.vector_stores.types import (
     FilterOperator,
@@ -30,6 +30,12 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
 from pymilvus import AsyncMilvusClient, MilvusClient
 
+from knowledge_engine.embedding.contract import (
+    ensure_vector_contract,
+    is_positive_int,
+    resolve_declared_dimension,
+)
+from knowledge_engine.embedding.errors import EmbeddingResponseFormatError
 from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
@@ -37,6 +43,12 @@ from knowledge_engine.retrieval.filters import (
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.milvus_dimension import (
+    CollectionSnapshot,
+    embedding_model_name,
+    raise_on_dimension_mismatch,
+    read_collection_snapshot,
+)
 from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -247,6 +259,10 @@ class MilvusBackend(BaseStorageBackend):
 
         Uses base_url (without db_name path) and passes db_name as separate parameter.
 
+        The returned client shares the process-global Milvus alias derived from
+        url/token/db_name, so it must never be closed: closing it would drop the
+        alias for every other client, including parallel writers.
+
         Returns:
             MilvusClient instance for direct Milvus operations
         """
@@ -354,7 +370,7 @@ class MilvusBackend(BaseStorageBackend):
         self,
         nodes: List[BaseNode],
         chunk_metadata: ChunkMetadata,
-        embed_model,
+        embed_model: BaseEmbedding,
         **kwargs,
     ) -> Dict:
         """
@@ -363,14 +379,17 @@ class MilvusBackend(BaseStorageBackend):
         Note: Metadata is already applied to nodes by the indexer layer via
         chunk_metadata.apply_to_nodes() before calling this method.
 
-        This method automatically uses the embedding dimension from the embed_model
-        if available (via _dimension attribute set from Model CRD's embeddingConfig).
-        This ensures the Milvus collection schema matches the actual embedding vectors.
+        This adapter writes nothing until the embedding dimension contract is
+        resolved, so the collection it creates or appends to always matches the
+        embedding vectors. The first real batch of document vectors is the
+        evidence for that decision, and it is reused by the write instead of
+        being requested twice. Models that never declared a dimension keep
+        working: that same batch decides the dimension of their collection.
 
         Args:
             nodes: List of nodes to index (metadata already applied)
             chunk_metadata: ChunkMetadata instance containing document metadata
-            embed_model: Embedding model (may have _dimension attribute from Model CRD)
+            embed_model: Embedding model (may declare a dimension from Model CRD)
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:
@@ -379,31 +398,201 @@ class MilvusBackend(BaseStorageBackend):
         # Get collection name
         collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
-        # Get embedding dimension from embed_model if available
-        # CustomEmbedding stores dimension in _dimension attribute (set from Model CRD)
-        embed_dim = getattr(embed_model, "_dimension", None)
-        if embed_dim:
-            logger.info(f"[Milvus] Using embedding dimension from model: {embed_dim}")
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
+        embeddable_nodes = self._embeddable_nodes(nodes_for_embedding)
+        if not embeddable_nodes:
+            # No vector can decide the collection dimension, so this write must
+            # not create a collection from the configured default dimension.
+            logger.info(
+                "[Milvus] index_with_metadata: collection=%s carries no embeddable "
+                "content; nothing to write",
+                collection_name,
+            )
+            return {
+                "indexed_count": 0,
+                "index_name": collection_name,
+                "status": "success",
+            }
 
-        # Create vector store with detected dimension (or fall back to configured dim)
+        # Resolve the contract before this adapter writes anything.
+        embed_dim = self._resolve_write_dimension(
+            embeddable_nodes,
+            embed_model,
+            collection_name,
+        )
+        if embed_dim is not None:
+            snapshot = self._collection_snapshot(collection_name)
+            if snapshot.exists:
+                raise_on_dimension_mismatch(
+                    stored_dim=snapshot.dimension,
+                    expected_dim=embed_dim,
+                    model=embedding_model_name(embed_model),
+                )
+
+        logger.info(
+            f"[Milvus] index_with_metadata: collection={collection_name}, "
+            f"dimension={embed_dim}, embeddable_nodes={len(embeddable_nodes)}, "
+            f"prepared_nodes={len(nodes_for_embedding)}"
+        )
+
+        # Create vector store with the resolved dimension
         vector_store = self.create_vector_store(collection_name, dim=embed_dim)
 
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
-            nodes_for_embedding,
+            embeddable_nodes,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
         )
 
         return {
-            "indexed_count": len(nodes),
+            "indexed_count": len(embeddable_nodes),
             "index_name": collection_name,
             "status": "success",
         }
+
+    def _resolve_write_dimension(
+        self,
+        nodes: List[BaseNode],
+        embed_model: BaseEmbedding,
+        collection_name: str,
+    ) -> Optional[int]:
+        """Resolve the dimension a write must use, embedding the first batch once."""
+        declared_dim = resolve_declared_dimension(embed_model)
+        batch_dim = self._embed_first_batch(
+            nodes,
+            embed_model,
+            declared_dim=declared_dim,
+        )
+        if declared_dim is None and batch_dim:
+            logger.warning(
+                "[Milvus] Compatibility path: embedding model '%s' declares no "
+                "dimension; collection %s is created from the first document batch "
+                "(%s dimensions)",
+                embedding_model_name(embed_model),
+                collection_name,
+                batch_dim,
+            )
+        return declared_dim or batch_dim
+
+    def _embed_first_batch(
+        self,
+        nodes: List[BaseNode],
+        embed_model: BaseEmbedding,
+        *,
+        declared_dim: Optional[int],
+    ) -> Optional[int]:
+        """
+        Embed the first real document batch and reuse it for the write.
+
+        Args:
+            nodes: Embeddable prepared nodes that are about to be indexed
+            embed_model: Embedding model that produces the document vectors
+            declared_dim: Dimension the model declares, when it declares one
+
+        Returns:
+            Dimension carried by the first batch, or None when there is nothing
+            to embed. The vectors are attached to the nodes so the write reuses
+            them instead of asking the provider twice.
+
+        Raises:
+            EmbeddingResponseFormatError: When the provider does not return one
+                usable vector per text.
+            EmbeddingDimensionMismatchError: When a returned vector breaks the
+                dimension the model declares.
+        """
+        batch = nodes[: self._first_batch_size(nodes, embed_model)]
+        if not batch:
+            return None
+
+        vectors = embed_model.get_text_embedding_batch(
+            [node.get_content(metadata_mode=MetadataMode.EMBED) for node in batch]
+        )
+        model = embedding_model_name(embed_model)
+        if len(vectors) != len(batch) or not vectors or not vectors[0]:
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' returned {len(vectors)} vectors for "
+                f"{len(batch)} texts"
+            )
+
+        ensure_vector_contract(
+            model=model,
+            declared=declared_dim,
+            vectors=vectors,
+        )
+        dimension = len(vectors[0])
+        if any(len(vector) != dimension for vector in vectors):
+            raise EmbeddingResponseFormatError(
+                f"Embedding model '{model}' returned vectors of mixed dimensions"
+            )
+
+        for node, vector in zip(batch, vectors):
+            node.embedding = vector
+
+        return dimension
+
+    @staticmethod
+    def _first_batch_size(nodes: List[BaseNode], embed_model: BaseEmbedding) -> int:
+        """Return how many nodes belong to the first provider batch."""
+        batch_size = getattr(embed_model, "embed_batch_size", None)
+        if is_positive_int(batch_size):
+            return batch_size
+        return len(nodes)
+
+    @staticmethod
+    def _embeddable_nodes(nodes: List[BaseNode]) -> List[BaseNode]:
+        """Return the nodes that carry retrieval text and reach the provider.
+
+        Metadata alone never makes a node embeddable: embedding it would send a
+        metadata-only text and let the configured default dimension create the
+        collection this guard exists to prevent.
+        """
+        return [
+            node
+            for node in nodes
+            if node.get_content(metadata_mode=MetadataMode.NONE).strip()
+        ]
+
+    def _collection_snapshot(self, collection_name: str) -> CollectionSnapshot:
+        """Read the collection once through a client on the shared alias."""
+        return read_collection_snapshot(self._get_client(), collection_name)
+
+    def _open_query_collection(
+        self,
+        *,
+        collection_name: str,
+        declared_dim: Optional[int],
+        embed_model: BaseEmbedding,
+    ) -> Optional[CollectionSnapshot]:
+        """
+        Return the snapshot a query may read.
+
+        Returns:
+            None when the collection does not exist, because a query must never
+            create the collection it reads.
+
+        Raises:
+            CollectionDimensionMismatchError: When the collection stores another
+                dimension than the one the embedding model declares.
+        """
+        snapshot = self._collection_snapshot(collection_name)
+        if not snapshot.exists:
+            logger.info(
+                "[Milvus] retrieve: collection %s does not exist; returning no records",
+                collection_name,
+            )
+            return None
+
+        if declared_dim is not None:
+            raise_on_dimension_mismatch(
+                stored_dim=snapshot.dimension,
+                expected_dim=declared_dim,
+                model=embedding_model_name(embed_model),
+            )
+        return snapshot
 
     @staticmethod
     def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
@@ -430,26 +619,18 @@ class MilvusBackend(BaseStorageBackend):
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = self._get_client()
-
-        try:
-            return self._delete_parent_nodes_with_client(
-                client,
-                collection_name,
-                knowledge_id,
-                doc_ref,
-            )
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
+        return self._delete_parent_nodes_with_client(
+            self._get_client(),
+            collection_name,
+            knowledge_id,
+            doc_ref,
+        )
 
     def retrieve(
         self,
         knowledge_id: str,
         query: str,
-        embed_model,
+        embed_model: BaseEmbedding,
         retrieval_setting: Dict[str, Any],
         scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
@@ -497,6 +678,22 @@ class MilvusBackend(BaseStorageBackend):
                 f"Supported modes: {self.SUPPORTED_RETRIEVAL_METHODS}."
             )
 
+        # A query never creates the collection it reads, and vector/hybrid
+        # queries need vectors matching the dimension the collection stores.
+        # Keyword queries never touch the vector field, so they stay available.
+        declared_dim = (
+            None
+            if retrieval_mode == "keyword"
+            else resolve_declared_dimension(embed_model)
+        )
+        snapshot = self._open_query_collection(
+            collection_name=collection_name,
+            declared_dim=declared_dim,
+            embed_model=embed_model,
+        )
+        if snapshot is None:
+            return {"records": []}
+
         # Create vector store
         vector_store = self.create_vector_store(
             collection_name,
@@ -532,6 +729,17 @@ class MilvusBackend(BaseStorageBackend):
                 resolved_queries.dense_query
             )
             query_str = resolved_queries.dense_query
+
+        if declared_dim is None and query_embedding is not None:
+            # A model that never declared a dimension still has to match what the
+            # collection stores, so the real query vector is compared before the query.
+            query_dimension = len(query_embedding)
+            if is_positive_int(query_dimension):
+                raise_on_dimension_mismatch(
+                    stored_dim=snapshot.dimension,
+                    expected_dim=query_dimension,
+                    model=embedding_model_name(embed_model),
+                )
 
         # Create VectorStoreQuery
         vs_query = VectorStoreQuery(
@@ -677,7 +885,12 @@ class MilvusBackend(BaseStorageBackend):
 
         return {"records": results}
 
-    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
+    def delete_document(
+        self,
+        knowledge_id: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> Dict:
         """
         Delete document from Milvus using LlamaIndex API.
 
@@ -693,6 +906,18 @@ class MilvusBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        if not self._collection_snapshot(collection_name).exists:
+            # Constructing a vector store would create the collection with the
+            # configured default dimension, so a missing collection only has
+            # parent nodes left to delete.
+            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "deleted_chunks": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document
@@ -720,63 +945,45 @@ class MilvusBackend(BaseStorageBackend):
         """Delete all chunks and parent nodes for a knowledge base."""
         collection_name = self.get_index_name(knowledge_id, **kwargs)
         parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = None
-
-        try:
-            client = self._get_client()
-            deleted_chunks = self._delete_collection_by_knowledge_id(
-                client,
-                collection_name,
-                knowledge_id,
-            )
-            deleted_parent_nodes = self._delete_collection_by_knowledge_id(
-                client,
-                parent_collection_name,
-                knowledge_id,
-            )
-            return {
-                "knowledge_id": knowledge_id,
-                "deleted_chunks": deleted_chunks,
-                "deleted_parent_nodes": deleted_parent_nodes,
-                "status": "deleted",
-            }
-        finally:
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
+        client = self._get_client()
+        deleted_chunks = self._delete_collection_by_knowledge_id(
+            client,
+            collection_name,
+            knowledge_id,
+        )
+        deleted_parent_nodes = self._delete_collection_by_knowledge_id(
+            client,
+            parent_collection_name,
+            knowledge_id,
+        )
+        return {
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "deleted_parent_nodes": deleted_parent_nodes,
+            "status": "deleted",
+        }
 
     def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
         """Physically drop the backing collection for a dedicated KB strategy."""
         self._ensure_can_drop_physical_index()
         collection_name = self.get_index_name(knowledge_id, **kwargs)
         parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
-        client = None
+        client = self._get_client()
+        dropped_parent_collection = False
 
-        try:
-            client = self._get_client()
-            dropped_parent_collection = False
+        if client.has_collection(collection_name):
+            client.drop_collection(collection_name=collection_name)
 
-            if client.has_collection(collection_name):
-                client.drop_collection(collection_name=collection_name)
+        if client.has_collection(parent_collection_name):
+            client.drop_collection(collection_name=parent_collection_name)
+            dropped_parent_collection = True
 
-            if client.has_collection(parent_collection_name):
-                client.drop_collection(collection_name=parent_collection_name)
-                dropped_parent_collection = True
-
-            return {
-                "knowledge_id": knowledge_id,
-                "collection_name": collection_name,
-                "dropped_parent_collection": dropped_parent_collection,
-                "status": "dropped",
-            }
-        finally:
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
+        return {
+            "knowledge_id": knowledge_id,
+            "collection_name": collection_name,
+            "dropped_parent_collection": dropped_parent_collection,
+            "status": "dropped",
+        }
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
@@ -794,6 +1001,11 @@ class MilvusBackend(BaseStorageBackend):
             Document details dict with chunks
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        if not self._collection_snapshot(collection_name).exists:
+            # Constructing a vector store would create the collection with the
+            # configured default dimension, so report the document as missing.
+            raise ValueError(f"Document {doc_ref} not found")
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document
@@ -874,7 +1086,6 @@ class MilvusBackend(BaseStorageBackend):
             Document list dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-        client = None
 
         try:
             # Create MilvusClient for direct query
@@ -956,13 +1167,6 @@ class MilvusBackend(BaseStorageBackend):
                 "page_size": page_size,
                 "knowledge_id": knowledge_id,
             }
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
 
     def save_parent_nodes(
         self,
@@ -976,44 +1180,38 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
         client = self._get_client()
 
-        try:
-            if not client.has_collection(collection_name):
-                client.create_collection(
-                    collection_name=collection_name,
-                    dimension=1,
-                    auto_id=True,
-                    enable_dynamic_field=True,
-                )
-            else:
-                self._delete_parent_nodes_with_client(
-                    client,
-                    collection_name,
-                    knowledge_id,
-                    parent_nodes[0].metadata.get("doc_ref", ""),
-                )
-
-            client.insert(
+        if not client.has_collection(collection_name):
+            client.create_collection(
                 collection_name=collection_name,
-                data=[
-                    {
-                        "vector": [0.0],
-                        "parent_node_id": node.node_id,
-                        "knowledge_id": knowledge_id,
-                        "doc_ref": node.metadata.get("doc_ref"),
-                        "source_file": node.metadata.get("source_file"),
-                        "content": self.get_node_display_text(node),
-                        "title": node.metadata.get("source_file", ""),
-                        "metadata_json": json.dumps(node.metadata),
-                    }
-                    for node in parent_nodes
-                ],
+                dimension=1,
+                auto_id=True,
+                enable_dynamic_field=True,
             )
-            return {"stored_count": len(parent_nodes)}
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
+        else:
+            self._delete_parent_nodes_with_client(
+                client,
+                collection_name,
+                knowledge_id,
+                parent_nodes[0].metadata.get("doc_ref", ""),
+            )
+
+        client.insert(
+            collection_name=collection_name,
+            data=[
+                {
+                    "vector": [0.0],
+                    "parent_node_id": node.node_id,
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": node.metadata.get("doc_ref"),
+                    "source_file": node.metadata.get("source_file"),
+                    "content": self.get_node_display_text(node),
+                    "title": node.metadata.get("source_file", ""),
+                    "metadata_json": json.dumps(node.metadata),
+                }
+                for node in parent_nodes
+            ],
+        )
+        return {"stored_count": len(parent_nodes)}
 
     def _delete_collection_by_knowledge_id(
         self,
@@ -1049,42 +1247,36 @@ class MilvusBackend(BaseStorageBackend):
         collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
         client = self._get_client()
 
-        try:
-            if not client.has_collection(collection_name):
-                return {}
+        if not client.has_collection(collection_name):
+            return {}
 
-            parent_records: Dict[str, Dict[str, Any]] = {}
-            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
-            for parent_node_id in parent_node_ids:
-                safe_parent_node_id = self._sanitize_filter_value(parent_node_id)
-                results = client.query(
-                    collection_name=collection_name,
-                    filter=(
-                        f'knowledge_id == "{safe_knowledge_id}" and '
-                        f'parent_node_id == "{safe_parent_node_id}"'
-                    ),
-                    output_fields=[
-                        "parent_node_id",
-                        "content",
-                        "title",
-                        "metadata_json",
-                    ],
-                    limit=1,
-                )
-                if not results:
-                    continue
-                record = results[0]
-                parent_records[parent_node_id] = {
-                    "content": record.get("content", ""),
-                    "title": record.get("title", ""),
-                    "metadata": json.loads(record.get("metadata_json") or "{}"),
-                }
-            return parent_records
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+        for parent_node_id in parent_node_ids:
+            safe_parent_node_id = self._sanitize_filter_value(parent_node_id)
+            results = client.query(
+                collection_name=collection_name,
+                filter=(
+                    f'knowledge_id == "{safe_knowledge_id}" and '
+                    f'parent_node_id == "{safe_parent_node_id}"'
+                ),
+                output_fields=[
+                    "parent_node_id",
+                    "content",
+                    "title",
+                    "metadata_json",
+                ],
+                limit=1,
+            )
+            if not results:
+                continue
+            record = results[0]
+            parent_records[parent_node_id] = {
+                "content": record.get("content", ""),
+                "title": record.get("title", ""),
+                "metadata": json.loads(record.get("metadata_json") or "{}"),
+            }
+        return parent_records
 
     def test_connection(self) -> bool:
         """
@@ -1093,21 +1285,12 @@ class MilvusBackend(BaseStorageBackend):
         Returns:
             True if connection successful, False otherwise
         """
-        client = None
         try:
-            client = self._get_client()
             # Try to list collections as a connection test
-            client.list_collections()
+            self._get_client().list_collections()
             return True
         except Exception:
             return False
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
 
     def get_all_chunks(
         self,
@@ -1130,7 +1313,6 @@ class MilvusBackend(BaseStorageBackend):
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-        client = None
 
         try:
             # Create MilvusClient for direct query
@@ -1190,10 +1372,3 @@ class MilvusBackend(BaseStorageBackend):
                 f"[Milvus] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
-        finally:
-            # Ensure client is closed to avoid connection leaks
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
