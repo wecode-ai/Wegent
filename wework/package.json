@@ -160,8 +160,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
-    "vitest": "^4.1.7",
-    "ws": "8.21.0"
+    "vitest": "^4.1.7"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,md}": [
