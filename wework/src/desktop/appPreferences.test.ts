@@ -31,7 +31,6 @@ const mergedDefaultPreferences = {
   supervisorModelSelection: null,
   projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,

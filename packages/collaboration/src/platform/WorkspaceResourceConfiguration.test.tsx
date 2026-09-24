@@ -12,9 +12,12 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
+  CollaborationWorkspace,
+  CollaborationWorkspaceMember,
 } from "../types";
 import {
   WorkspaceCollaborationGroupsConfiguration,
+  WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
 
@@ -124,6 +127,51 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       element.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
+
+  it("shows Viewer workspace members with the correct role", async () => {
+    const workspace: CollaborationWorkspace = {
+      id: "workspace-1",
+      location: "cloud",
+      name: "Shared space",
+      description: "",
+      namespace: "default",
+      access_role: "Owner",
+      member_count: 1,
+      agent_count: 0,
+      execution_environment_count: 0,
+      project_count: 0,
+      created_by_user_id: 1,
+      version: 1,
+      created_at: "2026-09-24T00:00:00Z",
+      updated_at: "2026-09-24T00:00:00Z",
+    };
+    const viewer: CollaborationWorkspaceMember = {
+      ...humanMember,
+      role: "Viewer",
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceMembersConfiguration
+          workspace={workspace}
+          members={[viewer]}
+          locale="zh-CN"
+          commands={commands}
+        />,
+      ),
+    );
+
+    const role = byTestId<HTMLSelectElement>(
+      "collaboration-workspace-member-role-7",
+    );
+    expect(role.value).toBe("Viewer");
+    expect(role.selectedOptions[0]?.textContent).toBe("只读成员");
+    await click(byTestId("collaboration-workspace-member-invite"));
+    expect(
+      byTestId<HTMLSelectElement>(
+        "collaboration-workspace-member-invite-role",
+      ).querySelector('option[value="Viewer"]'),
+    ).not.toBeNull();
+  });
 
   it("adds the current user by default and labels them as me", async () => {
     commands.createCollaborationGroup = vi.fn(async () => group);

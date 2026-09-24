@@ -652,6 +652,66 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     ])
   })
 
+  test('settles a terminal turn recovered by an older transcript request', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    let resolveTranscript: ((value: RuntimeTranscriptResponse) => void) | undefined
+    const getRuntimeTranscript = vi.fn(
+      () =>
+        new Promise<RuntimeTranscriptResponse>(resolve => {
+          resolveTranscript = resolve
+        })
+    )
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+        result: {},
+      })
+    })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      store.syncTranscript(address, {
+        ...runtimeTranscript(true),
+        turns: [{ id: 'turn-1', status: 'streaming', items: [] }],
+      })
+    })
+    expect(store.getTask(address)?.turn).toMatchObject({
+      id: 'turn-1',
+      phase: 'streaming',
+    })
+
+    await act(async () => {
+      resolveTranscript?.(runtimeTranscript(false))
+    })
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('reconciles executor state when completion already carries content', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()

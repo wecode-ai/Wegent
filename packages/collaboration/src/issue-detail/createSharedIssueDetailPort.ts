@@ -117,6 +117,7 @@ export interface SharedIssueDetailCreateInput {
 
 export interface SharedIssueDetailUpdateInput {
   version: number;
+  security_level?: "open" | "related";
   title?: string;
   description?: string;
   status?: string;
@@ -538,6 +539,9 @@ export function createSharedIssueDetailPort(
       update: (issueId, input) =>
         api.issues.update(issueId, {
           version: input.version,
+          ...(input.security_level !== undefined
+            ? { securityLevel: input.security_level }
+            : {}),
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.description !== undefined
             ? { description: input.description }

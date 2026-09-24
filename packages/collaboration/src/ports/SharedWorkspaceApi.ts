@@ -20,6 +20,8 @@ import type {
   CollaborationProject,
   CollaborationProjectVisibility,
   CollaborationRole,
+  CollaborationWorkspaceRole,
+  CollaborationWorkspaceMember,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -37,6 +39,8 @@ export interface WorkspaceProjectCreateInput {
   description?: string
   taskProvider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   includeDefaultAgent?: boolean
 }
@@ -47,6 +51,8 @@ export interface WorkspaceProjectUpdateInput {
   description?: string
   tags?: string[]
   visibility?: CollaborationProjectVisibility
+  publicAccess?: { role: 'Developer' | 'Viewer' }
+  defaultIssueSecurity?: 'open' | 'related'
   providerConfig?: Record<string, unknown>
   boardConfig?: CollaborationProject['board_config']
   cardDisplay?: CollaborationProject['card_display']
@@ -135,6 +141,7 @@ export interface WorkspaceIssueCreateInput {
 
 export interface WorkspaceIssueUpdateInput {
   version: number
+  securityLevel?: 'open' | 'related'
   title?: string
   description?: string
   status?: string
@@ -193,11 +200,11 @@ export interface WorkspaceUpdateInput {
 
 export interface WorkspaceMemberCreateInput {
   userId: number
-  role?: Exclude<CollaborationRole, 'Owner'>
+  role?: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceMemberUpdateInput {
-  role: Exclude<CollaborationRole, 'Owner'>
+  role: Exclude<CollaborationWorkspaceRole, 'Owner'>
 }
 
 export interface WorkspaceAgentCreateInput {
@@ -561,13 +568,13 @@ export interface SharedCollaborationWorkspacesApi {
   create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>
   update(workspaceId: string, input: WorkspaceUpdateInput): Promise<CollaborationWorkspace>
   archive(workspaceId: string, version: number): Promise<void>
-  listMembers(workspaceId: string): Promise<CollaborationMember[]>
-  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationMember>
+  listMembers(workspaceId: string): Promise<CollaborationWorkspaceMember[]>
+  addMember(workspaceId: string, input: WorkspaceMemberCreateInput): Promise<CollaborationWorkspaceMember>
   updateMember(
     workspaceId: string,
     userId: number,
     input: WorkspaceMemberUpdateInput
-  ): Promise<CollaborationMember>
+  ): Promise<CollaborationWorkspaceMember>
   removeMember(workspaceId: string, userId: number): Promise<void>
   listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>
   addAgent(workspaceId: string, input: WorkspaceAgentCreateInput): Promise<CollaborationOwnedAgent>

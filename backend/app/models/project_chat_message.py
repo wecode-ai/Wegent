@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     event,
+    text,
 )
 from sqlalchemy.sql import func
 
@@ -76,11 +77,13 @@ class ProjectChatMessage(Base):
     status = Column(
         String(16), nullable=False, default="completed", server_default="completed"
     )
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
     updated_at = Column(
         DateTime,
         nullable=False,
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         onupdate=func.now(),
     )
     deleted_at = Column(

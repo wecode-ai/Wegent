@@ -418,7 +418,7 @@ class ProjectChatService:
     def list_agents(
         self, db: Session, *, user_id: int, project_id: str
     ) -> list[ProjectChatAgentView]:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rows = (
             db.query(ProjectChatAgent)
             .filter(
@@ -704,7 +704,7 @@ class ProjectChatService:
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
-            required_role=BaseRole.Reporter,
+            required_role=BaseRole.Viewer,
         )
         query = db.query(ProjectChatMessage).filter(
             ProjectChatMessage.project_id == request.project_id,
@@ -750,9 +750,7 @@ class ProjectChatService:
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
-            required_role=(
-                BaseRole.Reporter if request.task_id else BaseRole.Developer
-            ),
+            required_role=BaseRole.Developer,
         )
         self._validate_agent_mentions(db, project, request)
         existing = (
@@ -2105,9 +2103,7 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        access = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
         if task_id is None:
             if not has_permission(access.role, required_role):
@@ -2127,15 +2123,20 @@ class ProjectChatService:
         )
         if task is None:
             if project.task_provider in {"github", "gitlab"}:
-                # External provider tasks have no local task row; chat threads
-                # are keyed by the provider issue id and need no existence row.
+                from app.services.loop_items.external_provider import (
+                    external_loop_item_provider,
+                )
+
+                external_loop_item_provider.get(db, task_id, user_id)
+                if not has_permission(access.role, required_role):
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                    )
                 return project
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
-        if not (
-            required_role == BaseRole.Reporter and access.restricts_unrelated_issues
-        ) and not has_permission(access.role, required_role):
+        if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 

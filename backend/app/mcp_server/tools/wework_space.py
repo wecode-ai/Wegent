@@ -160,7 +160,7 @@ def _item_id(db: Session, token_info: MCPAuthInfo, requested: str = "") -> str:
 
 
 def _project(db: Session, project_id: str, user_id: int) -> CloudProject:
-    require_cloud_project_role(db, int(project_id), user_id, BaseRole.Reporter)
+    require_cloud_project_role(db, int(project_id), user_id, BaseRole.Viewer)
     project = db.get(CloudProject, int(project_id))
     if project is None:
         raise ValueError("Project not found")

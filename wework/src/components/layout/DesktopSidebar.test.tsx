@@ -5283,6 +5283,8 @@ describe('DesktopSidebar', () => {
   test('opens away reminder controls from the account IM message button', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
+    const openNotificationSettings = vi.fn()
+    window.addEventListener('wework:open-notification-settings', openNotificationSettings)
 
     renderSidebar({
       imNotificationSettings: {
@@ -5322,7 +5324,9 @@ describe('DesktopSidebar', () => {
     )
     await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
-    expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+    expect(openNotificationSettings).toHaveBeenCalledTimes(1)
+    expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
+    window.removeEventListener('wework:open-notification-settings', openNotificationSettings)
   })
 
   test('shows global IM notifications while experimental features are disabled', () => {

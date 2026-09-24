@@ -371,7 +371,7 @@ export function parseChangeRequest(
   }
 }
 
-function classifyChangeRequestCommandError(
+export function classifyChangeRequestCommandError(
   response: DeviceCommandResponse
 ): ChangeRequestLookupState {
   const message = [response.error, response.stderr].filter(Boolean).join('\n').toLowerCase()

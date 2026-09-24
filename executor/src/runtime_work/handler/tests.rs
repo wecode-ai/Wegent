@@ -4322,6 +4322,38 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["taskId"], "optimistic-local-task");
     assert_eq!(result["workspacePath"], "/tmp/project");
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    assert!(
+        result.get("running").is_none(),
+        "An unknown task must not report an authoritative idle execution"
+    );
+}
+
+#[tokio::test]
+async fn transcript_without_session_preserves_known_terminal_state() {
+    let index_path = temp_runtime_work_index_path("transcript-terminal-without-session");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "failed-before-session".to_owned(),
+        "/tmp/project".to_owned(),
+        "Failed task".to_owned(),
+    );
+    link.status = "failed".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": { "taskId": "failed-before-session", "workspacePath": "/tmp/project" }
+        }))
+        .await
+        .expect("terminal task without a session should return its known state");
+
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"], json!([]));
+    let _ = std::fs::remove_file(index_path);
 }
 
 #[test]

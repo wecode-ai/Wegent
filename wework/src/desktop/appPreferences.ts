@@ -49,7 +49,6 @@ export interface AppPreferences {
   supervisorModelSelection: ModelSelectionConfig | null
   projectAiModelSelection: ModelSelectionConfig | null
   supervisorIntervalSeconds: number
-  taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
   trayUsageEnabled: boolean
@@ -129,7 +128,6 @@ export interface AppPreferencesPatch {
   supervisorModelSelection?: ModelSelectionConfig | null
   projectAiModelSelection?: ModelSelectionConfig | null
   supervisorIntervalSeconds?: number
-  taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
   trayUsageEnabled?: boolean
@@ -175,7 +173,6 @@ export const defaultAppPreferences: AppPreferences = {
   supervisorModelSelection: null,
   projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -333,10 +330,6 @@ function mergeAppPreferences(value: unknown): AppPreferences {
     supervisorIntervalSeconds: [10, 30, 60, 300].includes(record.supervisorIntervalSeconds ?? 0)
       ? (record.supervisorIntervalSeconds as number)
       : defaultAppPreferences.supervisorIntervalSeconds,
-    taskCompletionNotificationsEnabled:
-      typeof record.taskCompletionNotificationsEnabled === 'boolean'
-        ? record.taskCompletionNotificationsEnabled
-        : defaultAppPreferences.taskCompletionNotificationsEnabled,
     trayUnreadEnabled:
       typeof record.trayUnreadEnabled === 'boolean'
         ? record.trayUnreadEnabled

@@ -26,7 +26,7 @@ import type {
   CollaborationGroup,
   CollaborationComment,
   CollaborationIssue,
-  CollaborationMember,
+  CollaborationWorkspaceMember,
 } from "../types";
 
 export interface SharedWorkspaceHttpTransport {
@@ -111,14 +111,14 @@ function keysToCamelCase(value: unknown): unknown {
   );
 }
 
-function mapWorkspaceMemberDto(input: unknown): CollaborationMember {
+function mapWorkspaceMemberDto(input: unknown): CollaborationWorkspaceMember {
   const row = record(input);
   return {
     id: Number(row.id),
     user_id: Number(row.user_id ?? row.userId),
     user_name: String(row.user_name ?? row.userName ?? ""),
     email: row.email == null ? null : String(row.email),
-    role: (row.role ?? "Developer") as CollaborationMember["role"],
+    role: (row.role ?? "Developer") as CollaborationWorkspaceMember["role"],
     ...((row.capability_description ?? row.capabilityDescription) == null
       ? {}
       : {

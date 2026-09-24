@@ -73,6 +73,7 @@ import type {
   CollaborationGroup,
   CollaborationIssue,
   CollaborationMember,
+  CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationProject,
   CollaborationWorkspace,
@@ -1384,7 +1385,7 @@ function ResourceCatalogPage({
   ): void;
 }) {
   const [workspaceMembers, setWorkspaceMembers] = useState<
-    Record<string, CollaborationMember[]>
+    Record<string, CollaborationWorkspaceMember[]>
   >({});
   useEffect(() => {
     let active = true;
@@ -3192,7 +3193,7 @@ function RootTeamEditor({
   onCreated(): Promise<void>;
   groupId?: string;
 }) {
-  const [members, setMembers] = useState<CollaborationMember[]>([]);
+  const [members, setMembers] = useState<CollaborationWorkspaceMember[]>([]);
   const [agents, setAgents] = useState<CollaborationOwnedAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3479,7 +3480,7 @@ export function CollaborationPlatformApp({
     null,
   );
   const [projectWorkspaceMembers, setProjectWorkspaceMembers] = useState<
-    CollaborationMember[]
+    CollaborationWorkspaceMember[]
   >([]);
   const [projectWorkspaceAgents, setProjectWorkspaceAgents] = useState<
     CollaborationOwnedAgent[]

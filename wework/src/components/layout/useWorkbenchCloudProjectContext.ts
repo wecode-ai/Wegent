@@ -33,6 +33,7 @@ import {
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
   RuntimeAdditionalContext,
   RuntimeProjectSpaceRef,
@@ -568,8 +569,17 @@ export function useWorkbenchCloudProjectContext({
     }
     const contextApis = todoBindingApis
     if (contextApis.length > 0) {
+      const lookupStartedAt = performance.now()
       void waitForPendingProjectSpaceContext(contextApis, contextRuntimeTask, () => active)
         .then(context => {
+          logRuntimeTaskCreateStage('project-space-context-resolved', {
+            taskId: contextRuntimeTask.taskId,
+            deviceId: contextRuntimeTask.deviceId,
+            projectId: context.project.id,
+            itemId: context.loop_item?.id ?? null,
+            elapsedMs: Math.round(performance.now() - lookupStartedAt),
+            applied: active && contextLookupGenerationRef.current === lookupGeneration,
+          })
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
           if (rememberProjectTaskStore(contextRuntimeTask, context.project.project_store)) {
             publishProjectSpaceTaskBindingChanged({
@@ -593,6 +603,18 @@ export function useWorkbenchCloudProjectContext({
         })
         .catch(error => {
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
+          logRuntimeTaskCreateStage('project-space-context-failed', {
+            taskId: contextRuntimeTask.taskId,
+            deviceId: contextRuntimeTask.deviceId,
+            error: error instanceof Error ? error.message : String(error),
+            elapsedMs: Math.round(performance.now() - lookupStartedAt),
+            causes:
+              error instanceof AggregateError
+                ? error.errors.map(cause =>
+                    cause instanceof Error ? cause.message : String(cause)
+                  )
+                : undefined,
+          })
           console.warn('[Wework] Failed to resolve project-space context for task', {
             task: contextRuntimeTask,
             error,

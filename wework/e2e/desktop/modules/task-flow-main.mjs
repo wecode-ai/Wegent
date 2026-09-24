@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -1957,6 +1958,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -2315,6 +2318,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
     }
 
     phase = 'secondary-project-create'

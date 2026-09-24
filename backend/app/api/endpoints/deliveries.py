@@ -1520,7 +1520,7 @@ async def create_issue_assignment(
         db,
         int(project.id),
         current_user.id,
-        BaseRole.RestrictedAnalyst,
+        BaseRole.Viewer,
     )
     require_issue_action(
         access,

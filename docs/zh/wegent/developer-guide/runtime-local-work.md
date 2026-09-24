@@ -342,6 +342,22 @@ URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 UR
 
 新对话和未选择项目的入口使用根路径或普通会话路径，不使用 `projectId=0` 这类占位参数。项目选择状态由 runtime workspace 引用和当前会话上下文恢复。
 
+## 新任务发送状态与诊断
+
+Electron 启动完成通知必须幂等：首次完成启动后，页面切换或重新挂载发来的通知不应再次显示、聚焦主窗口，避免抢走弹出窗口的焦点。并发通知共享同一次启动完成操作；失败后允许重新完成启动。
+
+刷新后页面未恢复时，检查 Electron 的 `[renderer-load]` 事件，按 `webContentsId` 关联加载开始、DOM 就绪、加载结束、失败和退出拦截。日志不包含页面 URL，避免暴露查询参数。
+
+发送消息后，前端会先展示用户消息并读取历史，此时 executor 可能仍在创建 worktree，尚未登记 LocalTask。无任务索引、无 provider 会话且没有已知执行时，空 transcript 必须省略 `running`，表示状态未知；不能用 `running=false` 提前结束前端的发送状态。已知运行和完成状态仍使用明确的布尔值。
+
+显式发送操作直接更新共享 `RuntimeTaskLifecycleStore`。切换标签页或隐藏发起发送的界面不应阻止 `sendRequested`、`sendAccepted` 或发送失败的状态更新；后台列表和历史同步继续受界面所有权限制。
+
+保留挂载的隐藏工作台不得订阅创建项目、绑定工作目录和打开云端设备设置的全局交互事件；这些事件仅由 `routeActive` 的工作台处理，避免切换标签页后重复打开 Portal 对话框。已知任务在创建 provider 会话前失败时，transcript 仍须返回 `running=false`，让客户端结束等待。
+
+恢复本地任务的项目空间上下文时，复用绑定记录中的项目 ID 读取任务，不要再次遍历项目列表。`project-space-context-resolved/failed` 诊断记录上下文查询耗时及结果是否被当前界面采用，用于区分查询超时和过期响应。
+
+排查发送后的空白时，用 `deviceId + taskId` 关联 Electron 日志目录中的 `runtime-launch.log` 与 executor 日志。前者记录历史响应接收、状态机转换、等待提示状态和 `web_contents_id`；后者的 `runtime worktree stage` 记录锁等待、预检查、Git worktree 创建与持久化耗时。后端返回 `running=true` 不等于前端已经渲染等待提示，必须核对两侧时间。这些日志不需要记录消息正文。Electron 日志采集器和 executor 的修改需要重启对应进程，前端热更新不能替代重启。
+
 ## 兼容性
 
 Wegent 原生 Task/Subtask 流程仍保留给现有聊天、共享任务和历史 task URL。Wework sidebar、移动端 drawer、项目下任务展示和新任务创建路径使用 runtime work API，不再依赖 DB task list 或 Backend `projects` 表。

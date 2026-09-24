@@ -10,6 +10,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.wework_notification import NotificationCreate
 from app.services.notification_copy import (
@@ -18,10 +19,42 @@ from app.services.notification_copy import (
     NotificationLink,
     push_copy,
 )
+from app.services.wework_notification_preferences import (
+    get_notification_preferences,
+    notification_category,
+)
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 _PENDING = "wework_notification_ids"
+
+
+def _delivery_channels(db: Session, *, user_id: int, kind: str) -> dict[str, bool]:
+    user = db.get(User, user_id)
+    preferences = get_notification_preferences(user) if user else None
+    category = notification_category(kind)
+    channel_preferences = getattr(preferences, category) if preferences else None
+    return {
+        "in_app": channel_preferences.in_app if channel_preferences else True,
+        "system": (
+            bool(channel_preferences.system)
+            if channel_preferences
+            else kind == "assignment"
+        ),
+        "im": bool(channel_preferences.im) if channel_preferences else True,
+    }
+
+
+def _delivery_payload(notification: WeworkNotification) -> dict:
+    return {
+        "id": notification.id,
+        "user_id": notification.user_id,
+        "kind": notification.kind,
+        "title": notification.title,
+        "body": notification.body,
+        "url": notification.url,
+        "payload": notification.payload,
+    }
 
 
 def issue_url(
@@ -54,10 +87,16 @@ def notification_links(notification: WeworkNotification) -> list[NotificationLin
     board page as well.
     """
 
-    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    return _notification_links(_delivery_payload(notification))
+
+
+def _notification_links(notification: dict) -> list[NotificationLink]:
+    payload = (
+        notification["payload"] if isinstance(notification.get("payload"), dict) else {}
+    )
     links: list[NotificationLink] = []
-    if notification.url:
-        links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification.url))
+    if notification.get("url"):
+        links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification["url"]))
     project_id = payload.get("projectId")
     item_id = payload.get("itemId")
     if project_id and item_id:
@@ -85,6 +124,7 @@ def create_notification(
     payload: dict | None = None,
 ) -> WeworkNotification:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    channels = _delivery_channels(db, user_id=user_id, kind=kind)
     notification = WeworkNotification(
         id=str(uuid4()),
         user_id=user_id,
@@ -102,8 +142,19 @@ def create_notification(
         is_read=False,
         read_status_changed_at=now,
     )
-    db.add(notification)
-    db.info.setdefault(_PENDING, []).append(notification.id)
+    if channels["in_app"]:
+        db.add(notification)
+        db.info.setdefault(_PENDING, []).append(
+            {"type": "stored", "id": notification.id, "channels": channels}
+        )
+    elif channels["system"] or channels["im"]:
+        db.info.setdefault(_PENDING, []).append(
+            {
+                "type": "transient",
+                "notification": _delivery_payload(notification),
+                "channels": channels,
+            }
+        )
     return notification
 
 
@@ -116,80 +167,137 @@ def _discard_delivery(db: Session) -> None:
 def _schedule_delivery(db: Session) -> None:
     from app.core.async_utils import schedule_async_task
 
-    for notification_id in db.info.pop(_PENDING, []):
+    for pending in db.info.pop(_PENDING, []):
         try:
-            schedule_async_task(deliver_notification, notification_id)
+            if pending["type"] == "stored":
+                schedule_async_task(
+                    deliver_notification,
+                    pending["id"],
+                    pending["channels"],
+                )
+            else:
+                schedule_async_task(
+                    deliver_notification_payload,
+                    pending["notification"],
+                    pending["channels"],
+                )
         except Exception:
-            logger.exception(
-                "Wework delivery scheduling failed: id=%s", notification_id
-            )
+            logger.exception("Wework delivery scheduling failed: pending=%s", pending)
 
 
 @trace_async()
-async def deliver_notification(notification_id: str) -> None:
+async def deliver_notification(
+    notification_id: str,
+    channels: dict[str, bool] | None = None,
+) -> None:
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        notification = db.get(WeworkNotification, notification_id)
+        if notification is None:
+            return
+        channels = channels or _delivery_channels(
+            db, user_id=notification.user_id, kind=notification.kind
+        )
+        await _deliver_notification_payload(
+            db,
+            _delivery_payload(notification),
+            channels,
+            emit_inbox=True,
+        )
+
+
+@trace_async()
+async def deliver_notification_payload(
+    notification: dict,
+    channels: dict[str, bool],
+) -> None:
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        await _deliver_notification_payload(
+            db,
+            notification,
+            channels,
+            emit_inbox=False,
+        )
+
+
+async def _deliver_notification_payload(
+    db: Session,
+    notification: dict,
+    channels: dict[str, bool],
+    *,
+    emit_inbox: bool,
+) -> None:
     from app.api.ws.wework_runtime_namespace import (
         WEWORK_RUNTIME_EVENT,
         WEWORK_RUNTIME_NAMESPACE,
         wework_runtime_user_room,
     )
     from app.core.socketio import get_sio
-    from app.db.session import SessionLocal
     from app.services.im.notification_dispatcher import im_notification_dispatcher
     from app.services.im.session_service import im_session_service
 
-    with SessionLocal() as db:
-        notification = db.get(WeworkNotification, notification_id)
-        if notification is None:
-            return
-        try:
+    notification_id = notification["id"]
+    user_id = notification["user_id"]
+    kind = notification["kind"]
+    try:
+        if emit_inbox:
             await get_sio().emit(
                 WEWORK_RUNTIME_EVENT,
                 {
                     "event": "wework.notification.created",
-                    "payload": {"id": notification.id},
+                    "payload": {"id": notification_id},
                 },
-                room=wework_runtime_user_room(notification.user_id),
+                room=wework_runtime_user_room(user_id),
                 namespace=WEWORK_RUNTIME_NAMESPACE,
             )
-            if notification.kind == "assignment":
-                await get_sio().emit(
-                    WEWORK_RUNTIME_EVENT,
-                    {"event": "project.task.assigned", "payload": notification.payload},
-                    room=wework_runtime_user_room(notification.user_id),
-                    namespace=WEWORK_RUNTIME_NAMESPACE,
+        if channels["system"] and kind == "assignment":
+            await get_sio().emit(
+                WEWORK_RUNTIME_EVENT,
+                {
+                    "event": "project.task.assigned",
+                    "payload": notification["payload"],
+                },
+                room=wework_runtime_user_room(user_id),
+                namespace=WEWORK_RUNTIME_NAMESPACE,
+            )
+    except Exception:
+        logger.exception("Wework live delivery failed: id=%s", notification_id)
+
+    if not channels["im"]:
+        return
+    try:
+        sessions = await im_session_service.list_user_sessions(db, user_id=user_id)
+        payload = (
+            notification["payload"]
+            if isinstance(notification.get("payload"), dict)
+            else {}
+        )
+        push = push_copy(
+            kind=kind,
+            title=notification["title"],
+            body=notification["body"],
+            payload=payload,
+        )
+        for session in sessions:
+            if session.user_id != user_id:
+                continue
+            result = await im_notification_dispatcher.send_notification(
+                db,
+                session,
+                push,
+                links=_notification_links(notification),
+            )
+            if not result.get("success"):
+                logger.warning(
+                    "Wework IM delivery failed: id=%s channel=%s",
+                    notification_id,
+                    session.channel_type,
                 )
-        except Exception:
-            logger.exception("Wework live delivery failed: id=%s", notification.id)
-        try:
-            sessions = await im_session_service.list_user_sessions(
-                db, user_id=notification.user_id
-            )
-            payload = (
-                notification.payload if isinstance(notification.payload, dict) else {}
-            )
-            push = push_copy(
-                kind=notification.kind,
-                title=notification.title,
-                body=notification.body,
-                payload=payload,
-            )
-            for session in sessions:
-                if session.user_id != notification.user_id:
-                    continue
-                result = await im_notification_dispatcher.send_notification(
-                    db,
-                    session,
-                    push,
-                    links=notification_links(notification),
-                )
-                if not result.get("success"):
-                    logger.warning(
-                        "Wework IM delivery failed: id=%s channel=%s",
-                        notification.id,
-                        session.channel_type,
-                    )
-        except Exception:
-            logger.exception("Wework IM delivery failed: id=%s", notification.id)
+    except Exception:
+        logger.exception("Wework IM delivery failed: id=%s", notification_id)
 
 
 @trace_sync()
@@ -212,22 +320,25 @@ def send_wework_notification(
         url=values.url,
     )
     db.commit()
-    db.refresh(row)
+    if row in db:
+        db.refresh(row)
     return row
 
 
 def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
 ) -> None:
+    from app.services.cloud_project_visibility import explicit_project_member_ids
     from app.services.cloud_projects import cloud_project_service
     from app.services.loop_items.external_provider import external_loop_item_provider
     from app.services.loop_items.service import loop_item_service
 
     access = cloud_project_service.access(db, values.project_id, user_id)
-    if access.is_public_visitor:
+    member_ids = explicit_project_member_ids(db, access.project)
+    if access.is_viewer or user_id not in member_ids:
         raise HTTPException(403, "Project membership required")
     recipient = cloud_project_service.access(db, values.project_id, recipient_id)
-    if recipient.is_public_visitor:
+    if recipient.is_viewer or recipient_id not in member_ids:
         raise HTTPException(403, "Recipient must be a project member")
     if values.item_id:
         if access.project.task_provider in {"github", "gitlab"}:

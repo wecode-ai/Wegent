@@ -65,6 +65,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
+import { OPEN_NOTIFICATION_SETTINGS_EVENT } from '@/features/notifications/notificationPreferences'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -1214,11 +1215,9 @@ function GlobalImNotificationBell({
   const title = getGlobalImNotificationTitle(t, imNotificationSettings, cloud.status)
   const primaryActionLabel = requiresCloudLogin
     ? t('workbench.cloud_connection_login', '登录并连接')
-    : enabled
-      ? t('workbench.away_im_reminder_disable', '关闭提醒')
-      : needsSession
-        ? t('workbench.away_im_reminder_choose_session', '选择 IM 会话')
-        : t('workbench.away_im_reminder_enable', '开启离开电脑提醒')
+    : needsSession
+      ? t('workbench.away_im_reminder_choose_session', '选择 IM 会话')
+      : t('notifications.settings', '通知设置')
 
   const openCloudLogin = () => {
     onMenuOpenChange(false)
@@ -1241,17 +1240,12 @@ function GlobalImNotificationBell({
       openCloudLogin()
       return
     }
-    if (!onToggleGlobalImNotification) {
-      onMenuOpenChange(false)
-      onOpenSettings()
-      return
-    }
     if (needsSession) {
       openSessionSettings()
       return
     }
     onMenuOpenChange(false)
-    void onToggleGlobalImNotification()
+    window.dispatchEvent(new Event(OPEN_NOTIFICATION_SETTINGS_EVENT))
   }
 
   return (
