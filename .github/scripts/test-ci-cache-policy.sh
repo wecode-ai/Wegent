@@ -545,13 +545,19 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$memory_build_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
   [[ "$memory_build_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
   [[ "$memory_build_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
+  [[ "$memory_build_section" != *'resolve-wework-macos-e2e-build-ref.sh'* ]] ||
+  [[ "$memory_build_section" != *'restore-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$memory_build_section" != *'archive-wework-macos-e2e-build.sh'* ]] ||
+  [[ "$memory_build_section" != *'node wework/e2e/desktop/run-checkpoints.mjs'* ]] ||
+  ! grep -Fq 'Publish shared macOS Wework E2E build' "$warmup_workflow" ||
   ! grep -Fq 'strip --strip-debug' \
     "$script_dir/archive-wework-core-e2e-build.sh"; then
-  fail "Linux Wework builds must reuse shared Rust runtimes without a duplicate warmup"
+  fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
+bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"

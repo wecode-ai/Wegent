@@ -148,7 +148,7 @@ cloud_shards=(
 # prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-apps,browser-annotation-design
+  harness-apps,browser-annotation-design,collaboration-agent-automation-chain
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
@@ -160,7 +160,7 @@ core_shards=(
   resilience,environment-panel-scroll,collaboration-shared-core
   workspace-attachments,automation-lifecycle,collaboration-settings-matrix
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention
-  rendering-extensions,collaboration-agent-automation-chain,transcript-sync
+  rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery

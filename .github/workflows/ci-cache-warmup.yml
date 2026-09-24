@@ -417,6 +417,24 @@ jobs:
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           test -x "$backend_runtime"
 
+      - name: Publish shared macOS Wework E2E build
+        env:
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+        run: |
+          reference_output="$(mktemp)"
+          GITHUB_OUTPUT="$reference_output" \
+            .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
+            "$GITHUB_REPOSITORY_OWNER" \
+            "$EXECUTOR_SOURCE_DIGEST" \
+            "$BACKEND_RS_SOURCE_DIGEST"
+          reference="$(sed -n 's/^reference=//p' "$reference_output")"
+          test -n "$reference"
+          .github/scripts/archive-wework-macos-e2e-build.sh
+          .github/scripts/publish-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-macos-e2e-build.tar.zst \
+            "$reference"
+
       - name: Publish macOS arm64 runtimes to OCI
         env:
           EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
