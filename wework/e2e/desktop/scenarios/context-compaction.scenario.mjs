@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -159,6 +160,7 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   workspacePath,
 }) {
+  const interrupted = createInterruptedCompactionScenario({ uiTimeoutMs, modelResponseTimeoutMs })
   let active = false
   let compactionRequests = 0
   let followUpSawCompactedContext = false
@@ -175,6 +177,7 @@ export function createDesktopScenario({
 
   return {
     async handleHttp(request, response, url) {
+      if (await interrupted.handleHttp(request, response, url)) return true
       if (
         !active ||
         request.method !== 'POST' ||
@@ -316,10 +319,17 @@ export function createDesktopScenario({
       assert.equal(followUpSession.conversation_id, initialSession.conversation_id)
       assert.notEqual(followUpSession.response_id, initialSession.response_id)
       await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
+      await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+      await interrupted.verify(control)
     },
 
     diagnostics() {
-      return { active, compactionRequests, followUpSawCompactedContext }
+      return {
+        active,
+        compactionRequests,
+        followUpSawCompactedContext,
+        interrupted: interrupted.diagnostics(),
+      }
     },
   }
 }

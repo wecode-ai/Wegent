@@ -10,6 +10,7 @@ import type { TurnFileChangesSummary } from "./runtime";
 import {
   limitWorkbenchProcessingBlock,
   resolveStreamingThinkingContent,
+  settleWorkbenchProcessingBlock,
 } from "./workbench-message-reducer";
 
 import type {
@@ -623,18 +624,11 @@ export function boundVisibleRuntimeProcessingBlocks(
 export function settleProcessingBlocks(
   items: RuntimeConversationItem[],
 ): RuntimeConversationItem[] {
-  const completedAt = Date.now();
   return items.map((item) => {
     if (item.type !== "block") return item;
-    if (item.block.status === "done" || item.block.status === "error")
-      return item;
     return {
       ...item,
-      block: {
-        ...item.block,
-        status: "done",
-        completedAt: item.block.completedAt ?? completedAt,
-      } as ProcessingBlock,
+      block: settleWorkbenchProcessingBlock(item.block),
     };
   });
 }
