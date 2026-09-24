@@ -1353,6 +1353,10 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_TOOL_MARKER,
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_PARTIAL,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
       text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
@@ -1370,6 +1374,13 @@ export function createDesktopScenario({
       ),
       false,
       'The restored child tool leaked into the root conversation'
+    )
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The restored child stream leaked into the root conversation'
     )
     await captureSubagent(control, 'streaming-text-subagent-06-restored-history.png')
     await control.command('click', '[data-testid="right-workspace-subagents-tab-close-button"]')
