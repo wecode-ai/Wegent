@@ -103,6 +103,7 @@ import {
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyComposerPluginNetworkIsolation,
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
@@ -284,6 +285,7 @@ import {
 } from './task-state-flows.mjs'
 
 import {
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
   verifyCrossProviderSwitchRetry,
@@ -1856,6 +1858,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
         appBundlePath,
@@ -1972,6 +1982,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
           userDataDirectory: electronUserDataDirectory,
+        })
+      }
+      if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
+        phase = 'plugin-composer-network-isolation'
+        await verifyComposerPluginNetworkIsolation({
+          blockingNetworkProxy,
+          codexHome,
+          control,
+          marketplacePath: marketplacePluginPath,
+          restartDesktopApp,
+          workspacePath,
         })
       }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
@@ -4293,6 +4314,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'attachment-only-sidebar'
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector,
+        control,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({

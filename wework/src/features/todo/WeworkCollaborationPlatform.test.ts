@@ -290,6 +290,15 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             projectId
           )
         ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'collaboration-platform-open-issue',
+            onClick: () => host.navigate({ ...host.location, issueId: 'issue-1' }),
+            type: 'button',
+          },
+          'Open issue'
+        ),
         showLocalProject
           ? renderProject?.({
               project: {
@@ -1127,6 +1136,47 @@ describe('Wework collaboration workspace API', () => {
     expect(getProject).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps an Issue the reader opened while the route only names the project', async () => {
+    const getProject = vi.fn().mockResolvedValue({
+      id: 'active-project',
+      name: 'Active project',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    })
+    const props = {
+      user: {
+        id: 1,
+        user_name: 'admin',
+        email: 'admin@example.com',
+      } as never,
+      localProjects: [],
+      services: {
+        sharedWorkspaceApi: {
+          projects: {
+            get: getProject,
+          },
+        },
+      } as never,
+      activeProjectRef: {
+        projectStore: 'backend' as const,
+        projectId: 'active-project',
+      },
+      onActiveProjectChange: vi.fn(),
+    }
+    render(createElement(WeworkCollaborationPlatform, props))
+
+    const platform = () => screen.getByTestId('collaboration-platform-root')
+    await waitFor(() => expect(platform()).toHaveAttribute('data-issue-id', ''))
+
+    await act(async () => {
+      screen.getByTestId('collaboration-platform-open-issue').click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(platform()).toHaveAttribute('data-issue-id', 'issue-1')
+  })
+
   it('resumes controlled project synchronization after navigation loading fails', async () => {
     const getProject = vi.fn(async (projectId: string) => {
       if (projectId === 'project-missing') throw new Error('Project was not found')
@@ -1172,7 +1222,9 @@ describe('Wework collaboration workspace API', () => {
       )
     })
     expect(getProject).toHaveBeenCalledWith('project-missing')
-    expect(getProject).toHaveBeenCalledTimes(3)
+    // The route already names the project the failed navigation fell back to,
+    // so recovering it costs no second lookup of that project.
+    expect(getProject).toHaveBeenCalledTimes(2)
   })
 
   it('ignores stale project navigation completions', async () => {

@@ -79,6 +79,7 @@ import type {
   Attachment,
   DeviceInfo,
   InstalledPlugin,
+  LocalDeviceApp,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
@@ -1284,6 +1285,9 @@ function ProjectSendProbe({
       </button>
       <button type="button" onClick={() => workbench.startStandaloneChat()}>
         start standalone chat
+      </button>
+      <button type="button" onClick={() => workbench.selectStandaloneDevice('device-1')}>
+        select standalone device
       </button>
       <button
         type="button"
@@ -3389,6 +3393,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3420,7 +3427,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'codex.app_server_request') {
-          if ((params as { method: string }).method === 'plugin/installed')
+          if (
+            (params as { method: string }).method === 'plugin/list' ||
+            (params as { method: string }).method === 'plugin/installed'
+          )
             return { marketplaces: [] }
           if ((params as { method: string }).method === 'app/list')
             return { data: [], nextCursor: null }
@@ -3437,6 +3447,109 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('keeps installed plugins available while both remote Codex catalogs hang and fail', async () => {
+    setElectronRuntime()
+    const codexApps = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
+    const remoteInstalled = deferred<{ marketplaces: [] }>()
+    const documentsPlugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'documents', namespace: 'default', labels: { id: '101' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'documents',
+        },
+        displayName: 'Documents',
+        description: 'Create documents',
+        installState: 'installed',
+        enabled: true,
+        visibility: 'public',
+        pluginId: 101,
+        releaseId: 1001,
+        manifest: { name: 'documents' },
+        components: {
+          skills: [],
+          commands: [],
+          apps: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        interface: { shortDescription: 'Create documents' },
+      },
+      status: { state: 'enabled' },
+    }
+    pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [documentsPlugin] })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/list') return { marketplaces: [] }
+          if (request.method === 'plugin/installed') return remoteInstalled.promise
+          if (request.method === 'app/list') return codexApps.promise
+        }
+        return {}
+      }
+    )
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+        status: 'connected',
+        isConnected: true,
+        apiBaseUrl: 'https://cloud.example/api',
+        token: 'test-token',
+      })
+
+      await userEvent.click(screen.getByText('list local apps'))
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+          'loaded:plugin:documents'
+        )
+      )
+      await waitFor(() =>
+        expect(
+          localExecutorMocks.requestLocalExecutor.mock.calls.some(
+            ([method, params]) =>
+              method === 'codex.app_server_request' &&
+              (params as { method?: string }).method === 'app/list'
+          )
+        ).toBe(true)
+      )
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'plugin/installed'
+        )
+      ).toBe(true)
+      expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
+
+      codexApps.reject(new Error('ChatGPT app directory unavailable'))
+      remoteInstalled.reject(new Error('ChatGPT installed directory unavailable'))
+      await waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          '[Wework] Failed to enrich composer plugins from Codex apps.',
+          expect.any(Error)
+        )
+      )
+      expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'loaded:plugin:documents'
+      )
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
   test('reports a composer inventory failure and accepts a fresh read after recovery', async () => {
     setElectronRuntime()
     let storeAvailable = false
@@ -3448,7 +3561,10 @@ describe('WorkbenchProvider runtime tasks', () => {
           return { storePath: '/store', plugins: [] }
         }
         if (method === 'codex.app_server_request') {
-          if ((params as { method: string }).method === 'plugin/installed')
+          if (
+            (params as { method: string }).method === 'plugin/list' ||
+            (params as { method: string }).method === 'plugin/installed'
+          )
             return { marketplaces: [] }
           if ((params as { method: string }).method === 'app/list')
             return { data: [], nextCursor: null }
@@ -3481,6 +3597,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3658,6 +3777,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3733,6 +3855,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [installedMarketplace] }
+          }
           if (request.method === 'app/list') {
             return { data: [], nextCursor: null }
           }
@@ -9218,15 +9343,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
       })
     )
+    const createResponse =
+      deferred<
+        Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
+      >()
     const transcript = deferred<RuntimeTranscriptResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      createRuntimeTask: vi.fn(async request => ({
-        accepted: true,
-        deviceId: request.deviceId,
-        taskId: request.taskId,
-        workspacePath: request.workspacePath,
-        runtime: 'claude_code',
-      })),
+      createRuntimeTask: vi.fn().mockReturnValue(createResponse.promise),
       getRuntimeTranscript: vi.fn().mockReturnValue(transcript.promise),
     })
     const services = createWorkbenchServices({
@@ -9244,6 +9367,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('0')
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         attachmentIds: [45],
@@ -9253,6 +9377,84 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(
       previews.some(preview => preview.getAttribute('src') === 'blob:runtime-message-image-preview')
     ).toBe(true)
+
+    await act(async () => {
+      createResponse.resolve({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+      })
+      await createResponse.promise
+    })
+  })
+
+  test('restores the draft and image attachment when runtime task creation fails', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'device-1',
+        taskId: 'runtime-rejected',
+        error: 'create rejected',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+    )
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent('create rejected')
+  })
+
+  test('restores a rejected standalone draft to the blank chat scope', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'device-1',
+        taskId: 'standalone-rejected',
+        error: 'standalone create rejected',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(services.deviceApi.listDevices).toHaveBeenCalled())
+    await userEvent.click(await screen.findByText('start standalone chat'))
+    await userEvent.click(screen.getByText('select standalone device'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-1')
+    )
+    const blankChatKey = screen.getByTestId('standalone-chat-key').textContent
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(blankChatKey ?? '')
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent('standalone create rejected')
   })
 
   test('uploads local image attachments before creating a cloud runtime task', async () => {
@@ -18702,6 +18904,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (
           method === 'codex.app_server_request' &&
           (params as { method?: string })?.method === 'plugin/installed'
+        )
+          return { marketplaces: [] }
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string })?.method === 'plugin/list'
         )
           return { marketplaces: [] }
         return {}
