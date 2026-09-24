@@ -30,11 +30,19 @@ from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
 from app.services.turn_file_changes import turn_file_changes_service
 from app.stores.tasks import subtask_store, task_access_store
+from shared.metrics import ApiRouteMetrics, track_api_sync
 
 router = APIRouter()
 
+# Request metrics for the subtask resource (collection and item).
+_SUBTASKS_METRICS = ApiRouteMetrics("/subtasks", slow_threshold_ms=500)
+_SUBTASK_DETAIL_METRICS = ApiRouteMetrics(
+    "/subtasks/:subtask_id", slow_threshold_ms=500
+)
+
 
 @router.get("", response_model=SubtaskListResponse)
+@track_api_sync(_SUBTASKS_METRICS)
 def list_subtasks(
     task_id: int = Query(..., description="Task ID"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -79,6 +87,7 @@ def list_subtasks(
 
 
 @router.get("/{subtask_id}", response_model=SubtaskInDB)
+@track_api_sync(_SUBTASK_DETAIL_METRICS)
 def get_subtask(
     subtask_id: int,
     current_user: User = Depends(security.get_current_user),
@@ -125,6 +134,7 @@ async def revert_turn_file_changes(
 
 
 @router.put("/{subtask_id}", response_model=SubtaskInDB)
+@track_api_sync(_SUBTASK_DETAIL_METRICS)
 def update_subtask(
     subtask_id: int,
     subtask_update: SubtaskUpdate,
@@ -138,6 +148,7 @@ def update_subtask(
 
 
 @router.delete("/{subtask_id}")
+@track_api_sync(_SUBTASK_DETAIL_METRICS)
 def delete_subtask(
     subtask_id: int,
     current_user: User = Depends(security.get_current_user),

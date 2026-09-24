@@ -63,6 +63,7 @@ from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_access_store, task_store
 from shared.db.capability_reference import resolve_model_kind
+from shared.metrics import ApiRouteMetrics, track_api
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -76,6 +77,13 @@ router = APIRouter()
 
 # Get rate limiter instance
 limiter = get_limiter()
+
+# Request metrics named after the route templates the Rust gateway uses, so a
+# route keeps one set of series while it moves between Python and Rust.
+_CREATE_RESPONSE_METRICS = ApiRouteMetrics("/api/v1/responses", slow_threshold_ms=500)
+_RESPONSE_DETAIL_METRICS = ApiRouteMetrics(
+    "/api/v1/responses/:response_id", slow_threshold_ms=500
+)
 
 
 class _DispatchWithoutTerminalError(RuntimeError):
@@ -382,6 +390,7 @@ async def _persist_terminal_failure(
 
 
 @router.post("")
+@track_api(_CREATE_RESPONSE_METRICS)
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(
     span_name="openapi.create_response",
@@ -1043,6 +1052,7 @@ async def _create_streaming_response_unified(
     # Extract data needed for streaming before closing db
     user_id = user.id
     user_name = user.user_name
+    team_owner_user_id = team.user_id
 
     current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
     inherited_kb_refs = _get_inherited_knowledge_base_refs(
@@ -1148,6 +1158,30 @@ async def _create_streaming_response_unified(
         subtask_id=assistant_subtask_id,
         task_id=task_kind_id,
     )
+
+    if not execution_dispatcher.supports_streaming(execution_request):
+        target = execution_dispatcher.router.route(execution_request, device_id=None)
+        shell_type = (
+            execution_request.bot[0].get("shell_type", "Chat")
+            if execution_request.bot
+            else "Chat"
+        )
+        logger.warning(
+            "[OPENAPI] Non-SSE streaming request: "
+            "caller_user_id=%s, caller_username=%s, team_owner_user_id=%s, "
+            "team_namespace=%s, team_name=%s, api_key_name=%s, "
+            "shell_type=%s, route_mode=%s, task_id=%d, subtask_id=%d",
+            user_id,
+            user_name,
+            team_owner_user_id,
+            model_info.get("namespace"),
+            model_info.get("team_name"),
+            api_key_name,
+            shell_type,
+            target.mode.value,
+            task_kind_id,
+            assistant_subtask_id,
+        )
 
     @trace_async_generator(
         span_name="openapi.raw_chat_stream",
@@ -1623,6 +1657,7 @@ async def _create_streaming_response_unified(
 
 
 @router.get("/{response_id}", response_model=WeworkResponseObject | ResponseObject)
+@track_api(_RESPONSE_DETAIL_METRICS)
 @limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
     request: Request,
@@ -1918,6 +1953,7 @@ async def cancel_response(
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
+@track_api(_RESPONSE_DETAIL_METRICS)
 @limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
     request: Request,
