@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,16 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[4]
 SDK = REPOSITORY / "sdk/dws-auth"
+
+
+def host_target() -> str:
+    operating_system = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
+    architecture = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
+        platform.machine()
+    )
+    if not operating_system or not architecture:
+        raise ValueError("DWS E2E requires a supported POSIX host")
+    return f"{operating_system}/{architecture}"
 
 
 def build(output: Path, source_archive: Path | None) -> None:
@@ -69,7 +80,13 @@ def build(output: Path, source_archive: Path | None) -> None:
             ],
             check=True,
         )
-        assemble(plugin, output, source_archive)
+        assemble(
+            plugin,
+            output,
+            source_archive,
+            targets=(host_target(),),
+            test_host=False,
+        )
 
 
 def source_store(action: str, root: Path, source_archive: Path | None) -> None:

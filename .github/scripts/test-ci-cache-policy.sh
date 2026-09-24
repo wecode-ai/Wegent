@@ -376,60 +376,60 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
   "$workflow_dir/e2e-tests.yml" |
   grep -F 'prepare-platform-e2e-image' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'node scripts/prepare-codex-binary.mjs --materialize' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex' \
       >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'test -x "$CODEX_BINARY_PATH"' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F \
     'PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
       >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'docker run --rm' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--network host' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- \
       '--volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE"' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- \
       '--volume "$GITHUB_WORKSPACE:$container_workspace"' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'container_workspace="/__w/$repository_name/$repository_name"' \
       >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_BOOTSTRAP_ADMIN_PASSWORD' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_CLAUDE_MODEL_SERVER_URL' >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F \
       'E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == '\''true'\'' && '\''wegent/e2e-claudecode-executor:latest'\'' || needs.build-executor-e2e-runtime.outputs.image }}' \
       >/dev/null ||
-  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_CLAUDE_EXECUTOR_IMAGE' >/dev/null ||
-  sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null ||
-  sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'playwright-chromium-v2-' >/dev/null; then
   fail "Executor E2E must run Playwright from the immutable dependency image"

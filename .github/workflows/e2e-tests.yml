@@ -336,12 +336,7 @@ jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    needs:
-      [
-        build-frontend-e2e,
-        build-backend-rs-e2e-runtime,
-        prepare-platform-e2e-image,
-      ]
+    needs: [build-backend-rs-e2e-runtime, prepare-platform-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -450,6 +445,7 @@ jobs:
 
       - name: Download frontend E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "300"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -697,7 +693,6 @@ jobs:
       packages: read
     needs:
       [
-        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
@@ -869,6 +864,7 @@ jobs:
 
       - name: Download frontend E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "300"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -1255,60 +1251,6 @@ jobs:
             executor_manager/container-logs/
           retention-days: 7
 
-  # Merge test reports from all E2E jobs
-  merge-reports:
-    name: Merge Test Reports
-    needs: [changes, e2e-tests, executor-e2e-tests]
-    if: always() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
-
-      - name: Download shard 1 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-1
-          path: all-blob-reports
-
-      - name: Download shard 2 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-2
-          path: all-blob-reports
-
-      - name: Download shard 3 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-3
-          path: all-blob-reports
-
-      - name: Download shard 4 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-4
-          path: all-blob-reports
-
-      - name: Download executor blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-executor
-          path: all-blob-reports
-
-      - name: Merge reports
-        working-directory: ./frontend
-        run: pnpm exec playwright merge-reports --reporter html ../all-blob-reports
-
-      - name: Upload merged report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: playwright-report-merged
-          path: frontend/playwright-report/
-          retention-days: 30
-
   platform-e2e-summary:
     name: Platform E2E Summary
     needs:
@@ -1317,7 +1259,6 @@ jobs:
       - build-executor-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
-      - merge-reports
     if: always()
     runs-on: ubuntu-latest
 
@@ -1330,7 +1271,6 @@ jobs:
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
-          REPORT_RESULT: ${{ needs.merge-reports.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
@@ -1355,4 +1295,3 @@ jobs:
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
-          assert_success "$REPORT_RESULT" "E2E report merge"

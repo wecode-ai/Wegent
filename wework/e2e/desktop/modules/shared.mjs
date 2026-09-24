@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
+import { reservePort } from '../port-reservation.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -1032,18 +1033,6 @@ async function runChecked(command, args, options = {}) {
       reject(new Error(`${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}`))
     })
   })
-}
-
-async function reservePort() {
-  const server = createServer()
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolvePromise)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-  await new Promise(resolvePromise => server.close(resolvePromise))
-  return address.port
 }
 
 class BlockingNetworkProxy {

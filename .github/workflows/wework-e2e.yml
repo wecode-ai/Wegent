@@ -327,9 +327,7 @@ jobs:
 
   wework-desktop-core-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs:
-      - changes
-      - build-wework-desktop-core-e2e
+    needs: changes
     if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -370,6 +368,7 @@ jobs:
 
       - name: Download Wework desktop Core E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -774,9 +773,7 @@ jobs:
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs:
-      - changes
-      - build-wework-desktop-core-e2e
+    needs: changes
     if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -801,6 +798,7 @@ jobs:
 
       - name: Download shared Wework desktop E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -888,9 +886,7 @@ jobs:
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    needs:
-      - changes
-      - build-wework-desktop-core-e2e
+    needs: changes
     if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -913,6 +909,7 @@ jobs:
 
       - name: Download shared Wework desktop E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "600"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -1166,16 +1163,34 @@ jobs:
 
       - name: Build Wework Electron E2E application
         env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
-          pnpm --filter wework ai:verify:electron:build
+          pnpm --filter wework ai:verify:electron:build &
+          wework_pid=$!
+          cargo build \
+            --locked \
+            --manifest-path backend-rs/Cargo.toml \
+            --bin wegent-backend-rs &
+          backend_pid=$!
+
+          status=0
+          wait "$wework_pid" || status=$?
+          wait "$backend_pid" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
+
           app_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
           executor_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"
+          backend_rs_bin="$CARGO_TARGET_DIR/debug/wegent-backend-rs"
           test -x "$app_bin"
           test -x "$executor_bin"
+          test -x "$backend_rs_bin"
           echo "WEWORK_E2E_APP_BIN=$app_bin" >> "$GITHUB_ENV"
           echo "WEWORK_E2E_EXECUTOR_BIN=$executor_bin" >> "$GITHUB_ENV"
+          echo "WEWORK_E2E_BACKEND_RS_BIN=$backend_rs_bin" >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1206,21 +1221,14 @@ jobs:
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
           CI: true
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --parallel-segments browser-toolbar-actions,tray-lifecycle
-
-      - name: Run Wework desktop macOS browser annotation overlay E2E
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
-        env:
-          CI: true
-        run: |
-          test -x "$CODEX_BIN"
-          test -x "$WEWORK_E2E_APP_BIN"
-          test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --segment browser-annotation-design
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          pnpm --filter wework e2e:desktop -- \
+            --parallel-segments browser-toolbar-actions,tray-lifecycle,browser-annotation-design
 
       - name: Save shared Wework Electron build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
