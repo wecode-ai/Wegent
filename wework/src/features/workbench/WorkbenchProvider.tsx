@@ -32,7 +32,11 @@ import {
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
 import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
-import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
+import {
+  createLocalCodexPluginApi,
+  listLocalInstalledPluginsFromDisk,
+  peekLocalCodexPluginsReadState,
+} from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
@@ -2273,9 +2277,9 @@ export function WorkbenchProvider({
         replaceComposerApps(apps)
       }
       const loadPromise = (async () => {
-        // Composer only needs installed membership. Never await Codex plugin/list
-        // here — it reconciles for ~10s and stalls turns on the shared app-server
-        // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
+        // Composer only needs installed membership on its warm path. Never await
+        // Codex app/list here — a remote directory failure can take about a minute
+        // and must not stall the rest of the plugin inventory.
         const currentComposerDeviceId =
           peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId?.trim() ||
           peekLocalCodexPluginsReadState()?.deviceId?.trim() ||
@@ -2283,26 +2287,23 @@ export function WorkbenchProvider({
         if (!currentComposerDeviceId)
           throw new Error('Composer plugin inventory requires a device ID')
 
-        // Both passes share one membership snapshot; logo hydration cannot restore removed plugins.
-        const installedSnapshot = Promise.all([
-          localPluginApi
-            .listInstalledPlugins({
-              shareInflight: !options?.supersedeInstalledRequest,
-              requireComplete: true,
-            })
-            .then(response => response.items),
-          cloudConnection.isConnected
-            ? cloudPluginApi
-                .listInstalledPlugins(currentComposerDeviceId)
-                .then(response => response.items)
-            : Promise.resolve([] as InstalledPlugin[]),
-        ])
-        const composerPluginSources = {
+        // Paint managed local packages directly from the on-disk capability
+        // manifest. Codex plugin/installed also refreshes ChatGPT membership, so
+        // it belongs in the detached enrichment pass with app/list.
+        const localInstalledSnapshot = listLocalInstalledPluginsFromDisk()
+        const cloudInstalledSnapshot = cloudConnection.isConnected
+          ? cloudPluginApi
+              .listInstalledPlugins(currentComposerDeviceId)
+              .then(response => response.items)
+          : Promise.resolve([] as InstalledPlugin[])
+        const composerPluginSources = (
+          codexApps: LocalDeviceApp[],
+          localInstalled: Promise<InstalledPlugin[]> = localInstalledSnapshot
+        ) => ({
           deviceId: currentComposerDeviceId,
-          // Keep inaccessible apps during matching so their plugins cannot add selectable duplicates.
-          listCodexApps: () => localPluginApi.listApps({ includeInaccessible: true }),
-          readLocalInstalledPlugins: async () => (await installedSnapshot)[0],
-          listCloudInstalledPlugins: async () => (await installedSnapshot)[1],
+          listCodexApps: async () => codexApps,
+          readLocalInstalledPlugins: async () => localInstalled,
+          listCloudInstalledPlugins: async () => cloudInstalledSnapshot,
           readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => {
             const labels = plugin.metadata.labels
             const id =
@@ -2311,15 +2312,17 @@ export function WorkbenchProvider({
               typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
             )
           },
-        }
+        })
 
         const marketplaceCache = getPluginMarketplaceCache(
           pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
         )
         const marketplaceItems = marketplaceCache?.marketplaceItems ?? []
 
-        // Paint installed plugins before connector sync / relative-logo detail reads.
-        let apps = await loadComposerPluginApps(composerPluginSources, {
+        // Installed membership is the primary composer inventory. Paint it before
+        // starting the remote ChatGPT app directory so a slow or failed app/list
+        // cannot hide local, enterprise, or cloud-managed plugins.
+        let apps = await loadComposerPluginApps(composerPluginSources([]), {
           marketplaceItems,
           visiblePluginKeys,
         })
@@ -2372,7 +2375,7 @@ export function WorkbenchProvider({
         if (isCurrentLoad()) {
           void loadComposerPluginApps(
             {
-              ...composerPluginSources,
+              ...composerPluginSources([]),
               // Reuse the warm snapshot; logo hydration must not issue another app/list.
               listCodexApps: async () => apps,
             },
@@ -2385,7 +2388,7 @@ export function WorkbenchProvider({
             .then(enriched => {
               if (!isCurrentLoad()) return
               const byId = new Map(enriched.map(app => [app.id, app]))
-              const merged = apps.map(app => byId.get(app.id) ?? app)
+              const merged = getComposerApps().map(app => byId.get(app.id) ?? app)
               replaceComposerApps(merged)
               localAppsCacheRef.current = {
                 expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
@@ -2404,6 +2407,59 @@ export function WorkbenchProvider({
             apps,
           }
         }
+
+        // Remote Codex apps only enrich installed membership (for example, by
+        // replacing a package row with its connector-backed app metadata). Keep
+        // this detached from the primary load and retain Wegent connector rows
+        // that may have arrived while app/list was in flight.
+        window.setTimeout(() => {
+          if (!isCurrentLoad()) return
+          const remoteInstalled = localPluginApi
+            .listInstalledPlugins({
+              shareInflight: !options?.supersedeInstalledRequest,
+              requireComplete: true,
+            })
+            .then(response => response.items)
+          void Promise.all([
+            localPluginApi.listApps({ includeInaccessible: true }),
+            remoteInstalled,
+          ])
+            .then(([codexApps, installed]) =>
+              loadComposerPluginApps(composerPluginSources(codexApps, Promise.resolve(installed)), {
+                marketplaceItems,
+                visiblePluginKeys,
+              })
+            )
+            .then(codexComposerApps => {
+              if (!isCurrentLoad()) return
+              const currentApps = getComposerApps()
+              const currentById = new Map(currentApps.map(app => [app.id, app]))
+              const enrichedApps = codexComposerApps.map(app => {
+                const current = currentById.get(app.id)
+                if (!current) return app
+                return {
+                  ...current,
+                  ...app,
+                  logoUrl: app.logoUrl ?? current.logoUrl,
+                  logoUrlDark: app.logoUrlDark ?? current.logoUrlDark,
+                }
+              })
+              const existingIds = new Set(enrichedApps.map(app => app.id))
+              const connectorApps = currentApps.filter(
+                app => app.source === 'wegent-connector' && !existingIds.has(app.id)
+              )
+              const merged = [...enrichedApps, ...connectorApps]
+              replaceComposerApps(merged)
+              localAppsCacheRef.current = {
+                expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+                apps: merged,
+              }
+            })
+            .catch(error => {
+              if (!isCurrentLoad()) return
+              console.warn('[Wework] Failed to enrich composer plugins from Codex apps.', error)
+            })
+        }, 0)
         return apps
       })()
 

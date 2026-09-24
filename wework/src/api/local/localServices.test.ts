@@ -59,26 +59,23 @@ describe('createLocalAppServices', () => {
     resetLocalRuntimeChatStreamsForTests()
   })
 
-  test('loads project plugins from installed inventory without the online app catalog', async () => {
-    const api = codexPlugins.createLocalCodexPluginApi()
-    const listApps = vi.fn().mockRejectedValue(new Error('Online app catalog unavailable'))
-    const listInstalledPlugins = vi.fn().mockResolvedValue({ items: [] })
-    const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
-      ...api,
-      listApps,
-      listInstalledPlugins,
-    })
+  test('loads project plugins from disk without either online Codex catalog', async () => {
+    const listFromDisk = vi
+      .spyOn(codexPlugins, 'listLocalInstalledPluginsFromDisk')
+      .mockResolvedValue([])
     try {
       const services = createLocalAppServices({ subscribe: vi.fn().mockResolvedValue(vi.fn()) })
       await expect(services.pluginApi!.listPlugins('local')).resolves.toEqual([])
-      expect(listInstalledPlugins).toHaveBeenCalledWith({ requireComplete: true })
-      expect(listApps).not.toHaveBeenCalled()
-      listInstalledPlugins.mockRejectedValue(new Error('Installed inventory unavailable'))
+      await expect(services.pluginApi!.listPlugins('')).resolves.toEqual([])
+      expect(listFromDisk).toHaveBeenCalledTimes(2)
+      expect(listFromDisk).toHaveBeenNthCalledWith(1)
+      expect(listFromDisk).toHaveBeenNthCalledWith(2)
+      listFromDisk.mockRejectedValue(new Error('Installed inventory unavailable'))
       await expect(services.pluginApi!.listPlugins('local')).rejects.toThrow(
         'Installed inventory unavailable'
       )
     } finally {
-      factory.mockRestore()
+      listFromDisk.mockRestore()
     }
   })
 
