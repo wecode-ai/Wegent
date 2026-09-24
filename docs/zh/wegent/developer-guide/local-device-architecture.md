@@ -130,6 +130,8 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
 
+任务创建期间可能已经分配 provider thread ID，但首个 turn 尚未物化。若 runtime handle 只有不带 turn ID 的本地用户消息 presentation，且没有完成消息、transcript 快照、`lastTurnId` 或 subtask turn ID，executor 必须把该任务视为未物化会话：transcript 返回本地 presentation，导航返回空列表，不调用 provider 的分页历史接口。项目看板只在对应 workspace tab 处于激活状态时预加载绑定任务的 transcript，并且同一挂载周期内每个任务地址最多尝试一次；失败不会因任务时间戳或状态刷新而自动重试，重新挂载后才允许再次加载。
+
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
 同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。

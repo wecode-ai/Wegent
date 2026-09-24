@@ -14,16 +14,16 @@ sidebar_position: 3
 
 仅填写模板 ID 即使用以下默认映射；“高级：字段与追问设置”允许修改字段名或关闭追问。
 
-| 配置 | 默认值 | 用途 |
-| --- | --- | --- |
-| `template_id` | 必填，仅启用自定义模板时 | 钉钉模板 ID |
-| `content_key` | `content` | AI 回答的 Markdown 正文字段 |
-| `follow_up_enabled` | `true` | 是否接受卡片追问 |
-| `follow_up_action` | `follow_up` | 发送按钮的回传动作 ID |
-| `follow_up_text_key` | `followUpText` | 回调携带的文本参数名 |
-| `follow_up_images_key` | `followUpImages` | 回调携带的图片 URL 数组参数名 |
-| `follow_up_status_key` | `null`（关闭） | 可选的发送状态字段，必须在模板中绑定 |
-| `initial_data` | `{}` | 可通过配置 API 设置的模板初始变量，值为字符串 |
+| 配置                   | 默认值                   | 用途                                          |
+| ---------------------- | ------------------------ | --------------------------------------------- |
+| `template_id`          | 必填，仅启用自定义模板时 | 钉钉模板 ID                                   |
+| `content_key`          | `content`                | AI 回答的 Markdown 正文字段                   |
+| `follow_up_enabled`    | `true`                   | 是否接受卡片追问                              |
+| `follow_up_action`     | `follow_up`              | 发送按钮的回传动作 ID                         |
+| `follow_up_text_key`   | `followUpText`           | 回调携带的文本参数名                          |
+| `follow_up_images_key` | `followUpImages`         | 回调携带的图片 URL 数组参数名                 |
+| `follow_up_status_key` | `null`（关闭）           | 可选的发送状态字段，必须在模板中绑定          |
+| `initial_data`         | `{}`                     | 可通过配置 API 设置的模板初始变量，值为字符串 |
 
 配置存放于通道的 `config.chat_card`，例如：
 
@@ -47,7 +47,7 @@ sidebar_position: 3
 
 ## 通知卡片（可选）
 
-同一个钉钉通道可以把站内通知改用卡片推送：勾选“任务通知以卡片发送”后，@提及、被分配、开始执行、执行完成/失败/取消这类通知会以卡片形式发出；不勾选或卡片发送失败时仍发送原来的 Markdown 通知。应用内通知和站内记录不受影响。
+同一个钉钉通道可以把应用内通知改用卡片推送：勾选“任务通知以卡片发送”后，@提及、被分配、开始执行、执行完成/失败/取消这类通知会以卡片形式发出；不勾选或卡片发送失败时仍发送原来的 Markdown 通知。应用内通知和应用内记录不受影响。
 
 默认使用钉钉内置的 Markdown 消息卡片，无需自建模板。内置模板的变量约定是 `title`、`markdown`、`tips`，以及 `sys_full_json_obj` 中的 `msgButtons`。这与下方自定义模板的变量约定不同。通知使用普通消息卡片，不使用带流式状态和反馈区的 AI 卡片。
 
@@ -59,23 +59,23 @@ sidebar_position: 3
 
 自定义模板使用以下 13 个普通变量；后端在投放卡片时填充它们：
 
-| 变量 | 内容 |
-| --- | --- |
-| `kindLabel` | “评论提及”“任务分配”或执行状态标签 |
-| `tone` | 状态色：`blue`、`orange`、`green`、`red`、`gray` |
-| `headline` | 通知动作，如“你的任务已完成” |
-| `itemTitle` | 任务标题 |
-| `itemKey` | 任务编号 |
-| `metaLine` | 看板、任务状态和负责人组成的摘要 |
-| `detailLabel` | 详情标题，如“评论内容”“失败原因” |
-| `detail` | 评论、结果或原因；卡片最多展示 240 个字符 |
-| `showDetail` | 是否展示详情；在模板中定义为布尔变量 |
-| `primaryLabel` | 网页入口文案“查看任务” |
-| `primaryUrl` | 任务网页地址 |
-| `secondaryLabel` | 桌面入口文案“在 Wework 中打开” |
-| `secondaryUrl` | Wegent 网页中转页地址；页面只按合法的看板、任务和评论标识构造 Wework 桌面深链 |
+| 变量             | 内容                                                                          |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `kindLabel`      | “评论提及”“任务分配”或执行状态标签                                            |
+| `tone`           | 状态色：`blue`、`orange`、`green`、`red`、`gray`                              |
+| `headline`       | 通知动作，如“你的任务已完成”                                                  |
+| `itemTitle`      | 任务标题                                                                      |
+| `itemKey`        | 任务编号                                                                      |
+| `metaLine`       | 看板、任务状态和负责人组成的摘要                                              |
+| `detailLabel`    | 详情标题，如“评论内容”“失败原因”                                              |
+| `detail`         | 评论、结果或原因；卡片最多展示 240 个字符                                     |
+| `showDetail`     | 是否展示详情；在模板中定义为布尔变量                                          |
+| `primaryLabel`   | 网页入口文案“查看任务”                                                        |
+| `primaryUrl`     | 任务网页地址                                                                  |
+| `secondaryLabel` | 桌面入口文案“在 Wework 中打开”                                                |
+| `secondaryUrl`   | Wegent 网页中转页地址；页面只按合法的看板、任务和评论标识构造 Wework 桌面深链 |
 
-`tone` 由通知类型与状态决定：提及、分配和开始执行为 `blue`；等待审批或设备为 `orange`；完成为 `green`；失败为 `red`；取消为 `gray`。卡片标题描述动作，任务标题与编号、上下文和可选详情分开显示。中转页还提供“查看任务”网页入口；站内通知地址、内置卡片及 Markdown 通知仍保留原来的 `wework://` 链接。可引用回复的本地运行任务通知仍为文本消息，以便直接引用继续任务。
+`tone` 由通知类型与状态决定：提及、分配和开始执行为 `blue`；等待审批或设备为 `orange`；完成为 `green`；失败为 `red`；取消为 `gray`。卡片标题描述动作，任务标题与编号、上下文和可选详情分开显示。中转页还提供“查看任务”网页入口；应用内通知地址、内置卡片及 Markdown 通知仍保留原来的 `wework://` 链接。可引用回复的本地运行任务通知仍为文本消息，以便直接引用继续任务。
 
 配置存放于通道的 `config.notification_card`；自定义模板例如：
 

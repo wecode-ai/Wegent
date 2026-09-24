@@ -1831,6 +1831,14 @@ flowchart LR
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not
   mark anything read. “Mark all read” acknowledges every available source.
+- The bell's settings view is the single notification-preference surface.
+  Preferences are account-scoped and grouped by Task updates, Collaboration,
+  and Other notifications. Each category exposes only channels that it can
+  actually deliver: in-app, system, and IM independently. Disabling in-app
+  delivery prevents new unread items and acknowledges existing unread items in
+  that category without deleting notification history. The sidebar IM control
+  may open this settings view or select an IM target, but must not maintain a
+  second notification toggle.
 - Preserve the current local task list and read actions while disconnected.
   Show cloud unavailability in the popover rather than disabling the whole bell.
   Never discard already loaded cloud items because a refresh fails.
