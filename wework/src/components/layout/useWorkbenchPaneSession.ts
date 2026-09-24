@@ -264,10 +264,10 @@ export function useWorkbenchPaneSession({
     : projectChat.scopeKey
   const attachmentState =
     projectChat.attachmentStateByScope[inputScopeKey] ?? EMPTY_ATTACHMENT_STATE
+  const addExistingAttachmentForScope = projectChat.addExistingAttachmentForScope
   const addExistingAttachment = useCallback(
-    (attachment: Attachment) =>
-      projectChat.addExistingAttachmentForScope(inputScopeKey, attachment),
-    [inputScopeKey, projectChat]
+    (attachment: Attachment) => addExistingAttachmentForScope(inputScopeKey, attachment),
+    [addExistingAttachmentForScope, inputScopeKey]
   )
   const handleFileSelect = useCallback(
     (files: File | File[]) => projectChat.handleFileSelectForScope(inputScopeKey, files),
@@ -2222,7 +2222,9 @@ export function useWorkbenchPaneSession({
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
           setInput('')
+          resetAttachments()
           let errorScopeKey = inputScopeKey
+          let submissionScopeKey = inputScopeKey
           const optimisticMessage = createRuntimeUserMessage(
             visibleSubmittedInput,
             currentAttachments,
@@ -2231,52 +2233,68 @@ export function useWorkbenchPaneSession({
               codeComments: codeCommentContexts,
             }
           )
-          const sent = await sendCurrentInput(visibleSubmittedInput, {
-            optimisticUserMessage: optimisticMessage,
-            codeCommentContexts,
-            initialGoal: pendingInitialGoal,
-            additionalContext: resolvedAdditionalContext,
-            cloudProjectId: options.cloudProjectId,
-            origin: options.origin,
-            initialSupervisor: options.initialSupervisor,
-            ...(options.runtime ? { runtime: options.runtime } : {}),
-            ...(options.runtimeExecutablePath
-              ? { runtimeExecutablePath: options.runtimeExecutablePath }
-              : {}),
-            ...(options.runtimePermissionMode
-              ? { runtimePermissionMode: options.runtimePermissionMode }
-              : {}),
-            ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
-            ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
-              ? { modelSelection: options.modelSelection }
-              : {}),
-            onError: nextError => setErrorForScope(errorScopeKey, nextError),
-            onRuntimeTaskOptimisticOpen: (address, context) => {
-              errorScopeKey = getRuntimeTaskChatScopeKey(address)
-              options.onRuntimeTaskCreated?.(address)
-              if (pendingInitialGoal) {
-                setPendingGoalState(current =>
-                  current
-                    ? {
-                        ...current,
-                        targetKey: runtimeTranscriptPaneKey(address),
-                        targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
-                      }
-                    : current
-                )
-              }
-              if (pendingInitialGoal && pendingGoalState) {
-                seedRuntimePaneGoal(address, pendingGoalState.goal)
-              }
-              debugRuntimePaneMessageFlow('seed-optimistic-open', {
-                address: runtimeAddressDebug(address),
-                previousAddress: context?.previousAddress
-                  ? runtimeAddressDebug(context.previousAddress)
-                  : null,
-                seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
-              })
-            },
-          })
+          let sent: boolean | RuntimeTaskAddress
+          try {
+            sent = await sendCurrentInput(visibleSubmittedInput, {
+              attachments: currentAttachments,
+              preserveAttachments: true,
+              optimisticUserMessage: optimisticMessage,
+              codeCommentContexts,
+              initialGoal: pendingInitialGoal,
+              additionalContext: resolvedAdditionalContext,
+              cloudProjectId: options.cloudProjectId,
+              origin: options.origin,
+              initialSupervisor: options.initialSupervisor,
+              ...(options.runtime ? { runtime: options.runtime } : {}),
+              ...(options.runtimeExecutablePath
+                ? { runtimeExecutablePath: options.runtimeExecutablePath }
+                : {}),
+              ...(options.runtimePermissionMode
+                ? { runtimePermissionMode: options.runtimePermissionMode }
+                : {}),
+              ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
+              ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+                ? { modelSelection: options.modelSelection }
+                : {}),
+              onError: nextError => setErrorForScope(errorScopeKey, nextError),
+              onRuntimeTaskOptimisticOpen: (address, context) => {
+                errorScopeKey = getRuntimeTaskChatScopeKey(address)
+                submissionScopeKey = errorScopeKey
+                options.onRuntimeTaskCreated?.(address)
+                if (pendingInitialGoal) {
+                  setPendingGoalState(current =>
+                    current
+                      ? {
+                          ...current,
+                          targetKey: runtimeTranscriptPaneKey(address),
+                          targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+                        }
+                      : current
+                  )
+                }
+                if (pendingInitialGoal && pendingGoalState) {
+                  seedRuntimePaneGoal(address, pendingGoalState.goal)
+                }
+                debugRuntimePaneMessageFlow('seed-optimistic-open', {
+                  address: runtimeAddressDebug(address),
+                  previousAddress: context?.previousAddress
+                    ? runtimeAddressDebug(context.previousAddress)
+                    : null,
+                  seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
+                })
+              },
+              onRuntimeTaskOptimisticRemoved: () => {
+                errorScopeKey = inputScopeKey
+                submissionScopeKey = inputScopeKey
+              },
+            })
+          } catch (error) {
+            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            currentAttachments.forEach(attachment =>
+              addExistingAttachmentForScope(submissionScopeKey, attachment)
+            )
+            throw error
+          }
           if (sent) {
             if (!isRuntimeTaskAddress(sent)) {
               appendLocalUserMessage(visibleSubmittedInput, currentAttachments, {
@@ -2300,10 +2318,12 @@ export function useWorkbenchPaneSession({
             if (isRuntimeTaskAddress(sent)) {
               dispatchMessages({ type: 'reset', messages: [] })
             }
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
-            restoreInputAfterFailure(visibleSubmittedInput)
+            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            currentAttachments.forEach(attachment =>
+              addExistingAttachmentForScope(submissionScopeKey, attachment)
+            )
           }
           return Boolean(sent)
         }
@@ -2460,6 +2480,7 @@ export function useWorkbenchPaneSession({
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
+        addExistingAttachmentForScope,
         queuedMessages.length,
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
@@ -2471,6 +2492,7 @@ export function useWorkbenchPaneSession({
         setErrorForScope,
         setError,
         setInput,
+        setInputForScope,
         setQueuedMessages,
         setRuntimeGoal,
       ]
