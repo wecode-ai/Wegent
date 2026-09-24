@@ -7383,6 +7383,49 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
   })
 
+  test('routes an agent open request to the selected blank browser tab', async () => {
+    runtimeMocks.electron = true
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 't', metaKey: true })
+    expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-selected-blank-tab',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0-2',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0-2',
+          url: 'about:blank',
+        })
+      )
+    })
+  })
+
   test('deactivates the right workspace browser while settings are open', async () => {
     renderWorkspacePanelLayout()
 

@@ -1,5 +1,6 @@
 import { observeOperation } from '@/telemetry/observeOperation'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
+import { ensurePython } from '@/desktop/executionEnvironments'
 import type { PluginLocalAuthDefinition } from '@/types/api'
 
 export type LocalConnectorAuthStatus =
@@ -85,7 +86,14 @@ export function localConnectorAuthHealth(
 }
 
 export function localConnectorAuthStart(target: LocalConnectorAuthTarget) {
-  return callLocalConnectorAuth('start', target)
+  const prepare = localAuthRequiresPython(target.localAuth) ? ensurePython() : Promise.resolve()
+  return prepare.then(() => callLocalConnectorAuth('start', target))
+}
+
+function localAuthRequiresPython(localAuth?: PluginLocalAuthDefinition | null): boolean {
+  const executable = localAuth?.start?.[0]?.trim().replace(/\\/g, '/').split('/').pop()
+  if (!executable) return false
+  return /^(?:python(?:3(?:\.\d+)*)?(?:\.exe)?|.+\.py)$/i.test(executable)
 }
 
 export function localConnectorAuthPoll(

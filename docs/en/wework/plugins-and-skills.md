@@ -33,6 +33,12 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
+## Managed local Python
+
+On a normal desktop startup, Wework checks its own managed Python runtime and installs the client-pinned Python 3.12.12 release in the background when it is missing or outdated. The pinned version is updated with the Wework client so every supported device uses the same tested patch release. The runtime is stored in Wework's application data directory, does not require a system Python installation, and does not modify the system `PATH`.
+
+After you confirm a plugin installation on desktop, Wework prepares the plugin metadata and managed Python in parallel, then submits the actual plugin installation only after Python is ready. For plugins that declare device-local authorization, authorization continues after installation succeeds. The plugin authorization script is not run if Python preparation or plugin installation fails. Open **Settings → Execution environments** to inspect the installation state or retry manually.
+
 ## View, share, and request company-wide publishing
 
 > Implementation status (2026-08-29): the interaction below is implemented on the current feature branch and has local verification. Production publication is not enabled: HTTPS, GitLab protection rules, native Windows/macOS Runners, and a new Release credential remain external P0 gates. This section is therefore not a production-availability claim.

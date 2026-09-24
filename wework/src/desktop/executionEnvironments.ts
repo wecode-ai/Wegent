@@ -16,7 +16,7 @@ export interface ExecutionEnvironmentStatus {
   installedBytes: number
   path: string | null
   error: string | null
-  source?: 'electron' | 'configured' | 'system'
+  source?: 'electron' | 'configured' | 'system' | 'managed'
   configuredPath?: string | null
   restartRequired?: boolean
 }
@@ -32,6 +32,13 @@ export function chooseNodeExecutable() {
   )
 }
 
+export function ensurePython() {
+  return (
+    window.weworkElectronExecutionEnvironments?.ensurePython() ??
+    Promise.reject(new Error('Managed Python is unavailable outside Electron'))
+  )
+}
+
 export function useBuiltinNode() {
   return (
     window.weworkElectronExecutionEnvironments?.useBuiltinNode() ??
@@ -43,6 +50,7 @@ declare global {
   interface Window {
     weworkElectronExecutionEnvironments?: {
       list(): Promise<ExecutionEnvironmentStatus[]>
+      ensurePython(): Promise<ExecutionEnvironmentStatus>
       chooseNodeExecutable(): Promise<{ path: string; version: string } | null>
       useBuiltinNode(): Promise<void>
     }
