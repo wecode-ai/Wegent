@@ -238,6 +238,18 @@ jobs:
           path: ~/.cache/wegent/codex
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
+      - name: Restore legacy shared Wework Electron E2E build dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            ~/.cache/electron
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+
       - name: Restore shared Wework Electron E2E build dependencies
         id: wework-desktop-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -259,8 +271,6 @@ jobs:
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
-          CARGO_PROFILE_RELEASE_STRIP: "false"
-          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
           CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
         run: |
           pnpm --filter wework ai:verify:electron:build &
@@ -1119,6 +1129,18 @@ jobs:
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Restore legacy shared Wework Electron build dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            ~/Library/Caches/electron
+          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-electron-app-v1-
 
       - name: Restore shared Wework Electron build dependencies
         id: wework-cargo-sources-cache
