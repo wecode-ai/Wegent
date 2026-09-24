@@ -6,6 +6,7 @@ import type {
   PluginMarketplaceItem,
 } from '@/types/api'
 import {
+  PLUGIN_AUTO_UPDATE_FAILURE_LIMIT,
   marketplaceItemCanRetryPluginUpdate,
   marketplaceItemHasPausedPluginAutoUpdate,
   marketplaceItemNeedsPluginAutoUpdate,
@@ -267,6 +268,82 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
       deviceSyncPerformed: true,
     })
     expect(syncDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('retries a failed release gap before the automatic failure limit', async () => {
+    const failedItem = {
+      installedPluginId: 10,
+      installed: true,
+      installedLocally: true,
+      updateAvailable: false,
+      currentDeviceInstallation: {
+        deviceId: 'device-1',
+        desiredReleaseId: 20,
+        actualReleaseId: 10,
+        state: 'failed',
+        errorCode: 'PLUGIN_DOWNLOAD_FAILED',
+        errorMessage: 'download failed',
+        attemptCount: 1,
+        lastSyncAt: null,
+        updatedAt: '2026-09-24T00:00:00Z',
+      },
+    } as PluginMarketplaceItem
+    const syncDevice = vi.fn(async () => sync(true))
+
+    await expect(
+      runCurrentDevicePluginAutoUpdate({
+        listLocalInstalledPlugins: async () => ({ deviceId: 'device-1' }),
+        listMarketplacePlugins: async () => ({ items: [failedItem] }),
+        updateBatch: async () => batch(0, 0),
+        syncPlugin: vi.fn(async () => sync(true)),
+        syncDevice,
+      })
+    ).resolves.toEqual({
+      deviceId: 'device-1',
+      updatedCount: 0,
+      failedCount: 0,
+      failures: [],
+      deviceSyncPerformed: true,
+    })
+    expect(syncDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('does not retry a failed release gap after the automatic failure limit', async () => {
+    const pausedItem = {
+      installedPluginId: 10,
+      installed: true,
+      installedLocally: true,
+      updateAvailable: false,
+      currentDeviceInstallation: {
+        deviceId: 'device-1',
+        desiredReleaseId: 20,
+        actualReleaseId: 10,
+        state: 'failed',
+        errorCode: 'PLUGIN_DOWNLOAD_FAILED',
+        errorMessage: 'download failed',
+        attemptCount: PLUGIN_AUTO_UPDATE_FAILURE_LIMIT,
+        lastSyncAt: null,
+        updatedAt: '2026-09-24T00:00:00Z',
+      },
+    } as PluginMarketplaceItem
+    const syncDevice = vi.fn(async () => sync(true))
+
+    await expect(
+      runCurrentDevicePluginAutoUpdate({
+        listLocalInstalledPlugins: async () => ({ deviceId: 'device-1' }),
+        listMarketplacePlugins: async () => ({ items: [pausedItem] }),
+        updateBatch: async () => batch(0, 0),
+        syncPlugin: vi.fn(async () => sync(true)),
+        syncDevice,
+      })
+    ).resolves.toEqual({
+      deviceId: 'device-1',
+      updatedCount: 0,
+      failedCount: 0,
+      failures: [],
+      deviceSyncPerformed: false,
+    })
+    expect(syncDevice).not.toHaveBeenCalled()
   })
 })
 
