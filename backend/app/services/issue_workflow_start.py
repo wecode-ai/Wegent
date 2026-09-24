@@ -119,7 +119,8 @@ class IssueWorkflowStartService:
         if plan is None or plan.status != "awaiting_review":
             return 0
         if not plan.items or any(
-            entry.outcome_verdict != "passed" for entry in plan.items
+            entry.outcome_verdict not in {"passed", "needs_rework"}
+            for entry in plan.items
         ):
             return 0
         run = (
@@ -144,6 +145,9 @@ class IssueWorkflowStartService:
             f"执行者回报：\n{outcomes}\n\n"
             "请结合 Issue 与子任务详情核查结果，调用 decide_workflow_review。"
         )
+        feedback = run_metadata.get("user_review_feedback")
+        if isinstance(feedback, dict):
+            instruction += f"\n\n用户确认或修改意见：{feedback.get('text', '')}"
         started = await project_automation_service.run_ai_workflow_manager(
             db,
             project_id=str(project.id),

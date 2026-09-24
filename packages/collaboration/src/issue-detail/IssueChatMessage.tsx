@@ -221,6 +221,7 @@ export function IssueChatMessage({
   compact = false,
   plain = false,
   showInlineExecutionStatus = false,
+  agentRole,
   eventOnly = false,
   taskAiState,
   executionStatus,
@@ -243,6 +244,7 @@ export function IssueChatMessage({
   /** Render inside a parent comment card without the outer card border. */
   plain?: boolean;
   showInlineExecutionStatus?: boolean;
+  agentRole?: "manager" | "member";
   eventOnly?: boolean;
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
@@ -258,6 +260,11 @@ export function IssueChatMessage({
 }) {
   const text = activityDisplayBody(message.content, "");
   const isAgent = message.sender.type === "agent";
+  const isManager =
+    agentRole === "manager" ||
+    message.metadata.automation_role === "manager" ||
+    message.metadata.automation_role === "manager_review" ||
+    typeof message.metadata.manager_type === "string";
   const isSubagent = message.metadata.kind === "task_ai_subagent";
   const runId =
     typeof message.metadata.run_id === "string"
@@ -267,7 +274,9 @@ export function IssueChatMessage({
   const modelName =
     typeof message.metadata.model === "string" ? message.metadata.model : null;
   const runStatus =
-    executionStatus ?? resolveMessageRunStatus(taskAiState, message);
+    typeof message.metadata.manager_action_error === "string"
+      ? "failed"
+      : (executionStatus ?? resolveMessageRunStatus(taskAiState, message));
   const displayStatus = executionDisplayStatus(runStatus);
   const isStreaming =
     executionStatus === undefined
@@ -283,7 +292,9 @@ export function IssueChatMessage({
         onOpenUrl(backendExecution.executionUrl);
       }
     : undefined;
-  const openExecution = onOpenExecution ?? (allowBackendExecutionFallback ? openBackendExecution : undefined);
+  const openExecution =
+    onOpenExecution ??
+    (allowBackendExecutionFallback ? openBackendExecution : undefined);
   if (eventOnly) {
     return (
       <div
@@ -390,6 +401,16 @@ export function IssueChatMessage({
         <span className="text-sm text-text-muted">
           {t("activity.project_chat_processing_ellipsis")}
         </span>
+      ) : null}
+      {isAgent && isStreaming ? (
+        <div
+          role="status"
+          data-testid={`task-activity-working-${message.messageId}`}
+          className="mt-2 flex items-center gap-2 text-xs text-text-muted"
+        >
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+          {t("activity.project_chat_processing_ellipsis")}
+        </div>
       ) : null}
       {isAgent && !compact && isSucceeded ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
@@ -534,15 +555,27 @@ export function IssueChatMessage({
         hideTime={hideTime}
         metadata={
           isAgent && showInlineExecutionStatus ? (
-            <ExecutionStatusBadge
-              translate={t}
-              testId={executionTestId}
-              messageId={message.messageId}
-              status={runStatus}
-              onOpenExecution={openExecution}
-              onStopExecution={onStopExecution}
-              stopping={stopping}
-            />
+            <>
+              <span
+                className="text-xs text-text-muted"
+                data-testid={`cloud-task-activity-role-${message.messageId}`}
+              >
+                {t(
+                  isManager
+                    ? "activity.task_activity_manager_role"
+                    : "activity.task_activity_member_role",
+                )}
+              </span>
+              <ExecutionStatusBadge
+                translate={t}
+                testId={executionTestId}
+                messageId={message.messageId}
+                status={runStatus}
+                onOpenExecution={openExecution}
+                onStopExecution={onStopExecution}
+                stopping={stopping}
+              />
+            </>
           ) : isSubagent ? (
             <span className="text-xs text-text-muted">
               {t("activity.task_activity_subagent_execution")}

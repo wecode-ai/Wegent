@@ -134,7 +134,10 @@ export function IssueAutomationExecutionSummary({
 }) {
   const configureRuntime = useRuntimeConfiguration();
   const stages = nodes.filter(
-    (node) => !node.node_type || node.node_type === "task",
+    (node) =>
+      (!node.node_type || node.node_type === "task") &&
+      node.automation_role !== "manager" &&
+      node.automation_role !== "manager_review",
   );
   if (stages.length === 0) return null;
   const needsConfiguration =

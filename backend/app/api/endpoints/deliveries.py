@@ -82,6 +82,7 @@ from app.schemas.issue_workflow import (
     WorkflowPlanSubmit,
     WorkflowPlanView,
     WorkflowReviewDecisionSubmit,
+    WorkflowReviewFeedbackSubmit,
     WorkflowTaskOutcomeSubmit,
 )
 from app.schemas.project_chat import LoopItemAssign
@@ -1092,6 +1093,49 @@ async def decide_loop_item_workflow_review(
             user_id=current_user.id,
             reason="workflow_manager_reviewed",
         )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/feedback", response_model=WorkflowPlanView
+)
+async def submit_workflow_review_feedback(
+    item_id: str,
+    values: WorkflowReviewFeedbackSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        issue_workflow_planning_service.record_review_feedback(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+            version=values.version,
+            feedback=values.feedback,
+        )
+        parent = loop_item_service.get(db, item_id, current_user.id)
+        project = cloud_project_service.get(
+            db, int(str(parent.cloud_project_id)), current_user.id
+        )
+        await issue_workflow_start_service.review_outcomes(
+            db,
+            item=parent,
+            project=project,
+            user_id=current_user.id,
+        )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_review_feedback",
+        )
+        plan = issue_workflow_planning_service.get(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+        if plan is None:
+            raise ValueError("The Issue has no active workflow plan")
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

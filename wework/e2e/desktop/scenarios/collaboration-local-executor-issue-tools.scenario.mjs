@@ -25,9 +25,7 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `执行者工具验收-${process.pid}`
 const AGENT = `执行者智能体-${process.pid}`
-const GROUP = `执行者协作小组-${process.pid}`
 const ISSUE = `执行者附件验收-${process.pid}`
-const STAGE = '读取 Issue 并上传附件'
 const MODEL = 'wework-custom-desktop-e2e-responses'
 const MARKER = `LOCAL_EXECUTOR_ISSUE_TOOLS_${process.pid}`
 const ATTACHMENT = `${MARKER}.txt`
@@ -222,75 +220,6 @@ export async function createDesktopScenario({ executorHome, modelResponseTimeout
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-participants-tab-groups"]')
-      )
-      await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
-      await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
-        value: GROUP,
-      })
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-group-create-add-members"]')
-      )
-      const memberTestId = await waitForTestIdByText(
-        control,
-        CONTENT,
-        'collaboration-group-create-member-agent-',
-        AGENT,
-        uiTimeoutMs
-      )
-      await control.command('click', `[data-testid="${memberTestId}"]`)
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-group-create"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="collaboration-group-detail-tab-rules"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
-      await control.command('click', scoped('[data-testid="collaboration-group-stage-add"]'))
-      const snapshot = JSON.parse(await control.command('snapshot', CONTENT))
-      const stageTestId = snapshot.testIds.find(
-        testId =>
-          testId.startsWith('collaboration-group-stage-') &&
-          testId !== 'collaboration-group-stage-add'
-      )
-      assert.ok(stageTestId, 'The preset executor stage was not added')
-      await control.command('fill', scoped(`[data-testid="${stageTestId}"] input`), {
-        value: STAGE,
-      })
-      await control.command('fill', scoped(`[data-testid="${stageTestId}"] textarea`), {
-        value: 'Read the bound Issue and upload the requested attachment.',
-      })
-      const agentId = memberTestId.slice('collaboration-group-create-member-agent-'.length)
-      await control.command('select', scoped(`[data-testid="${stageTestId}"] select`), {
-        value: `agent:${agentId}`,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-group-detail-save"]'),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      const groupTestId = await waitForTestIdByText(
-        control,
-        CONTENT,
-        'collaboration-group-detail-local-group-',
-        GROUP,
-        uiTimeoutMs
-      )
-      const groupId = groupTestId.slice('collaboration-group-detail-'.length)
-
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
       await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
@@ -307,10 +236,14 @@ export async function createDesktopScenario({ executorHome, modelResponseTimeout
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
+      const assigneeTestId = await waitForTestIdByText(
+        control,
+        'body',
+        'cloud-todo-detail-assignee-option-agent:',
+        AGENT,
+        uiTimeoutMs
       )
+      await control.command('click', `[data-testid="${assigneeTestId}"]`)
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
         timeoutMs: uiTimeoutMs,
       })

@@ -1173,6 +1173,11 @@ class ProjectAutomationExecution:
             "automation_rule_name": rule.title or "AI managed automation",
             "assignment_mode": "ai_managed",
             "manager_type": configured_manager,
+            "automation_role": (
+                "manager_review"
+                if metadata(run).get("event", {}).get("type") == "workflow.review"
+                else "manager"
+            ),
             "manager_ref": manager_ref,
             "run_id": str(run.id),
             "run_status": "queued",
@@ -1366,6 +1371,7 @@ class ProjectAutomationExecution:
         user_id: int,
         workflow_run_id: str,
         plan_version: int,
+        assignments: list[dict[str, str]] | None = None,
         commit: bool = True,
     ) -> None:
         """Record the manager's durable orchestration action."""
@@ -1397,6 +1403,8 @@ class ProjectAutomationExecution:
             **(activity.metadata_json or {}),
             "workflow_plan_run_id": workflow_run_id,
             "workflow_plan_version": plan_version,
+            "workflow_plan_submitted": True,
+            "workflow_assignments": assignments or [],
         }
         if commit:
             db.commit()
@@ -1434,6 +1442,14 @@ class ProjectAutomationExecution:
                 user_id=user_id,
                 workflow_run_id=view.run_id,
                 plan_version=view.plan_version,
+                assignments=[
+                    {
+                        "assignee_type": item.assignee_type,
+                        "assignee_id": item.assignee_id,
+                        "assignee_name": item.assignee_name,
+                    }
+                    for item in validated.items
+                ],
                 commit=False,
             )
             db.commit()

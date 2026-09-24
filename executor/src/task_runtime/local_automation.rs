@@ -263,6 +263,11 @@ fn dispatch(
                 "You are the AI manager for this Issue. Use get_current_context, get_board_item, and get_assignment_candidates to inspect the Issue and eligible members. Then call submit_workflow_plan with independently verifiable child tasks. Write a specific execution prompt for each assignee, including the goal, boundaries, and acceptance criteria. Do not execute the child tasks.\n\nIssue: {}",
                 task.title.as_deref().unwrap_or_default()
             );
+            let manager_prompt = format!(
+                "{manager_prompt}\n\nIssue description: {}\n\nConfigured project workflow (use its phases, constraints and acceptance rules to plan the work): {}\n\nCollaboration group instructions: {}\n\nAutomation instruction: {}",
+                task.description, project.metadata["workflow_definition"],
+                group, text(rule, "prompt")
+            );
             let nodes = vec![json!({
                 "id": format!("{run_id}:manager"),
                 "name": group["name"],
@@ -285,6 +290,7 @@ fn dispatch(
                 &mut workflow,
             )?;
             let mut metadata = task.metadata;
+            metadata["collaboration_group"] = group.clone();
             metadata["workflow"] = workflow;
             connection.execute("UPDATE loop_items SET metadata=?1, status='in_progress', version=version+1, updated_at=?2 WHERE id=?3",params![metadata.to_string(),now(),task_id])?;
         }
@@ -416,10 +422,18 @@ impl LocalTaskStore {
             .ok_or_else(|| TaskRuntimeError::Invalid("Issue workflow has no nodes".into()))?;
         let manager_node_id = nodes
             .iter()
+            .rev()
             .find(|node| text(node, "automation_role") == "manager")
             .and_then(|node| node["id"].as_str())
             .map(ToOwned::to_owned)
             .ok_or_else(|| TaskRuntimeError::Invalid("AI manager stage is missing".into()))?;
+        let manager_execution_id = nodes
+            .iter()
+            .rev()
+            .find(|node| text(node, "automation_role") == "manager")
+            .and_then(|node| node["execution_id"].as_i64())
+            .ok_or_else(|| TaskRuntimeError::Invalid("AI manager execution is missing".into()))?;
+        let round = nodes.len();
         let mut previous = manager_node_id;
         let mut seen_keys = HashSet::new();
         let mut planned = Vec::new();
@@ -465,7 +479,7 @@ impl LocalTaskStore {
                     ));
                 }
             }
-            let node_id = format!("{run_id}:plan:{index}:{client_key}");
+            let node_id = format!("{run_id}:plan:{round}:{index}:{client_key}");
             let prompt = text(item, "prompt").trim();
             if prompt.is_empty() {
                 return Err(TaskRuntimeError::Invalid(
@@ -494,9 +508,9 @@ impl LocalTaskStore {
             ));
         }
         nodes.push(json!({
-            "id": format!("{run_id}:review"),
+            "id": format!("{run_id}:review:{round}"),
             "name": "负责人验收",
-            "prompt": "Review the executor results. Call decide_workflow_review with in_review or completed and explain your decision. Do not execute the child tasks.",
+            "prompt": "Review the executor results. Call decide_workflow_review with in_review, completed or needs_rework and explain your decision. Do not execute the child tasks.",
             "kind": "ai",
             "execution_mode": "robot",
             "required_assignee_type": "agent",
@@ -507,11 +521,20 @@ impl LocalTaskStore {
             "automation_role": "manager_review",
         }));
         workflow.insert("plan_submitted".to_owned(), json!(true));
+        workflow.remove("manager_decision");
         workflow.insert(
             "plan_summary".to_owned(),
             plan.get("summary").cloned().unwrap_or_else(|| json!("")),
         );
         workflow.insert("plan_items".to_owned(), json!(planned));
+        transaction.execute(
+            "UPDATE loop_item_comments
+             SET metadata=json_set(metadata, '$.workflow_plan_submitted', json('true'), '$.workflow_assignments', json(?3)),
+                 updated_at=?1
+             WHERE deleted_at IS NULL
+               AND json_extract(metadata, '$.execution_id')=?2",
+            params![now(), manager_execution_id, json!(planned).to_string()],
+        )?;
         transaction.execute(
             "UPDATE loop_items SET metadata=?1, version=version+1, updated_at=?2 WHERE id=?3",
             params![task.metadata.to_string(), now(), task_id],
@@ -524,6 +547,116 @@ impl LocalTaskStore {
         }))
     }
 
+    pub fn submit_local_review_feedback(
+        &self,
+        task_id: &str,
+        version: i64,
+        feedback: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        if feedback.trim().is_empty() {
+            return Err(TaskRuntimeError::Invalid("Feedback is required".into()));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut task =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if task.version != version || task.status.as_deref() != Some("in_review") {
+            return Err(TaskRuntimeError::Invalid(
+                "Review changed; refresh the Issue".into(),
+            ));
+        }
+        let workflow = &mut task.metadata["workflow"];
+        if workflow["manager_decision"]["status"] != "in_review" {
+            return Err(TaskRuntimeError::Invalid(
+                "The manager has not requested confirmation".into(),
+            ));
+        }
+        let run_id = text(workflow, "automation_run_id").to_owned();
+        workflow["manager_decision"] = Value::Null;
+        let nodes = workflow["nodes"]
+            .as_array_mut()
+            .ok_or_else(|| TaskRuntimeError::Invalid("No workflow nodes".into()))?;
+        let previous = nodes
+            .iter()
+            .rev()
+            .find(|node| text(node, "automation_role") == "manager_review")
+            .cloned()
+            .ok_or_else(|| TaskRuntimeError::Invalid("No manager review".into()))?;
+        nodes.push(json!({
+            "id": format!("{run_id}:feedback:{}", nodes.len()),
+            "name": "Review user feedback", "automation_role": "manager_review",
+            "prompt": format!("Review the executor evidence and user feedback: {feedback}. Call decide_workflow_review with completed, in_review or needs_rework. Do not execute child work."),
+            "required_assignee_type": "agent", "required_assignee_id": previous["required_assignee_id"],
+            "execution_mode": "robot", "kind": "ai", "required": true,
+            "depends_on": [], "status": "ready"
+        }));
+        enqueue_ready_local_workflow_stages(
+            &transaction,
+            task_id,
+            task.cloud_project_id
+                .as_deref()
+                .ok_or(TaskRuntimeError::ProjectNotFound)?,
+            task.priority.as_deref().unwrap_or("none"),
+            workflow,
+        )?;
+        transaction.execute(
+            "UPDATE loop_items SET metadata=?1, version=version+1, updated_at=?2 WHERE id=?3",
+            params![task.metadata.to_string(), now(), task_id],
+        )?;
+        transaction.execute("UPDATE loop_items SET metadata=json_set(metadata, '$.status', 'running'), updated_at=?1 WHERE id=?2",
+            params![now(), run_id])?;
+        transaction.commit()?;
+        Ok(json!({"accepted": true}))
+    }
+
+    pub fn report_local_workflow_outcome(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        runtime_task_id: &str,
+        outcome: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        if !matches!(text(outcome, "verdict"), "passed" | "needs_rework")
+            || text(outcome, "summary").trim().is_empty()
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "An outcome requires a verdict and evidence".into(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut task =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if task.cloud_project_id.as_deref() != Some(project_id) {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        let execution_id: i64 = transaction.query_row(
+            "SELECT id FROM loop_item_executions WHERE loop_item_id=?1 AND runtime_task_id=?2 AND status IN ('claimed','running') ORDER BY id DESC LIMIT 1",
+            params![task_id, runtime_task_id], |row| row.get(0),
+        )?;
+        let nodes = task.metadata["workflow"]["nodes"]
+            .as_array_mut()
+            .ok_or_else(|| TaskRuntimeError::Invalid("No active workflow".into()))?;
+        let node = nodes
+            .iter_mut()
+            .find(|node| node["execution_id"].as_i64() == Some(execution_id))
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("Execution does not belong to the active workflow".into())
+            })?;
+        if matches!(text(node, "automation_role"), "manager" | "manager_review") {
+            return Err(TaskRuntimeError::Invalid(
+                "Only an executor can report a child outcome".into(),
+            ));
+        }
+        node["outcome"] = json!({"verdict": outcome["verdict"], "summary": outcome["summary"], "findings": outcome["findings"]});
+        transaction.execute(
+            "UPDATE loop_items SET metadata=?1, version=version+1, updated_at=?2 WHERE id=?3",
+            params![task.metadata.to_string(), now(), task_id],
+        )?;
+        transaction.commit()?;
+        Ok(json!({"verdict": outcome["verdict"], "summary": outcome["summary"]}))
+    }
+
     pub fn decide_local_automation_workflow_review(
         &self,
         project_id: &str,
@@ -532,7 +665,9 @@ impl LocalTaskStore {
         decision: &str,
         summary: &str,
     ) -> Result<Value, TaskRuntimeError> {
-        if !matches!(decision, "in_review" | "completed") || summary.trim().is_empty() {
+        if !matches!(decision, "in_review" | "completed" | "needs_rework")
+            || summary.trim().is_empty()
+        {
             return Err(TaskRuntimeError::Invalid(
                 "workflow review requires a decision and summary".into(),
             ));
@@ -549,10 +684,35 @@ impl LocalTaskStore {
             "status": decision,
             "summary": summary.trim(),
         });
+        if decision == "needs_rework" {
+            let workflow = &mut task.metadata["workflow"];
+            workflow["plan_submitted"] = json!(false);
+            let nodes = workflow["nodes"]
+                .as_array_mut()
+                .ok_or_else(|| TaskRuntimeError::Invalid("No active nodes".into()))?;
+            let review = nodes
+                .iter()
+                .rev()
+                .find(|node| text(node, "automation_role") == "manager_review")
+                .cloned()
+                .ok_or_else(|| TaskRuntimeError::Invalid("No active review".into()))?;
+            nodes.push(json!({
+                "id": format!("{run_id}:manager:{}", nodes.len()),
+                "name": "Replan tasks",
+                "prompt": format!("You are the Issue manager. Inspect the Issue and previous executor results. Submit a new workflow plan addressing this review: {summary}. Do not execute the work yourself."),
+                "kind": "ai", "execution_mode": "robot", "required": true,
+                "required_assignee_type": "agent", "required_assignee_id": review["required_assignee_id"],
+                "depends_on": [review["id"]], "automation_role": "manager", "status": "blocked"
+            }));
+        }
         let stamp = now();
         transaction.execute(
+            "UPDATE loop_item_comments SET metadata=json_set(metadata, '$.workflow_review_decision', ?1, '$.workflow_review_summary', ?2) WHERE task_id=?3 AND json_extract(metadata, '$.automation_role')='manager_review' AND json_extract(metadata, '$.automation_run_id')=?4",
+            params![decision, summary.trim(), task_id, run_id],
+        )?;
+        transaction.execute(
             "UPDATE loop_items SET status=?1, metadata=?2, version=version+1, updated_at=?3 WHERE id=?4",
-            params![decision, task.metadata.to_string(), stamp, task_id],
+            params![if decision == "needs_rework" { "in_progress" } else { decision }, task.metadata.to_string(), stamp, task_id],
         )?;
         transaction.commit()?;
         Ok(json!({"status": decision, "summary": summary.trim()}))

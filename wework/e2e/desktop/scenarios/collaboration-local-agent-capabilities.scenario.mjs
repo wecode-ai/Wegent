@@ -153,6 +153,7 @@ export async function createDesktopScenario({
   modelResponseTimeoutMs,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
+  inspectModelRequest,
 }) {
   await prepareCapabilities(executorHome)
   const resultRoot = dirname(executorHome)
@@ -241,6 +242,13 @@ export async function createDesktopScenario({
           createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
         )
       }
+      if (inspectModelRequest) {
+        const events = await inspectModelRequest(body, { boundContext })
+        if (events) {
+          writeEvents(events)
+          return true
+        }
+      }
       if (requestContainsToolOutput(body, REVIEW_CALL)) {
         writeEvents([assistantMessage('The manager reviewed the child result.')])
         return true
@@ -293,6 +301,7 @@ export async function createDesktopScenario({
                 prompt: EXECUTOR_PROMPT,
                 assignee_type: 'agent',
                 assignee_id: robot.id,
+                assignee_name: robot.name,
               },
             ],
           },
@@ -413,6 +422,11 @@ export async function createDesktopScenario({
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: AGENT_NAME,
       })
+      await control.command(
+        'waitFor',
+        `[data-testid="cloud-project-chat-agent-model"] option[value="${MODEL_NAME}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
         value: MODEL_NAME,
       })
@@ -521,6 +535,11 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+      await control.command(
+        'waitFor',
+        `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command(
         'click',
         `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`

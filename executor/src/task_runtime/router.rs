@@ -639,6 +639,31 @@ impl TaskRuntime {
             .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
     }
 
+    pub fn submit_local_review_feedback(
+        &self,
+        task_id: &str,
+        version: i64,
+        feedback: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store
+            .submit_local_review_feedback(task_id, version, feedback)
+    }
+
+    pub fn report_local_workflow_outcome(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        runtime_task_id: &str,
+        outcome: &Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.report_local_workflow_outcome(
+            project_id,
+            task_id,
+            runtime_task_id,
+            outcome,
+        )
+    }
+
     pub fn decide_local_automation_workflow_review(
         &self,
         project_id: &str,

@@ -1101,6 +1101,43 @@ describe('local delivery API', () => {
     }
   )
 
+  test.each(['in_progress', 'in_review', 'completed'] as const)(
+    'preserves the manager-owned %s status when a workflow runtime finishes',
+    async status => {
+      const workflowTask = {
+        ...taskRecord,
+        status,
+        metadata: {
+          ...taskRecord.metadata,
+          workflow: {
+            version: 1,
+            automation_run_id: 'run-1',
+            nodes: [{ id: 'review', status: 'running', automation_role: 'manager_review' }],
+          },
+        },
+      }
+      const request = vi.fn(async (method: string) => {
+        if (method === 'runtime_tasks.context')
+          return {
+            id: 'binding-1',
+            cloud_project_id: projectRecord.id,
+            loop_item_id: taskRecord.id,
+            device_id: 'local-device',
+            task_id: 'runtime-1',
+            workflow_node_id: 'review',
+          }
+        if (method === 'projects.list') return [projectRecord]
+        if (method === 'todos.get') return workflowTask
+        throw new Error(`Unexpected mutation or read: ${method}`)
+      })
+      const api = createLocalDeliveryApi(request)
+      await expect(
+        api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
+      ).resolves.toMatchObject({ status })
+      expect(request.mock.calls.some(([method]) => method === 'todos.update')).toBe(false)
+    }
+  )
+
   test('writes a completed user-bound runtime task into its Issue workflow', async () => {
     const workflowTask = {
       ...taskRecord,

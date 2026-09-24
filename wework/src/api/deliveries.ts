@@ -1060,6 +1060,16 @@ export function createDeliveryApi(client: HttpClient) {
     approveWorkflowReview(itemId: string): Promise<WorkflowPlan> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/review`, {})
     },
+    async submitWorkflowReviewFeedback(
+      itemId: string,
+      version: number,
+      feedback: string
+    ): Promise<void> {
+      await client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/feedback`, {
+        version,
+        feedback,
+      })
+    },
     pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`, {})
     },

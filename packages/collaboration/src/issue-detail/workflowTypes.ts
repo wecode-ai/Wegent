@@ -56,6 +56,7 @@ export interface SharedWorkflowNode {
   required_assignee_type?: "user" | "agent" | "team" | null;
   required_assignee_id?: string | null;
   required_assignee_name?: string | null;
+  automation_role?: "manager" | "manager_review" | null;
   execution_config?: {
     agent_id?: string | null;
   } | null;

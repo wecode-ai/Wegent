@@ -2485,6 +2485,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
+        "todos.review_feedback" => runtime
+            .submit_local_review_feedback(
+                required_task_string(&params, "item_id")?,
+                params
+                    .get("version")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?,
+                required_task_string(&params, "feedback")?,
+            )
+            .map_err(task_runtime_error),
         "projects.automation.cancel" => runtime
             .cancel_project_automation_run(
                 required_task_string(&params, "project_id")?,

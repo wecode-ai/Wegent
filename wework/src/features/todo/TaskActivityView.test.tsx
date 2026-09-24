@@ -24,6 +24,7 @@ const updateLoopItem = vi.fn()
 const getLoopItem = vi.fn()
 const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
+const submitWorkflowReviewFeedback = vi.fn()
 const listModels = vi.fn()
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
@@ -73,6 +74,7 @@ const workbenchServices = {
     getLoopItem,
     approveLoopItemRun,
     rejectLoopItemRun,
+    submitWorkflowReviewFeedback,
     unbindTask: vi.fn(),
   },
   projectChatAgentApi: { list: vi.fn(async () => agentsMock.value) },
@@ -240,6 +242,7 @@ describe('TaskActivityView', () => {
     getLoopItem.mockReset()
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
+    submitWorkflowReviewFeedback.mockReset()
     listModels.mockReset()
     attachmentSelectionMock.attachments = []
     attachmentSelectionMock.isAttachmentReadyToSend = true
@@ -1322,12 +1325,11 @@ describe('TaskActivityView', () => {
     expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()
     await user.click(replyToggle)
     expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
-    expect(within(card).getByTestId('cloud-task-activity-card-composer-message-1')).toBeVisible()
-    expect(replyToggle).toHaveTextContent('取消')
-    expect(within(card).getByTestId('cloud-task-activity-card-composer-message-1')).toHaveFocus()
-    await user.click(replyToggle)
+    expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
+    expect(screen.getByTestId('cloud-task-activity-card-composer-message-1')).toHaveFocus()
+    await user.click(screen.getByTestId('issue-reply-cancel'))
     expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
-    expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()
+    expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
 
   it('hides replies while the comment execution is running', async () => {
@@ -3845,4 +3847,138 @@ it('starts a cloud issue comment through the project service when the assigned a
   expect(client.startAgentResponse).not.toHaveBeenCalled()
   expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   expect(screen.queryByTestId('task-comment-settings-toggle')).not.toBeInTheDocument()
+})
+
+it('shows a manager assignment as an activity event and labels executor comments', async () => {
+  const managerMessage: ProjectChatMessage = {
+    ...agentMessage,
+    messageId: 'manager-plan-1',
+    sender: { type: 'agent', id: 'manager', name: '当前设备智能体' },
+    content: 'Long manager planning transcript that should not appear in the issue timeline',
+    metadata: {
+      kind: 'project_automation_run',
+      manager_type: 'project_robot',
+      workflow_plan_run_id: 'plan-1',
+      run_status: 'completed',
+    },
+    status: 'completed',
+    rootMessageId: null,
+  }
+  const memberMessage: ProjectChatMessage = {
+    ...agentMessage,
+    messageId: 'member-result-1',
+    sequenceNumber: 3,
+    sender: { type: 'agent', id: 'member', name: 'test' },
+    content: 'CPU 检查已完成',
+    metadata: { run_status: 'completed' },
+    status: 'completed',
+    rootMessageId: null,
+  }
+  const localManagerMessage: ProjectChatMessage = {
+    ...agentMessage,
+    messageId: 'local-manager-review',
+    sequenceNumber: 4,
+    sender: { type: 'agent', id: 'local-leader', name: '当前设备智能体' },
+    metadata: { workflow_node_id: 'review', automation_role: 'manager_review' },
+    content: 'Reviewing member reports',
+    rootMessageId: null,
+  }
+  const client = {
+    subscribe: vi.fn(async () => ({
+      snapshot: {
+        messages: [managerMessage, memberMessage, localManagerMessage],
+        latestSequence: 4,
+        currentUserId: '1',
+      },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async () => userMessage),
+    startAgentResponse: vi.fn(async () => agentMessage),
+    failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+
+  render(
+    <TaskActivityView
+      client={client}
+      project={
+        {
+          id: '11',
+          name: 'Wework',
+          collaboration_groups: [{ id: 'group-1', leader: { kind: 'agent', id: 'local-leader' } }],
+        } as never
+      }
+      task={
+        {
+          id: 'WEG-1',
+          title: 'Inspect CPU',
+          status: 'in_progress',
+          assignee_group_id: 'group-1',
+        } as never
+      }
+      linear
+      issueTimeline
+    />
+  )
+
+  const assignment = await screen.findByTestId('cloud-task-assignment-event-manager-plan-1')
+  expect(assignment).toHaveTextContent('当前设备智能体 负责人 · 分配了任务')
+  expect(screen.queryByText(/Long manager planning transcript/)).not.toBeInTheDocument()
+  expect(screen.queryByTestId('cloud-task-activity-card-manager-plan-1')).not.toBeInTheDocument()
+  expect(screen.getByTestId('cloud-task-activity-role-member-result-1')).toHaveTextContent(
+    '执行成员'
+  )
+  expect(screen.getByText('CPU 检查已完成')).toBeInTheDocument()
+  expect(screen.getByTestId('cloud-task-manager-event-local-manager-review')).toHaveTextContent(
+    '正在验收成员结果'
+  )
+  expect(screen.queryByText('Reviewing member reports')).not.toBeInTheDocument()
+  expect(
+    screen.queryByTestId('cloud-task-activity-reply-toggle-local-manager-review')
+  ).not.toBeInTheDocument()
+})
+
+it('routes a collaboration group review comment back to the manager', async () => {
+  const user = userEvent.setup()
+  const updatedTask = {
+    id: 'WEG-1',
+    title: 'Inspect CPU',
+    status: 'in_review',
+    version: 8,
+    assignee_group_id: 'group-1',
+  }
+  getLoopItem.mockResolvedValue(updatedTask)
+  submitWorkflowReviewFeedback.mockResolvedValue(undefined)
+  const onTaskUpdated = vi.fn()
+  const client = {
+    subscribe: vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async () => ({ ...userMessage, content: '请补充温度证据' })),
+    startAgentResponse: vi.fn(async () => agentMessage),
+    failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+
+  render(
+    <TaskActivityView
+      client={client}
+      project={{ id: '11', name: 'Wework', location: 'cloud' } as never}
+      task={{ ...updatedTask, version: 7 } as never}
+      linear
+      issueTimeline
+      onTaskUpdated={onTaskUpdated}
+    />
+  )
+
+  await user.type(screen.getByTestId('cloud-task-activity-composer'), '请补充温度证据')
+  await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+  await waitFor(() =>
+    expect(submitWorkflowReviewFeedback).toHaveBeenCalledWith('WEG-1', 7, '请补充温度证据')
+  )
+  expect(getLoopItem).toHaveBeenCalledWith('WEG-1')
+  expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask)
+  expect(createProjectRuntimeTask).not.toHaveBeenCalled()
 })

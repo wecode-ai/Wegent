@@ -1041,6 +1041,13 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         })),
       }
     },
+    async submitWorkflowReviewFeedback(
+      itemId: string,
+      version: number,
+      feedback: string
+    ): Promise<void> {
+      await request('todos.review_feedback', { item_id: itemId, version, feedback })
+    },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.get', {
@@ -1388,6 +1395,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         }
         if (!context.loop_item_id || !context.loop_item) return null
         const item = context.loop_item
+        if (item.workflow && 'automation_run_id' in item.workflow) return item
         if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)

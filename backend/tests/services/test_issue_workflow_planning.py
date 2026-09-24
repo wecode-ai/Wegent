@@ -551,6 +551,57 @@ def test_manager_can_complete_issue_only_after_executor_outcome(
     assert completed_issue.metadata_json["status_history"][-1]["by_user_id"] is None
 
 
+def test_review_feedback_reopens_manager_review_with_user_context(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _project(test_db, test_user)
+    robot = _robot(test_db, project, test_user)
+    issue = _issue(test_db, project, test_user)
+    issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(robot),
+    )
+    approved = issue_workflow_planning_service.approve(
+        test_db, issue_id=issue.id, user_id=test_user.id
+    )
+    child_id = approved.items[0].task_id
+    assert child_id is not None
+    issue_workflow_planning_service.report_outcome(
+        test_db,
+        child_id=child_id,
+        user_id=test_user.id,
+        values=WorkflowTaskOutcomeSubmit(
+            verdict="passed", summary="Implementation verified."
+        ),
+    )
+    review = issue_workflow_planning_service.decide_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision="in_review",
+        summary="Needs user confirmation.",
+    )
+
+    issue_workflow_planning_service.record_review_feedback(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        version=test_db.get(LoopItem, issue.id).version,
+        feedback="Please verify the empty input case.",
+    )
+
+    run = test_db.get(ProjectWorkflowRun, review.run_id)
+    assert run.metadata_json["user_review_feedback"] == {
+        "text": "Please verify the empty input case.",
+        "user_id": test_user.id,
+    }
+    assert "manager_review" not in run.metadata_json
+    assert test_db.get(LoopItem, issue.id).status == "in_review"
+
+
 @pytest.mark.asyncio
 async def test_reported_outcome_dispatches_manager_review_once(
     test_db: Session,
@@ -774,6 +825,15 @@ def test_needs_rework_stops_old_task_and_starts_new_plan_version(
         ),
     )
 
+    assert replanned.status == "awaiting_review"
+    assert replanned.plan_version == approved.plan_version
+    replanned = issue_workflow_planning_service.decide_review(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision="needs_rework",
+        summary="The executor evidence requires a corrected implementation.",
+    )
     assert replanned.status == "planning"
     assert replanned.plan_version == approved.plan_version + 1
     old_child = test_db.get(LoopItem, child_id)

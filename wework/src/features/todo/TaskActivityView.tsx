@@ -1,3 +1,5 @@
+import { IssueManagerEvent } from './IssueManagerEvent'
+import { issueActivityRole } from './issueActivityRole'
 import {
   useActivityExecutionBinding,
   useActivityExecutionDisplayStatus,
@@ -114,76 +116,43 @@ const EMPTY_STATUS_HISTORY: SharedIssueStatusHistoryEntry[] = []
 
 function TimelineReply({
   rootId,
-  projectId,
   createdAt,
-  disabled,
-  aiError,
   replyLabel,
-  cancelLabel,
   executionMessage,
   executionTurnId,
   fallbackExecutionStatus,
   sessionBusy,
-  onSend,
+  active,
+  onReply,
 }: {
   rootId: string
-  projectId: string
   createdAt: string
-  disabled: boolean
-  aiError?: string | null
   replyLabel: string
-  cancelLabel: string
   executionMessage?: ProjectChatMessage
   executionTurnId?: string
   fallbackExecutionStatus?: string | null
   sessionBusy: boolean
-  onSend: (text: string, attachments: Attachment[]) => Promise<CardCommentSendResult>
+  active: boolean
+  onReply: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const editorRef = useRef<HTMLDivElement>(null)
-  const { status: runtimeStatus } = useActivityExecutionDisplayStatus(
-    executionMessage,
-    executionTurnId
-  )
-  const displayStatus = executionDisplayStatus(runtimeStatus ?? fallbackExecutionStatus)
-  const replyBlocked =
-    sessionBusy || (displayStatus !== 'unknown' && isExecutionActive(displayStatus))
-  useEffect(() => {
-    if (open && !replyBlocked) editorRef.current?.querySelector('textarea')?.focus()
-  }, [open, replyBlocked])
-
+  const { status } = useActivityExecutionDisplayStatus(executionMessage, executionTurnId)
+  const displayStatus = executionDisplayStatus(status ?? fallbackExecutionStatus)
+  const blocked = sessionBusy || isExecutionActive(displayStatus)
   return (
-    <div className="task-detail-thread-reply">
-      <div className="task-detail-thread-actions">
-        <time dateTime={createdAt} className="text-xs text-text-muted">
-          {formatIssueTimestamp(createdAt)}
-        </time>
-        {!replyBlocked ? (
-          <button
-            type="button"
-            data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-            aria-expanded={open}
-            onClick={() => setOpen(current => !current)}
-          >
-            {open ? cancelLabel : replyLabel}
-          </button>
-        ) : null}
-      </div>
-      {open && !replyBlocked ? (
-        <div ref={editorRef} className="task-detail-thread-reply-editor">
-          <CardCommentComposer
-            rootId={rootId}
-            projectId={projectId}
-            disabled={disabled}
-            placeholder={replyLabel}
-            aiError={aiError}
-            onSend={async (text, attachments) => {
-              const result = await onSend(text, attachments)
-              if (result.ok) setOpen(false)
-              return result
-            }}
-          />
-        </div>
+    <div className="task-detail-thread-actions">
+      <time dateTime={createdAt} className="text-xs text-text-muted">
+        {formatIssueTimestamp(createdAt)}
+      </time>
+      {!blocked ? (
+        <button
+          type="button"
+          data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
+          aria-expanded={active}
+          aria-controls="issue-reply-composer"
+          onClick={onReply}
+        >
+          {replyLabel}
+        </button>
       ) : null}
     </div>
   )
@@ -377,6 +346,11 @@ export function TaskActivityView({
   const requestedTaskBindingAddresses = useRef(new Set<string>())
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const [newCommentDraft, setNewCommentDraft] = useState('')
+  const [replyTarget, setReplyTarget] = useState<TaskReplyCard | null>(null)
+  const replyComposerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (replyTarget) replyComposerRef.current?.querySelector('textarea')?.focus()
+  }, [replyTarget])
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding
   // and a device-owned workspace carry no selectable project.
@@ -808,7 +782,16 @@ export function TaskActivityView({
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToBottom()
       void persistConversationAttachments(attachments)
-      if (projectLocation !== 'local' && client.executeTaskComment) {
+      if (
+        issueTimeline &&
+        task.status === 'in_review' &&
+        task.assignee_group_id &&
+        projectDeliveryApi?.submitWorkflowReviewFeedback
+      ) {
+        await projectDeliveryApi.submitWorkflowReviewFeedback(task.id, task.version, text)
+        const updated = await projectDeliveryApi.getLoopItem(task.id)
+        onTaskUpdated?.(updated)
+      } else if (projectLocation !== 'local' && client.executeTaskComment) {
         const incoming = await client.executeTaskComment({
           projectId: project.id,
           taskId: task.id,
@@ -853,6 +836,8 @@ export function TaskActivityView({
     eventOnly = false,
     hideTime = false
   ) => {
+    const role = issueActivityRole(message, task)
+    const agentRole = role === 'manager' || role === 'manager_review' ? 'manager' : role
     const address = messageRuntimeAddress(message)
     const binding = address
       ? taskBindings.find(
@@ -871,6 +856,7 @@ export function TaskActivityView({
         compact
         plain
         showInlineExecutionStatus={issueTimeline}
+        agentRole={agentRole}
         allowBackendExecutionFallback={!issueTimeline}
         eventOnly={eventOnly}
         taskAiState={task.ai_state}
@@ -936,7 +922,39 @@ export function TaskActivityView({
         }
         composer={
           <>
-            {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
+            {issueTimeline && replyTarget ? (
+              <div
+                ref={replyComposerRef}
+                id="issue-reply-composer"
+                className="px-3 py-2"
+                data-testid="issue-reply-composer"
+              >
+                <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
+                  <span>
+                    {t('workbench.task_activity_inline_placeholder')} {replyTarget.root.sender.name}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="issue-reply-cancel"
+                    onClick={() => setReplyTarget(null)}
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+                <CardCommentComposer
+                  rootId={replyTarget.root.messageId}
+                  projectId={project.id}
+                  disabled={!client}
+                  placeholder={t('workbench.task_activity_inline_placeholder')}
+                  aiError={replyQueue.error(replyTarget.root.messageId)}
+                  onSend={async (text, attachments) => {
+                    const result = await sendCardReply(replyTarget, text, attachments)
+                    if (result.ok) setReplyTarget(null)
+                    return result
+                  }}
+                />
+              </div>
+            ) : linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
               <TaskCommentComposer
                 key={task.id}
                 value={newCommentDraft}
@@ -1021,6 +1039,27 @@ export function TaskActivityView({
               }
               const card = activity.card
               const rootId = card.root.messageId
+              const role = issueActivityRole(card.root, task)
+              if (issueTimeline && (role === 'manager' || role === 'manager_review')) {
+                const address = messageRuntimeAddress(card.root)
+                const binding = address
+                  ? taskBindings.find(
+                      item => item.device_id === address.deviceId && item.task_id === address.taskId
+                    )
+                  : undefined
+                return (
+                  <div key={rootId}>
+                    <IssueManagerEvent
+                      message={card.root}
+                      task={task}
+                      onOpenExecution={
+                        binding && onOpenTask ? () => onOpenTask(binding) : undefined
+                      }
+                    />
+                    {card.replies.map(reply => renderActivityMessage(reply))}
+                  </div>
+                )
+              }
               const executions = [card.root, ...card.replies].filter(
                 message => message.sender.type === 'agent'
               )
@@ -1055,12 +1094,8 @@ export function TaskActivityView({
                       {issueTimeline ? (
                         <TimelineReply
                           rootId={rootId}
-                          projectId={project.id}
                           createdAt={card.root.createdAt}
-                          disabled={!client}
-                          aiError={replyQueue.error(rootId)}
                           replyLabel={t('workbench.task_activity_inline_placeholder')}
-                          cancelLabel={t('common.cancel')}
                           executionMessage={latestExecution}
                           executionTurnId={
                             latestExecution
@@ -1075,7 +1110,8 @@ export function TaskActivityView({
                                 : null
                           }
                           sessionBusy={cardSessionActive(card)}
-                          onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                          active={replyTarget?.root.messageId === rootId}
+                          onReply={() => setReplyTarget(card)}
                         />
                       ) : (
                         <CardCommentComposer

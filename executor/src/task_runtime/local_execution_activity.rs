@@ -108,6 +108,8 @@ pub(super) fn create_execution_comment(
         "previous_execution_id": execution.previous_execution_id,
         "trigger_message_id": trigger,
         "workflow_node_id": payload.get("workflow_node_id"),
+        "automation_role": payload.get("automation_role"),
+        "automation_run_id": payload.get("automation_run_id"),
     });
     if let (Some(device), Some(task)) = (&execution.runtime_device_id, &execution.runtime_task_id) {
         metadata["runtime_address"] = json!({"deviceId": device, "taskId": task});

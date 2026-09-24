@@ -834,38 +834,13 @@ async fn call_tool_with_runtime_context(
     backend_url: Option<&str>,
     auth_token: Option<&str>,
 ) -> Value {
-    if is_automation_manager(grant.as_ref()) && !is_automation_manager_tool(name) {
-        return text_result(
-            format!("AI-managed automation cannot call wework_space tool: {name}"),
-            true,
-        );
-    }
-    if is_automation_executor(grant.as_ref()) && !is_automation_executor_tool(name) {
+    if is_automation_executor(grant.as_ref())
+        && board_tool_category(name) != Some(BoardToolCategory::Execution)
+    {
         return text_result(
             format!("Project automation executor cannot call wework_space tool: {name}"),
             true,
         );
-    }
-    if is_automation_executor(grant.as_ref()) && name == "update_board_item" {
-        let update = arguments.get("item").unwrap_or(&arguments);
-        if let Some(field) = [
-            "assignee_user_id",
-            "assignee_agent_id",
-            "assignee_group_id",
-            "assignee_team_id",
-            "workflow",
-            "execution_payload",
-            "execution_config",
-            "automation_rule_id",
-        ]
-        .into_iter()
-        .find(|field| update.get(*field).is_some())
-        {
-            return text_result(
-                format!("Project automation executor cannot update board item field: {field}"),
-                true,
-            );
-        }
     }
     if let Some(error) = grant
         .as_ref()
@@ -1118,7 +1093,20 @@ async fn call_tool_with_runtime_context(
                 | (_, _, _, _, Err(error)) => Err(error),
             }
         }
-        "report_workflow_outcome" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+        "report_workflow_outcome" => {
+            match (
+                string_argument(&arguments, "space_id"),
+                string_argument(&arguments, "item_id"),
+                grant.as_ref(),
+            ) {
+                (Ok(project_id), Ok(task_id), Some(grant)) if grant.automation_executor => runtime
+                    .report_local_workflow_outcome(project_id, task_id, &grant.task_id, &arguments),
+                _ => Err(super::TaskRuntimeError::Invalid(
+                    "An active executor context is required".into(),
+                )),
+            }
+        }
+        "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
             "This orchestration operation requires a backend project space".to_owned(),
         )),
         "create_board_item" => {
@@ -2693,7 +2681,7 @@ fn tools() -> Vec<Value> {
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "decision": {"enum": ["in_review", "completed"]},
+                    "decision": {"enum": ["in_review", "completed", "needs_rework"]},
                     "summary": {"type": "string"}
                 },
                 "required": ["space_id", "item_id", "decision", "summary"]
@@ -3075,22 +3063,14 @@ fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec
             .collect();
     }
     if is_automation_manager(context.grant()) {
-        return tools()
-            .into_iter()
-            .filter(|tool| {
-                tool["name"]
-                    .as_str()
-                    .is_some_and(is_automation_manager_tool)
-            })
-            .collect();
+        return tools();
     }
     if is_automation_executor(context.grant()) {
         return tools()
             .into_iter()
             .filter(|tool| {
-                tool["name"]
-                    .as_str()
-                    .is_some_and(is_automation_executor_tool)
+                tool["name"].as_str().and_then(board_tool_category)
+                    == Some(BoardToolCategory::Execution)
             })
             .collect();
     }
@@ -3108,43 +3088,56 @@ fn is_automation_executor(grant: Option<&SpaceContextGrant>) -> bool {
     grant.is_some_and(|grant| grant.automation_executor)
 }
 
-fn is_automation_executor_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "get_current_context"
-            | "get_board_item"
-            | "list_board_items"
-            | "search_board_items"
-            | "list_space_files"
-            | "read_space_file"
-            | "update_board_item"
-            | "add_board_item_comment"
-            | "list_item_attachments"
-            | "upload_item_attachment"
-            | "read_item_attachment"
-            | "delete_item_attachment"
-            | "get_delivery_requirements"
-            | "get_workflow_stage_context"
-            | "create_delivery"
-            | "upload_delivery_asset"
-            | "list_deliveries"
-            | "read_delivery"
-            | "download_delivery_asset"
-            | "finalize_delivery"
-            | "discard_delivery_draft"
-    )
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoardToolCategory {
+    Management,
+    Execution,
 }
 
-fn is_automation_manager_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "get_current_context"
-            | "get_board_item"
-            | "get_assignment_candidates"
-            | "submit_workflow_plan"
-            | "decide_workflow_review"
-            | "send_notification"
-    )
+fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
+    match name {
+        "create_space"
+        | "update_space"
+        | "create_board_item"
+        | "send_notification"
+        | "get_assignment_candidates"
+        | "submit_workflow_plan"
+        | "decide_workflow_review"
+        | "assign_board_item"
+        | "update_board_item"
+        | "reorder_board_items" => Some(BoardToolCategory::Management),
+        "list_spaces"
+        | "get_current_context"
+        | "list_board_items"
+        | "list_space_files"
+        | "read_space_file"
+        | "search_board_items"
+        | "get_board_item"
+        | "report_workflow_outcome"
+        | "add_board_item_comment"
+        | "list_item_attachments"
+        | "upload_item_attachment"
+        | "read_item_attachment"
+        | "delete_item_attachment"
+        | "get_delivery_requirements"
+        | "get_workflow_stage_context"
+        | "create_delivery"
+        | "upload_delivery_asset"
+        | "list_deliveries"
+        | "read_delivery"
+        | "download_delivery_asset"
+        | "finalize_delivery"
+        | "discard_delivery_draft"
+        | "describe_space_table"
+        | "list_table_records"
+        | "create_table_record"
+        | "update_table_record"
+        | "delete_table_record"
+        | "create_table_field"
+        | "update_table_field"
+        | "delete_table_field" => Some(BoardToolCategory::Execution),
+        _ => None,
+    }
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
@@ -3887,36 +3880,18 @@ mod tests {
     }
 
     #[test]
-    fn automation_manager_has_read_plan_and_notification_tools() {
-        let names = tools()
-            .into_iter()
-            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
-            .filter(|name| is_automation_manager_tool(name))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            names,
-            vec![
-                "get_current_context",
-                "get_board_item",
-                "send_notification",
-                "get_assignment_candidates",
-                "submit_workflow_plan",
-                "decide_workflow_review",
-            ]
-        );
-        for forbidden in [
-            "create_board_item",
-            "update_board_item",
-            "add_board_item_comment",
-            "delete_item_attachment",
-        ] {
-            assert!(!is_automation_manager_tool(forbidden));
+    fn every_board_tool_has_exactly_one_role_category() {
+        for tool in tools() {
+            let name = tool["name"].as_str().expect("tool name");
+            assert!(
+                board_tool_category(name).is_some(),
+                "missing role category for {name}"
+            );
         }
     }
 
     #[test]
-    fn automation_executor_can_work_on_its_issue_without_assignment_tools() {
+    fn automation_tool_categories_match_management_and_execution_responsibilities() {
         let grant = SpaceContextGrant {
             space_id: Some("space-1".to_owned()),
             item_id: Some("ISSUE-1".to_owned()),
@@ -3929,21 +3904,31 @@ mod tests {
             "list_item_attachments",
             "upload_item_attachment",
             "read_item_attachment",
-            "update_board_item",
             "add_board_item_comment",
             "create_delivery",
             "finalize_delivery",
+            "create_table_record",
         ] {
-            assert!(is_automation_executor_tool(name), "missing {name}");
+            assert_eq!(
+                board_tool_category(name),
+                Some(BoardToolCategory::Execution),
+                "{name}"
+            );
         }
         for name in [
             "assign_board_item",
             "get_assignment_candidates",
             "submit_workflow_plan",
             "create_board_item",
+            "update_board_item",
             "update_space",
+            "reorder_board_items",
         ] {
-            assert!(!is_automation_executor_tool(name), "exposed {name}");
+            assert_eq!(
+                board_tool_category(name),
+                Some(BoardToolCategory::Management),
+                "{name}"
+            );
         }
         assert!(context_scope_error(&grant, &json!({"space_id": "space-2"})).is_some());
         assert!(context_scope_error(&grant, &json!({"item_id": "ISSUE-2"})).is_some());
@@ -3970,25 +3955,7 @@ mod tests {
         assert!(names.contains(&"upload_item_attachment"));
         assert!(!names.contains(&"assign_board_item"));
         assert!(!names.contains(&"submit_workflow_plan"));
-
-        for field in ["assignee_user_id", "workflow", "execution_config"] {
-            let denied = call_tool_with_grant(
-                &runtime,
-                "update_board_item",
-                json!({
-                    "space_id": "space-1",
-                    "item_id": "ISSUE-1",
-                    "item": {"version": 1, (field): null},
-                }),
-                Some(grant.clone()),
-            )
-            .await;
-            assert_eq!(denied["isError"], true);
-            assert!(denied["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("cannot update board item field"));
-        }
+        assert!(!names.contains(&"update_board_item"));
 
         let denied = call_tool_with_grant(
             &runtime,
@@ -4002,6 +3969,34 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("cannot call wework_space tool"));
+    }
+
+    #[test]
+    fn automation_manager_receives_management_and_execution_tools() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let context = SpaceMcpRequestContext::new(
+            Some(SpaceContextGrant {
+                space_id: Some("space-1".to_owned()),
+                item_id: Some("ISSUE-1".to_owned()),
+                automation_manager: true,
+                ..SpaceContextGrant::default()
+            }),
+            None,
+            None,
+        );
+        let visible = visible_tools(&runtime, &context);
+        let names = visible
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names.len(), tools().len());
+        assert!(names.contains(&"submit_workflow_plan"));
+        assert!(names.contains(&"update_board_item"));
+        assert!(names.contains(&"upload_item_attachment"));
+        assert!(names.contains(&"read_space_file"));
     }
 
     #[test]

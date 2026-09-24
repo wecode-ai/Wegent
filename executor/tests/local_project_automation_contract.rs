@@ -213,7 +213,7 @@ fn group_fixture(second_kind: &str) -> (TempDir, LocalTaskStore, String, String)
     store.update_project(&project_id, ProjectUpdate {
         version: project.version,
         automatic_processing_rules: Some(json!([rule])),
-        collaboration_groups: Some(json!([{"id":"group-1","name":"Review","leader":{"kind":"agent","id":agent_id},"stages":[
+        collaboration_groups: Some(json!([{"id":"group-1","name":"Review","leader":{"kind":"agent","id":agent_id},"members":[{"kind":second_kind,"id":if second_kind=="agent" {agent_id.as_str()} else {"1"}}],"stages":[
             {"id":"build","name":"Build","assignee":{"kind":"agent","id":agent_id}},
             {"id":"review","name":"Review","assignee":{"kind":second_kind,"id":if second_kind=="agent" {agent_id.as_str()} else {"1"}}}
         ]}])),
@@ -232,10 +232,46 @@ fn claim(store: &LocalTaskStore) -> wegent_executor::task_runtime::LocalExecutio
     store.claim_next_local_execution(&serde_json::from_value(json!({"execution_device_id":"local-device","runtime_instance_id":"instance","device_capacity":1,"runtime_active":0,"runtime_active_task_ids":[],"lease_seconds":300})).unwrap()).unwrap().unwrap()
 }
 
+fn submit_group_plan(
+    store: &LocalTaskStore,
+    project_id: &str,
+    task_id: &str,
+    manager: &wegent_executor::task_runtime::LocalExecution,
+    assignee_kind: &str,
+    item_count: usize,
+) -> String {
+    let run_id = manager.execution_payload.as_ref().unwrap()["origin"]["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let items = (0..item_count)
+        .map(|index| {
+            json!({
+                "client_key": format!("task-{index}"),
+                "title": format!("Task {index}"),
+                "description": "Check the Issue",
+                "prompt": format!("Perform task {index} and report evidence."),
+                "assignee_type": assignee_kind,
+                "assignee_id": if assignee_kind == "agent" { manager.agent_id.as_str() } else { "1" },
+            })
+        })
+        .collect::<Vec<_>>();
+    store
+        .submit_local_automation_workflow_plan(
+            project_id,
+            task_id,
+            &run_id,
+            &json!({"summary":"Manager assigned work", "items":items}),
+        )
+        .unwrap();
+    run_id
+}
+
 #[test]
 fn group_waiting_for_human_is_not_reported_as_complete() {
-    let (directory, store, project_id, _task_id) = group_fixture("human");
+    let (directory, store, project_id, task_id) = group_fixture("human");
     let execution = claim(&store);
+    submit_group_plan(&store, &project_id, &task_id, &execution, "user", 1);
     store
         .complete_execution(execution.id, Some("Build done"))
         .unwrap();
@@ -300,18 +336,36 @@ fn cancelled_group_does_not_launch_next_stage_on_a_racing_completion() {
 #[test]
 fn group_finishes_only_after_both_agent_stages() {
     let (_directory, store, project_id, task_id) = group_fixture("agent");
-    let first = claim(&store);
-    store.complete_execution(first.id, Some("Built")).unwrap();
+    let manager = claim(&store);
+    let run_id = submit_group_plan(&store, &project_id, &task_id, &manager, "agent", 2);
+    store
+        .complete_execution(manager.id, Some("Assigned"))
+        .unwrap();
     assert_eq!(
         store
             .list_project_automation_runs(&project_id, "rule-1")
             .unwrap()[0]["status"],
         "queued"
     );
+    let first = claim(&store);
+    store.complete_execution(first.id, Some("Built")).unwrap();
     let second = claim(&store);
     assert_ne!(first.id, second.id);
     store
         .complete_execution(second.id, Some("Reviewed"))
+        .unwrap();
+    let review = claim(&store);
+    store
+        .decide_local_automation_workflow_review(
+            &project_id,
+            &task_id,
+            &run_id,
+            "completed",
+            "Both reports verified",
+        )
+        .unwrap();
+    store
+        .complete_execution(review.id, Some("Accepted"))
         .unwrap();
     assert_eq!(
         store
@@ -330,9 +384,88 @@ fn group_finishes_only_after_both_agent_stages() {
 }
 
 #[test]
+fn manager_without_a_plan_fails_without_completing_the_issue() {
+    let (_directory, store, project_id, task_id) = group_fixture("agent");
+    let manager = claim(&store);
+    let finished = store
+        .complete_execution(manager.id, Some("Tools unavailable"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished.status, "failed");
+    let issue = store.get_task(&project_id, &task_id).unwrap();
+    assert_eq!(issue.status.as_deref(), Some("in_progress"));
+    let comments = store.list_comments(&project_id, &task_id, 0).unwrap();
+    assert_eq!(comments[0].status, "failed");
+    assert_eq!(comments[0].metadata["automation_role"], "manager");
+}
+
+#[test]
+fn manager_review_requires_a_decision_and_preserves_pending_review_history() {
+    for decision in [None, Some("in_review")] {
+        let (_directory, store, project_id, task_id) = group_fixture("agent");
+        let manager = claim(&store);
+        let run_id = submit_group_plan(&store, &project_id, &task_id, &manager, "agent", 1);
+        let comments = store.list_comments(&project_id, &task_id, 0).unwrap();
+        assert_eq!(comments[0].metadata["workflow_plan_submitted"], true);
+        store
+            .complete_execution(manager.id, Some("Assigned"))
+            .unwrap();
+        let member = claim(&store);
+        store
+            .complete_execution(member.id, Some("CPU evidence: verified measurements"))
+            .unwrap();
+        let review = claim(&store);
+        let payload = review.execution_payload.as_ref().unwrap();
+        assert_eq!(payload["origin"]["automationRole"], "manager_review");
+        assert_eq!(payload["origin"]["run_id"], run_id);
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("CPU evidence: verified measurements"));
+        if let Some(decision) = decision {
+            store
+                .decide_local_automation_workflow_review(
+                    &project_id,
+                    &task_id,
+                    &run_id,
+                    decision,
+                    "Needs user confirmation",
+                )
+                .unwrap();
+        }
+        let finished = store
+            .complete_execution(review.id, Some("Review ended"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            finished.status,
+            if decision.is_some() {
+                "completed"
+            } else {
+                "failed"
+            }
+        );
+        let issue = store.get_task(&project_id, &task_id).unwrap();
+        assert_eq!(
+            issue.status.as_deref(),
+            Some(decision.unwrap_or("in_progress"))
+        );
+        let history = issue.metadata["status_history"].as_array().unwrap();
+        assert!(!history
+            .iter()
+            .any(|event| event["to_status"] == "completed"));
+        assert_eq!(
+            history.last().unwrap()["to_status"],
+            decision.unwrap_or("in_progress")
+        );
+    }
+}
+
+#[test]
 fn unavailable_next_stage_does_not_undo_completed_runtime_state() {
     let (_directory, store, project_id, task_id) = group_fixture("agent");
     let first = claim(&store);
+    submit_group_plan(&store, &project_id, &task_id, &first, "agent", 1);
     let agent = store.list_chat_agents(&project_id).unwrap().remove(0);
     store
         .archive_chat_agent(&project_id, &agent.id, agent.version)

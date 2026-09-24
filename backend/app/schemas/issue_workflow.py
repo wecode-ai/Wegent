@@ -821,8 +821,13 @@ class WorkflowPlanSubmit(BaseModel):
 
 
 class WorkflowReviewDecisionSubmit(BaseModel):
-    decision: Literal["in_review", "completed"]
+    decision: Literal["in_review", "completed", "needs_rework"]
     summary: str = Field(min_length=1, max_length=10_000)
+
+
+class WorkflowReviewFeedbackSubmit(BaseModel):
+    version: int
+    feedback: str = Field(min_length=1, max_length=10_000)
 
 
 class WorkflowPlanItemView(WorkflowPlanItemCreate):

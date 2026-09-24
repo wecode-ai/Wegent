@@ -63,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-capabilities':
     './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
+  'collaboration-local-tool-roles': './scenarios/collaboration-local-tool-roles.scenario.mjs',
   'collaboration-local-executor-issue-tools':
     './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
   'collaboration-agent-automation-chain':
@@ -94,6 +95,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-capabilities',
+  'collaboration-local-tool-roles',
   'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
   'plugin-development',

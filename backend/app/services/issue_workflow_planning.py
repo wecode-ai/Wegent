@@ -386,31 +386,37 @@ class IssueWorkflowPlanningService:
             trigger=f"workflow_outcome_{values.verdict}",
             by_user_id=user_id,
         )
-        if values.verdict == "needs_rework":
-            db.commit()
-            replanned = self.replan(
-                db,
-                issue_id=issue.id,
-                user_id=user_id,
-            )
-            next_run = db.get(ProjectWorkflowRun, replanned.run_id)
-            if next_run is not None:
-                next_run.metadata_json = {
-                    **(next_run.metadata_json or {}),
-                    "rework_context": {
-                        "source_task_id": child.id,
-                        **outcome,
-                    },
-                }
-                db.commit()
-                db.refresh(next_run)
-                return self._view(db, issue, next_run)
-            return replanned
         self.sync_from_child(db, child_id=child.id, commit=True)
         current = self.get(db, issue_id=issue.id, user_id=user_id)
         if current is None:
             raise ValueError("The Issue has no active workflow plan")
         return current
+
+    def record_review_feedback(
+        self,
+        db: Session,
+        *,
+        issue_id: str,
+        user_id: int,
+        version: int,
+        feedback: str,
+    ) -> None:
+        issue = self._issue(db, issue_id, user_id, for_update=True)
+        run = self._active_run(db, issue, self._workflow(issue))
+        if issue.version != version or issue.status != "in_review" or run is None:
+            raise ValueError(
+                "Review changed; refresh the Issue before submitting feedback"
+            )
+        metadata = dict(run.metadata_json or {})
+        if not metadata.get("manager_review"):
+            raise ValueError("The manager has not requested confirmation")
+        metadata.pop("manager_review", None)
+        metadata.pop("review_manager_run_id", None)
+        metadata["user_review_feedback"] = {"text": feedback, "user_id": user_id}
+        run.metadata_json = metadata
+        run.version += 1
+        issue.version += 1
+        db.commit()
 
     def decide_review(
         self,
@@ -423,8 +429,10 @@ class IssueWorkflowPlanningService:
     ) -> WorkflowPlanView:
         """Apply the AI manager's review decision to the parent Issue."""
 
-        if decision not in {"in_review", "completed"}:
-            raise ValueError("Review decision must be in_review or completed")
+        if decision not in {"in_review", "completed", "needs_rework"}:
+            raise ValueError(
+                "Review decision must be in_review, completed or needs_rework"
+            )
         issue = self._issue(db, issue_id, user_id, for_update=True)
         workflow = self._workflow(issue)
         run = self._active_run(db, issue, workflow)
@@ -437,11 +445,24 @@ class IssueWorkflowPlanningService:
             or len(tasks) != len(items)
             or any(
                 (task.metadata_json or {}).get("workflow_outcome", {}).get("verdict")
-                != "passed"
+                not in {"passed", "needs_rework"}
                 for task in tasks
             )
         ):
             raise ValueError("All executor outcomes must be reported before review")
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "manager_review": {"decision": decision, "summary": summary},
+        }
+        if decision == "needs_rework":
+            db.commit()
+            return self.replan(db, issue_id=issue_id, user_id=user_id)
+        if decision == "completed" and any(
+            (task.metadata_json or {}).get("workflow_outcome", {}).get("verdict")
+            != "passed"
+            for task in tasks
+        ):
+            raise ValueError("Unresolved executor findings require rework")
         if decision == "completed":
             return self.approve_review(
                 db,
@@ -484,6 +505,8 @@ class IssueWorkflowPlanningService:
         if issue is None or run is None or run.parent_id != issue.id:
             return None
         workflow = self._workflow(issue)
+        if (run.metadata_json or {}).get("manager_review"):
+            return issue
         if workflow.get("active_run_id") != run.id or run.status in {
             "paused",
             "failed",

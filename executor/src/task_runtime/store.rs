@@ -1916,7 +1916,7 @@ impl LocalTaskStore {
         update_agent_comment(
             &transaction,
             execution_id,
-            "completed",
+            &execution_row(&transaction, execution_id)?.status,
             content.unwrap_or(""),
             &timestamp,
         )?;
@@ -4343,7 +4343,7 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         version: row.get(24)?,
         created_at: row.get(25)?,
         updated_at: row.get(26)?,
-        task_title: row.get(38)?,
+        task_title: row.get::<_, Option<String>>(38)?.unwrap_or_default(),
         task_status: row.get(39)?,
         task_priority: row.get(40)?,
         agent_name: agent_metadata
@@ -4691,9 +4691,10 @@ fn enqueue_ready_local_workflow_stages(
                     )
                     .optional()?;
                 reports.push(format!(
-                    "{}: {}",
+                    "{}: {}\nReported outcome: {}",
                     child["name"].as_str().unwrap_or_default(),
-                    note.unwrap_or_default()
+                    note.unwrap_or_default(),
+                    child.get("outcome").unwrap_or(&Value::Null)
                 ));
             }
             format!("{message}\n\nExecutor results:\n{}", reports.join("\n\n"))
@@ -4835,6 +4836,7 @@ fn advance_local_workflow_after_execution(
         return Ok(true);
     }
     let review_decision_recorded = workflow["manager_decision"]["status"].as_str().is_some();
+    let plan_submitted = workflow["plan_submitted"] == true;
     let nodes = workflow
         .get_mut("nodes")
         .and_then(Value::as_array_mut)
@@ -4853,16 +4855,33 @@ fn advance_local_workflow_after_execution(
             "workflow execution assignee does not match the stage constraint".to_owned(),
         ));
     }
-    let review_without_decision =
-        node["automation_role"] == "manager_review" && !review_decision_recorded;
-    node["status"] = json!(if review_without_decision {
+    let missing_manager_action =
+        if node["automation_role"] == "manager_review" && !review_decision_recorded {
+            Some("AI manager finished without deciding workflow review")
+        } else if node["automation_role"] == "manager" && !plan_submitted {
+            Some("AI manager finished without submitting a workflow plan")
+        } else {
+            None
+        };
+    node["status"] = json!(if missing_manager_action.is_some() {
         "failed"
     } else {
         "completed"
     });
     node["execution_id"] = json!(execution_id);
-    if review_without_decision {
-        workflow["error"] = json!("AI manager finished without deciding workflow review");
+    if let Some(error) = missing_manager_action {
+        workflow["error"] = json!(error);
+        connection.execute(
+            "UPDATE loop_item_executions SET status='failed', error_message=?1,
+             termination_reason='manager_action_missing' WHERE id=?2",
+            params![error, execution_id],
+        )?;
+        connection.execute(
+            "UPDATE loop_item_comments
+             SET metadata=json_set(metadata, '$.manager_action_error', ?1)
+             WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id')=?2",
+            params![error, execution_id],
+        )?;
     }
     release_local_workflow_nodes(workflow)?;
     let before_enqueue = workflow.clone();
@@ -4906,9 +4925,12 @@ fn advance_local_workflow_after_execution(
                 Some("completed" | "forced_completed")
             )
         });
-    let requires_manager_decision = nodes
-        .iter()
-        .any(|node| node["automation_role"].as_str() == Some("manager_review"));
+    let requires_manager_decision = nodes.iter().any(|node| {
+        matches!(
+            node["automation_role"].as_str(),
+            Some("manager" | "manager_review")
+        )
+    });
     let manager_decision = workflow["manager_decision"]["status"]
         .as_str()
         .map(str::to_owned);
