@@ -18,7 +18,7 @@ import {
 } from '@/features/harness-apps/harnessContext'
 import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { listLocalInstalledPluginsFromDisk } from '@/api/local/codexPlugins'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
@@ -3379,21 +3379,12 @@ function summarizeLocalModelOptions(
 }
 
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
-  const localPluginApi = createLocalCodexPluginApi()
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
-    async listPlugins(deviceId: string) {
-      if (deviceId) {
-        const installed = await localPluginApi.listInstalledPlugins({ requireComplete: true })
-        return buildProjectPluginCatalog(installed.items).map(plugin => ({
-          ...plugin,
-          catalogSource: 'local' as const,
-        }))
-      }
-      const [apps, installed] = await Promise.all([
-        localPluginApi.listApps(),
-        localPluginApi.listInstalledPlugins({ requireComplete: true }).then(result => result.items),
-      ])
-      return buildProjectPluginCatalog(installed, apps).map(plugin => ({
+    async listPlugins() {
+      // Agent configuration must remain local-only. Both app/list and
+      // plugin/installed can refresh ChatGPT state and time out together.
+      const installed = await listLocalInstalledPluginsFromDisk()
+      return buildProjectPluginCatalog(installed).map(plugin => ({
         ...plugin,
         catalogSource: 'local' as const,
       }))

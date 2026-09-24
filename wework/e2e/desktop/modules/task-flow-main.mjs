@@ -103,6 +103,7 @@ import {
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyComposerPluginNetworkIsolation,
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
@@ -1981,6 +1982,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
           userDataDirectory: electronUserDataDirectory,
+        })
+      }
+      if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
+        phase = 'plugin-composer-network-isolation'
+        await verifyComposerPluginNetworkIsolation({
+          blockingNetworkProxy,
+          codexHome,
+          control,
+          marketplacePath: marketplacePluginPath,
+          restartDesktopApp,
+          workspacePath,
         })
       }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {

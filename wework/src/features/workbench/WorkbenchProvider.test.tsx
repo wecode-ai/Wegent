@@ -79,6 +79,7 @@ import type {
   Attachment,
   DeviceInfo,
   InstalledPlugin,
+  LocalDeviceApp,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
@@ -3392,6 +3393,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3423,7 +3427,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'codex.app_server_request') {
-          if ((params as { method: string }).method === 'plugin/installed')
+          if (
+            (params as { method: string }).method === 'plugin/list' ||
+            (params as { method: string }).method === 'plugin/installed'
+          )
             return { marketplaces: [] }
           if ((params as { method: string }).method === 'app/list')
             return { data: [], nextCursor: null }
@@ -3440,6 +3447,109 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('keeps installed plugins available while both remote Codex catalogs hang and fail', async () => {
+    setElectronRuntime()
+    const codexApps = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
+    const remoteInstalled = deferred<{ marketplaces: [] }>()
+    const documentsPlugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'documents', namespace: 'default', labels: { id: '101' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'documents',
+        },
+        displayName: 'Documents',
+        description: 'Create documents',
+        installState: 'installed',
+        enabled: true,
+        visibility: 'public',
+        pluginId: 101,
+        releaseId: 1001,
+        manifest: { name: 'documents' },
+        components: {
+          skills: [],
+          commands: [],
+          apps: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        interface: { shortDescription: 'Create documents' },
+      },
+      status: { state: 'enabled' },
+    }
+    pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [documentsPlugin] })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/list') return { marketplaces: [] }
+          if (request.method === 'plugin/installed') return remoteInstalled.promise
+          if (request.method === 'app/list') return codexApps.promise
+        }
+        return {}
+      }
+    )
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+        status: 'connected',
+        isConnected: true,
+        apiBaseUrl: 'https://cloud.example/api',
+        token: 'test-token',
+      })
+
+      await userEvent.click(screen.getByText('list local apps'))
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+          'loaded:plugin:documents'
+        )
+      )
+      await waitFor(() =>
+        expect(
+          localExecutorMocks.requestLocalExecutor.mock.calls.some(
+            ([method, params]) =>
+              method === 'codex.app_server_request' &&
+              (params as { method?: string }).method === 'app/list'
+          )
+        ).toBe(true)
+      )
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'plugin/installed'
+        )
+      ).toBe(true)
+      expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
+
+      codexApps.reject(new Error('ChatGPT app directory unavailable'))
+      remoteInstalled.reject(new Error('ChatGPT installed directory unavailable'))
+      await waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          '[Wework] Failed to enrich composer plugins from Codex apps.',
+          expect.any(Error)
+        )
+      )
+      expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'loaded:plugin:documents'
+      )
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
   test('reports a composer inventory failure and accepts a fresh read after recovery', async () => {
     setElectronRuntime()
     let storeAvailable = false
@@ -3451,7 +3561,10 @@ describe('WorkbenchProvider runtime tasks', () => {
           return { storePath: '/store', plugins: [] }
         }
         if (method === 'codex.app_server_request') {
-          if ((params as { method: string }).method === 'plugin/installed')
+          if (
+            (params as { method: string }).method === 'plugin/list' ||
+            (params as { method: string }).method === 'plugin/installed'
+          )
             return { marketplaces: [] }
           if ((params as { method: string }).method === 'app/list')
             return { data: [], nextCursor: null }
@@ -3484,6 +3597,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3661,6 +3777,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [] }
+          }
           if (request.method === 'plugin/installed') {
             return { marketplaces: [] }
           }
@@ -3736,6 +3855,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
+          if (request.method === 'plugin/list') {
+            return { marketplaces: [installedMarketplace] }
+          }
           if (request.method === 'app/list') {
             return { data: [], nextCursor: null }
           }
@@ -18782,6 +18904,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (
           method === 'codex.app_server_request' &&
           (params as { method?: string })?.method === 'plugin/installed'
+        )
+          return { marketplaces: [] }
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string })?.method === 'plugin/list'
         )
           return { marketplaces: [] }
         return {}

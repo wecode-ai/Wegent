@@ -93,6 +93,7 @@ export const DESKTOP_CHECKPOINTS = [
 export const PLUGIN_SEGMENTS = [
   'core-dsh-ui-plugin-composition',
   'core-dsh-plugin-management',
+  'plugin-composer-network-isolation',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',
