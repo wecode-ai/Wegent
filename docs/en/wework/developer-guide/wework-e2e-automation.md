@@ -146,11 +146,13 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
-Actions matrix jobs and Cloud uses fifteen. Every job runs its
-checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
-contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The thirty-two matrix jobs still provide
+`ci:all` still run the complete desktop suites. Core uses thirteen fixed GitHub
+Actions matrix jobs and Cloud uses ten. Every job runs its
+up to three isolated checkpoints concurrently, shortening each shard's critical
+path without adding runners. Checkpoints that share the Collaboration cloud
+runtime remain serialized through an exclusive resource lock so real Electron,
+WebView, and Executor stacks cannot contaminate one another. The twenty-three Core and Cloud
+matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
 budget; a new or materially slower checkpoint requires rebalancing instead of
@@ -162,18 +164,32 @@ application, Executor, and Codex artifact. Electron package preparation builds
 the Harness runtime, Node execution runtime, and Executor concurrently; the
 Harness preparation owns the single DSH application Vite build so the same
 frontend is not compiled twice. Every Core and Cloud shard downloads and reuses
-that artifact instead of rebuilding Vite, Electron, and Executor. Rust builds
+that artifact instead of rebuilding Vite, Electron, and Executor. Desktop shards
+start only after the shared build succeeds and download it directly through the
+GitHub artifact action. This prevents many runners from sitting idle while
+polling during the build, allowing Lint, Tests, and Platform E2E to acquire
+runners promptly without adding matrix jobs or dropping checkpoints.
+Both the Rust gateway and Executor use debug profiles so E2E does not spend time
+on unused release optimization. Test artifacts also disable dev-profile
+debuginfo because diagnostics do not retain those symbols; generating and then
+stripping them only extends a cold build. Rust builds
 reuse both the `main`-owned Cargo target cache and sccache compiler units: the
 target cache bounds PR and first-run latency, while sccache reduces incremental
 compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the thirty-two shards. Desktop E2E and its cache
+upload and download time across the shards. Source changes under `backend-rs/**`
+or `executor/**` select the desktop target-cache warmup so `main` does not refresh
+that cache only when a lockfile changes. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The macOS Inspector path also uses the debug
+Executor profile and disables dev-profile debuginfo. It builds a release
+Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
+or a non-pull-request run), because optimized code generation is relevant to
+memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -316,7 +332,26 @@ On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` set
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
+The hybrid Backend launcher gives Python Uvicorn a 2,400-second upstream HTTP
+keep-alive, longer than the workflow's longest 35-minute hybrid E2E job.
+`brz-http-gateway` 0.1.4 builds a hyper-util connection pool without installing
+its idle-connection timer. If Uvicorn expires an idle socket first, the gateway
+can reuse that upstream-closed connection and incorrectly return `502 fallback
+upstream unavailable`. Bounding the upstream lifetime beyond the job prevents
+that stale-socket window in this local hybrid launcher. The setting affects only
+the local Rust-to-Python fallback connection and does not disable keep-alive
+between external clients and the gateway.
+
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
+
+The `plugin-account-auth` scenario uses shorter scheduling intervals only when
+an E2E reconciliation marker is configured and emits one precise retry signal
+after the test changes credential state. Production retains the 15-second
+automatic synchronization period and 60-second failure backoff. The DWS manual
+revocation assertion no longer sleeps for a fixed 32 seconds. It waits for two
+completed reconciliation markers from the real Executor while continuously
+asserting that the grant remains revoked, so the optimization removes idle time
+without dropping account migration, cloud execution, or revocation coverage.
 
 The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 

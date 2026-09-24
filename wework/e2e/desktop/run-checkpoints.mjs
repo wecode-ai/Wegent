@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { reservePort } from './port-reservation.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -14,6 +16,11 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
+const CHECKPOINT_RESOURCES = new Map([
+  ['collaboration-shared-core', 'collaboration-runtime'],
+  ['collaboration-settings-matrix', 'collaboration-runtime'],
+  ['collaboration-issue-comment-notification', 'collaboration-runtime'],
+])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
@@ -184,20 +191,6 @@ function formatDuration(durationMs) {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
-async function reservePort() {
-  const server = createServer()
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolvePromise)
-  })
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    throw new Error('Unable to reserve a desktop E2E port')
-  }
-  await new Promise(resolvePromise => server.close(resolvePromise))
-  return address.port
-}
-
 function configuredPort(value, name) {
   if (value === undefined) return null
   const port = Number(value)
@@ -216,17 +209,18 @@ async function resolveServerPorts(env) {
     env.WEWORK_E2E_CONTROL_SERVER_PORT,
     'WEWORK_E2E_CONTROL_SERVER_PORT'
   )
-  let modelServerPort = configuredModelPort ?? (await reservePort())
-  let controlServerPort = configuredControlPort ?? (await reservePort())
+  const registryDir = env.WEWORK_E2E_PORT_REGISTRY_DIR
+  let modelServerPort = configuredModelPort ?? (await reservePort(registryDir))
+  let controlServerPort = configuredControlPort ?? (await reservePort(registryDir))
 
   while (controlServerPort === modelServerPort) {
     if (configuredControlPort !== null && configuredModelPort !== null) {
       throw new Error('Desktop E2E control and model server ports must differ')
     }
     if (configuredControlPort !== null) {
-      modelServerPort = await reservePort()
+      modelServerPort = await reservePort(registryDir)
     } else {
-      controlServerPort = await reservePort()
+      controlServerPort = await reservePort(registryDir)
     }
   }
   return { controlServerPort, modelServerPort }
@@ -485,53 +479,59 @@ async function runRequestedArgs() {
 }
 
 async function runParallelCheckpoints(checkpoints) {
-  const sharedEnv = await sharedBuildEnvironment()
-  const pending = [...checkpoints]
-  const failures = []
-  const workerCount = Math.min(parallelCheckpointLimit(), pending.length)
-  console.log(
-    `[desktop-e2e] Running ${pending.length} checkpoints with ${workerCount} parallel workers`
-  )
+  const portRegistryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-ports-'))
+  try {
+    const sharedEnv = {
+      ...(await sharedBuildEnvironment()),
+      WEWORK_E2E_PORT_REGISTRY_DIR: portRegistryDir,
+    }
+    const failures = []
+    const workerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
+    console.log(
+      `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
+    )
 
-  async function runWorker() {
-    while (pending.length > 0) {
-      const checkpoint = pending.shift()
-      if (!checkpoint) return
-      const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
-      delete env.WEWORK_E2E_CONTROL_SERVER_PORT
-      delete env.WEWORK_E2E_MODEL_SERVER_PORT
-      const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
-      env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
-      env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
-      console.log(`\n[desktop-e2e] START ${checkpoint}`)
-      const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
-      if (result.code === 0) {
-        console.log(
-          `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
+    await runWithCheckpointResources({
+      checkpoints,
+      workerCount,
+      resourceFor: checkpoint => CHECKPOINT_RESOURCES.get(checkpoint),
+      run: async checkpoint => {
+        const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
+        delete env.WEWORK_E2E_CONTROL_SERVER_PORT
+        delete env.WEWORK_E2E_MODEL_SERVER_PORT
+        const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
+        env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
+        env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
+        console.log(`\n[desktop-e2e] START ${checkpoint}`)
+        const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
+        if (result.code === 0) {
+          console.log(
+            `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
+          )
+          return
+        }
+        const failure = await readFailureSummary(result)
+        failures.push({ checkpoint, failure, ...result })
+        console.error(
+          `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
         )
-        continue
-      }
-      const failure = await readFailureSummary(result)
-      failures.push({ checkpoint, failure, ...result })
+      },
+    })
+    if (failures.length === 0) {
+      console.log('\n[desktop-e2e] All parallel checkpoints passed.')
+      return
+    }
+
+    console.error('\n[desktop-e2e] Parallel checkpoint failure summary:')
+    for (const failure of failures) {
       console.error(
-        `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
+        `- ${failure.checkpoint}: ${failure.failure}${failure.resultDir ? ` (${failure.resultDir})` : ''}`
       )
     }
+    process.exitCode = 1
+  } finally {
+    await rm(portRegistryDir, { recursive: true, force: true })
   }
-
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
-  if (failures.length === 0) {
-    console.log('\n[desktop-e2e] All parallel checkpoints passed.')
-    return
-  }
-
-  console.error('\n[desktop-e2e] Parallel checkpoint failure summary:')
-  for (const failure of failures) {
-    console.error(
-      `- ${failure.checkpoint}: ${failure.failure}${failure.resultDir ? ` (${failure.resultDir})` : ''}`
-    )
-  }
-  process.exitCode = 1
 }
 
 async function runCheckpoints(checkpoints) {

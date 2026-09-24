@@ -64,6 +64,10 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const dwsSourceRoot = join(resultDir, 'dws-source')
+  const reconcileMarker = join(resultDir, 'plugin-account-reconcile.log')
+  const retrySignal = join(resultDir, 'plugin-account-retry.signal')
+  let retrySignalGeneration = 0
+  const signalAutomaticRetry = () => writeFile(retrySignal, String((retrySignalGeneration += 1)))
   for (const name of ['config', 'keychain']) {
     await mkdir(join(dwsSourceRoot, name), { recursive: true })
   }
@@ -370,6 +374,9 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       DWS_CONFIG_DIR: join(dwsSourceRoot, 'config'),
       DWS_KEYCHAIN_DIR: join(dwsSourceRoot, 'keychain'),
       DWS_DISABLE_KEYCHAIN: '1',
+      WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_INTERVAL_MS: '1000',
+      WEWORK_E2E_PLUGIN_ACCOUNT_RECONCILE_MARKER: reconcileMarker,
+      WEWORK_E2E_PLUGIN_ACCOUNT_RETRY_SIGNAL: retrySignal,
     },
     setCloudEnvironment(environment) {
       cloud = environment
@@ -511,6 +518,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       )
       assert.equal(await connectionFor('transfer'), undefined)
       const abortedId = await marker(transferFence)
+      await signalAutomaticRetry()
       await writeFile(
         sourceAuth,
         JSON.stringify({ username: 'alice@example.test', password: secret }),
@@ -529,6 +537,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       )
       assert.notEqual(await marker(transferReceipt), abortedId)
       await assert.rejects(readFile(transferSource), { code: 'ENOENT' })
+      await signalAutomaticRetry()
       // Device grants also advance the revision; settle both grants before
       // using a revision change as proof that the source credential changed.
       const mail = await waitForValue(
@@ -546,6 +555,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         JSON.stringify({ username: 'alice@example.test', password: secret + '-updated' }),
         { mode: 0o600 }
       )
+      await signalAutomaticRetry()
       await waitForValue(
         () => connectionFor('mail'),
         item => item.revision > mail.revision,
@@ -655,6 +665,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         api,
         waitForValue,
         managedRoot,
+        reconcileMarker,
         timeoutMs: workbenchReadyTimeoutMs,
         invoke: async (nextCommand, expected) => {
           command = nextCommand
