@@ -665,7 +665,7 @@ def test_delivery_does_not_accept_human_assigned_issue(
     assert latest["current_delivery_id"] == draft.json()["id"]
 
 
-def test_reporter_assignee_can_attach_evidence_while_working(
+def test_developer_assignee_can_attach_evidence_while_working(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -686,6 +686,7 @@ def test_reporter_assignee_can_attach_evidence_while_working(
             resource_type=ResourceType.CLOUD_PROJECT.value,
             resource_id=delivery_project.id,
             entity_id=str(member.id),
+            role="Developer",
             status=MemberStatus.APPROVED.value,
         )
     )
@@ -2349,6 +2350,7 @@ def test_project_member_can_discover_shared_todo_and_delivery(
             resource_type=ResourceType.CLOUD_PROJECT.value,
             resource_id=delivery_project.id,
             entity_id=str(member.id),
+            role="Viewer",
             status=MemberStatus.APPROVED.value,
         )
     )
@@ -2416,6 +2418,7 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
             resource_type=ResourceType.CLOUD_PROJECT.value,
             resource_id=delivery_project.id,
             entity_id=str(member.id),
+            role="Viewer",
             status=MemberStatus.APPROVED.value,
         )
     )

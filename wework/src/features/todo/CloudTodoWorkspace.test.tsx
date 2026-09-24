@@ -3805,6 +3805,7 @@ describe('CloudTodoWorkspace', () => {
         task_provider: 'local',
         provider_config: {},
         visibility: 'private',
+        default_issue_security: 'open',
       })
     )
     expect(onActiveProjectChange).toHaveBeenLastCalledWith(
@@ -3899,6 +3900,7 @@ describe('CloudTodoWorkspace', () => {
           repository: 'group/project',
         },
         visibility: 'private',
+        default_issue_security: 'open',
       })
     )
   })

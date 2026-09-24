@@ -22,7 +22,7 @@ def resolve_project_transcript(
         user_id=user_id,
         project_id=scope.project_id,
         task_id=scope.issue_id,
-        required_role=BaseRole.Reporter,
+        required_role=BaseRole.Viewer,
     )
     executions = (
         db.query(LoopItemExecution)

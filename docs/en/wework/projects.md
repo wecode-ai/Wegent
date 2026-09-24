@@ -76,15 +76,11 @@ When two or more agents are selected, the creation flow recommends organizing th
 
 ### Set cloud board access
 
-Cloud project spaces using the built-in task source can set their access level during creation. An Owner or Maintainer can change it later under **Project settings → Project access**:
+Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security and assignments.
 
-- **Private**: only project members can enter.
-- **Related tasks only**: every signed-in user can discover and enter the project. Owners and Maintainers see every issue; other users see only issues related to them.
-- **Public**: every signed-in user can enter and view every issue.
+Issue visibility is set separately during project creation, in project settings, and on each issue. Choose whether new issues default to **Visible to project members** or **Related people only** when creating the project; Maintainers can change the default or individual issues later. Owners and Maintainers see every issue. Other users see open issues and issues related to them: issues they created, are assigned to, collaborate on, have an active execution task for, or that are assigned to a robot they created. Unrelated issues are omitted from boards, tables, execution lists, and project conversations. Opening one directly returns not found.
 
-Related issues include issues the user created, issues assigned to the user, issues where the user is a collaborator, issues linked to one of the user's execution tasks, and issues assigned to a robot created by the user. Unrelated issues are omitted from the board, table, execution lists, and project conversations. Opening an unrelated issue directly also returns not found.
-
-The access level controls project and issue visibility only. It does not change project roles, assignees, or collaborators. External task sources such as GitHub, GitLab, and DingTalk AI Table do not offer **Related tasks only**.
+DingTalk controls access to AI Table records. Wework project roles control entry and editing in its table view.
 
 ### Import more projects into the local space
 

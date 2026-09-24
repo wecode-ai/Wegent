@@ -23,9 +23,16 @@ export const projectCreateLabels: Record<
     visibility: "项目可见性",
     privateVisibility: "私有",
     privateVisibilityDescription: "仅项目成员可访问",
-    restrictedVisibility: "仅看相关任务",
-    restrictedVisibilityDescription:
-      "所有人可进入；普通用户只能看到自己创建、负责、参与或关联的任务，以及自己创建机器人负责的任务",
+    publicAccessRole: "所有登录用户的角色",
+    viewerRole: "Viewer · 只读",
+    developerRole: "Developer · 可创建和编辑可见任务",
+    viewerRoleDescription: "只能查看有权访问的任务",
+    developerRoleDescription: "可以创建、编辑和执行有权访问的任务",
+    defaultIssueSecurity: "新任务默认可见范围",
+    openIssueSecurity: "项目可访问者可见",
+    relatedIssueSecurity: "仅相关人员可见",
+    openIssueSecurityDescription: "有项目访问权限的人都可以查看新任务",
+    relatedIssueSecurityDescription: "新任务仅对创建者、负责人和参与者可见",
     publicVisibility: "公开",
     publicVisibilityDescription: "所有登录用户可访问",
     publicVisibilityNotice:
@@ -133,9 +140,18 @@ export const projectCreateLabels: Record<
     visibility: "Project visibility",
     privateVisibility: "Private",
     privateVisibilityDescription: "Project members only",
-    restrictedVisibility: "Related tasks only",
-    restrictedVisibilityDescription:
-      "Everyone can enter; regular users only see tasks they created, own, participate in, are linked to, or that are assigned to robots they created",
+    publicAccessRole: "Role for all signed-in users",
+    viewerRole: "Viewer · read only",
+    developerRole: "Developer · create and edit visible tasks",
+    viewerRoleDescription: "Can view accessible tasks",
+    developerRoleDescription: "Can create, edit, and run accessible tasks",
+    defaultIssueSecurity: "Default visibility for new issues",
+    openIssueSecurity: "Visible to project users",
+    relatedIssueSecurity: "Related people only",
+    openIssueSecurityDescription:
+      "Anyone with project access can see new issues",
+    relatedIssueSecurityDescription:
+      "Only creators, assignees, and participants see new issues",
     publicVisibility: "Public",
     publicVisibilityDescription: "All signed-in users",
     publicVisibilityNotice:

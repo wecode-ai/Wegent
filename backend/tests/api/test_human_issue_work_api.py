@@ -29,7 +29,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def _member(
-    db: Session, project: CloudProject, *, role: str = "Reporter"
+    db: Session, project: CloudProject, *, role: str = "Developer"
 ) -> tuple[User, str]:
     name = f"human-work-{uuid4().hex[:8]}"
     user = User(

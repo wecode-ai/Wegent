@@ -270,6 +270,7 @@ export function TemporaryChatPanel({
     initialAddress ? getRuntimeConversationTurns(initialAddress) : []
   )
   const [input, setInput] = useState(initialInput)
+  const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -714,6 +715,7 @@ export function TemporaryChatPanel({
       const message = conversationQueue.take(id)
       if (!message) return
       setInput(message.content)
+      setReplaceDraftKey(current => current + 1)
       sideChatProjectChat.resetAttachments()
       message.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
     },
@@ -828,6 +830,7 @@ export function TemporaryChatPanel({
         <ComposerCatalogContext.Provider value={composerCatalog}>
           <BufferedChatInput
             value={input}
+            replaceDraftKey={replaceDraftKey}
             onChange={setInput}
             onDraftEdit={() => setError(null)}
             onSubmit={send}

@@ -9,9 +9,10 @@ import type { ProjectCreateHostAdapter } from './project-create/types'
 
 export type CollaborationProjectId = string
 
-export type CollaborationRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+export type CollaborationRole = 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
+export type CollaborationWorkspaceRole = CollaborationRole | 'Reporter' | 'RestrictedAnalyst'
 
-export type CollaborationProjectVisibility = 'private' | 'public_restricted' | 'public'
+export type CollaborationProjectVisibility = 'private' | 'public'
 
 export type CollaborationPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
 
@@ -51,7 +52,9 @@ export interface CollaborationProject {
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
-  access_role?: CollaborationRole | 'RestrictedAnalyst'
+  access_role?: CollaborationRole
+  public_access?: { role: 'Developer' | 'Viewer' } | null
+  default_issue_security?: 'open' | 'related'
   visibility?: CollaborationProjectVisibility
   status: string
   tags: string[]
@@ -67,7 +70,7 @@ export type LocalCollaborationProject = CollaborationProject & {
 
 export type BackendCollaborationProject = CollaborationProject & {
   project_store: 'backend'
-  access_role: CollaborationRole | 'RestrictedAnalyst'
+  access_role: CollaborationRole
 }
 
 export interface CollaborationHumanWork {
@@ -119,6 +122,7 @@ export interface CollaborationIssue {
   completed_at: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  security_level?: 'open' | 'related'
   assignment_history?: SharedIssueAssignmentHistoryEntry[]
   status_history?: SharedIssueStatusHistoryEntry[]
   automation?: { trigger?: string; [key: string]: unknown } | null
@@ -165,7 +169,7 @@ export interface CollaborationWorkspace {
   name: string
   description: string
   namespace: string
-  access_role: CollaborationRole | 'Member'
+  access_role: CollaborationWorkspaceRole | 'Member'
   member_count: number
   agent_count: number
   execution_environment_count: number
@@ -313,6 +317,10 @@ export interface CollaborationMember {
   email: string | null
   role: CollaborationRole
   capability_description?: string
+}
+
+export interface CollaborationWorkspaceMember extends Omit<CollaborationMember, 'role'> {
+  role: CollaborationWorkspaceRole
 }
 
 export interface CollaborationUser {

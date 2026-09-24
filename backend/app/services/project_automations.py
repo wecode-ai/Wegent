@@ -92,7 +92,7 @@ class ProjectAutomationService:
     """Own project automation rules, schedules, and persisted run records."""
 
     def list(self, db: Session, project_id: str, user_id: int) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rows = (
             db.query(ProjectAutomationRule)
             .filter(
@@ -1140,7 +1140,7 @@ class ProjectAutomationService:
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Reporter)
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         rule = self._rule(db, project_id, automation_id)
         timezone_name = str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         rows = (

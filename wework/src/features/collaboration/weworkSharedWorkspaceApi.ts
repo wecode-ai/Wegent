@@ -424,6 +424,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               task_provider: input.taskProvider,
               visibility: input.visibility,
+              public_access: input.publicAccess,
+              default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
                 DeliveryApi['createCloudProject']
               >[0]['provider_config'],
@@ -441,6 +443,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               description: input.description,
               tags: input.tags,
               visibility: input.visibility,
+              public_access: input.publicAccess,
+              default_issue_security: input.defaultIssueSecurity,
               provider_config: input.providerConfig as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['provider_config'],
@@ -547,6 +551,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_team_id: input.assigneeTeamId,
               due_at: input.dueAt,
               tags: input.tags,
+              security_level: input.securityLevel,
               workflow: input.workflow as Parameters<DeliveryApi['updateLoopItem']>[1]['workflow'],
               execution_config: input.executionConfig as Parameters<
                 DeliveryApi['updateLoopItem']
@@ -936,6 +941,8 @@ export function createWeworkSharedWorkspaceApi<
               description: projectInput.description,
               task_provider: projectInput.taskProvider,
               visibility: projectInput.visibility,
+              public_access: projectInput.publicAccess,
+              default_issue_security: projectInput.defaultIssueSecurity,
               provider_config: projectInput.providerConfig,
             })
           )
