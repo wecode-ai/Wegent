@@ -46,6 +46,11 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
 
   async function send(control, text) {
     await control.command('fill', COMPOSER, { value: text })
+    await control.command(
+      'waitFor',
+      '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="send-message-button"]',
+      { enabled: true, timeoutMs: uiTimeoutMs }
+    )
     await control.command('press', COMPOSER, { key: 'Enter' })
   }
 
@@ -126,10 +131,7 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
           text: '上下文压缩未完成',
           timeoutMs: uiTimeoutMs,
         })
-        const indicators = await control.command(
-          'getText',
-          '[data-testid="chat-message-scroll-area"]'
-        )
+        const indicators = await control.command('getText', INDICATOR)
         assert.ok(indicators.includes('上下文压缩未完成'))
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
@@ -142,7 +144,7 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
         await waitIdle(control)
         // A cancelled attempt may be absent from Codex history, but must never become a success.
-        const texts = await control.command('getText', '[data-testid="chat-message-scroll-area"]')
+        const texts = await control.command('getText', INDICATOR)
         assert.equal(texts.split('上下文已自动压缩').length - 1, previousIndicators)
         await send(control, FOLLOW_UP)
         await control.command('waitFor', '[data-testid="message-assistant"]', {

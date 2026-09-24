@@ -249,6 +249,14 @@ export function createDesktopScenario({
       await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        {
+          enabled: true,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: INITIAL_COMPLETION,
