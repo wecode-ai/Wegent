@@ -615,9 +615,9 @@ wework_desktop_macos_inspector_e2e=false' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,embedded-browser,workspace-tabs,collaboration-group-onboarding"},{"id":"core-2","name":"Core / shard 2","segments":"task-status-sync,change-request-status,collaboration-first-use,executor-stream-recovery,running-conversation-history,supervisor-lifecycle,collaboration-local-executor-issue-tools"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,workbench-mode,harness-apps,codex-account-login"},{"id":"core-4","name":"Core / shard 4","segments":"core-task-flow,goal-lifecycle,codex-notification-isolation,offline-local-project-space"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing,tray-lifecycle,split-workbench,automation-lifecycle,browser-annotation-core"},{"id":"core-6","name":"Core / shard 6","segments":"environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd,collaboration-issue-comment-mention,collaboration-issue-comment-notification"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-agent-automation-chain,component-update,native-window-startup,resilience,browser-toolbar-actions"},{"id":"core-8","name":"Core / shard 8","segments":"project-ai-settings,priority-filter,system-pac,release-package-startup,project-event-sources,computer-use,running-plan-history"},{"id":"core-9","name":"Core / shard 9","segments":"local-harness,runtime-task-queue,cloud-context-resilience,external-content-import,project-assignment-notification,cloud-space-mention"},{"id":"core-10","name":"Core / shard 10","segments":"claude-runtime,temporary-chat,browser-annotation-anchors,conversation-state,dsh-owner-capture"},{"id":"core-11","name":"Core / shard 11","segments":"workspace-attachments,cloud-login-proxy,native-window-chrome,project-automation,fork-provider-preservation,collaboration-local-agent-capabilities"},{"id":"core-12","name":"Core / shard 12","segments":"collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference"},{"id":"core-13","name":"Core / shard 13","segments":"task-board-association,task-board-bulk-actions,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-full-1","name":"Core / full lane 1","segments":"rendering-extensions,embedded-browser,workspace-tabs,collaboration-group-onboarding,environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd,collaboration-issue-comment-mention,collaboration-issue-comment-notification,workspace-attachments,cloud-login-proxy,native-window-chrome,project-automation,fork-provider-preservation,collaboration-local-agent-capabilities","parallel":8},{"id":"core-full-2","name":"Core / full lane 2","segments":"task-status-sync,change-request-status,collaboration-first-use,executor-stream-recovery,running-conversation-history,supervisor-lifecycle,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain,component-update,native-window-startup,resilience,browser-toolbar-actions,collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference","parallel":8},{"id":"core-full-3","name":"Core / full lane 3","segments":"window-lifecycle,workbench-mode,harness-apps,codex-account-login,project-ai-settings,priority-filter,system-pac,release-package-startup,project-event-sources,computer-use,running-plan-history,task-board-association,task-board-bulk-actions,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development","parallel":8},{"id":"core-full-4","name":"Core / full lane 4","segments":"core-task-flow,goal-lifecycle,codex-notification-isolation,offline-local-project-space,local-harness,runtime-task-queue,cloud-context-resilience,external-content-import,project-assignment-notification,cloud-space-mention","parallel":8},{"id":"core-full-5","name":"Core / full lane 5","segments":"model-routing,tray-lifecycle,split-workbench,automation-lifecycle,browser-annotation-core,claude-runtime,temporary-chat,browser-annotation-anchors,conversation-state,dsh-owner-capture","parallel":8}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-auto-update,automation-lifecycle"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"core-task-flow,cloud-worktree-create"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-capability,cloud-project-creation,cloud-worktree-archive-restore"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"cloud-device-lifecycle,cloud-worktree-queued-cancel,workspace-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-workspace-publication,project-automation,supervisor-lifecycle"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"telemetry-consent,workspace-attachments,embedded-browser"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"priority-filter,rendering-extensions,goal-lifecycle"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"window-lifecycle,conversation-state"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-tools,browser-multi-tabs,resilience"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"plugin-account-auth,model-routing"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-full-1","name":"Cloud / full lane 1","segments":"plugin-auto-update,automation-lifecycle,cloud-worktree-capability,cloud-project-creation,cloud-worktree-archive-restore,plugin-workspace-publication,project-automation,supervisor-lifecycle,priority-filter,rendering-extensions,goal-lifecycle,cloud-worktree-tools,browser-multi-tabs,resilience","parallel":8},{"id":"cloud-full-2","name":"Cloud / full lane 2","segments":"core-task-flow,cloud-worktree-create,cloud-device-lifecycle,cloud-worktree-queued-cancel,workspace-tabs,telemetry-consent,workspace-attachments,embedded-browser,window-lifecycle,conversation-state,plugin-account-auth,model-routing","parallel":8}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
@@ -1407,7 +1407,7 @@ desktop_other_job="$(
 if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$core_build_job" != *"wework/electron/release/WeWork-linux-x64/WeWork"* ]] ||
   [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]] ||
-  [[ "$core_build_job" != *'CARGO_PROFILE_DEV_DEBUG: "0"'* ]]; then
+  [[ "$core_build_job" == *'CARGO_PROFILE_DEV_DEBUG: "0"'* ]]; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi
@@ -1526,14 +1526,14 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"max-parallel: 10"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: ${{ matrix.parallel || 3 }}'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"uses: actions/download-artifact@v4"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
-  printf 'Wework Cloud desktop E2E must use ten prebuilt three-worker shards\n' >&2
+  printf 'Wework Cloud desktop E2E must use prebuilt dynamically sized lanes\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
@@ -1547,11 +1547,11 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 13"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: ${{ matrix.parallel || 3 }}'* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
-  printf 'Wework Core desktop E2E must use thirteen prebuilt three-worker shards\n' >&2
+  printf 'Wework Core desktop E2E must use prebuilt dynamically sized lanes\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then

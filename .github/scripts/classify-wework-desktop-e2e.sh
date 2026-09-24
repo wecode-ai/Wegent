@@ -155,6 +155,21 @@ core_shards=(
   collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference
   task-board-association,task-board-bulk-actions,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development
 )
+# A full desktop run uses the same checkpoint catalog in eight jobs: five Core,
+# two Cloud, and the plugin suite. The regular shards remain the source of truth
+# for focused changes, while full runs merge measured lanes so the available
+# Linux runners execute a single wave instead of queueing several waves.
+full_core_shards=(
+  rendering-extensions,embedded-browser,workspace-tabs,collaboration-group-onboarding,environment-panel-scroll,local-file-preview,renderer-storage,collaboration-shared-core,board-focus-view,codex-invalid-launch-cwd,collaboration-issue-comment-mention,collaboration-issue-comment-notification,workspace-attachments,cloud-login-proxy,native-window-chrome,project-automation,fork-provider-preservation,collaboration-local-agent-capabilities
+  task-status-sync,change-request-status,collaboration-first-use,executor-stream-recovery,running-conversation-history,supervisor-lifecycle,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain,component-update,native-window-startup,resilience,browser-toolbar-actions,collaboration-settings-matrix,core-dsh-plugin-management,permission-modes,remote-device-onboarding,browser-annotation-design,send-key-preference
+  window-lifecycle,workbench-mode,harness-apps,codex-account-login,project-ai-settings,priority-filter,system-pac,release-package-startup,project-event-sources,computer-use,running-plan-history,task-board-association,task-board-bulk-actions,context-compaction,system-proxy,transcript-sync,task-attachments,plugin-development
+  core-task-flow,goal-lifecycle,codex-notification-isolation,offline-local-project-space,local-harness,runtime-task-queue,cloud-context-resilience,external-content-import,project-assignment-notification,cloud-space-mention
+  model-routing,tray-lifecycle,split-workbench,automation-lifecycle,browser-annotation-core,claude-runtime,temporary-chat,browser-annotation-anchors,conversation-state,dsh-owner-capture
+)
+full_cloud_shards=(
+  plugin-auto-update,automation-lifecycle,cloud-worktree-capability,cloud-project-creation,cloud-worktree-archive-restore,plugin-workspace-publication,project-automation,supervisor-lifecycle,priority-filter,rendering-extensions,goal-lifecycle,cloud-worktree-tools,browser-multi-tabs,resilience
+  core-task-flow,cloud-worktree-create,cloud-device-lifecycle,cloud-worktree-queued-cancel,workspace-tabs,telemetry-consent,workspace-attachments,embedded-browser,window-lifecycle,conversation-state,plugin-account-auth,model-routing
+)
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -1047,11 +1062,22 @@ build_matrix() {
   cloud_matrix_entries=()
   other_matrix_entries=()
 
+  local active_core_shards=("${core_shards[@]}")
+  local core_id_prefix=core
+  local core_name_prefix="Core / shard"
+  local core_parallel=3
+  if [[ "${selected[core:all]:-false}" == "true" ]]; then
+    active_core_shards=("${full_core_shards[@]}")
+    core_id_prefix=core-full
+    core_name_prefix="Core / full lane"
+    core_parallel=8
+  fi
+
   local shard_index
-  for shard_index in "${!core_shards[@]}"; do
+  for shard_index in "${!active_core_shards[@]}"; do
     local selected_segments=()
     local shard_segments
-    IFS=',' read -ra shard_segments <<< "${core_shards[$shard_index]}"
+    IFS=',' read -ra shard_segments <<< "${active_core_shards[$shard_index]}"
     local segment
     for segment in "${shard_segments[@]}"; do
       if [[ "${selected[core:all]:-false}" == "true" || \
@@ -1063,9 +1089,20 @@ build_matrix() {
       local joined_segments
       joined_segments="$(IFS=,; printf '%s' "${selected_segments[*]}")"
       local entry
-      printf -v entry \
-        '{"id":"core-%s","name":"Core / shard %s","segments":"%s"}' \
-        "$((shard_index + 1))" "$((shard_index + 1))" "$joined_segments"
+      if [[ "${selected[core:all]:-false}" == "true" ]]; then
+        printf -v entry \
+          '{"id":"%s-%s","name":"%s %s","segments":"%s","parallel":%s}' \
+          "$core_id_prefix" \
+          "$((shard_index + 1))" \
+          "$core_name_prefix" \
+          "$((shard_index + 1))" \
+          "$joined_segments" \
+          "$core_parallel"
+      else
+        printf -v entry \
+          '{"id":"core-%s","name":"Core / shard %s","segments":"%s"}' \
+          "$((shard_index + 1))" "$((shard_index + 1))" "$joined_segments"
+      fi
       core_matrix_entries+=("$entry")
     fi
   done
@@ -1084,11 +1121,23 @@ build_matrix() {
     done
   fi
 
+  local active_cloud_shards=("${cloud_shards[@]}")
+  local cloud_id_prefix=cloud
+  local cloud_name_prefix="Cloud / shard"
+  local cloud_parallel=3
+  if [[ "${selected[cloud:all]:-false}" == "true" && \
+    "${selected[core:all]:-false}" == "true" ]]; then
+    active_cloud_shards=("${full_cloud_shards[@]}")
+    cloud_id_prefix=cloud-full
+    cloud_name_prefix="Cloud / full lane"
+    cloud_parallel=8
+  fi
+
   local cloud_shard_index
-  for cloud_shard_index in "${!cloud_shards[@]}"; do
+  for cloud_shard_index in "${!active_cloud_shards[@]}"; do
     local selected_cloud_segments=()
     local cloud_shard_segments
-    IFS=',' read -ra cloud_shard_segments <<< "${cloud_shards[$cloud_shard_index]}"
+    IFS=',' read -ra cloud_shard_segments <<< "${active_cloud_shards[$cloud_shard_index]}"
     local cloud_segment
     for cloud_segment in "${cloud_shard_segments[@]}"; do
       if [[ "${selected[cloud:all]:-false}" == "true" || \
@@ -1100,11 +1149,23 @@ build_matrix() {
       local joined_cloud_segments
       joined_cloud_segments="$(IFS=,; printf '%s' "${selected_cloud_segments[*]}")"
       local entry
-      printf -v entry \
-        '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
-        "$((cloud_shard_index + 1))" \
-        "$((cloud_shard_index + 1))" \
-        "$joined_cloud_segments"
+      if [[ "${selected[cloud:all]:-false}" == "true" && \
+        "${selected[core:all]:-false}" == "true" ]]; then
+        printf -v entry \
+          '{"id":"%s-%s","name":"%s %s","segments":"%s","parallel":%s}' \
+          "$cloud_id_prefix" \
+          "$((cloud_shard_index + 1))" \
+          "$cloud_name_prefix" \
+          "$((cloud_shard_index + 1))" \
+          "$joined_cloud_segments" \
+          "$cloud_parallel"
+      else
+        printf -v entry \
+          '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
+          "$((cloud_shard_index + 1))" \
+          "$((cloud_shard_index + 1))" \
+          "$joined_cloud_segments"
+      fi
       cloud_matrix_entries+=("$entry")
     fi
   done

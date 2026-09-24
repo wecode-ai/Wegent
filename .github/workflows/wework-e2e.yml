@@ -268,7 +268,6 @@ jobs:
       - name: Build shared Wework desktop E2E runtime
         env:
           CI: true
-          CARGO_PROFILE_DEV_DEBUG: "0"
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: debug
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
@@ -407,7 +406,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: ${{ matrix.parallel || 3 }}
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -828,7 +827,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: ${{ matrix.parallel || 3 }}
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
           WEWORK_E2E_DWS_FIXTURE_DIR: ${{ github.workspace }}/.ci-artifacts/dws-account-auth
