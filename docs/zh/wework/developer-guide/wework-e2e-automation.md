@@ -143,12 +143,12 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件固定使用 13 个 GitHub Actions matrix job，Cloud 套件使用 10 个；每个 job
-最多并行运行 3 个彼此隔离的 checkpoint，在不增加 runner 数量的前提下缩短分片
-关键路径。共享同一协作云端运行时的 checkpoint 通过资源锁保持串行，避免真实
-Electron、WebView 和 Executor 栈互相污染。
-跨 runner 的 23 个 Core/Cloud matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
-上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
+完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；Core
+job 最多并行运行 2 个彼此隔离的 checkpoint，避免三个完整 Electron、Executor 和真实
+后端栈争抢同一 runner 的 CPU；Cloud job 保持最多 3 个并发。共享同一协作云端运行时
+或已证实存在时序竞争的 checkpoint 通过资源锁保持串行。
+跨 runner 的 32 个 Core/Cloud matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+上限，以控制完整套件的关键路径；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
 通知场景使用定向的 30 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron

@@ -146,16 +146,16 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core uses thirteen fixed GitHub
-Actions matrix jobs and Cloud uses ten. Every job runs its
-up to three isolated checkpoints concurrently, shortening each shard's critical
-path without adding runners. Checkpoints that share the Collaboration cloud
-runtime remain serialized through an exclusive resource lock so real Electron,
-WebView, and Executor stacks cannot contaminate one another. The twenty-three Core and Cloud
-matrix jobs still provide
+`ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
+Actions matrix jobs and Cloud uses fifteen. A Core job runs at most two isolated
+checkpoints concurrently so three complete Electron, Executor, and real-backend
+stacks cannot contend for one runner's CPU; Cloud jobs retain up to three
+concurrent checkpoints. Checkpoints that share the Collaboration cloud runtime
+or have demonstrated timing contention remain serialized through an exclusive
+resource lock. The thirty-two Core and Cloud matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to keep the complete suite inside its ten-minute critical-path
-budget; a new or materially slower checkpoint requires rebalancing instead of
+durations and capped to bound the complete suite's critical path; a new or
+materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures. The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
 dedicated shard; the notification scenario uses a targeted 30-second render
