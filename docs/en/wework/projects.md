@@ -38,6 +38,8 @@ For tasks using a GitHub or GitLab workspace, the environment panel looks up the
 
 The task list in the left sidebar, project-space board, and right-side environment panel reuse the same PR/MR monitoring snapshot, status priority, and icon for a task. Failed checks, merge conflicts, Merge Queue states, drafts, closed requests, and merged requests update consistently in all three places. The environment panel also stops showing an old PR/MR after the shared monitor confirms that the current branch has none.
 
+The shared monitor is the only owner of PR/MR status queries. The environment panel loads branch and diff information separately and does not start a second status lookup. Tasks from the same repository are grouped into one batch query, and rebuilding the runtime task list with equivalent task objects does not immediately repeat that query. Status still updates on the monitor interval, manual refreshes, and explicit refreshes after commits or pushes. Structured states such as a missing CLI, missing authentication, or lookup failure flow through the same snapshot to every surface.
+
 The lookup runs in the task's actual workspace on its execution device: GitHub uses `gh`, and GitLab uses `glab`. In a single-machine Wework setup, the local executor runs the command directly, so a separate cloud Git service connection is not required. Install and authenticate the corresponding CLI on that machine:
 
 ```bash
