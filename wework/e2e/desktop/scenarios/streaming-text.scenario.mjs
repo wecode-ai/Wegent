@@ -53,6 +53,10 @@ const WINDOWS_LINK_LABEL = 'wegent'
 const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
 const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
+const RECLASSIFIED_COMMENTARY_PROMPT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_COMMENTARY'
+const RECLASSIFIED_COMMENTARY_TEXT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_PROCESS_TEXT'
+const RECLASSIFIED_COMMENTARY_FINAL = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_REAL_FINAL'
+const RECLASSIFIED_COMMENTARY_CALL_ID = 'wework-reclassified-commentary-tool'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
@@ -377,6 +381,60 @@ function phaseFlipEvents(id) {
   ]
 }
 
+function reclassifiedCommentaryToolEvents(id, tool) {
+  const itemId = `${id}-reclassified-commentary`
+  return [
+    responseCreated(id),
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        id: itemId,
+        type: 'message',
+        status: 'in_progress',
+        role: 'assistant',
+        content: [],
+        phase: 'final_answer',
+      },
+    },
+    {
+      type: 'response.content_part.added',
+      item_id: itemId,
+      output_index: 0,
+      content_index: 0,
+      part: { type: 'output_text', text: '', annotations: [] },
+    },
+    ...textDeltaEvents(itemId, RECLASSIFIED_COMMENTARY_TEXT),
+    {
+      type: 'response.output_text.done',
+      item_id: itemId,
+      output_index: 0,
+      content_index: 0,
+      text: RECLASSIFIED_COMMENTARY_TEXT,
+    },
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: itemId,
+        type: 'message',
+        status: 'completed',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: RECLASSIFIED_COMMENTARY_TEXT,
+            annotations: [],
+          },
+        ],
+        phase: 'commentary',
+      },
+    },
+    ...functionCall(RECLASSIFIED_COMMENTARY_CALL_ID, tool.name, tool.arguments),
+    responseCompleted(id),
+  ]
+}
+
 function textDeltaEvents(itemId, text, initialOffset = 0) {
   return [
     {
@@ -423,6 +481,10 @@ function requestContainsToolRegressionPrompt(body) {
 
 function requestContainsPhaseFlipPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(PHASE_FLIP_PROMPT)
+}
+
+function requestContainsReclassifiedCommentaryPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(RECLASSIFIED_COMMENTARY_PROMPT)
 }
 
 function requestContainsLegacyConversationPrompt(body) {
@@ -896,10 +958,12 @@ export function createDesktopScenario({
   let subagentStage = 'initial'
   let subagentChildStage = 'initial'
   let toolRegressionStage = 'initial'
+  let reclassifiedCommentaryStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
   let releaseLongCodeStream
   let releasePhaseFlipCompletion
+  let releaseReclassifiedCommentaryFinal
   let releaseResponse
   let releaseScrollButtonAppend
   let releaseStart
@@ -909,6 +973,7 @@ export function createDesktopScenario({
   let releaseTimerFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
+  let resolveReclassifiedCommentaryFollowUp
   let resolveRequest
   let resolveScrollButtonAppendWritten
   let resolveSubagentChildRequestStarted
@@ -924,6 +989,9 @@ export function createDesktopScenario({
   })
   const phaseFlipCompletionRelease = new Promise(resolve => {
     releasePhaseFlipCompletion = resolve
+  })
+  const reclassifiedCommentaryFinalRelease = new Promise(resolve => {
+    releaseReclassifiedCommentaryFinal = resolve
   })
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
@@ -945,6 +1013,9 @@ export function createDesktopScenario({
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
+  })
+  const reclassifiedCommentaryFollowUpReceived = new Promise(resolve => {
+    resolveReclassifiedCommentaryFollowUp = resolve
   })
   const subagentCompletionRelease = new Promise(resolve => {
     releaseSubagentCompletion = resolve
@@ -1468,6 +1539,41 @@ export function createDesktopScenario({
         )
         return true
       }
+      if (
+        reclassifiedCommentaryStage === 'awaiting-tool-output' &&
+        requestContainsToolOutputForCall(body, RECLASSIFIED_COMMENTARY_CALL_ID)
+      ) {
+        reclassifiedCommentaryStage = 'awaiting-final-release'
+        resolveReclassifiedCommentaryFollowUp()
+        await reclassifiedCommentaryFinalRelease
+        reclassifiedCommentaryStage = 'complete'
+        const stream = streamingEvents(responseId, RECLASSIFIED_COMMENTARY_FINAL, 'final_answer')
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            ...stream.start,
+            ...textDeltaEvents(stream.itemId, RECLASSIFIED_COMMENTARY_FINAL),
+            ...stream.finish,
+          ])
+        )
+        return true
+      }
+      if (requestContainsReclassifiedCommentaryPrompt(body)) {
+        assert.equal(
+          reclassifiedCommentaryStage,
+          'initial',
+          `Unexpected reclassified-commentary stage: ${reclassifiedCommentaryStage}`
+        )
+        const tool = selectShellTool(
+          body,
+          workspacePath,
+          `printf '${RECLASSIFIED_COMMENTARY_TEXT}\\n'`
+        )
+        reclassifiedCommentaryStage = 'awaiting-tool-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(sse(reclassifiedCommentaryToolEvents(responseId, tool)))
+        return true
+      }
       if (requestContainsSubagentPrompt(body)) {
         assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
         subagentStage = 'awaiting-search-output'
@@ -1887,6 +1993,74 @@ export function createDesktopScenario({
         active = false
         return
       }
+
+      const assistantCountBeforeReclassifiedCommentary = Number(
+        await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)
+      )
+      const processTextCountBeforeReclassifiedCommentary = Number(
+        await control.command('getElementCount', PROCESS_TEXT_SELECTOR)
+      )
+      await control.command('fill', COMPOSER_SELECTOR, {
+        value: RECLASSIFIED_COMMENTARY_PROMPT,
+      })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      try {
+        await Promise.race([
+          reclassifiedCommentaryFollowUpReceived,
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('The reclassified-commentary follow-up was not received')),
+              uiTimeoutMs
+            )
+          ),
+        ])
+      } catch (error) {
+        releaseReclassifiedCommentaryFinal()
+        throw error
+      }
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: RECLASSIFIED_COMMENTARY_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', PROCESS_TEXT_SELECTOR)),
+        processTextCountBeforeReclassifiedCommentary + 1,
+        'Reclassified commentary did not add exactly one process block'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        assistantCountBeforeReclassifiedCommentary,
+        'Reclassified commentary remained visible as final assistant content'
+      )
+      const reclassifiedRunningSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        reclassifiedRunningSnapshot.testIds.includes('pause-response-button'),
+        'The turn stopped after commentary was reclassified even though the real final was pending'
+      )
+      releaseReclassifiedCommentaryFinal()
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: RECLASSIFIED_COMMENTARY_FINAL,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
+      const reclassifiedCompletedSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        assistantCountBeforeReclassifiedCommentary + 1,
+        'The real final answer did not add exactly one assistant response'
+      )
+      assert.ok(
+        !reclassifiedCompletedSnapshot.testIds.includes('pause-response-button'),
+        'The turn remained active after the real final completed'
+      )
 
       await verifyLongCodeTerminalBurst(control)
       await verifyWindowsDriveLinkRendering(control)

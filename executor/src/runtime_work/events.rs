@@ -14,7 +14,10 @@ use tokio::sync::broadcast;
 
 use crate::{
     agents::mcp_server_elicitation_request_user_input_params,
-    codex_phase::{codex_phase_is_final, CodexAgentMessagePhaseTracker},
+    codex_phase::{
+        codex_phase_is_final, codex_phase_is_process, codex_phase_name,
+        CodexAgentMessagePhaseTracker,
+    },
     logging::log_executor_event,
     protocol::ExecutionRequest,
 };
@@ -504,17 +507,25 @@ impl CodexNotificationEventMapper {
                 let tracked_phase = self
                     .agent_message_phases
                     .phase_for_item(notification.params);
+                let item = notification
+                    .params
+                    .get("item")
+                    .unwrap_or(notification.params);
+                let completed_phase =
+                    codex_phase_name(item).or_else(|| codex_phase_name(notification.params));
                 let active_output_matches = item_id
                     .as_deref()
                     .is_some_and(|item_id| self.active_output_item_id.as_deref() == Some(item_id));
                 let can_reuse_active_output_id = item_id.is_none()
                     && codex_phase_is_final(tracked_phase.as_deref())
                     && self.active_output_item_id.is_some();
-                let resolved_phase = if active_output_matches || can_reuse_active_output_id {
-                    Some("finalanswer".to_owned())
-                } else {
-                    tracked_phase
-                };
+                let resolved_phase = completed_phase.or_else(|| {
+                    if active_output_matches || can_reuse_active_output_id {
+                        Some("finalanswer".to_owned())
+                    } else {
+                        tracked_phase
+                    }
+                });
                 let output_item_id_fallback = can_reuse_active_output_id
                     .then(|| self.active_output_item_id.clone())
                     .flatten();
@@ -1188,6 +1199,7 @@ impl CodexNotificationEventMapper {
         process_kind: &str,
         item_id: Option<String>,
         text: String,
+        replaces_item_id: Option<&str>,
     ) {
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
@@ -1218,7 +1230,7 @@ impl CodexNotificationEventMapper {
                 self.process_text_count
             )
         });
-        let data = json!({
+        let mut data = json!({
             "block": {
                 "id": id,
                 "type": block_type,
@@ -1229,6 +1241,9 @@ impl CodexNotificationEventMapper {
                 "timestamp": now_ms(),
             }
         });
+        if let Some(replaces_item_id) = replaces_item_id {
+            data["replacesItemId"] = Value::String(replaces_item_id.to_owned());
+        }
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -1326,6 +1341,16 @@ impl CodexNotificationEventMapper {
                 item_id,
                 text,
             })) => {
+                let replaces_item_id = item_id
+                    .as_deref()
+                    .filter(|item_id| {
+                        codex_phase_is_process(resolved_phase)
+                            && self.active_output_item_id.as_deref() == Some(*item_id)
+                    })
+                    .map(str::to_owned);
+                if replaces_item_id.is_some() {
+                    self.active_output_item_id = None;
+                }
                 log_text_mapping(
                     emit_context.local_task_id,
                     method,
@@ -1340,6 +1365,7 @@ impl CodexNotificationEventMapper {
                     process_kind,
                     item_id,
                     text,
+                    replaces_item_id.as_deref(),
                 );
                 true
             }
@@ -3285,8 +3311,8 @@ mod tests {
     }
 
     #[test]
-    fn keeps_streamed_output_text_consistent_when_completion_is_reclassified() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+    fn reclassifies_streamed_final_text_as_commentary_before_the_real_final_answer() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
@@ -3324,6 +3350,47 @@ mod tests {
                     }
                 }
             }),
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "call-1",
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"pwd\"}"
+                    }
+                }
+            }),
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done."
+                    }
+                }
+            }),
         ] {
             mapper.map(
                 &Some(event_tx.clone()),
@@ -3337,16 +3404,44 @@ mod tests {
         let created = event_rx
             .try_recv()
             .expect("streamed output text should be emitted");
-        let completed = event_rx
+        let reclassified = event_rx
             .try_recv()
-            .expect("completed output text should be emitted");
+            .expect("reclassified process text should be emitted");
+        let tool = event_rx.try_recv().expect("tool block should be emitted");
+        let final_delta = event_rx
+            .try_recv()
+            .expect("real final output delta should be emitted");
+        let final_completed = event_rx
+            .try_recv()
+            .expect("real final output completion should be emitted");
 
         assert_eq!(created["event"], "response.output_text.delta");
         assert_eq!(created["payload"]["data"]["item_id"], "msg-progress");
         assert_eq!(created["payload"]["data"]["delta"], "I will inspect.");
-        assert_eq!(completed["event"], "response.output_text.done");
-        assert_eq!(completed["payload"]["data"]["item_id"], "msg-progress");
-        assert_eq!(completed["payload"]["data"]["text"], "I will inspect.");
+        assert_eq!(reclassified["event"], "response.block.created");
+        assert_eq!(
+            reclassified["payload"]["data"]["replacesItemId"],
+            "msg-progress"
+        );
+        assert_eq!(
+            reclassified["payload"]["data"]["block"]["id"],
+            "msg-progress"
+        );
+        assert_eq!(
+            reclassified["payload"]["data"]["block"]["content"],
+            "I will inspect."
+        );
+        assert_eq!(tool["event"], "response.block.created");
+        assert_eq!(
+            tool["payload"]["data"]["block"]["tool_name"],
+            "exec_command"
+        );
+        assert_eq!(final_delta["event"], "response.output_text.delta");
+        assert_eq!(final_delta["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(final_delta["payload"]["data"]["delta"], "Done.");
+        assert_eq!(final_completed["event"], "response.output_text.done");
+        assert_eq!(final_completed["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(final_completed["payload"]["data"]["text"], "Done.");
         assert!(event_rx.try_recv().is_err());
     }
 
