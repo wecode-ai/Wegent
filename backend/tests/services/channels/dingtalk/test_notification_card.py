@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from app.core.config import settings
 from app.services.channels.dingtalk.notification_card import (
     BUTTONS_KEY,
     MARKDOWN_KEY,
@@ -220,7 +221,10 @@ def test_custom_card_exposes_a_mention_as_separate_plain_text_fields() -> None:
         "primaryLabel": "查看任务",
         "primaryUrl": "http://localhost:3000/collaboration/12/issues/ISSUE-1",
         "secondaryLabel": "在 Wework 中打开",
-        "secondaryUrl": "wework://boards/12/issues/ISSUE-1",
+        "secondaryUrl": (
+            f"{settings.FRONTEND_URL.rstrip('/')}/open-wework"
+            "?projectId=12&itemId=ISSUE-1"
+        ),
     }
 
 
@@ -249,6 +253,48 @@ def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
     assert params["detail"] == ""
     assert params["showDetail"] == "false"
     assert params["primaryUrl"] == ""
+    assert params["secondaryUrl"] == ""
+
+
+def test_custom_card_handoff_keeps_an_encoded_comment_destination() -> None:
+    params = card_param_map(
+        push=push_copy(kind="mention", title="提到了你"),
+        links=[
+            NotificationLink(
+                label="在 Wework 中打开",
+                url=(
+                    "wework://boards/12/issues/gitlab%3A12%2Fissue%233"
+                    "/comments/3f%2F9"
+                ),
+            )
+        ],
+        card_template_id="wegent-custom-template",
+    )
+
+    assert params["secondaryUrl"] == (
+        f"{settings.FRONTEND_URL.rstrip('/')}/open-wework"
+        "?projectId=12&itemId=gitlab%3A12%2Fissue%233&commentId=3f%2F9"
+    )
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "wework://tasks/device/task",
+        "wework://boards",
+        "wework://boards/12/../13",
+        "wework://boards/12/issues/%00",
+        "wework://user@boards/12",
+    ],
+)
+def test_custom_card_omits_an_unsupported_desktop_destination(destination: str) -> None:
+    params = card_param_map(
+        push=push_copy(kind="mention", title="提到了你"),
+        links=[NotificationLink(label="在 Wework 中打开", url=destination)],
+        card_template_id="wegent-custom-template",
+    )
+
+    assert params["secondaryLabel"] == ""
     assert params["secondaryUrl"] == ""
 
 

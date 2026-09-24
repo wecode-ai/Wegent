@@ -20,7 +20,7 @@ Typing `@` in an Issue comment opens the project member picker and inserts `@Mem
 
 The title names the actor, and the second line carries the board, the item key and the current column. The body holds the comment preview, and a reply also shows the comment it answered. A DingTalk push has no summary line, so it lays the facts out as `label: value` lines instead: task title, item key, task state, current assignee and board, followed by the comment itself. For mention and assignment notices the task state is the board column the item sits in; for execution notices it is the state of that run. The lines are separated by a blank line because DingTalk collapses a single markdown newline.
 
-A push closes with two destinations: “Open in Wework” is the `wework://` deep link, which lands on the Issue — and on the mentioned comment, highlighted — for recipients who run the desktop app; “Open in browser” is the web board page, which works for everyone else. The inbox itself opens inside Wework, so a stored notification keeps only the deep link.
+A push closes with two destinations: “Open in Wework” opens the desktop app at the Issue, highlighting a mentioned comment; “View task” opens the web board. A custom DingTalk card first opens a Wegent web handoff page for the desktop action, where the recipient explicitly launches Wework and can also choose the web task. Markdown notifications and built-in cards still use the direct `wework://` link. The in-app inbox keeps its original deep link.
 
 ## Task execution notifications
 

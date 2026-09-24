@@ -6,8 +6,11 @@
 
 import json
 from collections.abc import Sequence
+from urllib.parse import unquote, urlencode, urlsplit
 
+from app.core.config import settings
 from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
+from app.schemas.wework_navigation import validate_wework_url
 from app.services.channels.dingtalk.markdown import escape_markdown
 from app.services.notification_copy import NotificationLink, PushNotification
 
@@ -85,6 +88,7 @@ def _custom_card_param_map(
         None,
     )
     secondary = next((link for link in links if link.url.startswith("wework://")), None)
+    secondary_url = _wework_handoff_url(secondary.url) if secondary else ""
     detail = _card_detail(push.detail)
     return {
         "kindLabel": kind_label,
@@ -98,9 +102,29 @@ def _custom_card_param_map(
         "showDetail": "true" if detail else "false",
         "primaryLabel": primary.label if primary else "",
         "primaryUrl": primary.url if primary else "",
-        "secondaryLabel": secondary.label if secondary else "",
-        "secondaryUrl": secondary.url if secondary else "",
+        "secondaryLabel": secondary.label if secondary_url else "",
+        "secondaryUrl": secondary_url,
     }
+
+
+def _wework_handoff_url(destination: str) -> str:
+    """Expose only a validated board destination through Wegent's web page."""
+
+    try:
+        url = urlsplit(validate_wework_url(destination))
+        if url.netloc != "boards":
+            return ""
+        parts = [unquote(part, errors="strict") for part in url.path.split("/")[1:]]
+    except ValueError:
+        return ""
+    if not parts or not parts[0]:
+        return ""
+    params = {"projectId": parts[0]}
+    if len(parts) >= 3:
+        params["itemId"] = parts[2]
+    if len(parts) == 5:
+        params["commentId"] = parts[4]
+    return f"{settings.FRONTEND_URL.rstrip('/')}/open-wework?{urlencode(params)}"
 
 
 def _presentation(push: PushNotification) -> tuple[str, str]:
