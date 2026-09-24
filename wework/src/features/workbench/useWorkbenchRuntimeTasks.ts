@@ -55,6 +55,7 @@ import {
   completeRuntimeConversationHydration,
   evictRuntimeConversation,
 } from './runtimeConversationCache'
+import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
@@ -274,38 +275,31 @@ export function useWorkbenchRuntimeTasks({
         address =>
           !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
       )
-      const results = await Promise.all(
-        persistedTargets.map(async address => {
-          try {
-            return { address, response: await executorClient.runtime.archiveConversation(address) }
-          } catch (error) {
-            return { address, error }
-          }
-        })
+      const archiveResults = await archiveRuntimeTaskAddresses(persistedTargets, address =>
+        executorClient.runtime.archiveConversation(address)
       )
       const archivedAddresses = [
         ...localFailedTargets,
-        ...results.flatMap(result => (result.response?.accepted ? [result.address] : [])),
+        ...archiveResults.flatMap(result => (result.response?.accepted ? [result.address] : [])),
       ]
-      let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
-        worktreeCleanupSucceeded = await removeArchivedWorktrees(
+        const worktreeCleanupSucceeded = await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
-        if (worktreeCleanupSucceeded) {
-          track('feature_action_completed', { domain: 'conversation', action: 'archive' })
-        } else {
+        if (!worktreeCleanupSucceeded) {
           track('operation_failed', { operation: 'worktree_archive_cleanup' })
         }
       }
-      const failedResult = results.find(result => !result.response?.accepted)
-      if (!failedResult && worktreeCleanupSucceeded) return { status: 'archived' }
-      if (!failedResult) return { status: 'failed' }
+      const failedResult = findFailedRuntimeTaskArchive(archiveResults)
+      if (!failedResult) {
+        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
+        return { status: 'archived' }
+      }
       track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',
