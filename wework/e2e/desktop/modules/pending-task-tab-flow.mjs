@@ -6,6 +6,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  WORKBENCH_READY_TIMEOUT_MS,
   assert,
   createSingleRootLocalProject,
   selectE2EModel,
@@ -39,7 +40,7 @@ export async function verifyPendingTaskAcrossTabs({ control, workspacePath }) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await withTimeout(
       request,
-      DEFAULT_STEP_TIMEOUT_MS,
+      WORKBENCH_READY_TIMEOUT_MS,
       'The background task did not reach the model'
     )
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')

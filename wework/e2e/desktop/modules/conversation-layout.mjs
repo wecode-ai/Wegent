@@ -1106,11 +1106,6 @@ async function verifyWorktreeCreationStatus({
     )
     await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
 
-    await withTimeout(
-      scenarioRequest,
-      DEFAULT_STEP_TIMEOUT_MS,
-      'The worktree task did not reach the model service after creation'
-    )
     const waitingSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -1129,6 +1124,13 @@ async function verifyWorktreeCreationStatus({
       'The held worktree response completed before the thinking state was verified'
     )
     await captureVerificationScreenshot(control, 'worktree-status-04-waiting-for-assistant.png')
+    // Check the creation-to-waiting transition before model startup can mask it.
+    // Cold Codex/MCP startup has its own runtime readiness budget.
+    await withTimeout(
+      scenarioRequest,
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The worktree task did not reach the model service after creation'
+    )
   } finally {
     control.releaseScenarioResponse(scenario)
   }
