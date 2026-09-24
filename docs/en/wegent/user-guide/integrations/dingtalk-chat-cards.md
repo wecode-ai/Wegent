@@ -49,23 +49,45 @@ Send `{"chat_card": null}` to remove this configuration through the API. Omittin
 
 The same DingTalk channel can push its in-app notifications as cards. Turn on "Send task notifications as cards" and mentions, assignments, run starts and run completion/failure/cancellation go out as cards; with the option off, or when the card cannot be delivered, the markdown notification is sent instead. In-app notifications and stored records are unaffected.
 
-The template defaults to DingTalk's built-in markdown card — a markdown body plus buttons — so no card of your own is required. The AI card template is deliberately not used: it carries the assistant's thumbs-up/down feedback row and only appears once it reaches a terminal `flowStatus`, and a notification wants neither.
+By default, DingTalk's built-in Markdown message card needs no custom template. Its variable contract is `title`, `markdown`, `tips`, and `msgButtons` inside `sys_full_json_obj`. The custom template below uses a different contract. Notifications use ordinary message cards, not AI cards with streaming state and feedback controls.
 
-A custom template must expose the title field `title`, the body field `markdown`, the optional `tips`, and the buttons in `sys_full_json_obj.msgButtons`. The headline goes in the template's own header slot — the only text it draws larger than the body, since a markdown `#` heading is no bigger and the template renders neither `---` nor `***` as a rule, which is why no line separates the headline from the facts.
+For a layout that separates the notification type, item, detail, and actions, import the [Wegent notification card example](../../../../examples/dingtalk-wework-notification-card.json):
 
-The card draws on the same content as the markdown notification: the headline states the action ("✅ 你的任务已完成", "🔔 hajimi 在评论中提到了你") while the item title moves into the body so a long one cannot crowd it; every fact in the body bolds its label (`**任务编号**：WORK-582`), and the comment, run result, failure reason or cancellation reason follows as a quote of its own. Two buttons at the bottom open the item in Wework and in the browser. Quotable local run notifications stay text messages so they can still be quoted to continue the task.
+1. In the [DingTalk card platform](https://open-dev.dingtalk.com/fe/card), create an ordinary message card for the robot application that sends notifications. Import the JSON in the editor, review the preview, then save and publish it.
+2. Copy the ID of the **new template in your organization**. Turn on "Send task notifications as cards" for the DingTalk channel and enter that ID. The test organization's template ID cannot be reused across organizations.
+3. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The Wework action uses a `wework://` link; verify that the target client opens it.
 
-The configuration lives in the channel's `config.notification_card`, for example:
+The custom template defines these 13 ordinary variables, which the backend fills when delivering a card:
+
+| Variable | Content |
+| --- | --- |
+| `kindLabel` | Mention, assignment, or run status label |
+| `tone` | Status color: `blue`, `orange`, `green`, `red`, or `gray` |
+| `headline` | Action headline, such as "Your task is complete" |
+| `itemTitle` | Task title |
+| `itemKey` | Task key |
+| `metaLine` | Board, task status, and assignee summary |
+| `detailLabel` | Detail heading, such as "Comment" or "Failure reason" |
+| `detail` | Comment, result, or reason; at most 240 characters on the card |
+| `showDetail` | Whether to show the detail; defined as a Boolean template variable |
+| `primaryLabel` | Web action label, "查看任务" (View task) |
+| `primaryUrl` | Task web URL |
+| `secondaryLabel` | Desktop action label, "在 Wework 中打开" (Open in Wework) |
+| `secondaryUrl` | Wework desktop deep link |
+
+`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. The headline names the action, while the item title, key, context, and optional detail have separate areas. Quotable local run notifications remain text messages so they can be quoted to continue the task.
+
+The configuration lives in the channel's `config.notification_card`. For a custom template:
 
 ```json
 {
   "notification_card": {
-    "template_id": "1366a1eb-bc54-4859-ac88-517c56a9acb1.schema"
+    "template_id": "your-published-template.schema"
   }
 }
 ```
 
-Send `{"notification_card": null}` to turn it off through the API. Omitting the field leaves it unchanged.
+Turning on the option without a custom template ID uses the built-in template. Send `{"notification_card": null}` to turn it off through the API. Omitting the field leaves it unchanged.
 
 ## Follow-ups and history
 
