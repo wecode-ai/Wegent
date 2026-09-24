@@ -19,7 +19,6 @@ from app.core.config import Settings
 from app.services.chat.config.model_resolver import (
     _process_model_config_placeholders,
     encode_wegent_header_values,
-    inject_session_id_header,
     strip_empty_wegent_headers,
 )
 from shared.models.execution import ExecutionRequest
@@ -139,7 +138,6 @@ class TestTeamPlaceholderResolution:
             "user": "alice",
             NS_HEADER: "default",
             NAME_HEADER: "wegent-chat",
-            "wecode-session-id": "1",
         }
 
     def test_chinese_team_name_is_base64_encoded(self):
@@ -168,64 +166,12 @@ class TestTeamPlaceholderResolution:
             user={"id": 5, "name": "alice"},
         )
         headers = self._resolve(task_data)
-        assert headers == {"user": "alice", "wecode-session-id": "1"}
+        assert headers == {"user": "alice"}
 
     def test_none_task_data_strips_identity_headers(self):
         """Without task_data, user is injected from user_name; team is dropped."""
         headers = self._resolve(None)
         assert headers == {"user": "alice"}
-
-
-class TestInjectSessionIdHeader:
-    """Unit tests for inject_session_id_header."""
-
-    def test_injects_task_id_into_existing_headers(self):
-        model_config = {"default_headers": {"user": "alice"}}
-        result = inject_session_id_header(model_config, {"task_id": 42})
-        assert result["default_headers"] == {
-            "user": "alice",
-            "wecode-session-id": "42",
-        }
-
-    def test_creates_headers_when_absent(self):
-        model_config = {}
-        result = inject_session_id_header(model_config, {"task_id": 7})
-        assert result["default_headers"] == {"wecode-session-id": "7"}
-
-    def test_overwrites_stale_session_id(self):
-        model_config = {"default_headers": {"wecode-session-id": "old"}}
-        result = inject_session_id_header(model_config, {"task_id": 9})
-        assert result["default_headers"]["wecode-session-id"] == "9"
-
-    def test_removes_case_variants_before_injecting(self):
-        model_config = {"default_headers": {"Wecode-Session-Id": "old"}}
-        result = inject_session_id_header(model_config, {"task_id": 9})
-        assert result["default_headers"] == {"wecode-session-id": "9"}
-
-    def test_skips_empty_task_ids(self):
-        for empty in (None, "", 0, "0"):
-            model_config = {"default_headers": {"user": "alice"}}
-            result = inject_session_id_header(model_config, {"task_id": empty})
-            assert result["default_headers"] == {"user": "alice"}
-
-    def test_skips_missing_task_id(self):
-        model_config = {"default_headers": {"user": "alice"}}
-        result = inject_session_id_header(model_config, {})
-        assert result["default_headers"] == {"user": "alice"}
-
-    def test_funnel_injects_session_id(self):
-        """_process_model_config_placeholders attaches the session id."""
-        task_data = ExecutionRequest(
-            task_id=123,
-            user={"id": 5, "name": "alice"},
-        )
-        processed = _process_model_config_placeholders(
-            model_config={},
-            user_id=5,
-            user_name="alice",
-            task_data=task_data,
-        )
-        assert processed["default_headers"]["wecode-session-id"] == "123"
 
 
 class TestExecutorEnvDefault:
