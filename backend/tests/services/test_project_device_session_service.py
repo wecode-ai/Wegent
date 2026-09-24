@@ -890,3 +890,190 @@ async def test_cloud_device_session_service_uses_runtime_transfer_host(
     assert result["url"] == "http://10.2.3.4:17888/s/session-123/?token=short"
     assert result["transport"] == "url"
     resolve_cloud_host.assert_not_awaited()
+
+
+def _patch_code_server_session(
+    monkeypatch,
+    session_service,
+    *,
+    device_spec: dict,
+    online_info: dict,
+    url: str = "http://localhost:17888/s/session-123/?token=short",
+) -> None:
+    """Return one code-server session for a device with the given state."""
+    _patch_session_runtime_identity(monkeypatch, session_service)
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": url,
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "code_server",
+    }
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=online_info),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(json={"spec": device_spec}),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+
+async def _start_code_server_session(session_service) -> dict:
+    return await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="code_server",
+        path="/repo",
+    )
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_uses_observed_client_ip(monkeypatch):
+    """Docker reports the container address, so the observed host has to win."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote", "clientIp": "10.0.0.24"},
+        online_info={
+            "socket_id": "socket-123",
+            "client_ip": "10.0.0.24",
+            "runtime_transfer_host": "172.17.0.2",
+        },
+    )
+    monkeypatch.setattr(
+        session_service,
+        "_cloud_session_host_resolver",
+        AsyncMock(side_effect=AssertionError("cloud resolver not expected")),
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://10.0.0.24:17888/s/session-123/?token=short"
+    assert result["transport"] == "url"
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_falls_back_to_reported_host(monkeypatch):
+    """An unusable observed address hands over to the host the device reports."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote"},
+        online_info={
+            "socket_id": "socket-123",
+            "client_ip": "127.0.0.1",
+            "runtime_transfer_host": "10.0.0.24",
+        },
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://10.0.0.24:17888/s/session-123/?token=short"
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_uses_reported_gateway_port(monkeypatch):
+    """The reported listening port fills in a URL that carries none."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote", "runtimeTransferPort": 19000},
+        online_info={"socket_id": "socket-123", "client_ip": "10.0.0.24"},
+        url="http://localhost/s/session-123/?token=short",
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://10.0.0.24:19000/s/session-123/?token=short"
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_prefers_reported_port(monkeypatch):
+    """The bound port beats a stale port that an older Executor put in the URL."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote", "runtimeTransferPort": 19000},
+        online_info={"socket_id": "socket-123", "client_ip": "10.0.0.24"},
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://10.0.0.24:19000/s/session-123/?token=short"
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_defaults_gateway_port(monkeypatch):
+    """A legacy device that reports no port keeps the documented default."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote"},
+        online_info={"socket_id": "socket-123", "client_ip": "10.0.0.24"},
+        url="http://localhost/s/session-123/?token=short",
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://10.0.0.24:17888/s/session-123/?token=short"
+
+
+@pytest.mark.asyncio
+async def test_remote_device_session_service_keeps_url_without_usable_host(monkeypatch):
+    """Without a reachable host the URL is left alone rather than invented."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={"deviceType": "remote", "clientIp": "127.0.0.1"},
+        online_info={
+            "socket_id": "socket-123",
+            "client_ip": "127.0.0.1",
+            "runtime_transfer_host": "localhost",
+        },
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://localhost:17888/s/session-123/?token=short"
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_keeps_loopback_session_url(monkeypatch):
+    """A local device shares its machine with the browser, so loopback stays."""
+    from app.services.device import session_service
+
+    _patch_code_server_session(
+        monkeypatch,
+        session_service,
+        device_spec={
+            "deviceType": "local",
+            "clientIp": "10.0.0.24",
+            "runtimeTransferHost": "10.0.0.24",
+        },
+        online_info={"socket_id": "socket-123", "client_ip": "10.0.0.24"},
+    )
+
+    result = await _start_code_server_session(session_service)
+
+    assert result["url"] == "http://localhost:17888/s/session-123/?token=short"

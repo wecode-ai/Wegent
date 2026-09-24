@@ -1027,6 +1027,59 @@ async function attachAndSendOnlyFile(control, composerSelector) {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
 }
 
+async function verifyAttachmentComposerClearsOnSubmit({ composerSelector, control }) {
+  control.holdScenarioResponse('attachment_submit_cleanup')
+  control.setScenario('attachment_submit_cleanup')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', composerSelector, {
+    value: 'WEWORK_DESKTOP_E2E_ATTACHMENT_SUBMIT_CLEANUP',
+  })
+  await control.command('dropFile', composerSelector, {
+    filename: ATTACHMENT_ONLY_FILENAME,
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('attachment-badge') &&
+      !snapshot.testIds.includes('uploading-attachment-badge'),
+    'The attachment cleanup fixture did not finish staging'
+  )
+
+  try {
+    await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.awaitScenarioRequestCount('attachment_submit_cleanup', 1)
+
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      '',
+      'Submitting text with an image did not clear the composer text immediately'
+    )
+    const submittedSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      submittedSnapshot.testIds.includes('attachment-badge'),
+      false,
+      'Submitting text with an image left the attachment in the composer'
+    )
+  } finally {
+    control.releaseScenarioResponse('attachment_submit_cleanup')
+  }
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
   const indexPath = join(executorHome, 'runtime-work', 'index.json')
   const startedAt = Date.now()
@@ -1245,5 +1298,6 @@ export {
   verifyBackgroundTaskWindowLifecycle,
   verifyPopoutWindowLifecycle,
   attachAndSendOnlyFile,
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
 }

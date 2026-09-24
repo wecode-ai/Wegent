@@ -3,6 +3,9 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.workbench.context_compaction_incomplete": "上下文压缩未完成",
+    "conversation.workbench.context_compaction_completed": "上下文已自动压缩",
+    "conversation.workbench.context_compaction_running": "正在自动压缩上下文",
     "conversation.workbench.scroll_to_bottom": "下拉到底",
     "conversation.workbench.loading_conversation": "正在加载会话...",
     "conversation.workbench.empty_conversation_title": "开始新的对话",
@@ -364,6 +367,10 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.workbench.context_compaction_incomplete":
+      "Context compaction did not complete",
+    "conversation.workbench.context_compaction_completed": "Context compacted",
+    "conversation.workbench.context_compaction_running": "Compacting context",
     "conversation.workbench.scroll_to_bottom": "Scroll to bottom",
     "conversation.workbench.loading_conversation": "Loading conversation...",
     "conversation.workbench.empty_conversation_title":

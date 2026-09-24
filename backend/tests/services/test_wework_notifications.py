@@ -1,10 +1,12 @@
 """Inbox persistence, transaction, authorization and IM contracts."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -21,6 +23,7 @@ from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
     issue_url,
+    notification_links,
     send_wework_notification,
 )
 from tests.services.test_loop_item_assignment import (
@@ -132,7 +135,7 @@ def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):
     assert len(rows) == 1
     assert rows[0].user_id == member.id
     assert rows[0].url == issue_url(str(project.id), item.id)
-    assert rows[0].payload["assignerName"] == test_user.user_name
+    assert rows[0].payload["actorName"] == test_user.user_name
 
 
 def test_version_conflict_rolls_back_notification(
@@ -257,6 +260,37 @@ def test_inbox_categories_have_independent_pagination_and_unread_counts(
     )
 
 
+def test_board_mentions_and_runs_join_the_collaboration_category(
+    test_client, test_db, test_user, test_token
+):
+    """The bell files board work a member is pulled into under collaboration."""
+
+    rows = {
+        kind: create_notification(
+            test_db,
+            user_id=test_user.id,
+            actor_user_id=test_user.id,
+            title=kind,
+            body=kind,
+            kind=kind,
+        )
+        for kind in ("mention", "execution", "message")
+    }
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = "/api/v1/wework-notifications"
+
+    collaboration = test_client.get(
+        f"{path}?category=collaboration", headers=headers
+    ).json()
+    assert {item["id"] for item in collaboration["items"]} == {
+        rows["mention"].id,
+        rows["execution"].id,
+    }
+    general = test_client.get(f"{path}?category=general", headers=headers).json()
+    assert {item["id"] for item in general["items"]} == {rows["message"].id}
+
+
 def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
     project = _make_project(test_db, test_user)
     other = _make_project(test_db, test_user)
@@ -323,8 +357,6 @@ def test_public_developer_cannot_send_project_notifications_without_membership(
 async def test_im_receives_message_even_when_live_push_fails(
     test_db, test_user, with_source, url
 ):
-    from types import SimpleNamespace
-
     row = create_notification(
         test_db,
         user_id=test_user.id,
@@ -350,13 +382,91 @@ async def test_im_receives_message_even_when_live_push_fails(
             AsyncMock(return_value=[session]),
         ),
         patch(
-            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_text",
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
             AsyncMock(return_value={"success": True}),
         ) as send,
     ):
         await deliver_notification(row.id)
-    expected = f"Review failed\n\n{row.url}" if row.url else "Review failed"
-    assert send.call_args.args[2] == expected
+    push = send.call_args.args[2]
+    assert push.headline == "Review"
+    assert push.card_headline == "Review"
+    assert push.plain_text() == "Review failed"
+    assert send.call_args.kwargs["links"] == notification_links(row)
+
+
+async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_user):
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="hajimi 在「修复登录」提到了你",
+        body="麻烦看下这个改动",
+        project_id="123",
+        item_id="WEG-12",
+        kind="mention",
+        payload={"projectId": "123", "projectName": "test-pro"},
+    )
+    test_db.commit()
+    session = SimpleNamespace(channel_type="dingtalk", user_id=test_user.id)
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=SimpleNamespace(emit=AsyncMock()),
+        ),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            AsyncMock(return_value=[session]),
+        ),
+        patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
+            AsyncMock(return_value={"success": True}),
+        ) as send,
+    ):
+        await deliver_notification(row.id)
+    push = send.call_args.args[2]
+    assert push.headline == "hajimi 在「修复登录」提到了你"
+    assert push.facts == (("看板", "test-pro"),)
+    assert push.detail_label == "评论内容"
+    assert push.plain_text() == "看板：test-pro\n\n评论内容：麻烦看下这个改动"
+
+
+def test_push_offers_the_desktop_deep_link_and_the_web_page(test_db, test_user):
+    """A push must stay usable for a recipient who does not run Wework."""
+
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="hajimi 在评论中提到了你",
+        body="麻烦看下这个改动",
+        project_id="123",
+        item_id="WEG-12",
+        kind="mention",
+        payload={"projectId": "123", "itemId": "WEG-12", "projectName": "test-pro"},
+    )
+    test_db.commit()
+
+    assert [(link.label, link.url) for link in notification_links(row)] == [
+        ("在 Wework 中打开", row.url),
+        (
+            "查看任务",
+            f"{settings.FRONTEND_URL.rstrip('/')}/collaboration/123/issues/WEG-12",
+        ),
+    ]
+
+
+def test_push_without_a_board_item_has_nothing_to_open(test_db, test_user):
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Greeting",
+        body="你好",
+    )
+    test_db.commit()
+
+    assert notification_links(row) == []
 
 
 def test_scheme_encodes_external_issue_identifiers():
@@ -364,6 +474,15 @@ def test_scheme_encodes_external_issue_identifiers():
         issue_url("12", "gitlab:12/issue#3")
         == "wework://boards/12/issues/gitlab%3A12%2Fissue%233"
     )
+
+
+def test_scheme_can_land_on_one_comment():
+    assert (
+        issue_url("12", "WEG-12", "3f/9")
+        == "wework://boards/12/issues/WEG-12/comments/3f%2F9"
+    )
+    # A comment link is only meaningful inside an item.
+    assert issue_url("12", None, "comment-1") == "wework://boards/12"
 
 
 @pytest.mark.parametrize(
@@ -376,6 +495,10 @@ def test_scheme_encodes_external_issue_identifiers():
         "wework://boards/12/issues/%00",
         "wework://boards/12/issues/%FF",
         "wework://boards/12/issues/%ZZ",
+        "wework://boards/12/issues/WEG-12/comments",
+        "wework://boards/12/comments/comment-1",
+        "wework://boards/12/issues/WEG-12/notes/comment-1",
+        "wework://boards/12/issues/WEG-12/comments/%00",
         "wework://user@boards/12",
         "wework://boards?redirect=x",
         123,
@@ -406,6 +529,17 @@ def test_explicit_click_target_overrides_source_link(test_db, test_user):
         ),
     )
     assert row.url == "wework://boards"
+
+
+def test_click_target_can_point_at_one_comment(test_client, test_db, test_token):
+    url = "wework://boards/12/issues/WEG-12/comments/c-1"
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        json={"title": "Hello", "body": "你好", "url": url},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+    assert response.status_code == 201
+    assert test_db.query(WeworkNotification).one().url == url
 
 
 def test_read_all_updates_only_unread_notifications_of_current_user(

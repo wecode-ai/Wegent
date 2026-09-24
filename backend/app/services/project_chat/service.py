@@ -52,6 +52,10 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.access import can_view_item
+from app.services.notification_copy import comment_preview
+from app.services.project_chat.mention_notification import (
+    notify_project_chat_mentions,
+)
 from app.services.project_chat.workspace_binding import (
     WORKSPACE_BINDING_METADATA_KEY,
     adapt_legacy_workspace_binding,
@@ -379,6 +383,15 @@ def compiled_bot_config(
 class ProjectChatWriteResult:
     message: ProjectChatMessageView
     created: bool
+
+
+@dataclass(frozen=True)
+class ReplyContext:
+    """The validated reply target of one comment, and its excerpt."""
+
+    reply_to_message_id: str | None = None
+    root_message_id: str | None = None
+    preview: str | None = None
 
 
 class ProjectChatService:
@@ -765,7 +778,7 @@ class ProjectChatService:
         }
         if request.model is not None:
             metadata["model"] = request.model
-        reply_to_message_id, root_message_id = self._resolve_reply_context(
+        reply = self._resolve_reply_context(
             db,
             project_id=request.project_id,
             task_id=request.task_id,
@@ -782,13 +795,27 @@ class ProjectChatService:
             message_type="text",
             content=request.content,
             metadata_json=metadata,
-            reply_to_message_id=reply_to_message_id or "",
-            thread_root_message_id=root_message_id or "",
+            reply_to_message_id=reply.reply_to_message_id or "",
+            thread_root_message_id=reply.root_message_id or "",
             status="completed",
         )
         db.add(row)
         if request.task_id:
             item = db.get(LoopItem, request.task_id)
+        else:
+            item = None
+        notify_project_chat_mentions(
+            db,
+            project=project,
+            item=item,
+            comment_id=message_id,
+            actor_user_id=user_id,
+            actor_name=user_name,
+            content=request.content,
+            mentions=request.mentions,
+            reply_preview=reply.preview,
+        )
+        if request.task_id:
             if item is not None:
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
@@ -806,7 +833,7 @@ class ProjectChatService:
         project_id: str,
         task_id: str | None,
         reply_to_message_id: str | None,
-    ) -> tuple[str | None, str | None]:
+    ) -> ReplyContext:
         """Validate a one-level reply target and resolve its thread root.
 
         The reply target must live in the same project/task thread. The root is
@@ -814,7 +841,7 @@ class ProjectChatService:
         comment), so every message in one card shares the same session root.
         """
         if not reply_to_message_id:
-            return None, None
+            return ReplyContext()
         target = (
             db.query(ProjectChatMessage)
             .filter(
@@ -834,7 +861,11 @@ class ProjectChatService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "reply target belongs to a different task thread",
             )
-        return reply_to_message_id, target.thread_root_message_id or target.message_id
+        return ReplyContext(
+            reply_to_message_id=reply_to_message_id,
+            root_message_id=target.thread_root_message_id or target.message_id,
+            preview=comment_preview(target.content),
+        )
 
     def start_agent_response(
         self,

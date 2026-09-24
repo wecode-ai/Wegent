@@ -344,6 +344,9 @@ spec:
   connectionMode: websocket
   bindShell: claudecode
   isDefault: false
+  clientIp: 10.0.0.24
+  runtimeTransferHost: 10.0.0.24
+  runtimeTransferPort: 17888
   capabilities: null
   remoteConfig:
     provider: docker
@@ -351,7 +354,6 @@ spec:
     deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
     deviceName: alice-remote-a931
     backendUrl: https://backend.example.com
-    publicBaseUrl: http://localhost:17888
     createdAt: "2026-06-17T10:00:00"
 status:
   state: Available
@@ -359,21 +361,24 @@ status:
 
 ### Field Description
 
-| Field                 | Type                       | Required | Description                                                                |
-| --------------------- | -------------------------- | -------- | -------------------------------------------------------------------------- |
-| `metadata.name`       | string                     | Yes      | Device resource name, usually the same as `spec.deviceId`                  |
-| `metadata.namespace`  | string                     | Yes      | Namespace, typically `default`                                             |
-| `spec.deviceId`       | string                     | Yes      | Device ID used by executor registration and heartbeat                      |
-| `spec.displayName`    | string                     | No       | Display name in the frontend                                               |
-| `spec.deviceType`     | `local`, `cloud`, `remote` | Yes      | Device type; `remote` means a user-managed Docker container or remote host |
-| `spec.connectionMode` | `websocket`                | Yes      | How the device connects to the backend                                     |
-| `spec.bindShell`      | `claudecode`, `openclaw`   | No       | Shell runtime bound to the device                                          |
-| `spec.isDefault`      | boolean                    | No       | Whether this is the default device for its type                            |
-| `spec.capabilities`   | array or null              | No       | Device capability tags                                                     |
-| `spec.cloudConfig`    | object                     | No       | Cloud device metadata, used only by cloud devices                          |
-| `spec.remoteConfig`   | object                     | No       | Remote device metadata, used only by remote devices                        |
+| Field                      | Type                       | Required | Description                                                                |
+| -------------------------- | -------------------------- | -------- | -------------------------------------------------------------------------- |
+| `metadata.name`            | string                     | Yes      | Device resource name, usually the same as `spec.deviceId`                  |
+| `metadata.namespace`       | string                     | Yes      | Namespace, typically `default`                                             |
+| `spec.deviceId`            | string                     | Yes      | Device ID used by executor registration and heartbeat                      |
+| `spec.displayName`         | string                     | No       | Display name in the frontend                                               |
+| `spec.deviceType`          | `local`, `cloud`, `remote` | Yes      | Device type; `remote` means a user-managed Docker container or remote host |
+| `spec.connectionMode`      | `websocket`                | Yes      | How the device connects to the backend                                     |
+| `spec.bindShell`           | `claudecode`, `openclaw`   | No       | Shell runtime bound to the device                                          |
+| `spec.isDefault`           | boolean                    | No       | Whether this is the default device for its type                            |
+| `spec.clientIp`            | string                     | No       | Client IP observed by Backend from the device connection                   |
+| `spec.runtimeTransferHost` | string                     | No       | Executor-reported device address reachable from other machines             |
+| `spec.runtimeTransferPort` | integer                    | No       | Effective Executor session gateway listening port                          |
+| `spec.capabilities`        | array or null              | No       | Device capability tags                                                     |
+| `spec.cloudConfig`         | object                     | No       | Cloud device metadata, used only by cloud devices                          |
+| `spec.remoteConfig`        | object                     | No       | Remote device metadata, used only by remote devices                        |
 
-`remoteConfig` stores only non-sensitive metadata. The `WEGENT_AUTH_TOKEN` returned in the remote Docker startup command is a newly created remote device API key and is not written to the Device CRD. `backendUrl` is the URL the container uses to reach Backend and is derived from the current Backend environment; `publicBaseUrl` is the browser-facing URL for the device session gateway.
+`runtimeTransferHost` must be reachable from other machines; loopback, unspecified, link-local, and multicast addresses are not used to build device access URLs. The Executor reports `runtimeTransferPort`; Backend uses the default port `17888` when a legacy Executor does not report it. Backend builds a remote device's browser-facing address from the device address it observes, falling back to `runtimeTransferHost`, and appends `runtimeTransferPort`. `remoteConfig` stores only non-sensitive metadata. The `WEGENT_AUTH_TOKEN` returned in the remote Docker startup command is a newly created remote device API key and is not written to the Device CRD. `backendUrl` is the URL the container uses to reach Backend and is derived from the current Backend environment.
 
 ---
 

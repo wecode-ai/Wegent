@@ -751,6 +751,14 @@ fn prepare_claude_cloud_model_route(
     ] {
         default_headers.insert(key.to_owned(), Value::String(value));
     }
+    // Forward the session (task) id through the gateway to the upstream provider.
+    let task_id = request.task_id.trim();
+    if !task_id.is_empty() {
+        default_headers.insert(
+            "X-Wegent-Upstream-Header-wecode-session-id".to_owned(),
+            Value::String(task_id.to_owned()),
+        );
+    }
     Ok(())
 }
 

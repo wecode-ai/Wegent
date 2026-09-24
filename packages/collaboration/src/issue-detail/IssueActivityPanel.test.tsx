@@ -325,6 +325,17 @@ describe('IssueActivityPanel', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [],
+    })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect(),
+    })
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -421,9 +432,21 @@ describe('IssueActivityPanel', () => {
 
   function change(testId: string, value: string) {
     const target = container.querySelector<HTMLElement>(`[data-testid="${testId}"]`) as
-      | HTMLInputElement
+      | (HTMLInputElement & { value: string })
       | HTMLSelectElement
       | HTMLTextAreaElement
+    if (testId === 'collaboration-issue-comment') {
+      act(() => {
+        ;(target as HTMLElement & { value: string }).value = value
+        target.dispatchEvent(
+          new KeyboardEvent('keyup', {
+            key: value.at(-1) ?? '',
+            bubbles: true,
+          })
+        )
+      })
+      return
+    }
     const prototype =
       target instanceof HTMLSelectElement
         ? HTMLSelectElement.prototype
@@ -438,19 +461,14 @@ describe('IssueActivityPanel', () => {
   }
 
   function typeMentionTrigger() {
-    const input = container.querySelector<HTMLTextAreaElement>(
+    const input = container.querySelector<HTMLElement & { value: string }>(
       '[data-testid="collaboration-issue-comment"]'
     )!
-    const start = input.selectionStart
-    const end = input.selectionEnd
-    const value = `${input.value.slice(0, start)}@${input.value.slice(end)}`
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
-        input,
-        value
+      input.value = '@'
+      input.dispatchEvent(
+        new KeyboardEvent('keyup', { key: '@', bubbles: true })
       )
-      input.setSelectionRange(start + 1, start + 1)
-      input.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
 
@@ -481,24 +499,24 @@ describe('IssueActivityPanel', () => {
     expect(
       container.querySelector('[data-testid="collaboration-assignment-workflow-step"]')
     ).toBeNull()
-    expect(container.querySelectorAll('textarea')).toHaveLength(1)
+    expect(container.querySelectorAll('.composer-prosemirror-editor')).toHaveLength(1)
   })
 
   it('preserves the comment draft across focus changes', () => {
     render(issue)
 
-    const textarea = container.querySelector<HTMLTextAreaElement>(
+    const editor = container.querySelector<HTMLElement & { value: string }>(
       '[data-testid="collaboration-issue-comment"]'
     )
 
-    act(() => textarea?.focus())
+    act(() => editor?.focus())
 
-    act(() => textarea?.blur())
+    act(() => editor?.blur())
 
-    act(() => textarea?.focus())
+    act(() => editor?.focus())
     change('collaboration-issue-comment', '补充上下文')
-    act(() => textarea?.blur())
-    expect(textarea?.value).toBe('补充上下文')
+    act(() => editor?.blur())
+    expect(editor?.value).toBe('补充上下文')
   })
 
   it('inserts a selected mention into the shared comment body', async () => {
@@ -506,7 +524,7 @@ describe('IssueActivityPanel', () => {
 
     typeMentionTrigger()
     expect(
-      container.querySelector('[data-testid="collaboration-issue-mention-popup"]')
+      container.querySelector('[data-testid="local-skill-autocomplete"]')
     ).toBeTruthy()
     await click('collaboration-issue-mention-member-7')
 
@@ -514,9 +532,9 @@ describe('IssueActivityPanel', () => {
       (
         container.querySelector(
           '[data-testid="collaboration-issue-comment"]'
-        ) as HTMLTextAreaElement
+        ) as HTMLElement & { value: string }
       ).value
-    ).toBe('@李明 ')
+    ).toBe('[$@李明](wework-member://7) ')
     expect(
       container.querySelector('[data-testid="collaboration-issue-assignment-preview"]')
     ).toBeNull()
@@ -525,141 +543,6 @@ describe('IssueActivityPanel', () => {
         .querySelector('[data-testid="collaboration-issue-comment-submit"]')
         ?.getAttribute('aria-label')
     ).toBe('发送消息')
-  })
-
-  it('confirms the active mention with Enter instead of submitting the comment', async () => {
-    const api = {
-      assignments: { create: vi.fn() },
-      comments: { create: vi.fn() },
-    } as unknown as Pick<SharedWorkspaceApi, 'assignments' | 'comments'>
-    render(issue, { api })
-
-    typeMentionTrigger()
-    const textarea = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="collaboration-issue-comment"]'
-    )!
-    await act(async () => {
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'Enter',
-          bubbles: true,
-          cancelable: true,
-        })
-      )
-      await Promise.resolve()
-    })
-
-    expect(textarea.value).toBe('@李明 ')
-    expect(api.comments.create).not.toHaveBeenCalled()
-    expect(container.querySelector('[data-testid="collaboration-issue-mention-popup"]')).toBeNull()
-  })
-
-  it('uses arrow keys to choose a mention before confirming it with Enter', async () => {
-    render(issue, {
-      members: [
-        {
-          id: 1,
-          user_id: 7,
-          user_name: '李明',
-          email: null,
-          role: 'Developer',
-        },
-        {
-          id: 2,
-          user_id: 8,
-          user_name: '王芳',
-          email: null,
-          role: 'Developer',
-        },
-      ],
-    })
-
-    typeMentionTrigger()
-    const textarea = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="collaboration-issue-comment"]'
-    )!
-    await act(async () => {
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'ArrowDown',
-          bubbles: true,
-          cancelable: true,
-        })
-      )
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'Enter',
-          bubbles: true,
-          cancelable: true,
-        })
-      )
-      await Promise.resolve()
-    })
-
-    expect(textarea.value).toBe('@王芳 ')
-  })
-
-  it('places the caret after a mention before the next input can arrive', async () => {
-    render(issue)
-    change('collaboration-issue-comment', 'Keep this suffix')
-    const textarea = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="collaboration-issue-comment"]'
-    )!
-    textarea.setSelectionRange(0, 0)
-    typeMentionTrigger()
-    await click('collaboration-issue-mention-member-7')
-    expect(textarea.value).toBe('@李明 Keep this suffix')
-    expect(document.activeElement).toBe(textarea)
-    expect(textarea.selectionStart).toBe(4)
-    expect(textarea.selectionEnd).toBe(4)
-  })
-
-  it('replaces the typed mention trigger instead of inserting a second at sign', async () => {
-    render(issue)
-
-    change('collaboration-issue-comment', '@')
-    await click('collaboration-issue-mention-member-7')
-
-    expect(
-      (
-        container.querySelector(
-          '[data-testid="collaboration-issue-comment"]'
-        ) as HTMLTextAreaElement
-      ).value
-    ).toBe('@李明 ')
-  })
-
-  it('inserts the exact selected collaborator when names share a prefix', async () => {
-    const prefixMember = {
-      id: 2,
-      user_id: 8,
-      user_name: '李',
-      email: null,
-      role: 'Developer',
-    } satisfies CollaborationMember
-    render(issue, {
-      members: [
-        prefixMember,
-        {
-          id: 1,
-          user_id: 7,
-          user_name: '李明',
-          email: null,
-          role: 'Developer',
-        },
-      ],
-    })
-
-    typeMentionTrigger()
-    await click('collaboration-issue-mention-member-7')
-
-    expect(
-      (
-        container.querySelector(
-          '[data-testid="collaboration-issue-comment"]'
-        ) as HTMLTextAreaElement
-      ).value
-    ).toBe('@李明 ')
   })
 
   it('keeps mention insertion independent from assignment', async () => {
@@ -671,9 +554,9 @@ describe('IssueActivityPanel', () => {
       (
         container.querySelector(
           '[data-testid="collaboration-issue-comment"]'
-        ) as HTMLTextAreaElement
+        ) as HTMLElement & { value: string }
       ).value
-    ).toBe('@李明 ')
+    ).toBe('[$@李明](wework-member://7) ')
     expect(
       container.querySelector('[data-testid="collaboration-issue-assignment-preview"]')
     ).toBeNull()

@@ -10,9 +10,11 @@ import type { ComponentProps } from 'react'
 import { useIssueActivityExecutionStatus } from './useIssueActivityExecutionStatus'
 import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
 import { useIssueCommentAttachments, issueCommentBody } from './useIssueCommentAttachments'
-import type { ProjectChatMessage } from '@wegent/chat-core'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
+import type { ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 import type { CollaborationAttachment, CollaborationExecution } from '../types'
+import type { CollaborationAgent, CollaborationMember } from '../types'
 import { IssueActivityThread, type IssueActivityThreadModel } from './IssueActivityThread'
 
 function ActivityMessage({
@@ -39,12 +41,16 @@ export function IssueProjectChatThread({
   singleExecutionForMessage,
   upload,
   remove,
+  members,
+  agents,
 }: {
   thread: IssueActivityThreadModel<ProjectChatMessage>
   upload?(file: File): Promise<CollaborationAttachment>
   remove?(id: string): Promise<void>
   canComment: boolean
-  send(text: string, replyToMessageId: string): Promise<unknown>
+  send(text: string, replyToMessageId: string, mentions?: ProjectChatMention[]): Promise<unknown>
+  members?: CollaborationMember[]
+  agents?: CollaborationAgent[]
   translate(key: string, fallback?: string, options?: Record<string, string | number>): string
   executions: CollaborationExecution[]
   taskSummaryForMessage?(message: ProjectChatMessage): ExecutionTaskSummary | undefined
@@ -56,6 +62,11 @@ export function IssueProjectChatThread({
 }) {
   const runtimeReplies = useBrowserIssueReplies()
   const attachments = useIssueCommentAttachments(upload, remove)
+  const mentionCandidates = useIssueMentionCandidates(
+    members ?? [],
+    agents ?? [],
+    translate
+  )
   const rootId = thread.root.messageId
   const runs = [thread.root, ...thread.replies].filter(message => message.sender.type === 'agent')
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
@@ -106,14 +117,21 @@ export function IssueProjectChatThread({
             disabled={!canComment}
             canAttach={Boolean(upload)}
             translate={translate}
+            mentionCandidates={mentionCandidates}
           />
         ) : canComment ? (
           <IssueThreadReplyComposer
             rootId={rootId}
             disabled={!canComment}
             attachments={upload ? attachments : undefined}
-            onSend={async text => {
-              await send(issueCommentBody(text, attachments.attachments), rootId)
+            mentionCandidates={mentionCandidates}
+            translate={translate}
+            onSend={async (text, mentions) => {
+              await send(
+                issueCommentBody(text, attachments.attachments),
+                rootId,
+                ...(mentions.length ? [mentions] : [])
+              )
               return { ok: true }
             }}
             labels={{

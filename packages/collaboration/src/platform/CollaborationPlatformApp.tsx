@@ -96,6 +96,7 @@ import {
 
 const platformMessages = {
   "zh-CN": {
+    loading: "正在加载…",
     archiveProject: "归档项目",
     projectActions: "项目操作",
     allSpaces: "所有空间",
@@ -313,6 +314,7 @@ const platformMessages = {
     collapseWorkspace: "收起空间项目",
   },
   en: {
+    loading: "Loading…",
     archiveProject: "Archive project",
     projectActions: "Project actions",
     allSpaces: "All spaces",
@@ -4004,6 +4006,18 @@ export function CollaborationPlatformApp({
           onCreateTask={onCreateTask}
         />
       );
+  } else if (host.location.projectId) {
+    // Opening one project holds the frame instead of painting the workspace
+    // home while the project's workspace is still on its way.
+    content = (
+      <div
+        className="collaboration-platform-panel flex min-h-32 items-center justify-center p-6 text-sm text-text-secondary"
+        data-testid="collaboration-platform-opening-project"
+        role="status"
+      >
+        {messages.loading}
+      </div>
+    );
   } else if (!state.workspace) {
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {

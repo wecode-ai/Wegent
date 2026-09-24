@@ -211,6 +211,12 @@ class DeviceInfo(BaseModel):
     runtime_transfer_host: Optional[str] = Field(
         None, description="Host peers should use for runtime direct transfers"
     )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
+    )
     runtime_instance_id: Optional[str] = Field(
         None, description="Stable runtime installation ID shared by all routes"
     )
@@ -409,6 +415,12 @@ class DeviceRegisterPayload(BaseModel):
         max_length=255,
         description="Host peers should use for runtime direct transfers",
     )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
+    )
     runtime_instance_id: Optional[str] = Field(
         None,
         max_length=100,
@@ -478,6 +490,12 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None,

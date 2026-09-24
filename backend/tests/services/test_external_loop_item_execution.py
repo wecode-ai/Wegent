@@ -42,6 +42,7 @@ from app.services.loop_items.external_provider import (
 )
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
+from app.services.notification_copy import NotificationTarget
 from app.services.project_chat.service import project_chat_service
 from tests.utils.agent_resources import create_runnable_wegent_team
 
@@ -689,10 +690,14 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
         test_db,
         actor_user_id=test_user.id,
         user_id=member.id,
-        project_id=str(project.id),
-        project_name=project.name,
-        item_id=_item_id(project),
-        item_title="External task 1",
+        target=NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name,
+            item_id=_item_id(project),
+            item_key=_item_id(project),
+            item_title="External task 1",
+            item_status="pending",
+        ),
         assigner_name=test_user.user_name,
     )
     row = test_db.get(LoopItem, _item_id(project))

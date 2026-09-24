@@ -236,9 +236,7 @@ async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
 async fn app_sidecar_runner_does_not_start_session_gateway() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let (event_tx, _) = broadcast::channel(8);
     let event_hub = ExecutorEventHub::new(event_tx.clone());
     event_hub.ensure_started();
@@ -258,16 +256,13 @@ async fn app_sidecar_runner_does_not_start_session_gateway() {
     assert_eq!(session_handler.public_base_url, "http://localhost:0");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]
 async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::set_var("DEVICE_SESSION_GATEWAY_ENABLED", "true");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let runner = LocalBackendRunner::new_for_app_sidecar(
         backend_config("local-device"),
         SocketIoTransport::default(),
@@ -279,16 +274,13 @@ async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
     assert_eq!(session_handler.public_base_url, "http://localhost:0");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]
 async fn remote_backend_runner_starts_session_gateway() {
     let _guard = env_lock();
     let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
     env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_PUBLIC_BASE_URL");
     let runner = LocalBackendRunner::new(
         backend_config("remote-device"),
         SocketIoTransport::default(),
@@ -300,7 +292,6 @@ async fn remote_backend_runner_starts_session_gateway() {
     assert_eq!(session_handler.public_base_url, "http://localhost:17888");
     drop(session_handler);
     restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-    restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
 }
 
 #[tokio::test]

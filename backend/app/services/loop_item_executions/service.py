@@ -38,6 +38,7 @@ from app.models.project_chat_message import ProjectChatMessage, project_chat_mes
 from app.models.user import User
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
     WeworkExecutionProfileError,
@@ -1141,6 +1142,26 @@ class LoopItemExecutionService:
             ),
         )
         db.flush()
+        # The persisted status checks the runtime first, so the notification
+        # has to read the same way when both are true.
+        if waiting_runtime:
+            notify_execution_lifecycle(
+                db,
+                execution=row,
+                status=STATUS_WAITING_RUNTIME,
+            )
+        elif requires_approval:
+            notify_execution_lifecycle(
+                db,
+                execution=row,
+                status=STATUS_PENDING_APPROVAL,
+            )
+        else:
+            notify_execution_lifecycle(
+                db,
+                execution=row,
+                status=STATUS_QUEUED,
+            )
         return row
 
     @staticmethod
@@ -1275,6 +1296,11 @@ class LoopItemExecutionService:
         # rolls the approval back instead of half-applying it.
         db.flush()
         db.refresh(row)
+        notify_execution_lifecycle(
+            db,
+            execution=row,
+            status=STATUS_WAITING_RUNTIME if needs_runtime else STATUS_QUEUED,
+        )
         return row
 
     def mark_managed_running(
@@ -1314,11 +1340,16 @@ class LoopItemExecutionService:
             if current is None:
                 raise RuntimeError("Board Team execution disappeared")
             return current
-        activity = self._linked_activity(db, db.get(LoopItemExecution, execution_id))
+        running = db.get(LoopItemExecution, execution_id)
+        if running is None:
+            raise RuntimeError("Board Team execution disappeared")
+        activity = self._linked_activity(db, running)
         if activity is not None:
             activity.status = "streaming"
             metadata = dict(activity.metadata_json or {})
             activity.metadata_json = {**metadata, "run_status": "running"}
+        # The queued notice already told the assignee the run started; the
+        # pipeline accepting it is the same moment, not a second one.
         db.commit()
         db.expire_all()
         row = db.get(LoopItemExecution, execution_id)
@@ -2806,6 +2837,12 @@ class LoopItemExecutionService:
                 error=error,
                 summary_note=note,
                 completed_at=now,
+            )
+            notify_execution_lifecycle(
+                db,
+                execution=execution,
+                status=terminal_status,
+                content=content or error or "",
             )
             if commit:
                 db.commit()
