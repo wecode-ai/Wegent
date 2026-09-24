@@ -1830,6 +1830,13 @@ impl LocalTaskStore {
                     Some("Runtime reconciled cancellation"),
                 );
             }
+            "missing" if current.sync_state == "stale" => {
+                return self.fail_execution(
+                    execution_id,
+                    "Runtime task disappeared after its execution lease expired",
+                    true,
+                );
+            }
             _ => {}
         }
 
@@ -4788,6 +4795,56 @@ fn release_local_workflow_nodes(workflow: &mut Value) -> Result<(), TaskRuntimeE
     Ok(())
 }
 
+fn local_workflow_assignments(
+    connection: &Connection,
+    project_id: &str,
+    workflow: &Value,
+    collaboration_group: &Value,
+) -> Result<Vec<Value>, TaskRuntimeError> {
+    let nodes = workflow["nodes"]
+        .as_array()
+        .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
+    nodes
+        .iter()
+        .filter(|node| {
+            !matches!(
+                node["automation_role"].as_str(),
+                Some("manager" | "manager_review")
+            ) && node["role"].as_str() != Some("start")
+        })
+        .filter_map(|node| {
+            let assignee_type = node["required_assignee_type"].as_str()?;
+            let assignee_id = node["required_assignee_id"].as_str()?;
+            Some((node, assignee_type, assignee_id))
+        })
+        .map(|(node, assignee_type, assignee_id)| {
+            let assignee_name = if assignee_type == "agent" {
+                get_item_from(connection, assignee_id, "chat_agent")?
+                    .filter(|agent| agent.cloud_project_id.as_deref() == Some(project_id))
+                    .map(map_chat_agent)
+                    .map(|agent| agent.display_name)
+                    .unwrap_or_else(|| assignee_id.to_owned())
+            } else {
+                collaboration_group["members"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .chain(std::iter::once(&collaboration_group["leader"]))
+                    .find(|member| member["id"].as_str() == Some(assignee_id))
+                    .and_then(|member| member["name"].as_str())
+                    .unwrap_or("本地用户")
+                    .to_owned()
+            };
+            Ok(json!({
+                "title": node["name"].as_str().unwrap_or_default(),
+                "assignee_type": assignee_type,
+                "assignee_id": assignee_id,
+                "assignee_name": assignee_name,
+            }))
+        })
+        .collect()
+}
+
 fn mark_local_workflow_stage_running(
     connection: &Connection,
     execution_id: i64,
@@ -4852,6 +4909,7 @@ fn advance_local_workflow_after_execution(
     };
     let mut item = get_item_from(connection, &execution.loop_item_id, "task")?
         .ok_or(TaskRuntimeError::TaskNotFound)?;
+    let collaboration_group = item.metadata["collaboration_group"].clone();
     let workflow = item
         .metadata
         .get_mut("workflow")
@@ -4873,32 +4931,52 @@ fn advance_local_workflow_after_execution(
         .get_mut("nodes")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| TaskRuntimeError::Invalid("task workflow has no nodes".to_owned()))?;
-    let node = nodes
-        .iter_mut()
-        .find(|node| node.get("id").and_then(Value::as_str) == Some(&workflow_node_id))
-        .ok_or_else(|| {
-            TaskRuntimeError::Invalid("workflow execution stage is missing".to_owned())
-        })?;
-    if node.get("required_assignee_type").and_then(Value::as_str) != Some("agent")
-        || node.get("required_assignee_id").and_then(Value::as_str)
-            != Some(execution.agent_id.as_str())
-    {
-        return Err(TaskRuntimeError::Invalid(
-            "workflow execution assignee does not match the stage constraint".to_owned(),
-        ));
-    }
-    let missing_manager_action =
-        if node["automation_role"] == "manager_review" && !review_decision_recorded {
-            Some("AI manager finished without deciding workflow review")
+    let (missing_manager_action, manager_completed) = {
+        let node = nodes
+            .iter_mut()
+            .find(|node| node.get("id").and_then(Value::as_str) == Some(&workflow_node_id))
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("workflow execution stage is missing".to_owned())
+            })?;
+        if node.get("required_assignee_type").and_then(Value::as_str) != Some("agent")
+            || node.get("required_assignee_id").and_then(Value::as_str)
+                != Some(execution.agent_id.as_str())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "workflow execution assignee does not match the stage constraint".to_owned(),
+            ));
+        }
+        let missing_manager_action =
+            if node["automation_role"] == "manager_review" && !review_decision_recorded {
+                Some("AI manager finished without deciding workflow review")
+            } else {
+                None
+            };
+        let manager_completed = node["automation_role"] == "manager";
+        node["status"] = json!(if missing_manager_action.is_some() {
+            "failed"
         } else {
-            None
-        };
-    node["status"] = json!(if missing_manager_action.is_some() {
-        "failed"
-    } else {
-        "completed"
-    });
-    node["execution_id"] = json!(execution_id);
+            "completed"
+        });
+        node["execution_id"] = json!(execution_id);
+        (missing_manager_action, manager_completed)
+    };
+    if manager_completed && workflow["plan_source"] == "project" {
+        let assignments = local_workflow_assignments(
+            connection,
+            &execution.cloud_project_id,
+            workflow,
+            &collaboration_group,
+        )?;
+        connection.execute(
+            "UPDATE loop_item_comments
+             SET metadata=json_set(metadata, '$.workflow_assignments', json(?1)),
+                 updated_at=?2
+             WHERE deleted_at IS NULL
+               AND json_extract(metadata, '$.execution_id')=?3",
+            params![json!(assignments).to_string(), timestamp, execution_id],
+        )?;
+    }
     if let Some(error) = missing_manager_action {
         workflow["error"] = json!(error);
         connection.execute(
@@ -5421,7 +5499,7 @@ mod tests {
             .expect("manager message should be a string");
         assert_eq!(
             message,
-            "Issue: Ship the feature\n\nIssue description: Implement and verify it."
+            "Issue: Ship the feature\n\nIssue description: Implement and verify it.\n\nProject collaboration rules:\nCoordinate the work."
         );
         let developer_instructions = payload["projectInstructions"]
             .as_str()
@@ -5429,8 +5507,8 @@ mod tests {
         assert!(developer_instructions.starts_with("Be careful."));
         assert!(developer_instructions.contains("You are the AI manager for this Issue."));
         assert!(developer_instructions.contains("\n\nConfigured project workflow"));
-        assert!(developer_instructions.contains("\"name\":\"Delivery team\""));
-        assert!(developer_instructions.contains("\"instructions\":\"Coordinate the work.\""));
+        assert!(!developer_instructions.contains("\"name\":\"Delivery team\""));
+        assert!(!developer_instructions.contains("\"instructions\":\"Coordinate the work.\""));
         assert!(developer_instructions.contains("\n\nAutomation instruction:"));
         assert_eq!(
             payload["origin"]["automationRole"],
@@ -5631,6 +5709,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(finished.status, "completed");
+        let comments = store.list_comments(&project.id, &task.id, 0).unwrap();
+        assert_eq!(
+            comments[0].metadata["workflow_assignments"][0]["assignee_name"],
+            worker.display_name
+        );
+        assert_eq!(
+            comments[0].metadata["workflow_assignments"][0]["title"],
+            "Execute configured work"
+        );
         assert_eq!(
             store
                 .get_task(&project.id, &task.id)
@@ -7387,10 +7474,10 @@ mod tests {
     }
 
     #[test]
-    fn local_recovery_keeps_delivered_run_unknown_instead_of_redelivering() {
+    fn local_recovery_terminalizes_missing_runtime_and_unblocks_agent_queue() {
         let (directory, store, project) = chat_agent_store();
         let agent = make_local_agent(&store, &project.id, "auto");
-        let task = store
+        let stale_task = store
             .create_task(
                 &project.id,
                 TaskCreate {
@@ -7408,9 +7495,33 @@ mod tests {
         store
             .enqueue_execution(
                 &project.id,
-                &task.id,
+                &stale_task.id,
                 &agent.id,
                 json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let next_task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Run after recovery".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let next_execution = store
+            .enqueue_execution(
+                &project.id,
+                &next_task.id,
+                &agent.id,
+                json!({"text": "next"}),
                 None,
             )
             .unwrap();
@@ -7447,7 +7558,18 @@ mod tests {
         assert_eq!(execution.status, "running");
         assert_eq!(execution.display_state, "unknown");
         assert_eq!(execution.sync_state, "stale");
-        assert!(store
+        let reconciled = store
+            .reconcile_execution_snapshot(claimed.id, "missing", false, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reconciled.status, "queued");
+        assert_eq!(reconciled.previous_execution_id, Some(claimed.id));
+        let failed = execution_row(&store.connection().unwrap(), claimed.id).unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.observed_state, "failed");
+        assert_eq!(failed.sync_state, "in_sync");
+
+        let claimed_next = store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
                 runtime_instance_id: "runtime-1".to_owned(),
@@ -7457,7 +7579,8 @@ mod tests {
                 lease_seconds: 300,
             })
             .unwrap()
-            .is_none());
+            .unwrap();
+        assert_eq!(claimed_next.id, next_execution.id);
     }
 
     #[test]

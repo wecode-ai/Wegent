@@ -272,6 +272,10 @@ export function IssueChatMessage({
     message.metadata.automation_role === "manager" ||
     message.metadata.automation_role === "manager_review" ||
     typeof message.metadata.manager_type === "string";
+  const activityAuthor =
+    isAgent && !isManager && taskSummary?.title
+      ? taskSummary.title
+      : message.sender.name;
   const isSubagent = message.metadata.kind === "task_ai_subagent";
   const runId =
     typeof message.metadata.run_id === "string"
@@ -559,7 +563,7 @@ export function IssueChatMessage({
     return (
       <IssueActivityMessage
         {...focusAttributes}
-        author={message.sender.name}
+        author={activityAuthor}
         createdAt={message.createdAt}
         avatar={avatar}
         hideTime={hideTime}
@@ -607,7 +611,7 @@ export function IssueChatMessage({
         >
           {body}
         </div>
-        {taskSummary ? (
+        {taskSummary && !showInlineExecutionStatus ? (
           <div className="task-detail-thread-task-link">
             {taskSummary.onOpen ? (
               <button

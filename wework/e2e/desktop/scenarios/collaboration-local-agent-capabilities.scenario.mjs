@@ -24,9 +24,12 @@ const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="fal
 const PROJECT_NAME = `本地智能体能力验收-${process.pid}`
 const AGENT_NAME = `本地能力智能体-${process.pid}`
 const GROUP_NAME = `本地能力协作小组-${process.pid}`
+const COLLABORATION_RULES = `LOCAL_COLLABORATION_RULES_${process.pid}: 委派后必须提交可复核证据。`
 const ISSUE_NAME = `本地智能体执行验收-${process.pid}`
+const CANCEL_ISSUE_NAME = `本地智能体终止验收-${process.pid}`
 const RUN_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_RUN'
 const COMPLETION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_COMPLETED'
+const CANCELLATION_MARKER = 'LOCAL_AGENT_CAPABILITY_E2E_CANCEL'
 const EXECUTOR_PROMPT =
   'LOCAL_MANAGER_GENERATED_EXECUTOR_PROMPT: verify the configured capability and report evidence.'
 const CONTEXT_SEARCH = 'local-manager-context-search'
@@ -162,6 +165,8 @@ export async function createDesktopScenario({
   let submittedPlan = false
   let planArguments = null
   let boundContext = null
+  let cancellationRequestStarted = false
+  let cancellationRequestAborted = false
 
   return {
     async handleHttp(request, response, url) {
@@ -251,6 +256,15 @@ export async function createDesktopScenario({
         response.end(
           createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
         )
+      }
+      if (serialized.includes(CANCELLATION_MARKER)) {
+        cancellationRequestStarted = true
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(createSse([responseCreated(responseId)]))
+        response.once('close', () => {
+          cancellationRequestAborted = true
+        })
+        return true
       }
       if (inspectModelRequest) {
         const events = await inspectModelRequest(body, { boundContext })
@@ -386,6 +400,10 @@ export async function createDesktopScenario({
       assert.ok(
         !userSerialized.includes('You are the AI manager for this Issue.'),
         'The AI manager system instructions leaked into the user message'
+      )
+      assert.ok(
+        userSerialized.includes(COLLABORATION_RULES),
+        'The project collaboration rules were not delivered in the manager user message'
       )
       const selection = mcpToolRequestEvents(body, {
         toolName: 'get_current_context',
@@ -526,6 +544,20 @@ export async function createDesktopScenario({
         uiTimeoutMs
       )
       const groupId = groupDetailTestId.slice('collaboration-group-detail-'.length)
+      await control.command(
+        'click',
+        scoped('[data-testid="collaboration-group-detail-tab-rules"]')
+      )
+      await control.command(
+        'fill',
+        scoped('[data-testid="collaboration-group-detail-instructions"]'),
+        { value: COLLABORATION_RULES }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="collaboration-group-detail-save"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
       await captureScreenshot(
         control,
         'collaboration-local-agent-03-group-created.png',
@@ -583,6 +615,17 @@ export async function createDesktopScenario({
         text: `分配给 ${AGENT_NAME}`,
         timeoutMs: modelResponseTimeoutMs,
       })
+      const executorActivity = scoped('[data-testid^="cloud-task-activity-message-"]')
+      await control.command('waitFor', executorActivity, {
+        text: 'Verify the configured capability',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const executorAvatar = `${executorActivity} [title="${AGENT_NAME}"]`
+      assert.equal(
+        await control.command('getAttribute', executorAvatar, { value: 'title' }),
+        AGENT_NAME,
+        'The executor avatar did not expose the Agent name'
+      )
       const executorLog = await readFile(join(resultRoot, 'executor.log'), 'utf8')
       assert.ok(
         executorLog.includes(COMPLETION_MARKER),
@@ -593,6 +636,61 @@ export async function createDesktopScenario({
         'collaboration-local-agent-05-capabilities-verified.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
+
+      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
+        value: `${CANCEL_ISSUE_NAME} ${RUN_MARKER} ${CANCELLATION_MARKER}`,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="cloud-todo-create-confirm"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
+      )
+      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid^="cloud-task-manager-cancel-"]'), {
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const cancellationStartDeadline = Date.now() + modelResponseTimeoutMs
+      while (!cancellationRequestStarted && Date.now() < cancellationStartDeadline) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.ok(cancellationRequestStarted, 'The cancellable manager execution never started')
+      await control.command('click', scoped('[data-testid^="cloud-task-manager-cancel-"]'))
+      await control.command('waitFor', '[data-testid="workflow-cancel-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workflow-cancel-confirm"]')
+      await control.command('waitFor', '[data-testid="workflow-cancel-dialog"]', {
+        visible: false,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid^="cloud-task-manager-cancel-"]'), {
+        visible: false,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const cancellationDeadline = Date.now() + modelResponseTimeoutMs
+      while (!cancellationRequestAborted && Date.now() < cancellationDeadline) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.ok(cancellationRequestAborted, 'Stopping the workflow did not abort the manager run')
+      await captureScreenshot(
+        control,
+        'collaboration-local-agent-06-workflow-cancelled.png',
+        ACTIVE_WORKBENCH_SELECTOR
+      )
     },
 
     diagnostics() {
@@ -601,6 +699,7 @@ export async function createDesktopScenario({
         pluginId: PLUGIN_ID,
         requestVerified: Boolean(verifiedRequest),
         skillName: SKILL_NAME,
+        workflowCancellationVerified: cancellationRequestStarted && cancellationRequestAborted,
       }
     },
   }

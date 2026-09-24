@@ -88,6 +88,12 @@ export const activityMessages: Record<
     "activity.task_activity_manager_completed": "验收通过，完成 Issue",
     "activity.task_activity_manager_confirmation": "等待用户确认",
     "activity.task_activity_manager_rework": "要求重新规划并执行",
+    "activity.task_activity_stop_workflow": "终止执行",
+    "activity.task_activity_stopping_workflow": "正在终止…",
+    "activity.task_activity_stop_workflow_title": "终止本轮执行？",
+    "activity.task_activity_stop_workflow_description":
+      "负责人规划、排队任务和正在运行的成员任务都会停止。Issue 状态不会自动改变。",
+    "activity.task_activity_stop_workflow_failed": "终止执行失败",
 
     "activity.task_activity_backend_task": "Wegent 任务 #{{id}}",
     "activity.task_activity_collapse_content": "收起",
@@ -205,6 +211,12 @@ export const activityMessages: Record<
       "Accepted results and completed Issue",
     "activity.task_activity_manager_confirmation": "Awaiting user confirmation",
     "activity.task_activity_manager_rework": "Requested replanning and rework",
+    "activity.task_activity_stop_workflow": "Stop execution",
+    "activity.task_activity_stopping_workflow": "Stopping…",
+    "activity.task_activity_stop_workflow_title": "Stop this workflow run?",
+    "activity.task_activity_stop_workflow_description":
+      "Manager planning, queued tasks, and running executor tasks will stop. The Issue status will not change automatically.",
+    "activity.task_activity_stop_workflow_failed": "Failed to stop execution",
 
     "activity.task_activity_backend_task": "Wegent task #{{id}}",
     "activity.task_activity_collapse_content": "Collapse",

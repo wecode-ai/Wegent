@@ -261,15 +261,16 @@ fn dispatch(
             }
             let manager_node_id = format!("{run_id}:manager");
             let manager_instructions = format!(
-                "You are the AI manager for this Issue. Use the board management tools to inspect the Issue, eligible members and configured project workflow. The configured project workflow is the default. Only call submit_workflow_plan when you need to replace that default with a different set of child tasks. When assigning work, write a specific execution prompt for every assignee with the goal, boundaries and acceptance criteria. Do not execute child tasks yourself. You alone decide when the Issue status should change, using the board management tools.\n\nConfigured project workflow: {}\n\nCollaboration group instructions: {}\n\nAutomation instruction: {}",
+                "You are the AI manager for this Issue. Use the board management tools to inspect the Issue, eligible members and configured project workflow. The configured project workflow is the default. Only call submit_workflow_plan when you need to replace that default with a different set of child tasks. When assigning work, write a specific execution prompt for every assignee with the goal, boundaries and acceptance criteria. Do not execute child tasks yourself. You alone decide when the Issue status should change, using the board management tools.\n\nConfigured project workflow: {}\n\nAutomation instruction: {}",
                 project.metadata["workflow_definition"],
-                group,
                 text(rule, "prompt")
             );
+            let collaboration_rules = text(group, "instructions").trim();
             let manager_message = format!(
-                "Issue: {}\n\nIssue description: {}",
+                "Issue: {}\n\nIssue description: {}\n\nProject collaboration rules:\n{}",
                 task.title.as_deref().unwrap_or_default(),
-                task.description
+                task.description,
+                collaboration_rules
             );
             let manager_node = json!({
                 "id": manager_node_id,

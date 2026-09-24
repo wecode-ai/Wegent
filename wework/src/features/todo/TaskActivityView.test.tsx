@@ -25,6 +25,8 @@ const getLoopItem = vi.fn()
 const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
 const submitWorkflowReviewFeedback = vi.fn()
+const cancelLocalAutomationRun = vi.fn()
+const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
@@ -78,6 +80,12 @@ const workbenchServices = {
     unbindTask: vi.fn(),
   },
   projectChatAgentApi: { list: vi.fn(async () => agentsMock.value) },
+  projectAutomationApi: { cancelRun: cancelCloudAutomationRun },
+  projectSpaceDetailServices: {
+    local: {
+      localProjectAutomationApi: { cancelRun: cancelLocalAutomationRun },
+    },
+  },
   modelApi: { listModels },
 }
 
@@ -243,6 +251,8 @@ describe('TaskActivityView', () => {
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
     submitWorkflowReviewFeedback.mockReset()
+    cancelLocalAutomationRun.mockReset()
+    cancelCloudAutomationRun.mockReset()
     listModels.mockReset()
     attachmentSelectionMock.attachments = []
     attachmentSelectionMock.isAttachmentReadyToSend = true
@@ -2513,6 +2523,77 @@ describe('TaskActivityView', () => {
     expect(screen.getByTestId('runtime-execution-detail-status')).toHaveTextContent('排队中')
   })
 
+  it('lets the user terminate a queued local collaboration workflow', async () => {
+    const user = userEvent.setup()
+    const managerMessage: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'manager-message-cancel',
+      type: 'agent_status',
+      content: '',
+      metadata: {
+        kind: 'project_automation_run',
+        automation_role: 'manager',
+        automation_run_id: 'manager-run-cancel',
+        run_id: 'manager-run-cancel',
+        run_status: 'queued',
+      },
+      status: 'pending',
+      runtimeAddress: null,
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [managerMessage], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const updatedTask = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      status: 'inbox',
+      version: 3,
+    }
+    getLoopItem.mockResolvedValue(updatedTask)
+    cancelLocalAutomationRun.mockResolvedValueOnce({
+      id: 'manager-run-cancel',
+      status: 'cancelled',
+    })
+    const onTaskUpdated = vi.fn()
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', location: 'local' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            status: 'inbox',
+            version: 2,
+          } as never
+        }
+        workflowManagerRunId="manager-run-cancel"
+        onTaskUpdated={onTaskUpdated}
+        issueTimeline
+        linear
+      />
+    )
+
+    await user.click(await screen.findByTestId('cloud-task-manager-cancel-manager-message-cancel'))
+    expect(screen.getByTestId('workflow-cancel-dialog')).toBeInTheDocument()
+    await user.click(screen.getByTestId('workflow-cancel-confirm'))
+
+    await waitFor(() =>
+      expect(cancelLocalAutomationRun).toHaveBeenCalledWith('11', 'manager-run-cancel')
+    )
+    expect(getLoopItem).toHaveBeenCalledWith('WEG-1')
+    expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask)
+  })
+
   it('refreshes the workflow plan when the AI manager finishes', async () => {
     const managerMessage: ProjectChatMessage = {
       ...agentMessage,
@@ -4052,7 +4133,7 @@ it('shows a manager assignment as an activity event and labels executor comments
     sequenceNumber: 3,
     sender: { type: 'agent', id: 'member', name: 'test' },
     content: 'CPU 检查已完成',
-    metadata: { run_status: 'completed' },
+    metadata: { run_status: 'completed', workflow_node_id: 'inspect-cpu' },
     status: 'completed',
     rootMessageId: null,
   }
@@ -4111,6 +4192,14 @@ it('shows a manager assignment as an activity event and labels executor comments
           title: 'Inspect CPU',
           status: 'in_progress',
           assignee_group_id: 'group-1',
+          workflow: {
+            nodes: [
+              {
+                id: 'inspect-cpu',
+                name: '检查当前设备 CPU',
+              },
+            ],
+          },
         } as never
       }
       linear
@@ -4125,6 +4214,13 @@ it('shows a manager assignment as an activity event and labels executor comments
   expect(screen.getByTestId('cloud-task-activity-role-member-result-1')).toHaveTextContent(
     '执行成员'
   )
+  expect(screen.getByText('检查当前设备 CPU')).toBeInTheDocument()
+  expect(screen.queryByText('test')).not.toBeInTheDocument()
+  expect(
+    screen
+      .getByTestId('cloud-task-activity-message-member-result-1')
+      .querySelector('[title="test"]')
+  ).toBeInTheDocument()
   expect(screen.getByText('CPU 检查已完成')).toBeInTheDocument()
   expect(screen.getByTestId('cloud-task-manager-event-local-manager-review')).toHaveTextContent(
     '正在验收成员结果'

@@ -64,6 +64,7 @@ import {
   type ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
@@ -400,12 +401,46 @@ export function TaskActivityView({
   )
   const cancellingMessageId = cancellation.stoppingMessageId
   const [error, setError] = useState<string | null>(null)
+  const [workflowCancelTarget, setWorkflowCancelTarget] = useState<{
+    runId: string
+    messageId: string
+  } | null>(null)
+  const [cancellingWorkflow, setCancellingWorkflow] = useState(false)
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
   const threadMessages = useMemo(
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
+  const workflowState = task.workflow as
+    | (Record<string, unknown> & { orchestration_status?: string; cancelled?: boolean })
+    | null
+    | undefined
+  const workflowTerminal =
+    workflowState?.cancelled === true ||
+    ['completed', 'failed'].includes(String(workflowState?.orchestration_status ?? ''))
+  const cancellableWorkflowRunId = workflowTerminal
+    ? null
+    : workflowManagerRunId ||
+      [...threadMessages].reverse().find(message => {
+        const role = issueActivityRole(message, task)
+        const status = resolveMessageRunStatus(task.ai_state, message)
+        return (
+          (role === 'manager' || role === 'manager_review') &&
+          isExecutionActive(executionDisplayStatus(status)) &&
+          typeof message.metadata.automation_run_id === 'string'
+        )
+      })?.metadata.automation_run_id
+  const cancellableManagerMessageId =
+    typeof cancellableWorkflowRunId === 'string'
+      ? [...threadMessages].reverse().find(message => {
+          const role = issueActivityRole(message, task)
+          return (
+            (role === 'manager' || role === 'manager_review') &&
+            message.metadata.automation_run_id === cancellableWorkflowRunId
+          )
+        })?.messageId
+      : undefined
 
   const { listRef, followCard, scrollTaskCommentsToBottom, revealCardBottom } =
     useIssueActivityScroll({
@@ -445,6 +480,47 @@ export function TaskActivityView({
     onWorkflowManagerExecutionChange,
     onWorkflowManagerFinished,
   })
+
+  const cancelWorkflow = useCallback(async () => {
+    if (!workflowCancelTarget) return
+    const automationApi =
+      projectLocation === 'local'
+        ? services.projectSpaceDetailServices?.local?.localProjectAutomationApi
+        : (services.projectSpaceDetailServices?.cloud?.projectAutomationApi ??
+          services.projectAutomationApi)
+    if (!automationApi) {
+      setError(activityTranslate('activity.task_activity_stop_workflow_failed'))
+      return
+    }
+    setCancellingWorkflow(true)
+    setError(null)
+    try {
+      await automationApi.cancelRun(String(project.id), workflowCancelTarget.runId)
+      if (projectDeliveryApi?.getLoopItem) {
+        const updated = await projectDeliveryApi.getLoopItem(task.id)
+        onTaskUpdated?.(updated)
+      }
+      setWorkflowCancelTarget(null)
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : activityTranslate('activity.task_activity_stop_workflow_failed')
+      )
+    } finally {
+      setCancellingWorkflow(false)
+    }
+  }, [
+    activityTranslate,
+    onTaskUpdated,
+    project.id,
+    projectDeliveryApi,
+    projectLocation,
+    services.projectAutomationApi,
+    services.projectSpaceDetailServices,
+    task.id,
+    workflowCancelTarget,
+  ])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -907,7 +983,7 @@ export function TaskActivityView({
         eventOnly={eventOnly}
         taskAiState={task.ai_state}
         executionDeviceName={deviceNameForMessage(message)}
-        taskSummary={issueTimeline ? undefined : taskSummaryForMessage(message)}
+        taskSummary={taskSummaryForMessage(message)}
         hideTime={hideTime}
         onOpenExecution={
           issueTimeline
@@ -1104,6 +1180,20 @@ export function TaskActivityView({
                       onOpenExecution={
                         binding && onOpenTask ? () => onOpenTask(binding) : undefined
                       }
+                      onCancel={
+                        cancellableWorkflowRunId &&
+                        cancellableManagerMessageId === card.root.messageId
+                          ? () =>
+                              setWorkflowCancelTarget({
+                                runId: String(cancellableWorkflowRunId),
+                                messageId: card.root.messageId,
+                              })
+                          : undefined
+                      }
+                      cancelling={
+                        cancellingWorkflow &&
+                        workflowCancelTarget?.messageId === card.root.messageId
+                      }
                     />
                     {card.replies.map(reply => renderActivityMessage(reply))}
                   </div>
@@ -1269,6 +1359,21 @@ export function TaskActivityView({
           onClose={() => setExecutionDetail(null)}
         />
       ) : null}
+      <ConfirmDialog
+        open={Boolean(workflowCancelTarget)}
+        title={activityTranslate('activity.task_activity_stop_workflow_title')}
+        description={activityTranslate('activity.task_activity_stop_workflow_description')}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={activityTranslate('activity.task_activity_stop_workflow')}
+        confirmTestId="workflow-cancel-confirm"
+        dialogTestId="workflow-cancel-dialog"
+        destructive
+        pending={cancellingWorkflow}
+        onClose={() => {
+          if (!cancellingWorkflow) setWorkflowCancelTarget(null)
+        }}
+        onConfirm={() => void cancelWorkflow()}
+      />
     </>
   )
 }

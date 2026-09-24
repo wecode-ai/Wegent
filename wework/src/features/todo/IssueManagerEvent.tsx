@@ -10,10 +10,14 @@ export function IssueManagerEvent({
   message,
   task,
   onOpenExecution,
+  onCancel,
+  cancelling = false,
 }: {
   message: ProjectChatMessage
   task: CloudLoopItem
   onOpenExecution?: () => void
+  onCancel?: () => void
+  cancelling?: boolean
 }) {
   const { i18n } = useTranslation('common')
   const t = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
@@ -68,15 +72,32 @@ export function IssueManagerEvent({
               ? t('activity.task_activity_manager_assigned_to', undefined, { name: recipients })
               : t(`activity.task_activity_manager_${action}`)}
           </div>
-          {onOpenExecution ? (
-            <button
-              type="button"
-              data-testid={`cloud-task-manager-execution-${message.messageId}`}
-              className="shrink-0 text-xs text-text-muted hover:text-text-primary"
-              onClick={onOpenExecution}
-            >
-              {t('activity.task_activity_view_execution')}
-            </button>
+          {onOpenExecution || onCancel ? (
+            <div className="flex shrink-0 items-center gap-3">
+              {onOpenExecution ? (
+                <button
+                  type="button"
+                  data-testid={`cloud-task-manager-execution-${message.messageId}`}
+                  className="text-xs text-text-muted hover:text-text-primary"
+                  onClick={onOpenExecution}
+                >
+                  {t('activity.task_activity_view_execution')}
+                </button>
+              ) : null}
+              {onCancel ? (
+                <button
+                  type="button"
+                  data-testid={`cloud-task-manager-cancel-${message.messageId}`}
+                  disabled={cancelling}
+                  className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={onCancel}
+                >
+                  {cancelling
+                    ? t('activity.task_activity_stopping_workflow')
+                    : t('activity.task_activity_stop_workflow')}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <time dateTime={message.createdAt} className="text-xs text-text-muted">
