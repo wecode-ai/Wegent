@@ -1522,8 +1522,14 @@ export function createHybridWorkbenchServices(
     },
     modelApi: {
       async listModels(): Promise<UnifiedModelListResponse> {
-        const localModels = await localServices.modelApi.listModels()
+        // Start the cloud catalog before awaiting the local one: the local
+        // catalog depends on the local executor and the desktop preferences,
+        // and a failure there must never keep the cloud models from loading.
         loadCloudModelsInBackground()
+        const localModels = await localServices.modelApi.listModels().catch(error => {
+          console.warn('[Wework] Failed to list local models', error)
+          return { data: [] }
+        })
         return {
           data: mergeModelCatalogs(annotateLocalModels(localModels.data), rememberedCloudModels),
         }
