@@ -346,6 +346,8 @@ URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 UR
 
 Electron 启动完成通知必须幂等：首次完成启动后，页面切换或重新挂载发来的通知不应再次显示、聚焦主窗口，避免抢走弹出窗口的焦点。并发通知共享同一次启动完成操作；失败后允许重新完成启动。
 
+刷新后页面未恢复时，检查 Electron 的 `[renderer-load]` 事件，按 `webContentsId` 关联加载开始、DOM 就绪、加载结束、失败和退出拦截。日志不包含页面 URL，避免暴露查询参数。
+
 发送消息后，前端会先展示用户消息并读取历史，此时 executor 可能仍在创建 worktree，尚未登记 LocalTask。无任务索引、无 provider 会话且没有已知执行时，空 transcript 必须省略 `running`，表示状态未知；不能用 `running=false` 提前结束前端的发送状态。已知运行和完成状态仍使用明确的布尔值。
 
 显式发送操作直接更新共享 `RuntimeTaskLifecycleStore`。切换标签页或隐藏发起发送的界面不应阻止 `sendRequested`、`sendAccepted` 或发送失败的状态更新；后台列表和历史同步继续受界面所有权限制。
