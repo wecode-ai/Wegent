@@ -158,6 +158,11 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         assert.equal(compactionRequests, 2)
         assert.equal(recoveredWithSummary, true)
         await waitIdle(control)
+        // Completed turns fold their processing details behind the duration toggle.
+        await control.command(
+          'click',
+          '[data-testid="final-processing-toggle"][aria-expanded="false"]'
+        )
         const recoveredText = await control.command('getText', INDICATOR)
         assert.equal(recoveredText.split('上下文已自动压缩').length - 1, previousIndicators + 1)
       } finally {
