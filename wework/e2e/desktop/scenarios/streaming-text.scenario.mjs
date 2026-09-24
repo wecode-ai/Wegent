@@ -60,7 +60,6 @@ const RECLASSIFIED_COMMENTARY_CALL_ID = 'wework-reclassified-commentary-tool'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
-const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
 const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
 const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
 const SUBAGENT_CHILD_TOOL_CALL_ID = 'wework-subagent-child-tool'
@@ -221,18 +220,6 @@ function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
     ...event,
     item: { ...event.item, namespace },
   }))
-}
-
-function toolSearchCall(callId, argumentsValue) {
-  return {
-    type: 'response.output_item.done',
-    item: {
-      type: 'tool_search_call',
-      call_id: callId,
-      execution: 'client',
-      arguments: argumentsValue,
-    },
-  }
 }
 
 function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
@@ -530,26 +517,6 @@ function requestContainsToolOutputForCall(body, callId) {
   return (Array.isArray(body.input) ? body.input : []).some(
     item => item?.type === 'function_call_output' && item.call_id === callId
   )
-}
-
-function requestContainsToolSearchOutputForCall(body, callId) {
-  return (Array.isArray(body.input) ? body.input : []).some(
-    item => item?.type === 'tool_search_output' && item.call_id === callId
-  )
-}
-
-function functionCallOutput(body, callId) {
-  return (Array.isArray(body.input) ? body.input : []).find(
-    item => item?.type === 'function_call_output' && item.call_id === callId
-  )?.output
-}
-
-function spawnedAgentId(body) {
-  const output = functionCallOutput(body, SUBAGENT_CALL_ID)
-  const parsed = typeof output === 'string' ? JSON.parse(output) : output
-  const agentId = parsed?.agent_id ?? parsed?.id
-  assert.ok(agentId, `spawn_agent output did not include an agent id: ${JSON.stringify(output)}`)
-  return agentId
 }
 
 async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
@@ -1308,6 +1275,13 @@ export function createDesktopScenario({
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      (await control.command('getText', '[data-testid="subagent-conversation-scroll"]')).includes(
+        SUBAGENT_PARENT_COMPLETION
+      ),
+      false,
+      'The root final answer was loaded into the child conversation'
+    )
     await captureSubagent(control, 'streaming-text-subagent-03-completed-conversation.png')
 
     await control.command('click', '[data-testid="subagent-conversation-back"]')
@@ -1376,6 +1350,13 @@ export function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
     })
     assert.equal(
+      (await control.command('getText', '[data-testid="subagent-conversation-scroll"]')).includes(
+        SUBAGENT_PARENT_COMPLETION
+      ),
+      false,
+      'The restored child conversation loaded the root final answer'
+    )
+    assert.equal(
       (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
         SUBAGENT_CHILD_TOOL_MARKER
       ),
@@ -1387,6 +1368,7 @@ export function createDesktopScenario({
   }
 
   return {
+    codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     modelProviderAuthToml: '',
     modelProviderConfigToml:
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
@@ -1500,39 +1482,14 @@ export function createDesktopScenario({
         subagentStage === 'awaiting-spawn-output' &&
         requestContainsToolOutputForCall(body, SUBAGENT_CALL_ID)
       ) {
-        const agentId = spawnedAgentId(body)
         await subagentChildRequestStarted
         subagentStage = 'awaiting-wait-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'multi_agent_v1', 'wait_agent', {
-              targets: [agentId],
+            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'collaboration', 'wait_agent', {
               timeout_ms: 60_000,
-            }),
-            responseCompleted(responseId),
-          ])
-        )
-        return true
-      }
-      if (
-        subagentStage === 'awaiting-search-output' &&
-        requestContainsToolSearchOutputForCall(body, SUBAGENT_SEARCH_CALL_ID)
-      ) {
-        const searchOutput = JSON.stringify(body.input)
-        assert.ok(
-          searchOutput.includes('multi_agent_v1') && searchOutput.includes('spawn_agent'),
-          'tool_search did not return multi_agent_v1.spawn_agent'
-        )
-        subagentStage = 'awaiting-spawn-output'
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'multi_agent_v1', 'spawn_agent', {
-              message: SUBAGENT_CHILD_PROMPT,
-              agent_type: 'explorer',
             }),
             responseCompleted(responseId),
           ])
@@ -1576,14 +1533,29 @@ export function createDesktopScenario({
       }
       if (requestContainsSubagentPrompt(body)) {
         assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
-        subagentStage = 'awaiting-search-output'
+        const collaborationTools = (body.tools ?? []).find(
+          tool => tool?.type === 'namespace' && tool.name === 'collaboration'
+        )?.tools
+        const collaborationToolNames = new Set(
+          (collaborationTools ?? []).map(tool => tool?.name).filter(Boolean)
+        )
+        assert.ok(
+          collaborationToolNames.has('spawn_agent'),
+          'The native collaboration.spawn_agent tool was not available'
+        )
+        assert.ok(
+          collaborationToolNames.has('wait_agent'),
+          'The native collaboration.wait_agent tool was not available'
+        )
+        subagentStage = 'awaiting-spawn-output'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            toolSearchCall(SUBAGENT_SEARCH_CALL_ID, {
-              query: 'spawn agent delegate child work',
-              limit: 8,
+            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'collaboration', 'spawn_agent', {
+              task_name: 'streaming_panel',
+              message: SUBAGENT_CHILD_PROMPT,
+              agent_type: 'explorer',
             }),
             responseCompleted(responseId),
           ])
