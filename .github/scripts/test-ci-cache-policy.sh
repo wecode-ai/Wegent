@@ -72,13 +72,20 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
 node_only="${warmup_all_false/node=false/node=true}"
 node_and_wework_target="${node_only/wework_target=false/wework_target=true}"
 assert_warmup_case "pnpm lock" "$node_and_wework_target" "pnpm-lock.yaml"
-assert_warmup_case "workspace manifest" "$node_only" "pnpm-workspace.yaml"
-assert_warmup_case "Wework manifest" "$node_only" "wework/package.json"
+assert_warmup_case "workspace manifest" "$node_and_wework_target" \
+  "pnpm-workspace.yaml"
+assert_warmup_case "Wework manifest" "$node_and_wework_target" \
+  "wework/package.json"
 assert_warmup_case "Wework Electron manifest" "$node_and_wework_target" \
   "wework/electron/package.json"
 assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
   "wework/electron/pnpm-lock.yaml"
-assert_warmup_case "Claude CLI lock" "$node_only" \
+assert_warmup_case "Wework source" \
+  "${warmup_all_false/wework_target=false/wework_target=true}" \
+  "wework/src/main.ts"
+assert_warmup_case "Chat Core source" "$node_and_wework_target" \
+  "packages/chat-core/src/index.ts"
+assert_warmup_case "Claude CLI lock" "$node_and_wework_target" \
   ".github/claude-code-cli/package-lock.json"
 
 python_only="${warmup_all_false/python=false/python=true}"
@@ -217,7 +224,7 @@ if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
     "$wework_e2e_workflow")" -ne 3 ]] ||
   ! grep -Fq 'name: Restore Rust runtimes and build shared Wework desktop E2E runtime' \
-  "$wework_e2e_workflow"; then
+    "$action_dir/build-wework-core-e2e/action.yml"; then
   fail "Linux Wework desktop E2E must use bounded checkpoint parallelism"
 fi
 
@@ -515,15 +522,25 @@ desktop_build_section="$(
     '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
     "$workflow_dir/wework-e2e.yml"
 )"
+desktop_build_action="$action_dir/build-wework-core-e2e/action.yml"
 memory_build_section="$(
   sed -n \
     '/^  wework-desktop-memory-e2e:/,$p' \
     "$workflow_dir/wework-e2e.yml"
 )"
 if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
-  [[ "$desktop_build_section" == *'cargo build'* ]] ||
-  [[ "$desktop_build_section" != *'restore-oci-runtime-binary.sh'* ]] ||
-  [[ "$desktop_build_section" != *'WEWORK_E2E_PREBUILT_EXECUTOR_PATH'* ]] ||
+  [[ "$desktop_build_section" != *'restore-wework-core-e2e-build-oci.sh'* ]] ||
+  [[ "$desktop_build_section" != *'uses: ./.github/actions/build-wework-core-e2e'* ]] ||
+  [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
+  grep -Fq 'cargo build' "$desktop_build_action" ||
+  ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
+  ! grep -Fq 'WEWORK_E2E_PREBUILT_EXECUTOR_PATH' "$desktop_build_action" ||
+  ! grep -Fq 'pnpm --filter wework ai:verify:electron:build' \
+    "$desktop_build_action" ||
+  ! grep -Fq 'warm-wework-desktop-core-e2e-build:' "$warmup_workflow" ||
+  ! grep -Fq 'uses: ./.github/actions/build-wework-core-e2e' \
+    "$warmup_workflow" ||
+  ! grep -Fq 'publish-wework-core-e2e-build-oci.sh' "$warmup_workflow" ||
   [[ "$memory_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
   [[ "$memory_build_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
   [[ "$memory_build_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
@@ -535,6 +552,7 @@ fi
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
+bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
 

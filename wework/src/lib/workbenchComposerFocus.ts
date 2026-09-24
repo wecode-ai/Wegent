@@ -100,6 +100,7 @@ function getPendingWorkbenchComposerFocus() {
 }
 
 function dispatchUntilWorkbenchComposerFocusConsumed(pending: PendingWorkbenchComposerFocus) {
+  if (typeof window === 'undefined') return
   window.requestAnimationFrame(() => {
     if (getPendingWorkbenchComposerFocus() !== pending || pending.consumers.size > 0) return
     dispatchPendingWorkbenchComposerFocusRequest()

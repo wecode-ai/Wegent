@@ -149,16 +149,16 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   harness-apps,browser-annotation-design
-  supervisor-lifecycle,remote-device-onboarding
+  supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core,collaboration-settings-matrix
+  send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,task-board-association,task-board-bulk-actions,core-task-flow,change-request-status,context-compaction
+  task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
-  workspace-attachments,automation-lifecycle
+  workspace-attachments,automation-lifecycle,collaboration-settings-matrix
   project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification
   rendering-extensions
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import

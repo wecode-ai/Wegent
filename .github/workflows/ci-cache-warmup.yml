@@ -12,7 +12,12 @@ on:
       - ".github/actions/**"
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
+      - ".github/scripts/archive-wework-core-e2e-build.sh"
+      - ".github/scripts/publish-wework-core-e2e-build-oci.sh"
+      - ".github/scripts/resolve-wework-core-e2e-build-ref.sh"
       - ".github/scripts/resolve-executor-e2e-runtime.sh"
+      - ".github/scripts/restore-oci-runtime-binary.sh"
+      - ".github/scripts/restore-wework-core-e2e-build-oci.sh"
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
       - ".github/scripts/lib/apt-packages.sh"
       - ".github/workflows/ci-cache-warmup.yml"
@@ -29,6 +34,7 @@ on:
       - "frontend/src/**"
       - "knowledge_engine/uv.lock"
       - "package.json"
+      - "packages/chat-core/**"
       - "packages/*/package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -40,6 +46,8 @@ on:
       - "wework/electron/package.json"
       - "wework/electron/pnpm-lock.yaml"
       - "wework/resources/**"
+      - "wework/scripts/**"
+      - "wework/src/**"
   workflow_dispatch:
 
 permissions:
@@ -467,6 +475,8 @@ jobs:
       packages: write
     outputs:
       desktop_image: ${{ steps.image.outputs.desktop-ref }}
+      executor_image: ${{ steps.runtime.outputs.executor-ref }}
+      backend_rs_image: ${{ steps.runtime.outputs.backend-rs-ref }}
 
     steps:
       - name: Checkout code
@@ -482,6 +492,23 @@ jobs:
           )"
           echo "desktop-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:desktop-$desktop_digest" \
             >> "$GITHUB_OUTPUT"
+
+      - name: Resolve shared Rust E2E runtimes
+        id: runtime
+        env:
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+        run: |
+          runtime_output="$(mktemp)"
+          GITHUB_OUTPUT="$runtime_output" \
+            SOURCE_DIGEST="$EXECUTOR_SOURCE_DIGEST" \
+            .github/scripts/resolve-executor-e2e-runtime.sh
+          executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
+          test -n "$executor_image"
+          {
+            echo "executor-ref=$executor_image"
+            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -514,6 +541,90 @@ jobs:
           tags: ${{ steps.image.outputs.desktop-ref }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop,mode=max
+
+  warm-wework-desktop-core-e2e-build:
+    name: Warm Wework Desktop Core E2E Build
+    needs:
+      - changes
+      - prepare-wework-desktop-image
+    if: needs.changes.outputs.wework_target == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      HOME: /root
+    container:
+      image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Log in to GHCR with ORAS
+        run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Resolve shared Wework desktop E2E build
+        id: shared-build
+        env:
+          DESKTOP_IMAGE: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
+          EXECUTOR_IMAGE: ${{ needs.prepare-wework-desktop-image.outputs.executor_image }}
+          BACKEND_RS_IMAGE: ${{ needs.prepare-wework-desktop-image.outputs.backend_rs_image }}
+        run: |
+          mkdir -p .ci-artifacts
+          .github/scripts/resolve-wework-core-e2e-build-ref.sh \
+            "$GITHUB_REPOSITORY_OWNER" \
+            "$DESKTOP_IMAGE" \
+            "$EXECUTOR_IMAGE" \
+            "$BACKEND_RS_IMAGE"
+
+      - name: Restore shared Wework desktop E2E build
+        id: restore-shared-build
+        env:
+          REFERENCE: ${{ steps.shared-build.outputs.reference }}
+        run: |
+          set +e
+          .github/scripts/restore-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-core-e2e-build.tar.zst \
+            "$REFERENCE"
+          restore_status=$?
+          set -e
+          case "$restore_status" in
+            0) echo "cache-hit=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "cache-hit=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$restore_status" ;;
+          esac
+
+      - name: Build shared Wework desktop E2E artifact
+        if: steps.restore-shared-build.outputs.cache-hit != 'true'
+        uses: ./.github/actions/build-wework-core-e2e
+        with:
+          executor-image: ${{ needs.prepare-wework-desktop-image.outputs.executor_image }}
+          backend-rs-image: ${{ needs.prepare-wework-desktop-image.outputs.backend_rs_image }}
+          save-cache: "true"
+
+      - name: Publish shared Wework desktop E2E build
+        if: steps.restore-shared-build.outputs.cache-hit != 'true'
+        env:
+          REFERENCE: ${{ steps.shared-build.outputs.reference }}
+        run: |
+          .github/scripts/publish-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-core-e2e-build.tar.zst \
+            "$REFERENCE"
 
   warm-executor-e2e-image:
     name: Warm Executor E2E Image Cache
