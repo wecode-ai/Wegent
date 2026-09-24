@@ -5,6 +5,9 @@ const POPOVER_WIDTH = 280
 const POPOVER_GAP = 8
 const POPOVER_MARGIN = 16
 const POPOVER_HEIGHT_ESTIMATE = 240
+const OPEN_POPOVER_BODY_ATTRIBUTE = 'data-wework-anchor-popover-open'
+
+let openPopoverCount = 0
 
 interface AnchorPopoverProps {
   anchor: HTMLElement | null
@@ -73,6 +76,18 @@ export function AnchorPopover({
   }, [anchor])
 
   useEffect(() => {
+    if (!anchor) return
+    openPopoverCount += 1
+    document.body.setAttribute(OPEN_POPOVER_BODY_ATTRIBUTE, '')
+    return () => {
+      openPopoverCount = Math.max(0, openPopoverCount - 1)
+      if (openPopoverCount === 0) {
+        document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
+      }
+    }
+  }, [anchor])
+
+  useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
@@ -104,7 +119,7 @@ export function AnchorPopover({
       role="dialog"
       tabIndex={-1}
       aria-label={title}
-      className={`fixed z-system-popover rounded-xl border border-border/70 bg-popover text-text-primary shadow-lg ${header ? '' : 'p-1'}`}
+      className={`electron-titlebar-interactive-region fixed z-system-popover rounded-xl border border-border/70 bg-popover text-text-primary shadow-lg ${header ? '' : 'p-1'}`}
       style={{
         left: position.left,
         width: position.width,

@@ -228,6 +228,10 @@ describe('notification center', () => {
     fireEvent.click(screen.getByTestId('wework-notifications-button'))
     fireEvent.click(screen.getByTestId('wework-notifications-settings'))
 
+    expect(screen.getByTestId('wework-notifications-popover')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(document.body).toHaveAttribute('data-wework-anchor-popover-open')
     const taskSystem = screen.getByTestId('wework-notifications-setting-tasks-system')
     expect(taskSystem).toBeEnabled()
     expect(screen.getByTestId('wework-notifications-setting-collaboration-im')).toBeDisabled()
@@ -236,6 +240,9 @@ describe('notification center', () => {
     await waitFor(() => expect(readActiveNotificationPreferences().tasks.system).toBe(true))
     expect(taskSystem).toHaveAttribute('aria-checked', 'true')
     expect(api.updatePreferences).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    expect(document.body).not.toHaveAttribute('data-wework-anchor-popover-open')
   })
 
   it('migrates the legacy task system setting for offline users', async () => {
