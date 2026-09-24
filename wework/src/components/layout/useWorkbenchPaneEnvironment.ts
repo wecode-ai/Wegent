@@ -129,6 +129,20 @@ export function applySharedChangeRequestSnapshot(
   environmentInfo: EnvironmentInfo,
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
+  const provider = snapshot.provider ?? snapshot.changeRequest?.provider
+  if (
+    provider &&
+    snapshot.lookupState &&
+    ['unavailable', 'unauthenticated', 'error'].includes(snapshot.lookupState)
+  ) {
+    return {
+      ...environmentInfo,
+      changeRequest: {
+        provider,
+        state: snapshot.lookupState,
+      },
+    }
+  }
   if (snapshot.error || snapshot.stale) return environmentInfo
   if (
     environmentInfo.changeRequest &&
@@ -136,17 +150,17 @@ export function applySharedChangeRequestSnapshot(
   ) {
     return environmentInfo
   }
-  const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
-  if (!provider) return environmentInfo
+  const resolvedProvider = provider ?? environmentInfo.changeRequest?.provider
+  if (!resolvedProvider) return environmentInfo
   return {
     ...environmentInfo,
     changeRequest: snapshot.changeRequest
       ? {
-          provider,
+          provider: resolvedProvider,
           state: 'found',
           changeRequest: snapshot.changeRequest,
         }
-      : { provider, state: 'not_found' },
+      : { provider: resolvedProvider, state: 'not_found' },
   }
 }
 
@@ -406,6 +420,7 @@ export function useWorkbenchPaneEnvironment({
         currentRuntimeTask.workspacePath ?? ''
       }`
     : ''
+  const currentRuntimeTaskDeviceId = currentRuntimeTask?.deviceId
   const environmentContextRef = useRef({ workspaceProject, activeWorkspaceTarget })
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
@@ -572,7 +587,7 @@ export function useWorkbenchPaneEnvironment({
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
           const executionDeviceId = resolveEnvironmentExecutionDeviceId(
-            currentRuntimeTask,
+            currentRuntimeTaskDeviceId ? { deviceId: currentRuntimeTaskDeviceId } : null,
             latestActiveWorkspaceTarget
           )
           const executionDevice = findWorkbenchDevice(devicesRef.current, executionDeviceId)
@@ -596,12 +611,6 @@ export function useWorkbenchPaneEnvironment({
               ...(preserveCurrentFields && !info.deletions && current.deletions
                 ? { deletions: current.deletions }
                 : {}),
-              ...(preserveCurrentFields &&
-              changeRequestStatusEnabled &&
-              !info.changeRequest &&
-              current.changeRequest
-                ? { changeRequest: current.changeRequest }
-                : {}),
               workspaceRoots,
               executionDeviceId,
               executionTarget: executionDevice
@@ -622,7 +631,7 @@ export function useWorkbenchPaneEnvironment({
           {
             ...(force ? { force: true } : {}),
             ...(shareInflight === false ? { shareInflight: false } : {}),
-            changeRequestStatusEnabled,
+            changeRequestStatusEnabled: false,
             onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
           }
         )
@@ -644,8 +653,7 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
-      changeRequestStatusEnabled,
-      currentRuntimeTask,
+      currentRuntimeTaskDeviceId,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
       workspaceRoots,

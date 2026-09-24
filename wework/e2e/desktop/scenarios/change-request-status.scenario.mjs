@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
@@ -10,9 +10,11 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CHANGE_REQUEST_BUTTON = '[data-testid="change-request-button"]'
 const ENVIRONMENT_BUTTON = '[data-testid="environment-info-button"]'
+const QUERY_LOG_FILE = '.wework-change-request-e2e-queries'
 const STATE_FILE = '.wework-change-request-e2e-state'
 const TASK_PROMPT = 'Inspect the pull request status for this branch'
 const TASK_COMPLETION = 'Pull request status fixture ready'
+const FOLLOW_UP_COMPLETION = 'Pull request status follow-up ready'
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -46,10 +48,11 @@ async function createGitHubCliFixture(homePath) {
   await mkdir(binPath, { recursive: true })
   await writeFile(
     fixturePath,
-    `import { readFileSync } from 'node:fs'
+    `import { appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+appendFileSync(join(home, '${QUERY_LOG_FILE}'), \`\${Date.now()}\\n\`)
 let state = 'pending'
 try {
   state = readFileSync(join(home, '${STATE_FILE}'), 'utf8').trim()
@@ -151,8 +154,9 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
   })
 }
 
-function writeTaskCompletion(response) {
-  const responseId = 'wework-change-request-e2e'
+function writeTaskCompletion(response, requestCount) {
+  const responseId = `wework-change-request-e2e-${requestCount}`
+  const completion = requestCount === 1 ? TASK_COMPLETION : FOLLOW_UP_COMPLETION
   const events = [
     {
       type: 'response.created',
@@ -161,10 +165,10 @@ function writeTaskCompletion(response) {
     {
       type: 'response.output_item.done',
       item: {
-        id: 'wework-change-request-e2e-message',
+        id: `wework-change-request-e2e-message-${requestCount}`,
         type: 'message',
         role: 'assistant',
-        content: [{ type: 'output_text', text: TASK_COMPLETION, annotations: [] }],
+        content: [{ type: 'output_text', text: completion, annotations: [] }],
       },
     },
     {
@@ -192,6 +196,11 @@ function writeTaskCompletion(response) {
   )
 }
 
+async function queryCount(path) {
+  const contents = await readFile(path, 'utf8')
+  return contents.split('\n').filter(Boolean).length
+}
+
 async function refreshEnvironment(control) {
   await control.command('click', ENVIRONMENT_BUTTON)
   assert.equal(
@@ -211,8 +220,11 @@ export async function createDesktopScenario({
 }) {
   await configureGitFixture(workspacePath)
   await createGitHubCliFixture(homePath)
+  const queryLogPath = join(homePath, QUERY_LOG_FILE)
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []
+  let modelRequestCount = 0
+  await writeFile(queryLogPath, '')
   await writeFile(statePath, 'pending\n')
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
@@ -311,7 +323,8 @@ export async function createDesktopScenario({
         for await (const _chunk of request) {
           // Consume the request before returning the deterministic response.
         }
-        writeTaskCompletion(response)
+        modelRequestCount += 1
+        writeTaskCompletion(response, modelRequestCount)
         return true
       }
       return false
@@ -364,6 +377,28 @@ export async function createDesktopScenario({
         /feat\(wework\): show pull request status/
       )
       await capture(control, 'change-request-status-02-pending.png')
+
+      const initialQueryCount = await queryCount(queryLogPath)
+      assert.ok(initialQueryCount > 0, 'The initial PR/MR lookup did not invoke GitHub CLI')
+      await control.command('click', ENVIRONMENT_BUTTON)
+      await control.command('fill', '[data-testid="chat-message-input"]', {
+        value: 'Keep the current task active without changing its branch',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FOLLOW_UP_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await new Promise(resolve => setTimeout(resolve, 500))
+      assert.equal(
+        await queryCount(queryLogPath),
+        initialQueryCount,
+        'An equivalent runtime task refresh repeated the PR/MR lookup'
+      )
+      await control.command('click', ENVIRONMENT_BUTTON)
+      await control.command('waitFor', '[data-testid="environment-info-popover"]')
 
       await writeFile(statePath, 'failure\n')
       await refreshEnvironment(control)

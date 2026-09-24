@@ -11616,66 +11616,67 @@ describe('DesktopWorkbenchLayout', () => {
         },
       },
     }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
-        state={{
-          ...baseProps.state,
-          currentProject: null,
-          currentRuntimeTask: {
-            deviceId: 'runtime-device',
-            workspacePath: '/workspace/project-alpha',
-            taskId: 'runtime-1',
-          },
-          projects: [
-            {
-              id: 2,
-              name: 'fallback',
-              tasks: [],
-              config: {
-                mode: 'workspace',
-                execution: {
-                  targetType: 'local',
-                  deviceId: 'fallback-device',
-                },
-                workspace: {
-                  source: 'local_path',
-                  localPath: '/workspace/fallback',
-                },
-              },
+    const runtimeState = {
+      ...baseProps.state,
+      currentProject: null,
+      currentRuntimeTask: {
+        deviceId: 'runtime-device',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-1',
+      },
+      projects: [
+        {
+          id: 2,
+          name: 'fallback',
+          tasks: [],
+          config: {
+            mode: 'workspace' as const,
+            execution: {
+              targetType: 'local' as const,
+              deviceId: 'fallback-device',
             },
-            runtimeProject,
-          ],
-          runtimeWork: {
-            projects: [
+            workspace: {
+              source: 'local_path' as const,
+              localPath: '/workspace/fallback',
+            },
+          },
+        },
+        runtimeProject,
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: runtimeProject.id, name: runtimeProject.name },
+            deviceWorkspaces: [
               {
-                project: { id: runtimeProject.id, name: runtimeProject.name },
-                deviceWorkspaces: [
+                id: 91,
+                deviceId: 'runtime-device',
+                workspacePath: '/workspace/project-alpha',
+                available: true,
+                mapped: true,
+                tasks: [
                   {
-                    id: 91,
-                    deviceId: 'runtime-device',
-                    workspacePath: '/workspace/project-alpha',
-                    available: true,
-                    mapped: true,
-                    tasks: [
-                      {
-                        taskId: 'runtime-1',
-                        workspacePath: '/workspace/worktrees/8/project-alpha',
-                        title: 'Runtime task',
-                        runtime: 'codex',
-                      },
-                    ],
+                    taskId: 'runtime-1',
+                    workspacePath: '/workspace/worktrees/8/project-alpha',
+                    title: 'Runtime task',
+                    runtime: 'codex',
                   },
                 ],
               },
             ],
-            chats: [],
-            totalTasks: 1,
           },
-        }}
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    }
+
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={runtimeState}
       />
     )
 
@@ -11689,12 +11690,24 @@ describe('DesktopWorkbenchLayout', () => {
           taskId: 'runtime-1',
         },
         {
-          changeRequestStatusEnabled: true,
+          changeRequestStatusEnabled: false,
           onPartialInfo: expect.any(Function),
         }
       )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={structuredClone(runtimeState)}
+      />
+    )
+
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
   })
 
   test('refreshes environment info after a runtime task finishes', async () => {
@@ -11787,7 +11800,7 @@ describe('DesktopWorkbenchLayout', () => {
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
         {
-          changeRequestStatusEnabled: true,
+          changeRequestStatusEnabled: false,
           force: true,
           onPartialInfo: expect.any(Function),
         }
@@ -11913,7 +11926,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
-          changeRequestStatusEnabled: true,
+          changeRequestStatusEnabled: false,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -12006,7 +12019,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
-          changeRequestStatusEnabled: true,
+          changeRequestStatusEnabled: false,
           onPartialInfo: expect.any(Function),
         }
       )
