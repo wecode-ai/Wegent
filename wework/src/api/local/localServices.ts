@@ -154,7 +154,7 @@ import {
   type CodexOfficialModelList,
 } from '@/features/model-settings/codexOfficialModels'
 import {
-  buildLocalModelRequestUrl,
+  localModelConfigRequestUrl,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -874,11 +874,7 @@ function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unkn
   }
   return {
     enabled: true,
-    request_url: buildLocalModelRequestUrl(
-      visionModel.baseUrl,
-      visionModel.requestPath,
-      visionModel.apiFormat
-    ),
+    request_url: localModelConfigRequestUrl(visionModel),
     api_format: visionModel.apiFormat,
     api_key: visionModel.apiKey || 'dummy',
     model_id: visionModel.modelId,
@@ -950,11 +946,7 @@ function localRuntimeModelConfig(
     if (requireCodexCatalog && !localModel.catalogReady) {
       throw new Error('Local model requires a Codex restart')
     }
-    const requestUrl = buildLocalModelRequestUrl(
-      localModel.baseUrl,
-      localModel.requestPath,
-      localModel.apiFormat
-    )
+    const requestUrl = localModelConfigRequestUrl(localModel)
     const visionSidecar = localVisionSidecarConfig(localModel)
     const primaryCodexCatalogModelId =
       localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
