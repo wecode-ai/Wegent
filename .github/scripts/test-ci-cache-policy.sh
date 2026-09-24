@@ -290,6 +290,9 @@ if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'
   [[ "$macos_warmup_section" != *'executor/target'* ]] ||
   [[ "$macos_warmup_section" != *'backend-rs/target'* ]] ||
   [[ "$macos_warmup_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$macos_warmup_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
   [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
   [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
   fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
@@ -522,11 +525,15 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'restore-oci-runtime-binary.sh'* ]] ||
   [[ "$desktop_build_section" != *'WEWORK_E2E_PREBUILT_EXECUTOR_PATH'* ]] ||
   [[ "$memory_build_section" != *'WEWORK_EXECUTOR_PROFILE: release'* ]] ||
+  [[ "$memory_build_section" != *'wework-macos-executor-runtime-v1-'* ]] ||
+  [[ "$memory_build_section" != *'wework-macos-backend-rs-runtime-v1-'* ]] ||
+  [[ "$memory_build_section" != *'build-macos-e2e-runtimes.sh'* ]] ||
   ! grep -Fq 'strip --strip-debug' \
     "$script_dir/archive-wework-core-e2e-build.sh"; then
   fail "Linux Wework builds must reuse shared Rust runtimes without a duplicate warmup"
 fi
 
+bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
 

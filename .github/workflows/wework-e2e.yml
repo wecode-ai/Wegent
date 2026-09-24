@@ -1159,32 +1159,49 @@ jobs:
             ${{ runner.os }}-wework-electron-app-v2-
             ${{ runner.os }}-wework-electron-app-v1-
 
+      - name: Restore macOS arm64 executor runtime
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+
+      - name: Restore macOS arm64 Rust backend runtime
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+
       - name: Build Wework Electron E2E application
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
-          CARGO_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
+          WEWORK_BACKEND_RS_TARGET_DIR: ${{ github.workspace }}/backend-rs/target
           WEWORK_EXECUTOR_PROFILE: release
         run: |
-          CARGO_BUILD_TARGET=aarch64-apple-darwin \
+          runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+          executor_runtime="$runtime_root/wegent-executor"
+          backend_runtime="$runtime_root/wegent-backend-rs"
+
+          .github/scripts/build-macos-e2e-runtimes.sh \
+            "$executor_runtime" \
+            "$backend_runtime" &
+          runtimes_pid=$!
+          WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime" \
+            WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS="900" \
+            CARGO_BUILD_TARGET=aarch64-apple-darwin \
             pnpm --filter wework ai:verify:electron:build &
           wework_pid=$!
-          cargo build \
-            --locked \
-            --manifest-path backend-rs/Cargo.toml \
-            --bin wegent-backend-rs &
-          backend_pid=$!
 
           status=0
           wait "$wework_pid" || status=$?
-          wait "$backend_pid" || status=$?
+          wait "$runtimes_pid" || status=$?
           if [[ "$status" -ne 0 ]]; then
             exit "$status"
           fi
 
           app_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
           executor_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"
-          backend_rs_bin="$CARGO_TARGET_DIR/debug/wegent-backend-rs"
+          backend_rs_bin="$backend_runtime"
           test -x "$app_bin"
           test -x "$executor_bin"
           test -x "$backend_rs_bin"
