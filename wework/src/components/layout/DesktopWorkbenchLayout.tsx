@@ -800,6 +800,7 @@ export function DesktopWorkbenchLayout({
   })
 
   useWorkbenchShellEventHandlers({
+    enabled: routeActive,
     onCreateProjectMode: openProjectFromWorkMenu,
     onBindProjectWorkspace: openProjectWorkspaceBinding,
     onOpenCloudDeviceSettings: openCloudDeviceSettings,

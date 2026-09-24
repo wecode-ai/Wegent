@@ -1498,6 +1498,7 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       const projectRecords = await loadProjectRecords()
       const projectRecord = projectRecords.find(record => record.id === binding.cloud_project_id)
       if (!projectRecord) throw new Error('Local project not found')
+      if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
       const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
       return {
         ...binding,
