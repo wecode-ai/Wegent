@@ -296,7 +296,7 @@ jobs:
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
         with:
-          version: 1.3.4
+          version: 1.3.1
 
       - name: Log in to GHCR with ORAS
         run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
