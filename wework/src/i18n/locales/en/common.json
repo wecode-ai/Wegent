@@ -4931,6 +4931,12 @@
   },
   "notifications": {
     "title": "Notifications",
+    "settings": "Notification settings",
+    "settings_requires_cloud": "Task updates can be changed locally. Connect to the cloud for Collaboration and Other notifications.",
+    "channel_in_app": "In-app",
+    "channel_system": "System notification",
+    "channel_im": "IM push",
+    "im_target_required": "Choose an IM conversation from the away-reminder control first.",
     "back": "Back to categories",
     "total_unread": "{{count}} unread",
     "category_tasks": "Task updates",

@@ -7,15 +7,20 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardCheck,
+  Settings2,
   type LucideIcon,
   UsersRound,
 } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import {
   createNotificationsApi,
   type WeworkInbox,
   type WeworkNotification,
   type WeworkNotificationCategory,
+  type WeworkNotificationChannel,
+  type WeworkNotificationPreferenceCategory,
+  type WeworkNotificationPreferences,
   type WeworkNotificationPayload,
 } from '@/api/notifications'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
@@ -28,8 +33,15 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { cn } from '@/lib/utils'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { openWeworkScheme } from './schemeEvents'
+import {
+  cacheNotificationPreferences,
+  migrateLegacyTaskSystemNotification,
+  OPEN_NOTIFICATION_SETTINGS_EVENT,
+  readCachedNotificationPreferences,
+} from './notificationPreferences'
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
 const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
@@ -153,6 +165,78 @@ function NotificationFeedRow({
   )
 }
 
+function NotificationSettings({
+  preferences,
+  isDisabled,
+  connected,
+  onChange,
+  t,
+}: {
+  preferences: WeworkNotificationPreferences
+  isDisabled: (
+    category: WeworkNotificationPreferenceCategory,
+    channel: WeworkNotificationChannel
+  ) => boolean
+  connected: boolean
+  onChange: (
+    category: WeworkNotificationPreferenceCategory,
+    channel: WeworkNotificationChannel,
+    enabled: boolean
+  ) => void
+  t: (key: string) => string
+}) {
+  const categories: Array<{
+    id: WeworkNotificationPreferenceCategory
+    title: string
+  }> = [
+    { id: 'tasks', title: t('notifications.category_tasks') },
+    { id: 'collaboration', title: t('notifications.category_collaboration') },
+    { id: 'general', title: t('notifications.category_general') },
+  ]
+  const channelLabels: Record<WeworkNotificationChannel, string> = {
+    in_app: t('notifications.channel_in_app'),
+    system: t('notifications.channel_system'),
+    im: t('notifications.channel_im'),
+  }
+
+  return (
+    <div data-testid="wework-notifications-settings-panel" className="divide-y divide-border/60">
+      {categories.map(category => (
+        <section key={category.id} className="px-3 py-3">
+          <h3 className="text-sm font-medium">{category.title}</h3>
+          <div className="mt-2 space-y-2">
+            {(Object.keys(channelLabels) as WeworkNotificationChannel[]).flatMap(channel => {
+              const enabled = preferences[category.id][channel]
+              if (enabled == null) return []
+              const label = channelLabels[channel]
+              return [
+                <label
+                  key={channel}
+                  className="flex min-h-9 items-center justify-between gap-3 rounded-md px-2 hover:bg-muted/60"
+                >
+                  <span className="text-sm text-text-secondary">{label}</span>
+                  <SettingsSwitch
+                    data-testid={`wework-notifications-setting-${category.id}-${channel}`}
+                    checked={enabled}
+                    disabled={isDisabled(category.id, channel)}
+                    aria-label={`${category.title} · ${label}`}
+                    onCheckedChange={checked => onChange(category.id, channel, checked)}
+                  />
+                </label>,
+              ]
+            })}
+          </div>
+        </section>
+      ))}
+      {!connected && (
+        <p className="px-3 py-2 text-xs text-text-secondary">
+          {t('notifications.settings_requires_cloud')}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function NotificationCenter() {
   const connection = useContext(CloudConnectionContext)
   return (
@@ -160,6 +244,7 @@ export function NotificationCenter() {
       key={`${connection?.apiBaseUrl ?? ''}:${connection?.user?.id ?? ''}`}
       baseUrl={connection?.apiBaseUrl ?? null}
       token={connection?.token ?? null}
+      userId={connection?.user?.id ?? null}
     />
   )
 }
@@ -192,9 +277,11 @@ function markInboxRead(inbox: WeworkInbox | null): WeworkInbox | null {
 function ConnectedNotificationCenter({
   baseUrl,
   token,
+  userId,
 }: {
   baseUrl: string | null
   token: string | null
+  userId: number | null
 }) {
   const { t } = useTranslation('common')
   const taskSource = useNotificationTaskSource()
@@ -211,8 +298,28 @@ function ConnectedNotificationCenter({
         : null,
     [baseUrl, token]
   )
+  const runtimeApi = useMemo(
+    () =>
+      baseUrl && token
+        ? createRuntimeWorkApi(
+            createHttpClient({
+              baseUrl,
+              getToken: () => token,
+              redirectOnUnauthorized: false,
+            })
+          )
+        : null,
+    [baseUrl, token]
+  )
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [category, setCategory] = useState<InboxCategory | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const accountKey = `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
+  const [preferences, setPreferences] = useState<WeworkNotificationPreferences>(() =>
+    readCachedNotificationPreferences(accountKey)
+  )
+  const [taskImSessionKey, setTaskImSessionKey] = useState<string | null>(null)
   const [inboxes, setInboxes] = useState<Record<WeworkNotificationCategory, WeworkInbox | null>>({
     collaboration: null,
     general: null,
@@ -220,6 +327,45 @@ function ConnectedNotificationCenter({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const requestId = useRef(0)
+  const refreshPreferences = useCallback(async () => {
+    if (!api || !runtimeApi) return Promise.resolve()
+    try {
+      await migrateLegacyTaskSystemNotification(accountKey, () =>
+        api.updatePreferences({
+          category: 'tasks',
+          channel: 'system',
+          enabled: true,
+        })
+      )
+    } catch (cause) {
+      console.error('[Wework] Failed to migrate legacy task notification setting', cause)
+    }
+
+    const next = await api.getPreferences()
+    let taskIm = preferences.tasks.im
+    try {
+      const imSettings = await runtimeApi.getImNotificationSettings()
+      taskIm = imSettings.global.enabled
+      setTaskImSessionKey(imSettings.global.sessionKey ?? null)
+    } catch (cause) {
+      console.error('[Wework] Failed to load task IM notification settings', cause)
+    }
+    const merged = {
+      ...next,
+      tasks: { ...next.tasks, im: taskIm },
+    }
+    setPreferences(merged)
+    cacheNotificationPreferences(accountKey, merged)
+  }, [accountKey, api, preferences.tasks.im, runtimeApi])
+  const openSettings = useCallback(() => {
+    if (!buttonRef.current) return
+    setAnchor(buttonRef.current)
+    setCategory(null)
+    setSettingsOpen(true)
+    void refreshPreferences().catch(cause => {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    })
+  }, [refreshPreferences])
   const refresh = useCallback(() => {
     if (!api) return Promise.resolve()
     const id = ++requestId.current
@@ -256,6 +402,24 @@ function ConnectedNotificationCenter({
     }
   }, [refresh, anchor])
 
+  useEffect(() => {
+    cacheNotificationPreferences(accountKey, readCachedNotificationPreferences(accountKey))
+  }, [accountKey])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshPreferences().catch(cause => {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [refreshPreferences])
+
+  useEffect(() => {
+    window.addEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
+    return () => window.removeEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
+  }, [openSettings])
+
   const unreadTasks = useMemo(
     () => taskSource?.items.filter(item => taskSource.unreadTaskKeys.has(item.key)) ?? [],
     [taskSource]
@@ -279,6 +443,7 @@ function ConnectedNotificationCenter({
     anchor?.focus()
     setAnchor(null)
     setCategory(null)
+    setSettingsOpen(false)
   }, [anchor])
   const mutate = async (action: () => Promise<void>) => {
     if (busy) return
@@ -390,6 +555,53 @@ function ConnectedNotificationCenter({
       })
     })
 
+  const updatePreference = (
+    preferenceCategory: WeworkNotificationPreferenceCategory,
+    channel: WeworkNotificationChannel,
+    enabled: boolean
+  ) =>
+    void mutate(async () => {
+      if (preferenceCategory === 'tasks' && channel === 'im') {
+        if (!runtimeApi || (!taskImSessionKey && enabled)) {
+          throw new Error(t('notifications.im_target_required'))
+        }
+        const settings = await runtimeApi.updateGlobalImNotification({
+          enabled,
+          sessionKey: taskImSessionKey,
+        })
+        const next = {
+          ...preferences,
+          tasks: { ...preferences.tasks, im: settings.global.enabled },
+        }
+        setTaskImSessionKey(settings.global.sessionKey ?? null)
+        setPreferences(next)
+        cacheNotificationPreferences(accountKey, next)
+        return
+      }
+      if (preferenceCategory === 'tasks' && !api) {
+        const next = {
+          ...preferences,
+          tasks: { ...preferences.tasks, [channel]: enabled },
+        }
+        setPreferences(next)
+        cacheNotificationPreferences(accountKey, next)
+        return
+      }
+      if (!api) return
+      const updated = await api.updatePreferences({
+        category: preferenceCategory,
+        channel,
+        enabled,
+      })
+      const next = {
+        ...updated,
+        tasks: { ...updated.tasks, im: preferences.tasks.im },
+      }
+      setPreferences(next)
+      cacheNotificationPreferences(accountKey, next)
+      await refresh()
+    })
+
   const selectedCloudCategory =
     category === 'collaboration' || category === 'general' ? category : null
   const selectedCloudInbox = selectedCloudCategory ? inboxes[selectedCloudCategory] : null
@@ -437,6 +649,7 @@ function ConnectedNotificationCenter({
     <>
       <Tooltip label={t('notifications.title')} side="bottom">
         <button
+          ref={buttonRef}
           type="button"
           data-testid="wework-notifications-button"
           className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, 'relative')}
@@ -466,43 +679,56 @@ function ConnectedNotificationCenter({
       {anchor && (
         <AnchorPopover
           anchor={anchor}
-          title={selectedCategoryRow?.title ?? t('notifications.title')}
+          title={
+            settingsOpen
+              ? t('notifications.settings')
+              : (selectedCategoryRow?.title ?? t('notifications.title'))
+          }
           testId="wework-notifications-popover"
           onClose={close}
           wide
           header={
             <div className="flex h-12 items-center gap-2 border-b border-border/60 px-2 md:px-3">
-              {category && (
+              {(category || settingsOpen) && (
                 <button
                   type="button"
                   data-testid="wework-notifications-back"
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
                   aria-label={t('notifications.back')}
-                  onClick={() => setCategory(null)}
+                  onClick={() => {
+                    setCategory(null)
+                    setSettingsOpen(false)
+                  }}
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </button>
               )}
               <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
                 <span className="truncate text-base font-semibold">
-                  {selectedCategoryRow?.title ?? t('notifications.title')}
+                  {settingsOpen
+                    ? t('notifications.settings')
+                    : (selectedCategoryRow?.title ?? t('notifications.title'))}
                 </span>
                 <span className="hidden shrink-0 text-xs text-text-secondary sm:inline">
                   {t('notifications.total_unread', {
-                    count: selectedCategoryRow?.unread ?? unreadCount,
+                    count: settingsOpen
+                      ? unreadCount
+                      : (selectedCategoryRow?.unread ?? unreadCount),
                   })}
                 </span>
               </span>
-              <button
-                type="button"
-                data-testid="wework-notifications-refresh"
-                className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
-                disabled={busy || !api}
-                onClick={() => void refresh()}
-              >
-                {t('notifications.refresh')}
-              </button>
-              {!category && (
+              {!settingsOpen && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-refresh"
+                  className="min-h-11 text-xs text-text-secondary hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
+                  disabled={busy || !api}
+                  onClick={() => void refresh()}
+                >
+                  {t('notifications.refresh')}
+                </button>
+              )}
+              {!category && !settingsOpen && (
                 <button
                   type="button"
                   data-testid="wework-notifications-read-all"
@@ -511,6 +737,17 @@ function ConnectedNotificationCenter({
                   onClick={readAll}
                 >
                   {t('notifications.read_all')}
+                </button>
+              )}
+              {!category && !settingsOpen && (
+                <button
+                  type="button"
+                  data-testid="wework-notifications-settings"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus md:h-7 md:w-7"
+                  aria-label={t('notifications.settings')}
+                  onClick={openSettings}
+                >
+                  <Settings2 className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -526,7 +763,17 @@ function ConnectedNotificationCenter({
               {t('notifications.cloud_unavailable')}
             </p>
           )}
-          {!category ? (
+          {settingsOpen ? (
+            <NotificationSettings
+              preferences={preferences}
+              isDisabled={(preferenceCategory, channel) =>
+                busy || (preferenceCategory === 'tasks' ? channel === 'im' && !runtimeApi : !api)
+              }
+              connected={Boolean(api)}
+              onChange={updatePreference}
+              t={t}
+            />
+          ) : !category ? (
             <div data-testid="wework-notifications-categories">
               {categoryRows.map(row => {
                 const Icon = row.icon

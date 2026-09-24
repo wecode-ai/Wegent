@@ -1,5 +1,6 @@
 """Inbox persistence, transaction, authorization and IM contracts."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,7 @@ from app.services.loop_items.service import loop_item_service
 from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
+    deliver_notification_payload,
     issue_url,
     notification_links,
     send_wework_notification,
@@ -64,7 +66,11 @@ def test_send_without_project_persists_in_own_inbox(
     assert row.is_read is False
     assert row.read_status_changed_at == row.created_at
     assert saved["read_at"] is None
-    no_external_delivery.assert_called_once_with(deliver_notification, saved["id"])
+    no_external_delivery.assert_called_once_with(
+        deliver_notification,
+        saved["id"],
+        {"in_app": True, "system": False, "im": True},
+    )
     inbox = test_client.get(path, headers=headers).json()
     assert [row["id"] for row in inbox["items"]] == [saved["id"]]
     assert inbox["unread_count"] == 1
@@ -525,3 +531,144 @@ def test_read_all_updates_only_unread_notifications_of_current_user(
         next(row for row in inbox["items"] if row["id"] == rows[0].id)["read_at"]
         == first_read["read_at"]
     )
+
+
+def test_notification_preferences_are_account_scoped_and_clear_category_unread(
+    test_client, test_db, test_user, test_token
+):
+    rows = [
+        create_notification(
+            test_db,
+            user_id=test_user.id,
+            actor_user_id=test_user.id,
+            title=kind,
+            body=kind,
+            kind=kind,
+        )
+        for kind in ("assignment", "message")
+    ]
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = "/api/v1/wework-notifications/preferences"
+
+    defaults = test_client.get(path, headers=headers)
+    assert defaults.status_code == 200
+    assert defaults.json()["tasks"] == {
+        "in_app": True,
+        "system": False,
+        "im": None,
+    }
+
+    updated = test_client.put(
+        path,
+        headers=headers,
+        json={"category": "collaboration", "channel": "in_app", "enabled": False},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["collaboration"]["in_app"] is False
+    test_db.expire_all()
+    assert test_db.get(WeworkNotification, rows[0].id).is_read is True
+    assert test_db.get(WeworkNotification, rows[1].id).is_read is False
+    assert (
+        json.loads(test_db.get(type(test_user), test_user.id).preferences)[
+            "wework_notification_preferences"
+        ]["collaboration"]["in_app"]
+        is False
+    )
+
+
+def test_disabled_inbox_still_allows_enabled_im_delivery(
+    test_client, test_db, test_user, test_token, no_external_delivery
+):
+    test_user.preferences = json.dumps(
+        {
+            "wework_notification_preferences": {
+                "general": {"in_app": False, "system": None, "im": True}
+            }
+        }
+    )
+    test_db.commit()
+
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={"title": "Quiet inbox", "body": "Still send IM"},
+    )
+
+    assert response.status_code == 201
+    assert test_db.query(WeworkNotification).count() == 0
+    no_external_delivery.assert_called_once()
+    assert no_external_delivery.call_args.args[0] is deliver_notification_payload
+    assert no_external_delivery.call_args.args[2] == {
+        "in_app": False,
+        "system": False,
+        "im": True,
+    }
+
+
+async def test_disabled_collaboration_im_skips_dingtalk_push(
+    test_db, test_user, no_external_delivery
+):
+    test_user.preferences = json.dumps(
+        {
+            "wework_notification_preferences": {
+                "collaboration": {"in_app": True, "system": True, "im": False}
+            }
+        }
+    )
+    test_db.commit()
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Mention",
+        body="Please review",
+        kind="mention",
+    )
+    test_db.commit()
+    channels = no_external_delivery.call_args.args[2]
+    session = SimpleNamespace(channel_type="dingtalk", user_id=test_user.id)
+
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=SimpleNamespace(emit=AsyncMock()),
+        ),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            AsyncMock(return_value=[session]),
+        ) as list_sessions,
+        patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
+            AsyncMock(return_value={"success": True}),
+        ) as send,
+    ):
+        await deliver_notification(row.id, channels)
+
+    assert channels == {"in_app": True, "system": True, "im": False}
+    list_sessions.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+def test_all_disabled_channels_drop_general_notification(
+    test_client, test_db, test_user, test_token, no_external_delivery
+):
+    test_user.preferences = json.dumps(
+        {
+            "wework_notification_preferences": {
+                "general": {"in_app": False, "system": None, "im": False}
+            }
+        }
+    )
+    test_db.commit()
+
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={"title": "Muted", "body": "Do not deliver"},
+    )
+
+    assert response.status_code == 201
+    assert test_db.query(WeworkNotification).count() == 0
+    no_external_delivery.assert_not_called()

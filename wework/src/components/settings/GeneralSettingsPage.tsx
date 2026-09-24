@@ -882,12 +882,6 @@ export function GeneralSettingsPage() {
               'workbench.general_settings_prevent_sleep_while_tasks_running_description'
             ),
           })}
-          {renderSwitchRow({
-            preferenceKey: 'taskCompletionNotificationsEnabled',
-            testId: 'general-task-completion-notifications-toggle',
-            label: t('workbench.general_settings_task_completion_notifications'),
-            description: t('workbench.general_settings_task_completion_notifications_description'),
-          })}
           <SettingsRow
             label={t('workbench.friendly_task_titles_title', '使用友好标题')}
             description={t(

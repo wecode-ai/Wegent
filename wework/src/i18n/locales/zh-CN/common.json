@@ -4928,6 +4928,12 @@
   },
   "notifications": {
     "title": "通知",
+    "settings": "通知设置",
+    "settings_requires_cloud": "任务动态可在本地修改；协作通知和其他通知需连接云端。",
+    "channel_in_app": "站内通知",
+    "channel_system": "系统通知",
+    "channel_im": "IM 推送",
+    "im_target_required": "请先在侧栏的离开电脑提醒中选择 IM 会话。",
     "back": "返回分类",
     "total_unread": "{{count}} 条未读",
     "category_tasks": "任务动态",

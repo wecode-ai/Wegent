@@ -108,6 +108,7 @@ class UserPreferences(BaseModel):
     runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
         default_factory=dict
     )
+    wework_notification_preferences: Optional[dict[str, Any]] = None
 
 
 class Token(BaseModel):

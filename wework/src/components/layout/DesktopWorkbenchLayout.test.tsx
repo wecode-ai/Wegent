@@ -3217,7 +3217,6 @@ describe('DesktopWorkbenchLayout', () => {
           hasRunningTasks: false,
           preferences: {
             ...defaultAppPreferences,
-            taskCompletionNotificationsEnabled: true,
           },
           markRuntimeTaskRead,
           items: [],
