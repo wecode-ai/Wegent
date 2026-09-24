@@ -56,7 +56,6 @@ import type {
   ArchiveRuntimeConversationsResult,
   WorkbenchContextValue,
 } from '@/features/workbench/workbenchContextTypes'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import type {
   ProjectSpaceDetailServices,
@@ -275,6 +274,7 @@ export interface WeworkCollaborationPlatformProps {
     addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
   renderLocalProjectImporter?: (input: {
@@ -344,7 +344,7 @@ export function WeworkSharedProject({
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  sendRuntimePaneMessage: WorkbenchContextValue['sendRuntimePaneMessage']
+  sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
@@ -741,13 +741,15 @@ export function WeworkSharedProject({
           )}
           onOpenProjectAiTask={run => openProjectManagerTask(run, onOpenRuntimeTask)}
           onContinueProjectAiConversation={(managerProject, run, message, modelSelection) =>
-            continueProjectManagerConversation(
-              sendRuntimePaneMessage,
-              managerProject,
-              run,
-              message,
-              modelSelection
-            )
+            sendRuntimePaneMessage
+              ? continueProjectManagerConversation(
+                  sendRuntimePaneMessage,
+                  managerProject,
+                  run,
+                  message,
+                  modelSelection
+                )
+              : Promise.reject(new Error('Runtime conversation sender is unavailable'))
           }
           onStopProjectAiConversation={(managerProject, run) =>
             stopProjectManagerConversation(services, managerProject, run)
@@ -955,7 +957,6 @@ export function WeworkSharedProject({
 
 export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformProps) {
   const { i18n } = useTranslation('common')
-  const workbench = useWorkbench()
   const cloudConnection = useOptionalCloudConnection()
   const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
   const api = props.services.sharedWorkspaceApi
@@ -1207,13 +1208,15 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         )}
         onOpenProjectAiTask={run => openProjectManagerTask(run, props.onOpenRuntimeTask)}
         onContinueProjectAiConversation={(project, run, message, modelSelection) =>
-          continueProjectManagerConversation(
-            workbench.sendRuntimePaneMessage,
-            project,
-            run,
-            message,
-            modelSelection
-          )
+          props.sendRuntimePaneMessage
+            ? continueProjectManagerConversation(
+                props.sendRuntimePaneMessage,
+                project,
+                run,
+                message,
+                modelSelection
+              )
+            : Promise.reject(new Error('Runtime conversation sender is unavailable'))
         }
         onStopProjectAiConversation={(project, run) =>
           stopProjectManagerConversation(props.services, project, run)
@@ -1497,7 +1500,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               onFocusedItemHandled={props.onFocusedItemHandled}
               onOpenSettings={props.onOpenSettings}
               onOpenRuntimeTask={props.onOpenRuntimeTask}
-              sendRuntimePaneMessage={workbench.sendRuntimePaneMessage}
+              sendRuntimePaneMessage={props.sendRuntimePaneMessage}
               project={project}
               runtimeTaskLifecycle={props.runtimeTaskLifecycle}
               runtimeWork={props.runtimeWork}

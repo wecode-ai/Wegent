@@ -190,6 +190,7 @@ export function DesktopWorkbenchLayout({
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
     projectChat,
+    sendRuntimePaneMessage,
     services,
     refreshWorkLists,
     workspaceTabId,
@@ -1241,6 +1242,7 @@ export function DesktopWorkbenchLayout({
                   onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                   onArchiveRuntimeTasks={onArchiveChatConversations}
                   onCancelRuntimeTask={onCancelRuntimeTask}
+                  sendRuntimePaneMessage={sendRuntimePaneMessage}
                   onOpenSettings={options => openSettings(options)}
                   onLogout={onLogout}
                   renderLocalProjectImporter={({ mode, projects, onClose, onCreated }) =>
