@@ -392,6 +392,11 @@ class SubscriptionNotificationDispatcher:
             subscription_display_name: Display name of the subscription
         """
         try:
+            # DingTalk markdown surfaces only render Markdown syntax; convert any
+            # HTML produced by the model so tags are not shown verbatim.
+            from app.services.channels.dingtalk.markdown import ensure_markdown
+
+            message = ensure_markdown(message)
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
             if send_private and not dingtalk_user_id:
                 logger.warning(
@@ -995,7 +1000,13 @@ class SubscriptionNotificationDispatcher:
             )
             # Remove newlines from title preview for cleaner display
             title_preview = title_preview.replace("\n", " ").strip()
-            text_with_title = f"### {subscription_display_name}\n\n{result_summary}"
+            # DingTalk webhook markdown renders only Markdown syntax; convert any
+            # HTML produced by the model so tags are not shown verbatim.
+            from app.services.channels.dingtalk.markdown import ensure_markdown
+
+            text_with_title = (
+                f"### {subscription_display_name}\n\n{ensure_markdown(result_summary)}"
+            )
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
