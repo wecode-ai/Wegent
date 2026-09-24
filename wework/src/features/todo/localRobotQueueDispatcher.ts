@@ -233,7 +233,11 @@ function startQueueDispatcher(services: WorkbenchServices, source: 'local' | 'cl
       ) {
         throw new Error('Transient runtime payload is missing execution context')
       }
-      if (!['board_comment', 'board_task', 'project_automation'].includes(String(origin.type))) {
+      if (
+        !['board_comment', 'board_task', 'issue_dispatch', 'project_automation'].includes(
+          String(origin.type)
+        )
+      ) {
         throw new Error('Transient runtime payload has an invalid execution origin')
       }
       if (

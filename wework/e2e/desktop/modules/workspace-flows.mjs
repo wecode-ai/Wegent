@@ -81,6 +81,13 @@ export async function waitForTestIdByText(
   )
 }
 
+export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
+  await control.command('waitFor', `${selector} option[value="${value}"]`, {
+    timeoutMs,
+  })
+  await control.command('select', selector, { value })
+}
+
 async function waitForNativeCollaborationPlatform(
   control,
   contentSelector,
@@ -120,7 +127,6 @@ async function waitForNativeCollaborationPlatform(
 
 async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
-  await selectCollaborationDomain(control, contentSelector, 'local')
   const localWorkspaceTree = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     contentSelector

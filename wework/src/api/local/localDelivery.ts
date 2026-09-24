@@ -36,6 +36,7 @@ import {
   visibleLoopItemTags,
 } from '@/api/localProjectAssociation'
 import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
+import { createLocalIssueDispatchApi } from './localIssueDispatch'
 
 type LocalRequest = <T>(
   method: string,
@@ -1071,6 +1072,17 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
+    ...createLocalIssueDispatchApi({
+      request,
+      resolveProjectId,
+      async getIssue(itemId) {
+        const projectId = await resolveProjectId(itemId)
+        return request<LocalLoopItemRecord>('todos.get', {
+          project_id: projectId,
+          task_id: itemId,
+        })
+      },
+    }),
     async createLoopItem(
       projectId: CloudProjectId,
       data: {

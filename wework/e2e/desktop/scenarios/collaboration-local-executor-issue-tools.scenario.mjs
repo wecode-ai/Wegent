@@ -108,7 +108,12 @@ function toolEvents(body, name, args, callId) {
   }).events
 }
 
-export async function createDesktopScenario({ executorHome, modelResponseTimeoutMs, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  executorHome,
+  modelResponseTimeoutMs,
+  uiTimeoutMs,
+}) {
   const attachmentPath = join(executorHome, ATTACHMENT)
   await mkdir(executorHome, { recursive: true })
   await writeFile(attachmentPath, `${MARKER}\n`, 'utf8')
@@ -235,28 +240,51 @@ export async function createDesktopScenario({ executorHome, modelResponseTimeout
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-      const assigneeTestId = await waitForTestIdByText(
+      await control.command('click', scoped('[data-testid="issue-dispatch-open"]'))
+      await control.command('waitFor', scoped('[data-testid="issue-dispatch-dialog"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="issue-dispatch-target-agent"]'))
+      const candidateTestId = await waitForTestIdByText(
         control,
         'body',
-        'cloud-todo-detail-assignee-option-agent:',
+        'issue-dispatch-candidate-agent-',
         AGENT,
         uiTimeoutMs
       )
-      await control.command('click', `[data-testid="${assigneeTestId}"]`)
-      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
+      await control.command('click', scoped(`[data-testid="${candidateTestId}"]`))
+      await control.command('fill', scoped('[data-testid="issue-dispatch-task-title"]'), {
+        value: ISSUE,
+      })
+      await control.command('fill', scoped('[data-testid="issue-dispatch-task-instructions"]'), {
+        value: `${MARKER} Read the Issue and upload the requested attachment.`,
+      })
+      await control.command('clickWhenEnabled', scoped('[data-testid="issue-dispatch-submit"]'), {
         timeoutMs: uiTimeoutMs,
       })
       await control.command(
         'waitFor',
-        scoped('[data-testid^="cloud-task-activity-execution-status-"][data-status="succeeded"]'),
+        scoped('[data-testid^="issue-dispatch-task-"][data-state="submitted"]'),
         {
           timeoutMs: modelResponseTimeoutMs,
         }
       )
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="cloud-todo-column-in_review"] [data-testid^="cloud-todo-card-"]'),
+        {
+          timeoutMs: modelResponseTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
+        'in_review',
+        'The successful local Agent dispatch did not move its Issue to in_review'
+      )
       assert.ok(contextSeen, 'The executor did not read the bound Issue through real MCP')
       assert.ok(attachmentSeen, 'The executor did not list its uploaded Issue attachment')
       assert.ok(completed, 'The executor model sequence did not finish')
+      await captureScreenshot(control, 'local-issue-dispatch-delivered-in-review.png', CONTENT)
     },
 
     diagnostics() {

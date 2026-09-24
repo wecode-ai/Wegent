@@ -54,9 +54,6 @@ jobs:
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      playwright_version: ${{ steps.playwright-version.outputs.version }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -65,13 +62,6 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Resolve Playwright version
-        id: playwright-version
-        working-directory: ./frontend
-        run: |
-          version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Restore shared Next.js build cache
         id: nextjs-cache
@@ -113,7 +103,7 @@ jobs:
 
   prepare-platform-e2e-image:
     name: Prepare Platform E2E Image
-    needs: [changes, build-frontend-e2e]
+    needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -129,15 +119,18 @@ jobs:
 
       - name: Resolve Platform E2E image
         id: image
-        env:
-          PLAYWRIGHT_VERSION: ${{ needs.build-frontend-e2e.outputs.playwright_version }}
         run: |
           dockerfile=docker/wework-e2e/browser.Dockerfile
           image_ref="$(awk '$1 == "FROM" { print $2 }' "$dockerfile")"
           image_version="${image_ref#mcr.microsoft.com/playwright:v}"
           image_version="${image_version%-noble}"
-          if [[ "$image_version" != "$PLAYWRIGHT_VERSION" ]]; then
-            echo "Playwright image version $image_version does not match workspace version $PLAYWRIGHT_VERSION" >&2
+          playwright_version="$(
+            sed -n 's/^  playwright@\([^:]*\):$/\1/p' pnpm-lock.yaml |
+              head -n 1
+          )"
+          test -n "$playwright_version"
+          if [[ "$image_version" != "$playwright_version" ]]; then
+            echo "Playwright image version $image_version does not match workspace version $playwright_version" >&2
             exit 1
           fi
           digest="$(sha256sum "$dockerfile" | cut -d ' ' -f 1)"
@@ -182,18 +175,52 @@ jobs:
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.runtime.outputs.image }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Resolve Backend Rust E2E runtime
+        id: runtime
+        env:
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check content-addressed Backend Rust E2E image
+        id: image-check
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Rust
+        if: steps.image-check.outputs.exists != 'true'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Set up sccache
+        if: steps.image-check.outputs.exists != 'true'
         uses: ./.github/actions/setup-sccache
 
       - name: Restore Backend Rust Cargo sources
+        if: steps.image-check.outputs.exists != 'true'
         id: backend-rs-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -205,6 +232,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-backend-rs-cargo-sources-v1-
 
       - name: Build Backend Rust E2E runtime
+        if: steps.image-check.outputs.exists != 'true'
         env:
           CARGO_PROFILE_RELEASE_STRIP: "false"
           CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: "false"
@@ -219,8 +247,40 @@ jobs:
             .ci-artifacts/wegent-backend-rs
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
+      - name: Publish content-addressed Backend Rust E2E image
+        if: steps.image-check.outputs.exists != 'true'
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          mkdir -p .ci-artifacts/backend-rs-image
+          cp .ci-artifacts/wegent-backend-rs \
+            .ci-artifacts/backend-rs-image/wegent-backend-rs
+          printf '%s\n' \
+            'FROM scratch' \
+            'COPY wegent-backend-rs /app/wegent-backend-rs' \
+            'ENTRYPOINT ["/app/wegent-backend-rs"]' \
+            > .ci-artifacts/backend-rs-image/Dockerfile
+          docker build \
+            --tag "$IMAGE" \
+            .ci-artifacts/backend-rs-image
+          docker push "$IMAGE"
+
+      - name: Restore content-addressed Backend Rust E2E binary
+        if: steps.image-check.outputs.exists == 'true'
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          docker pull "$IMAGE"
+          container_id="$(docker create "$IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          mkdir -p .ci-artifacts
+          docker cp \
+            "$container_id:/app/wegent-backend-rs" \
+            .ci-artifacts/wegent-backend-rs
+          chmod 0755 .ci-artifacts/wegent-backend-rs
+
       - name: Save Backend Rust Cargo sources
-        if: github.ref == 'refs/heads/main' && steps.backend-rs-cargo-sources-cache.outputs.cache-hit != 'true'
+        if: steps.image-check.outputs.exists != 'true' && github.ref == 'refs/heads/main' && steps.backend-rs-cargo-sources-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
@@ -343,12 +403,7 @@ jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    needs:
-      [
-        build-frontend-e2e,
-        build-backend-rs-e2e-runtime,
-        prepare-platform-e2e-image,
-      ]
+    needs: [build-backend-rs-e2e-runtime, prepare-platform-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -375,18 +430,18 @@ jobs:
           MYSQL_DATABASE: wegent_test
         options: >-
           --health-cmd="mysqladmin ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=45s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
       redis:
         image: redis:7-alpine
         options: >-
           --health-cmd="redis-cli ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=15
 
       qdrant:
         image: qdrant/qdrant:v1.15.4
@@ -398,10 +453,10 @@ jobs:
           MINIO_ROOT_PASSWORD: wegent-e2e-secret
         options: >-
           --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=20s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
     steps:
       - name: Generate internal service token
@@ -455,8 +510,15 @@ jobs:
           source .venv/bin/activate
           uv pip install -e ../shared
 
+      - name: Prepare Chat Shell tokenizers
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+          ../.github/scripts/prepare-chat-shell-tokenizers.sh
+
       - name: Download frontend E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "300"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -614,8 +676,7 @@ jobs:
           pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
-      - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 4
+      - name: Run Provider-native E2E tests
         timeout-minutes: 15
         working-directory: ./frontend
         env:
@@ -626,7 +687,12 @@ jobs:
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CI: true
-        run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
+        run: |
+          pnpm exec playwright test \
+            --project=provider-native-chromium \
+            --workers=1 \
+            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
+            --no-deps
 
       - name: Stop Knowledge Runtime
         if: always()
@@ -700,7 +766,6 @@ jobs:
       packages: read
     needs:
       [
-        build-frontend-e2e,
         build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
@@ -718,9 +783,9 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="mysqladmin ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=30
 
       redis:
         image: redis:7-alpine
@@ -728,9 +793,9 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=15
 
       minio:
         image: bitnamilegacy/minio:2025.7.23-debian-12-r0
@@ -741,10 +806,10 @@ jobs:
           MINIO_ROOT_PASSWORD: wegent-e2e-secret
         options: >-
           --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-start-period=20s
-          --health-retries=6
+          --health-start-period=5s
+          --health-retries=30
 
     steps:
       - name: Generate internal service token
@@ -849,6 +914,12 @@ jobs:
           source .venv/bin/activate
           uv pip install -e ../shared
 
+      - name: Prepare Chat Shell tokenizers
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+          ../.github/scripts/prepare-chat-shell-tokenizers.sh
+
       - name: Install executor manager dependencies
         working-directory: ./executor_manager
         run: |
@@ -872,6 +943,7 @@ jobs:
 
       - name: Download frontend E2E build
         env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "300"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/download-actions-artifact.sh \
@@ -1258,60 +1330,6 @@ jobs:
             executor_manager/container-logs/
           retention-days: 7
 
-  # Merge test reports from all E2E jobs
-  merge-reports:
-    name: Merge Test Reports
-    needs: [changes, e2e-tests, executor-e2e-tests]
-    if: always() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
-
-      - name: Download shard 1 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-1
-          path: all-blob-reports
-
-      - name: Download shard 2 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-2
-          path: all-blob-reports
-
-      - name: Download shard 3 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-3
-          path: all-blob-reports
-
-      - name: Download shard 4 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-4
-          path: all-blob-reports
-
-      - name: Download executor blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-executor
-          path: all-blob-reports
-
-      - name: Merge reports
-        working-directory: ./frontend
-        run: pnpm exec playwright merge-reports --reporter html ../all-blob-reports
-
-      - name: Upload merged report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: playwright-report-merged
-          path: frontend/playwright-report/
-          retention-days: 30
-
   platform-e2e-summary:
     name: Platform E2E Summary
     needs:
@@ -1320,7 +1338,6 @@ jobs:
       - build-executor-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
-      - merge-reports
     if: always()
     runs-on: ubuntu-latest
 
@@ -1333,7 +1350,6 @@ jobs:
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
-          REPORT_RESULT: ${{ needs.merge-reports.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
@@ -1358,4 +1374,3 @@ jobs:
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
-          assert_success "$REPORT_RESULT" "E2E report merge"

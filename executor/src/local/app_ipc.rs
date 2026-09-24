@@ -2335,6 +2335,20 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "executions.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = params.get("agent_id").and_then(Value::as_str);
+            let status = params.get("status").and_then(Value::as_str);
+            let include_terminal = params
+                .get("include_terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            serialize_task_value(
+                runtime
+                    .list_executions(project_id, agent_id, status, include_terminal)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.reorder" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = serde_json::from_value::<TaskReorder>(

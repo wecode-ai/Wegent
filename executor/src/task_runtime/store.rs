@@ -1949,6 +1949,13 @@ impl LocalTaskStore {
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = execution_row(&transaction, execution_id)?;
+        let advance_direct_dispatch = current
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_parent_transition"))
+            .and_then(Value::as_str)
+            == Some("in_review");
         let timestamp = now();
         let changed = transaction.execute(
             "UPDATE loop_item_executions
@@ -1970,6 +1977,15 @@ impl LocalTaskStore {
             content.unwrap_or(""),
             &timestamp,
         )?;
+        if advance_direct_dispatch {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = 'in_review', completed_at = NULL,
+                     version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND status = 'in_progress'",
+                params![timestamp, current.loop_item_id],
+            )?;
+        }
         transaction.commit()?;
         execution_row(&connection, execution_id).map(Some)
     }
@@ -5675,6 +5691,70 @@ mod tests {
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
         assert_eq!(second_after.metadata["is_unread"], Value::Null);
+    }
+
+    #[test]
+    fn direct_issue_dispatch_completion_moves_issue_to_review() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Review direct dispatch".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: task.version,
+                    assignee_agent_id: Some(Some(agent.id.clone())),
+                    execution_payload: Some(json!({
+                        "message": "Run the delegated task",
+                        "dispatch_id": "dispatch-local",
+                        "dispatch_role": "executor",
+                        "dispatch_parent_transition": "in_review",
+                    })),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
+            device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+        let claimed = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("dispatch run must be claimable");
+
+        store.complete_execution(claimed.id, Some("done")).unwrap();
+
+        let updated = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(updated.status.as_deref(), Some("in_review"));
+        assert_eq!(
+            updated.metadata["status_history"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["to_status"],
+            "in_review"
+        );
     }
 
     #[test]

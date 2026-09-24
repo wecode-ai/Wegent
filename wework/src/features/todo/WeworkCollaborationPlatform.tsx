@@ -20,7 +20,6 @@ import {
   IssueConversationDrawers,
   toSharedIssueDetailTaskBinding,
   type CollaborationHostAdapter,
-  type CollaborationDefaultAssistant,
   type CollaborationIssue,
   type CollaborationPlatformLocation,
   type CollaborationProjectRendererWorkspaceContext,
@@ -50,7 +49,6 @@ import {
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
-import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
@@ -306,7 +304,6 @@ function projectWorkspaceRoots(project: CollaborationProject): string[] {
 export function WeworkSharedProject({
   api,
   detailServices,
-  defaultAssistant,
   devices,
   focusedCommentId,
   focusedItemId,
@@ -329,7 +326,6 @@ export function WeworkSharedProject({
 }: {
   api: SharedWorkspaceApi
   detailServices?: ProjectSpaceDetailServices
-  defaultAssistant?: CollaborationDefaultAssistant
   devices?: DeviceInfo[]
   focusedCommentId?: string | null
   focusedItemId?: string | null
@@ -425,7 +421,6 @@ export function WeworkSharedProject({
         dingtalkAitable: true,
         projectLocation: project.project_store === 'local' ? 'local' : 'cloud',
       },
-      defaultAssistant,
       location: {
         projectId: String(project.id),
         issueId: location.issueId,
@@ -471,7 +466,6 @@ export function WeworkSharedProject({
     [
       focusedItemId,
       detailServices?.modelApi,
-      defaultAssistant,
       location.issueId,
       location.projectSettingsSection,
       location.projectView,
@@ -828,7 +822,6 @@ export function WeworkSharedProject({
             allIssues,
             assignments,
             taskBindings,
-            defaultAssistant,
             onChange,
             onClose,
             onCreateTask,
@@ -876,7 +869,6 @@ export function WeworkSharedProject({
                     runtimeExecutionStatusByAddress
                   )}
                   deviceNamesById={deviceNamesById}
-                  defaultAssistant={defaultAssistant}
                   selectedTaskId={
                     taskComposer?.issue.id === issue.id
                       ? (taskComposer.address?.taskId ?? null)
@@ -994,23 +986,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         : 'Me'
       : props.user.user_name
   const personalOwnerLabel = locale === 'zh-CN' ? '个人' : 'Personal'
-  const currentAgentDevice = useCurrentAgentDevice(
-    props.services.deviceApi,
-    props.services.pluginApi
-  )
-  const defaultAssistant = useMemo(
-    () => ({
-      name: locale === 'zh-CN' ? '本机助手' : 'Device assistant',
-      description:
-        locale === 'zh-CN'
-          ? `在“${currentAgentDevice.currentDevice?.name ?? '当前设备'}”上运行，使用设备当前可用能力`
-          : `Runs on “${currentAgentDevice.currentDevice?.name ?? 'this device'}” with its available capabilities`,
-      ...(currentAgentDevice.capabilitySummary
-        ? { capabilitySummary: currentAgentDevice.capabilitySummary }
-        : {}),
-    }),
-    [currentAgentDevice.capabilitySummary, currentAgentDevice.currentDevice?.name, locale]
-  )
   const [ownerGroups, setOwnerGroups] = useState<Array<{ label: string; namespace: string }>>([])
   const workspaceOwnerOptions = useMemo(
     () => [{ label: personalOwnerLabel, namespace: 'default' }, ...ownerGroups],
@@ -1270,7 +1245,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             requestLogin: () => setCloudLoginOpen(true),
           },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
-          defaultAssistant,
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(
@@ -1516,7 +1490,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                   project.project_store === 'local' ? 'local' : 'cloud'
                 ]
               }
-              defaultAssistant={defaultAssistant}
               devices={props.devices}
               focusedCommentId={props.focusedCommentId}
               focusedItemId={props.focusedItemId}

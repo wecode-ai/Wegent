@@ -234,14 +234,8 @@ export function createDesktopScenario({
           scoped('[data-testid="collaboration-project-description-input"]'),
           { value: 'Created through Workspace → Project in the native Wework module.' }
         )
-        await control.command(
-          'click',
-          scoped('[data-testid="cloud-project-visibility-public"]')
-        )
-        await control.command(
-          'click',
-          scoped('[data-testid="cloud-project-public-access-viewer"]')
-        )
+        await control.command('click', scoped('[data-testid="cloud-project-visibility-public"]'))
+        await control.command('click', scoped('[data-testid="cloud-project-public-access-viewer"]'))
         await control.command(
           'click',
           scoped('[data-testid="cloud-project-default-issue-security-related"]')
@@ -423,7 +417,11 @@ export function createDesktopScenario({
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
           backendUrl,

@@ -478,6 +478,43 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
+  it('accepts Issue Dispatch as a bound local execution origin', async () => {
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(
+        execution({
+          runtime_payload: runtimePayload({
+            origin: {
+              type: 'issue_dispatch',
+              cloudProjectId: 'P-1',
+              loopItemId: 'T-1',
+              dispatchId: 'dispatch-1',
+              dispatchRole: 'executor',
+            },
+          }),
+        })
+      )
+      .mockResolvedValue(null)
+    const { services: svc, mocks } = services({ claimNext })
+    const stop = startLocalRobotQueueDispatcher(svc)
+
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    expect(mocks.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: expect.objectContaining({
+          type: 'issue_dispatch',
+          dispatchId: 'dispatch-1',
+          dispatchRole: 'executor',
+        }),
+      }),
+      expect.any(Function)
+    )
+    expect(mocks.fail).not.toHaveBeenCalled()
+    stop()
+  })
+
   it.each([
     { label: 'project robot', agentId: 'LA-1', agentName: 'Bot', botId: 'LA-1' },
     { label: 'inline custom', agentId: '', agentName: 'AI 托管', botId: 0 },

@@ -232,8 +232,9 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
 
 async function declineInitialTelemetryConsent(control) {
   const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
-  const overlayCount = Number(await control.command('getElementCount', overlaySelector))
-  if (overlayCount === 0) return
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

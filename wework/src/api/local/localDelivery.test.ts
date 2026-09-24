@@ -68,6 +68,102 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
+  test('dispatches a local Issue through the shared Issue Dispatch contract', async () => {
+    let executionPayload: Record<string, unknown> | null = null
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return taskRecord
+      if (method === 'chat_agents.list') {
+        return [
+          {
+            id: 'agent-1',
+            project_id: projectRecord.id,
+            name: 'local-agent',
+            display_name: 'Local Agent',
+            status: 'active',
+          },
+        ]
+      }
+      if (method === 'todos.update') {
+        const todo = params?.todo as Record<string, unknown>
+        executionPayload = todo.execution_payload as Record<string, unknown>
+        expect(todo).toMatchObject({
+          version: taskRecord.version,
+          status: 'in_progress',
+          assignee_agent_id: 'agent-1',
+        })
+        expect(executionPayload).toMatchObject({
+          message: 'Collect reproducible evidence',
+          workflow_task_title: 'Collect local evidence',
+          dispatch_role: 'executor',
+          dispatch_parent_transition: 'in_review',
+        })
+        return { ...taskRecord, status: 'in_progress', version: 2 }
+      }
+      if (method === 'executions.list') {
+        return executionPayload
+          ? [
+              {
+                id: 41,
+                loop_item_id: taskRecord.id,
+                cloud_project_id: projectRecord.id,
+                task_title: taskRecord.title,
+                agent_id: 'agent-1',
+                agent_name: 'Local Agent',
+                status: 'queued',
+                error_message: '',
+                execution_note: '',
+                created_at: '2026-09-24T00:00:00Z',
+                updated_at: '2026-09-24T00:00:00Z',
+                runtime_payload: executionPayload,
+              },
+            ]
+          : []
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listIssueDispatchCandidates(taskRecord.id, 'agent')).resolves.toEqual([
+      {
+        target_type: 'agent',
+        target_id: 'agent-1',
+        name: 'Local Agent',
+        execution_location: 'local',
+      },
+    ])
+    const dispatch = await api.createIssueDispatch(taskRecord.id, {
+      target_type: 'agent',
+      target_id: 'agent-1',
+      idempotency_key: 'dispatch-1',
+      task_title: 'Collect local evidence',
+      instructions: 'Collect reproducible evidence',
+    })
+
+    expect(dispatch).toMatchObject({
+      id: 'local-dispatch:dispatch-1',
+      project_id: projectRecord.id,
+      issue_id: taskRecord.id,
+      target_type: 'agent',
+      target_id: 'agent-1',
+      target_name: 'Local Agent',
+      status: 'active',
+      rounds: [
+        {
+          status: 'executing',
+          tasks: [
+            {
+              task_title: 'Collect local evidence',
+              instructions: 'Collect reproducible evidence',
+              status: 'queued',
+              execution_location: 'local',
+            },
+          ],
+        },
+      ],
+    })
+  })
+
   test('maps persisted local Issue status transitions into the detail model', async () => {
     const statusHistory = [
       {
@@ -1294,89 +1390,6 @@ describe('local delivery API', () => {
       expect(request.mock.calls.some(([method]) => method === 'todos.update')).toBe(false)
     }
   )
-
-  test('writes a completed user-bound runtime task into its Issue workflow', async () => {
-    const workflowTask = {
-      ...taskRecord,
-      status: 'in_progress',
-      metadata: {
-        tags: [],
-        workflow: {
-          version: 1,
-          definition_version: 1,
-          stage_mode: 'dag',
-          advancement_policy: 'manual',
-          nodes: [
-            {
-              id: 'stage-1',
-              name: 'Develop',
-              execution_mode: 'human',
-              depends_on: [],
-              required: true,
-              status: 'ready',
-              task_ids: [],
-              task_statuses: {},
-              required_deliverables: [],
-            },
-          ],
-        },
-      },
-    }
-    const binding = {
-      id: 'binding-1',
-      cloud_project_id: 'project-1',
-      loop_item_id: 'LOCAL-1',
-      task_user_id: 0,
-      device_id: 'local-device',
-      task_id: 'runtime-1',
-      task_title: 'Runtime task',
-      backend_task_id: null,
-      workflow_node_id: 'stage-1',
-      binding_type: 'user',
-      linked_at: '2026-08-24T00:00:00Z',
-    }
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'runtime_tasks.context') return binding
-      if (method === 'projects.list') return [projectRecord]
-      if (method === 'todos.get') return workflowTask
-      if (method === 'todos.bindings') return [binding]
-      if (method === 'todos.update') {
-        const todo = params?.todo as {
-          status: string
-          workflow: {
-            nodes: Array<{
-              status: string
-              task_statuses: Record<string, string>
-            }>
-          }
-        }
-        expect(todo.workflow.nodes[0].task_statuses['local-device:runtime-1']).toBe('succeeded')
-        expect(todo.workflow.nodes[0].status).toBe('awaiting_approval')
-        return {
-          ...workflowTask,
-          status: todo.status,
-          metadata: { ...workflowTask.metadata, workflow: todo.workflow },
-          version: 2,
-        }
-      }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(
-      api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
-    ).resolves.toMatchObject({
-      id: 'LOCAL-1',
-      workflow: {
-        nodes: [
-          {
-            status: 'awaiting_approval',
-            task_statuses: { 'local-device:runtime-1': 'succeeded' },
-          },
-        ],
-      },
-    })
-  })
 
   test('synchronizes a friendly runtime title through executor IPC', async () => {
     const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }

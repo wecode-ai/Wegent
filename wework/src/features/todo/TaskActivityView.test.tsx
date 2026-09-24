@@ -2245,6 +2245,62 @@ describe('TaskActivityView', () => {
     expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
   })
 
+  it('refreshes the task version before accepting after a version conflict', async () => {
+    const user = userEvent.setup()
+    const onTaskUpdated = vi.fn()
+    const completedTask = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'completed' as const,
+      version: 9,
+      assignee_agent_id: '12',
+    }
+    updateLoopItem
+      .mockRejectedValueOnce(
+        Object.assign(new Error('task changed'), {
+          code: 'version_conflict',
+        })
+      )
+      .mockResolvedValueOnce(completedTask)
+    getLoopItem.mockResolvedValueOnce({
+      ...completedTask,
+      status: 'in_review',
+      version: 8,
+    })
+
+    render(
+      <TaskActivityView
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', location: 'local' } as never}
+        task={
+          {
+            ...completedTask,
+            status: 'in_review',
+            version: 7,
+            ai_state: { status: 'completed' },
+          } as never
+        }
+        onTaskUpdated={onTaskUpdated}
+        linear
+      />
+    )
+
+    await user.click(await screen.findByTestId('cloud-task-activity-accept-WEG-1'))
+
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem).toHaveBeenNthCalledWith(1, 'WEG-1', {
+      version: 7,
+      status: 'completed',
+    })
+    expect(getLoopItem).toHaveBeenCalledWith('WEG-1')
+    expect(updateLoopItem).toHaveBeenNthCalledWith(2, 'WEG-1', {
+      version: 8,
+      status: 'completed',
+    })
+    expect(onTaskUpdated).toHaveBeenCalledWith(completedTask)
+  })
+
   it('offers manual rerun when the assigned AI run failed', async () => {
     listModels.mockResolvedValue({
       data: [

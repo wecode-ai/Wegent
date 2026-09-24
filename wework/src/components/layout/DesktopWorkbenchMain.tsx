@@ -185,6 +185,7 @@ import {
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
 import {
+  focusComposerAtEnd,
   requestWorkbenchComposerFocus,
   WORKBENCH_NEW_CHAT_FOCUS_EVENT,
 } from '@/lib/workbenchComposerFocus'
@@ -3732,9 +3733,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         '[data-testid="chat-message-input"][contenteditable="true"]'
       )
       if (!composer) return
-      requestWorkbenchComposerFocus(paneSession.scopeKey)
+      focusComposerAtEnd(composer)
     },
-    [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
+    [paneActive, paneVisible, workbenchVisible]
   )
   useEffect(() => {
     if (!hasConversation || !paneActive || !paneVisible || !workbenchVisible) return
