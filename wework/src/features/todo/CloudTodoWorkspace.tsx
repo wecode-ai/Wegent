@@ -191,7 +191,6 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
-import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration'
 import { createLocalWorkspaceApi } from './WeworkCollaborationPlatform'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
@@ -708,11 +707,9 @@ export function CloudTodoWorkspace({
         services.localProjectChatAgentApi,
         services.modelApi,
         services.pluginApi,
-        services.deviceApi,
-        i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+        services.deviceApi
       ),
     [
-      i18n.language,
       services.agentResourceApi,
       services.deviceApi,
       services.localProjectChatAgentApi,
@@ -792,11 +789,10 @@ export function CloudTodoWorkspace({
   )
   const availableProjectSpaceApis = useMemo(() => {
     const available: ProjectCreateTarget[] = []
-    if (projectSpaceApis.local) {
-      const localWorkspaceApi = createWeworkDeliverySharedWorkspaceApi(projectSpaceApis.local)
+    if (localProjectManageApi) {
       available.push({
         location: 'local',
-        create: localWorkspaceApi.projects.create,
+        create: localProjectManageApi.projects.create,
       })
     }
     if (cloudWorkspaceApi) {
@@ -814,7 +810,7 @@ export function CloudTodoWorkspace({
     cloudWorkspace.commands,
     cloudWorkspaceApi,
     cloudWorkspaceMessages.saveFailed,
-    projectSpaceApis.local,
+    localProjectManageApi,
   ])
   const [localProjectSpaces, setLocalProjectSpaces] = useState<LocatedCloudProject[]>([])
   const cloudProjectSpaces = useMemo(

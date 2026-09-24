@@ -3765,8 +3765,14 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-project-location-local')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
     expect(screen.queryByTestId('cloud-project-task-provider-local')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
@@ -3870,8 +3876,14 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-project-location-local')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
     await userEvent.type(screen.getByTestId('cloud-project-name'), 'Cloud GitLab board')
     await userEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-gitlab'))

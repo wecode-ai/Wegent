@@ -22,6 +22,8 @@ import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-6-astra', 'GPT-6-Astra', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-6-sol', 'GPT-6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-6-luna', 'GPT-6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-terra', 'GPT-5.6-Terra', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-luna', 'GPT-5.6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max']],
@@ -262,6 +264,12 @@ describe('createLocalAppServices', () => {
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
         expect.objectContaining({
+          name: 'gpt-6-sol',
+          type: 'runtime',
+          modelId: 'gpt-6-sol',
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+        expect.objectContaining({
           name: 'gpt-5.6-sol',
           type: 'runtime',
           modelId: 'gpt-5.6-sol',
@@ -287,6 +295,8 @@ describe('createLocalAppServices', () => {
     expect(modelIds).toEqual(
       expect.arrayContaining([
         'gpt-6-astra',
+        'gpt-6-sol',
+        'gpt-6-luna',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
@@ -553,6 +563,92 @@ describe('createLocalAppServices', () => {
     })
     expect(payload.executionRequest).not.toHaveProperty('workspace_project')
     expect(payload.executionRequest.prompt).toContain('修复登录回调')
+  })
+
+  test('generates reusable structured text with tools disabled', async () => {
+    let listener: ((event: { event: string; payload: Record<string, unknown> }) => void) | null =
+      null
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn(async handler => {
+      listener = handler
+      return unsubscribe
+    })
+    const request = vi.fn().mockImplementation(async (method: string, payload) => {
+      if (method === 'runtime.text.generate') {
+        listener?.({
+          event: 'response.output_text.delta',
+          payload: {
+            taskId: payload.executionRequest.task_id,
+            data: { delta: '负责人：当前设备智能体' },
+          },
+        })
+        return { content: '{"name":"协作小组"}' }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe,
+    })
+    const onProgress = vi.fn()
+    const onDelta = vi.fn()
+
+    await expect(
+      services.textGenerationApi?.generateText({
+        prompt: 'Return JSON only',
+        title: 'Generate collaboration group',
+        modelId: 'gpt-5.6-sol',
+        outputSchema: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: ['name'],
+          additionalProperties: false,
+        },
+        onProgress,
+        onDelta,
+      })
+    ).resolves.toBe('{"name":"协作小组"}')
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.text.generate')?.[1]
+    expect(payload.executionRequest).toMatchObject({
+      prompt: 'Return JSON only',
+      ephemeral: true,
+      enable_tools: false,
+      enable_deep_thinking: false,
+      output_schema: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+    })
+    expect(onProgress.mock.calls).toEqual([[`preparing`], [`generating`]])
+    expect(onDelta).toHaveBeenCalledWith('负责人：当前设备智能体')
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  test('streams the final content when an older executor does not emit deltas', async () => {
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+      }),
+      request: vi.fn(async method =>
+        method === 'runtime.text.generate' ? { content: '分配原则：按能力分工' } : {}
+      ),
+      subscribe: vi.fn(async () => vi.fn()),
+    })
+    const onDelta = vi.fn()
+
+    await services.textGenerationApi?.generateText({
+      prompt: 'Generate responsibilities',
+      modelId: 'gpt-5.6-sol',
+      onDelta,
+    })
+
+    expect(onDelta).toHaveBeenCalledWith('分配原则：按能力分工')
   })
 
   test('registers harness models through the executor Messages proxy', async () => {

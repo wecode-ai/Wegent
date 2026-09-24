@@ -63,8 +63,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-capabilities':
     './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
+  'collaboration-local-executor-issue-tools':
+    './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
   'collaboration-agent-automation-chain':
     './scenarios/collaboration-agent-automation-chain.scenario.mjs',
+  'collaboration-issue-comment-mention':
+    './scenarios/collaboration-issue-comment-mention.scenario.mjs',
+  'collaboration-issue-comment-notification':
+    './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
@@ -92,7 +98,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-capabilities',
+  'collaboration-local-executor-issue-tools',
   'collaboration-agent-automation-chain',
+  'collaboration-issue-comment-mention',
+  'collaboration-issue-comment-notification',
   'plugin-development',
   'task-attachments',
   'project-assignment-notification',

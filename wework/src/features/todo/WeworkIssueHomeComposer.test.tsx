@@ -100,6 +100,9 @@ describe('Wework Issue home task composer', () => {
     const owner = screen.getByTestId('collaboration-issue-owner')
     expect(owner.tagName).toBe('BUTTON')
     expect(owner).not.toHaveTextContent('未分配')
+    await userEvent.type(screen.getByTestId('collaboration-home-issue-content'), '@')
+    await userEvent.click(await screen.findByTestId('collaboration-home-mention-member-8'))
+    await waitFor(() => expect(owner).toHaveTextContent('王芳'))
     await act(async () =>
       ref.current!.setValue(
         '[$@王芳](wework-member://p1/8) 负责，[$@李明](wework-member://p1/7) 参与'

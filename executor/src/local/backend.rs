@@ -490,7 +490,7 @@ where
             self.start_runtime_event_forwarder(event_hub);
         }
         self.register_handlers();
-        let _session_gateway = if self.start_session_gateway {
+        let session_gateway = if self.start_session_gateway {
             match &self.session_handler {
                 Some(handler) => start_session_gateway(Arc::clone(handler)).await?,
                 None => None,
@@ -498,6 +498,12 @@ where
         } else {
             None
         };
+        self.client.set_runtime_transfer_port(
+            session_gateway
+                .as_ref()
+                .map(|gateway| gateway.local_addr.port()),
+        );
+        let _session_gateway = session_gateway;
         let mut retry_delay = self.client.config.reconnect_delay;
         write_executor_log_line(&local_backend_starting_log_line(
             &self.client.config.backend_url,

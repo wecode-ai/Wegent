@@ -996,12 +996,12 @@ class TestSynchronizeExternalDocument:
             f"/knowledge-documents/{document.id}/external-sync"
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         assert response.json()["index_status"] == "queued"
         assert response.json()["is_active"] is True
         assert dispatched == [document.id]
 
-    def test_rejects_unsynchronized_external_document(
+    def test_refreshes_a_dingtalk_copy(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -1010,8 +1010,66 @@ class TestSynchronizeExternalDocument:
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
         document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["index_status"] == "queued"
+        assert dispatched == [document.id]
+
+    def test_reports_dingtalk_sync_dispatch_failure(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.tasks.knowledge_tasks as knowledge_tasks_module
+
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+
+        def fail_dispatch(**kwargs):
+            raise RuntimeError("broker unavailable")
+
+        monkeypatch.setattr(
+            knowledge_tasks_module,
+            "import_external_document_task",
+            SimpleNamespace(delay=fail_dispatch),
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-sync"
+        )
+
+        assert response.status_code == 503
+        test_db.refresh(document)
+        assert (
+            document.processing_error_payload["code"]
+            == "external_import_dispatch_failed"
+        )
+
+    def test_rejects_unsynchronized_external_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        # A Wiki copy imported before synchronization has no persisted remote
+        # locator, unlike an imported DingTalk copy.
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
             test_db, test_user.id, kb_id, index_status="failed"
         )
+        document.external_source.external_provider = "wiki"
+        test_db.commit()
 
         response = import_client.post(
             f"/knowledge-documents/{document.id}/external-sync"

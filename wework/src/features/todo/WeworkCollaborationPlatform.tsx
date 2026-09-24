@@ -46,6 +46,8 @@ import {
   type DesktopSidebarAccountSettingsOptions,
 } from '@/components/layout/DesktopSidebarAccount'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
+import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
@@ -54,6 +56,12 @@ import type {
   ProjectSpaceDetailServices,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
+import { getNewChatModelSelection } from '@/features/workbench/workbenchProviderHelpers'
+import {
+  defaultNewChatModelSelection,
+  modelSelectionIdentityOptions,
+} from '@/features/workbench/runtimeModelSelection'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import type {
   DeviceInfo,
   ProjectWithTasks,
@@ -97,6 +105,29 @@ const initialLocation: CollaborationPlatformLocation = {
   projectId: null,
   projectView: 'board',
   issueId: null,
+}
+
+/**
+ * The location a route that names one project opens.
+ *
+ * The workspace a project belongs to arrives from the backend, but which project
+ * the route points at is already known, so the board opens in the same pass
+ * instead of painting the workspace home until that request returns.
+ */
+function routeProjectLocation(
+  projectRef: RuntimeProjectSpaceRef | null,
+  focusedItemId: string | null
+): CollaborationPlatformLocation | null {
+  if (!projectRef) return null
+  return {
+    platformView: 'spaces',
+    collaborationDomain: projectRef.projectStore === 'local' ? 'local' : 'cloud',
+    workspaceId: null,
+    workspaceView: 'projects',
+    projectId: String(projectRef.projectId),
+    projectView: 'board',
+    issueId: focusedItemId,
+  }
 }
 const PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
 
@@ -159,6 +190,7 @@ export interface WeworkCollaborationPlatformProps {
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
+  focusedCommentId?: string | null
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedProjectSpace | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -203,6 +235,7 @@ export function WeworkSharedProject({
   detailServices,
   defaultAssistant,
   devices,
+  focusedCommentId,
   focusedItemId,
   localProjects,
   locale,
@@ -224,6 +257,7 @@ export function WeworkSharedProject({
   detailServices?: ProjectSpaceDetailServices
   defaultAssistant?: CollaborationDefaultAssistant
   devices?: DeviceInfo[]
+  focusedCommentId?: string | null
   focusedItemId?: string | null
   localProjects: ProjectWithTasks[]
   locale: 'zh-CN' | 'en'
@@ -356,8 +390,7 @@ export function WeworkSharedProject({
         project.project_store === 'local' ? services.localProjectChatAgentApi : undefined,
         project.project_store === 'local' ? detailServices?.modelApi : undefined,
         services.pluginApi,
-        services.deviceApi,
-        locale
+        services.deviceApi
       ),
     }),
     [
@@ -376,7 +409,6 @@ export function WeworkSharedProject({
       services.localProjectChatAgentApi,
       services.pluginApi,
       setLocation,
-      locale,
       workspace.id,
     ]
   )
@@ -684,6 +716,7 @@ export function WeworkSharedProject({
                 <TodoEditor
                   key={issue.id}
                   mode="edit"
+                  focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
                   sharedApi={issueApi}
                   api={services.deliveryApi}
                   presentation="workspace-panel"
@@ -802,18 +835,7 @@ export function WeworkSharedProject({
                   archiveLabel={t('todo.delete_issue', '删除任务')}
                   onMarkRead={onMarkRead}
                   previewDisabled={previewDisabled}
-                  onOpenRuntimeTask={
-                    runtimePort
-                      ? address => {
-                          setTaskComposer({
-                            issue,
-                            address,
-                            conversationKey: `${issue.id}:${address.deviceId}:${address.taskId}`,
-                          })
-                          projectHost.navigate({ ...projectHost.location, issueId: issue.id })
-                        }
-                      : onOpenRuntimeTask
-                  }
+                  issueDetailOnly
                   display={display}
                   processingStatus={issue.status === 'in_progress' || issue.status === 'in_review'}
                   archiveDisabled={!onDelete}
@@ -870,8 +892,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
         props.services.localProjectChatAgentApi,
         props.services.projectSpaceDetailServices?.local?.modelApi,
         props.services.pluginApi,
-        props.services.deviceApi,
-        locale
+        props.services.deviceApi
       ),
     [
       props.services.agentResourceApi,
@@ -879,7 +900,6 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       props.services.projectSpaceDetailServices?.local?.modelApi,
       props.services.pluginApi,
       props.services.localProjectChatAgentApi,
-      locale,
     ]
   )
   useEffect(() => {
@@ -955,11 +975,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
       ? null
       : (props.activeProjectRef ?? null)
-  const [location, setLocation] = useState<CollaborationPlatformLocation>(initialLocation)
+  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
+    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
+  }))
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const startupReadySent = useRef(false)
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
+  const resolvedWorkspaceProjectRef = useRef<string | null>(null)
 
   useEffect(() => {
     const activeProjectId = activeProject ? String(activeProject.projectId) : null
@@ -969,36 +992,61 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
     }
     if (!platformApi?.projects.get || !activeProject) return
     let cancelled = false
-    if (String(location.projectId) === activeProjectId) {
-      if (!props.focusedItemId || location.issueId === props.focusedItemId) return
-      queueMicrotask(() => {
-        if (cancelled) return
-        setLocation(current => ({
-          ...current,
-          workspaceView: 'projects',
-          projectView: 'board',
-          projectSettingsSection: null,
-          issueId: props.focusedItemId ?? null,
-        }))
-      })
-      return () => {
-        cancelled = true
+    const target = routeProjectLocation(activeProject, props.focusedItemId ?? null)
+    if (target) {
+      const routedFocus = props.focusedItemId ?? null
+      const projectAlreadyOnScreen = String(location.projectId ?? '') === target.projectId
+      // The route names a project, and only sometimes the Issue to open. Once
+      // that project is on screen the Issue the reader opened inside it — or
+      // the one the platform opened itself — stands, so only a routed focus
+      // moves the location.
+      if (!projectAlreadyOnScreen || (routedFocus !== null && location.issueId !== routedFocus)) {
+        queueMicrotask(() => {
+          if (cancelled) return
+          setLocation(current => {
+            const movingProject = String(current.projectId ?? '') !== target.projectId
+            const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
+            if (
+              !movingProject &&
+              current.issueId === issueId &&
+              current.workspaceView === target.workspaceView &&
+              current.projectView === target.projectView
+            )
+              return current
+            return {
+              ...current,
+              ...target,
+              issueId,
+              projectSettingsSection: null,
+            }
+          })
+        })
       }
     }
 
-    void platformApi.projects.get(String(activeProject.projectId)).then(project => {
-      if (cancelled || !project.workspace_id) return
-      setLocation(current => ({
-        ...current,
-        collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
-        workspaceId: project.workspace_id ?? null,
-        workspaceView: 'projects',
-        projectId: String(project.id),
-        projectView: 'board',
-        projectSettingsSection: null,
-        issueId: props.focusedItemId ?? null,
-      }))
-    })
+    // The workspace the board belongs to is the one thing the route cannot name,
+    // so it is resolved once per project without holding the board back.
+    if (resolvedWorkspaceProjectRef.current !== activeProjectId) {
+      resolvedWorkspaceProjectRef.current = activeProjectId
+      void platformApi.projects
+        .get(String(activeProject.projectId))
+        .then(project => {
+          if (cancelled) return
+          setLocation(current => {
+            const collaborationDomain = project.project_store === 'local' ? 'local' : 'cloud'
+            const workspaceId = project.workspace_id ?? null
+            if (
+              current.collaborationDomain === collaborationDomain &&
+              current.workspaceId === workspaceId
+            )
+              return current
+            return { ...current, collaborationDomain, workspaceId }
+          })
+        })
+        .catch(() => {
+          // The board still opens from the route; only its workspace stays unknown.
+        })
+    }
     return () => {
       cancelled = true
     }
@@ -1066,6 +1114,33 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           },
           renderIssueComposer: props => <WeworkIssueHomeComposer {...props} />,
           defaultAssistant,
+          loadProjectCollaborationGroupGenerationModels: async () => {
+            const response = await props.services.modelApi.listModels()
+            const models = response.data.filter(
+              model => model.isActive !== false && !model.compatibilityDisabled
+            )
+            const defaultSelection =
+              getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
+            return {
+              models: models.map(model => ({
+                modelName: model.name,
+                modelType: model.type,
+                displayName: getModelDisplayLabel(model),
+                options: {
+                  ...getDefaultModelOptions(model),
+                  ...modelSelectionIdentityOptions(model),
+                },
+              })),
+              defaultSelection,
+            }
+          },
+          generateProjectCollaborationGroupDraft: (input, onProgress, onEvent) =>
+            generateCollaborationGroupDraft({
+              input,
+              textGenerationApi: props.services.textGenerationApi,
+              onProgress,
+              onEvent,
+            }),
           location,
           capabilities: {
             automation: true,
@@ -1230,6 +1305,21 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                       name: projectName,
                       roots: workspaceRoots,
                     })
+                    const localAgentApi =
+                      props.services.projectSpaceDetailServices?.local?.localProjectChatAgentApi ??
+                      props.services.localProjectChatAgentApi
+                    if (localAgentApi) {
+                      await ensureDefaultLocalAgent(
+                        localAgentApi,
+                        String(importedProject.id),
+                        locale
+                      ).catch(error => {
+                        console.warn(
+                          `[Wework] Failed to ensure the default local Agent for imported project ${importedProject.id}`,
+                          error
+                        )
+                      })
+                    }
                     await onImported({
                       ...importedProject,
                       workspace_id: LOCAL_WORKSPACE_ID,
@@ -1271,6 +1361,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               }
               defaultAssistant={defaultAssistant}
               devices={props.devices}
+              focusedCommentId={props.focusedCommentId}
               focusedItemId={props.focusedItemId}
               localProjects={props.localProjects}
               locale={locale}

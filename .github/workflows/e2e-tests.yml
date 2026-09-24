@@ -87,7 +87,6 @@ jobs:
       - name: Build frontend for E2E
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
@@ -516,6 +515,7 @@ jobs:
           DELIVERY_S3_BUCKET: wegent-deliveries
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          RUST_LOG: info,brz_http_gateway::proxy=debug
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
@@ -546,7 +546,6 @@ jobs:
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
@@ -686,6 +685,7 @@ jobs:
           name: backend-logs-${{ matrix.shardIndex }}
           path: |
             backend/backend.log
+            logs/backend/rust/
             backend/chat_shell.log
             knowledge_runtime/ci.log
             frontend/next-dev.log
@@ -973,7 +973,6 @@ jobs:
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000

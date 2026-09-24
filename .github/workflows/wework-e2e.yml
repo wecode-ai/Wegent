@@ -204,7 +204,7 @@ jobs:
       - changes
     if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       HOME: /root
     container:
@@ -247,7 +247,7 @@ jobs:
             ~/.cargo/git
             executor/target
             ~/.cache/electron
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
@@ -260,6 +260,15 @@ jobs:
           pnpm --filter wework ai:verify:electron:build
           test -x wework/electron/release/WeWork-linux-x64/WeWork
           test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
+
+      - name: Build Rust Backend E2E gateway
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/backend-rs-target
+        run: |
+          cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
+          mkdir -p .ci-artifacts
+          cp "$CARGO_TARGET_DIR/debug/wegent-backend-rs" .ci-artifacts/wegent-backend-rs
+          chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Save shared Wework Electron E2E build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
@@ -392,11 +401,13 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
@@ -432,7 +443,7 @@ jobs:
       - changes
     if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
       WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
@@ -463,7 +474,7 @@ jobs:
             ~/.cargo/git
             ${{ runner.temp }}/executor-target
             ${{ env.ELECTRON_CACHE }}
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-
 
@@ -485,6 +496,19 @@ jobs:
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+
+      - name: Build Rust Backend Windows E2E gateway
+        shell: pwsh
+        run: |
+          $backendRsTarget = Join-Path $env:RUNNER_TEMP "backend-rs-target"
+          $env:CARGO_TARGET_DIR = $backendRsTarget
+          cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
+          $backendRsBin = Join-Path $backendRsTarget "debug/wegent-backend-rs.exe"
+          $appBackendRsBin = "wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe"
+          Copy-Item -LiteralPath $backendRsBin -Destination $appBackendRsBin -Force
+          if (-not (Test-Path $appBackendRsBin -PathType Leaf)) {
+            throw "Missing Windows Rust Backend E2E gateway: $appBackendRsBin"
+          }
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
@@ -641,6 +665,33 @@ jobs:
           "WEWORK_E2E_REDIS_SERVER_BIN=$redisServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Configure Windows MySQL E2E tools
+        shell: pwsh
+        run: |
+          $mysqlCandidates = @(
+            (Get-Command mysqld.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+            "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqld.exe",
+            "C:\Program Files\MySQL\MySQL Server 9.0\bin\mysqld.exe"
+          ) | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) }
+          $mysqlServerPath = $mysqlCandidates | Select-Object -First 1
+          if (-not $mysqlServerPath) {
+            choco install mysql --yes --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to install MySQL Server for desktop E2E"
+            }
+            $mysqlServerPath = Get-ChildItem -Path "C:\Program Files\MySQL", "C:\tools\mysql" -Filter mysqld.exe -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $mysqlServerPath) {
+            throw "Could not locate mysqld.exe on the Windows runner"
+          }
+          & $mysqlServerPath --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to run MySQL Server binary: $mysqlServerPath"
+          }
+          "WEWORK_E2E_MYSQLD_BIN=$mysqlServerPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
         continue-on-error: true
@@ -649,6 +700,7 @@ jobs:
           CI: true
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
+          WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
@@ -658,6 +710,7 @@ jobs:
           foreach ($path in @(
             $env:WEWORK_E2E_APP_BIN,
             $env:WEWORK_E2E_EXECUTOR_BIN,
+            $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
@@ -784,12 +837,14 @@ jobs:
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
+          WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
           node wework/e2e/desktop/run-checkpoints.mjs \
@@ -882,12 +937,14 @@ jobs:
           E2E_SEGMENT: ${{ matrix.segment }}
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
+          WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
           WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || startsWith(matrix.segment, 'browser-annotation-') && './scenarios/embedded-browser-annotation.scenario.mjs' || '' }}
           WEWORK_E2E_ISOLATED_XVFB: "true"
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           args=()
           if [[ -n "$E2E_SEGMENT" ]]; then
             args=(-- --segment "$E2E_SEGMENT")
@@ -1128,8 +1185,9 @@ jobs:
       - name: Install macOS Inspector backend dependencies
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         run: |
-          brew install redis libmagic
+          brew install redis libmagic mysql
           redis-server --version
+          mysqld --version
           uv sync --project backend --frozen
           uv run --project backend python -c "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
 

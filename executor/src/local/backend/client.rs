@@ -67,6 +67,7 @@ where
     running_tasks: LocalRunningTaskTracker,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
     runtime_capacity: Arc<Mutex<Option<Value>>>,
+    runtime_transfer_port: Arc<Mutex<Option<u16>>>,
 }
 
 impl<T> LocalBackendClient<T>
@@ -108,6 +109,7 @@ where
             running_tasks,
             capability_reporter: Arc::new(capability_reporter),
             runtime_capacity: Arc::new(Mutex::new(None)),
+            runtime_transfer_port: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -342,7 +344,18 @@ where
             .expect("runtime capacity lock should not be poisoned") = capacity;
     }
 
+    pub fn set_runtime_transfer_port(&self, port: Option<u16>) {
+        *self
+            .runtime_transfer_port
+            .lock()
+            .expect("runtime transfer port lock should not be poisoned") = port;
+    }
+
     fn registration_payload(&self) -> Value {
+        let runtime_transfer_port = *self
+            .runtime_transfer_port
+            .lock()
+            .expect("runtime transfer port lock should not be poisoned");
         json!({
             "device_id": self.config.device_id,
             "runtime_instance_id": self.config.runtime_instance_id,
@@ -352,6 +365,7 @@ where
             "executor_version": self.config.executor_version,
             "client_ip": self.config.client_ip,
             "runtime_transfer_host": self.config.runtime_transfer_host,
+            "runtime_transfer_port": runtime_transfer_port,
             "app_device_id": self.config.app_device_id,
             "runtime_features": runtime_features(),
         })
@@ -364,6 +378,10 @@ where
             .lock()
             .expect("runtime capacity lock should not be poisoned")
             .clone();
+        let runtime_transfer_port = *self
+            .runtime_transfer_port
+            .lock()
+            .expect("runtime transfer port lock should not be poisoned");
         json!({
             "device_id": self.config.device_id,
             "runtime_instance_id": self.config.runtime_instance_id,
@@ -376,6 +394,7 @@ where
                 &crate::agents::wework_codex_home()
             ),
             "runtime_transfer_host": self.config.runtime_transfer_host,
+            "runtime_transfer_port": runtime_transfer_port,
         })
     }
 }

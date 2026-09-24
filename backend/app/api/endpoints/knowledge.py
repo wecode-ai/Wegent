@@ -1184,7 +1184,7 @@ def synchronize_external_document(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> KnowledgeDocumentResponse:
-    """Fetch and re-index the latest body of a synchronized external document."""
+    """Fetch and re-index the latest body of an imported external document."""
     try:
         result = external_document_import_service.request_source_refresh(
             db=db, user=current_user, document_id=document_id

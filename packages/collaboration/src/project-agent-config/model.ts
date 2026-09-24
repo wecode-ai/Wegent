@@ -9,6 +9,7 @@ export interface ProjectAgentConfigurationRecord {
   id: string;
   name: string;
   displayName: string;
+  deletable: boolean;
   definitionSource: "project" | "shared_agent";
   executorType: "codex" | "claude_code" | null;
   status: "active" | "archived";
@@ -52,6 +53,7 @@ export function normalizeProjectAgent(
     id: String(row.id),
     name,
     displayName,
+    deletable: row.deletable !== false,
     definitionSource: rawTeamId == null ? "project" : "shared_agent",
     executorType:
       runtime === "wegent"

@@ -5,6 +5,7 @@
 'use client'
 
 import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
 
 import {
   Trash2,
@@ -12,6 +13,7 @@ import {
   ExternalLink,
   MoreVertical,
   CloudDownload,
+  RefreshCw,
   RotateCcw,
   Download,
   FolderInput,
@@ -34,12 +36,14 @@ import {
   getDocumentDisplayUpdatedAt,
   getExternalSourceInfo,
   getSyncedWikiConnectorType,
+  isDingtalkCopyDocument,
+  isDocumentIndexInFlight,
   isSyncedWikiDocument,
-  isWikiSourceMissing,
 } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
+import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import {
   ReanalyzeDropdownItem,
   ReanalyzeIconButton,
@@ -126,6 +130,7 @@ export function DocumentItem({
 }: DocumentItemProps) {
   const { t } = useTranslation()
   const downloadDocument = useKnowledgeDocumentDownload()
+  const getDingtalkSyncLabel = useDingtalkSyncLabel()
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -222,26 +227,27 @@ export function DocumentItem({
   const isIndexFailed = document.index_status === 'failed'
   const isPendingConversion = document.index_status === 'pending_conversion'
   const isConverting = document.index_status === 'converting'
-  const isBackendIndexing =
-    document.index_status === 'queued' ||
-    document.index_status === 'indexing' ||
-    isConverting ||
-    isPendingConversion
+  const isBackendIndexing = isDocumentIndexInFlight(document)
   const showIndexingState = isReindexing || isSyncing || isBackendIndexing
   const isExternal = document.source_type === 'external'
   const isWiki = isSyncedWiki
-  // External documents retry through the dedicated import-retry entry, which
-  // fetches the provider's latest body before replacing the attachment and
-  // reindexing. Regular documents reindex from failed or not-indexed states.
+  // A copy with its own source-refresh entry retries through that entry: for an
+  // external document a retry re-fetches the provider's latest body, so a
+  // separate import-retry control would repeat the same action under a second
+  // name.
+  const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
+  const canSyncWiki = isSyncedWiki && !!onSync && !showIndexingState
+  // Documents without such an entry keep the dedicated import-retry control,
+  // which fetches the provider's latest body before replacing the attachment
+  // and reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
     !!onReindex &&
     !showIndexingState &&
     (isSyncedWiki
       ? ragConfigured && !!document.attachment_id && isIndexFailed
       : isExternal
-        ? isIndexFailed
+        ? isIndexFailed && !canSyncDingtalkCopy
         : ragConfigured && (isIndexFailed || isNotIndexed))
-  const canSync = isSyncedWiki && !!onSync && !showIndexingState
   // The same control serves as "retry import" for external documents; the
   // DocumentList handler routes external documents to the retry entry.
   const reindexActionLabel =
@@ -268,25 +274,6 @@ export function DocumentItem({
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
-  // Source health is independent from index health: a synchronized document
-  // may keep serving its last successful index after the remote page disappears.
-  const hasExternalSourceWarning =
-    isExternal && ['inaccessible', 'sync_error'].includes(externalSource?.status || '')
-  const wikiSourceMissing = isWikiSourceMissing(document)
-  const isSourceSyncError = externalSource?.status === 'sync_error'
-  const sourceInaccessibleLabel = wikiSourceMissing
-    ? t('knowledge:document.document.wikiSourceMissing')
-    : isSourceSyncError
-      ? t('knowledge:document.document.sourceSyncFailed')
-      : t('knowledge:document.document.sourceInaccessible')
-  const sourceInaccessibleHint =
-    externalSource?.last_error ||
-    (wikiSourceMissing
-      ? t('knowledge:document.document.wikiSourceMissingHint')
-      : isSourceSyncError
-        ? t('knowledge:document.document.sourceSyncFailedHint')
-        : t('knowledge:document.document.sourceInaccessibleHint'))
-
   // Get display name - for web documents, remove .md extension
   const displayName =
     isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
@@ -294,6 +281,10 @@ export function DocumentItem({
   const handleRowClick = () => {
     onViewDetail?.(document)
   }
+
+  // DingTalk copies sync through the shared source-refresh entry; the entry
+  // stays visible while busy so the row can report "syncing".
+  const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
 
   const showSelectionColumn = Boolean(onSelect)
   const canEditDocument = Boolean(onEdit) && !isWiki
@@ -418,17 +409,11 @@ export function DocumentItem({
                   {document.file_extension}
                 </span>
               )}
-              {hasExternalSourceWarning && (
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="max-w-[9rem] truncate bg-red-500/10 px-1 py-0 text-[9px] text-red-600 border-red-500/20"
-                  title={sourceInaccessibleHint}
-                  data-testid="external-source-inaccessible-compact"
-                >
-                  {sourceInaccessibleLabel}
-                </Badge>
-              )}
+              <ExternalSourceStatusBadge
+                document={document}
+                testId="external-source-inaccessible-compact"
+                className="max-w-[9rem] truncate px-1 py-0 text-[9px]"
+              />
               {/* Size */}
               {!isWeb && (
                 <span className="text-[9px] text-text-muted">
@@ -547,8 +532,24 @@ export function DocumentItem({
                         : t('knowledge:document.upload.web.refetch')}
                     </DropdownMenuItem>
                   )}
-                  {canSync && (
-                    <DropdownMenuItem onClick={handleSync} disabled={showIndexingState}>
+                  {canSyncDingtalkCopy && (
+                    <DropdownMenuItem
+                      onClick={handleSync}
+                      disabled={showIndexingState}
+                      className="max-md:min-h-[44px]"
+                      data-testid={`sync-dingtalk-document-${document.id}`}
+                    >
+                      <RefreshCw
+                        className={`mr-2 h-3.5 w-3.5 ${showIndexingState ? 'animate-spin' : ''}`}
+                      />
+                      {dingtalkSyncLabel}
+                    </DropdownMenuItem>
+                  )}
+                  {canSyncWiki && (
+                    <DropdownMenuItem
+                      onClick={handleSync}
+                      data-testid={`sync-document-${document.id}`}
+                    >
                       <CloudDownload className="mr-2 h-3.5 w-3.5" />
                       {t('knowledge:document.document.resync')}
                     </DropdownMenuItem>
@@ -685,25 +686,11 @@ export function DocumentItem({
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
-        {hasExternalSourceWarning && (
-          <TooltipProvider>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="ml-1 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
-                  data-testid="external-source-inaccessible"
-                >
-                  {sourceInaccessibleLabel}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">{sourceInaccessibleHint}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+        <ExternalSourceStatusBadge
+          document={document}
+          testId="external-source-inaccessible"
+          className="ml-1"
+        />
       </div>
 
       {/* Size — wiki rows carry the real Markdown byte size since the
@@ -857,7 +844,23 @@ export function DocumentItem({
                   <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
                 </button>
               )}
-              {canSync && (
+              {canSyncDingtalkCopy && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors max-md:min-h-[44px] max-md:min-w-[44px] ${
+                    showIndexingState
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={handleSync}
+                  disabled={showIndexingState}
+                  title={dingtalkSyncLabel}
+                  aria-label={dingtalkSyncLabel}
+                  data-testid={`sync-dingtalk-document-${document.id}`}
+                >
+                  <RefreshCw className={`h-4 w-4 ${showIndexingState ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+              {canSyncWiki && (
                 <button
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                   onClick={handleSync}

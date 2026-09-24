@@ -1,17 +1,12 @@
 import { Paperclip, SlidersHorizontal } from "lucide-react";
-import {
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useId, useRef, useState, type Ref, type ReactNode } from "react";
+import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
+import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
+import type { ComposerInputHandle } from "../composer/composerInputTypes";
+import type { CollaborationTranslate } from "../i18n";
 import { IssueCommentComposer } from "./IssueActivityPresentation";
-
-export interface IssueMentionGroup {
-  label: string;
-  items: { id: string; name: string; avatar?: string; testId?: string }[];
-}
+import type { IssueMentionOption } from "./issueCommentMentions";
+import { issueCommentSubmission } from "./issueCommentMentions";
 
 export interface IssueMainCommentTestIds {
   form: string;
@@ -20,7 +15,6 @@ export interface IssueMainCommentTestIds {
   settings: string;
   file: string;
   attach: string;
-  mentions: string;
 }
 
 const desktopTestIds: IssueMainCommentTestIds = {
@@ -30,7 +24,6 @@ const desktopTestIds: IssueMainCommentTestIds = {
   settings: "task-comment-settings-toggle",
   file: "task-comment-file-input",
   attach: "task-comment-attach",
-  mentions: "task-comment-mention-popup",
 };
 
 /** One desktop composer; hosts provide draft persistence and execution services. */
@@ -47,12 +40,15 @@ export function IssueMainCommentComposer({
   attachments,
   onSelectFiles,
   settings,
-  mentionGroups = [],
+  mentionCandidates = [],
+  translate,
+  inputRef,
   testIds = desktopTestIds,
 }: {
   value: string;
   onChange(value: string): void;
-  onSubmit(): void;
+  /** The comment body, plus the structured targets it still names. */
+  onSubmit(body: string, mentions: IssueMentionOption[]): void;
   disabled: boolean;
   sending: boolean;
   uploading: boolean;
@@ -67,206 +63,51 @@ export function IssueMainCommentComposer({
   attachments?: ReactNode;
   onSelectFiles?(files: File[]): void | Promise<void>;
   settings?: ReactNode;
-  mentionGroups?: IssueMentionGroup[];
+  mentionCandidates?: ComposerExternalMentionCandidate[];
+  translate: CollaborationTranslate;
+  /** Lets a host (or a test) drive the editor the draft is written in. */
+  inputRef?: Ref<ComposerInputHandle>;
   testIds?: IssueMainCommentTestIds;
 }) {
   const settingsId = useId();
-  const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const caret = useRef<number | null>(null);
-  const activeMentionIndexRef = useRef(0);
+  const editorRef = useRef<HTMLElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mentionsOpen, setMentionsOpen] = useState(false);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const canSend = !disabled && !sending && !uploading && Boolean(value.trim());
-  const mentionItems = mentionGroups.flatMap((group) => group.items);
-
-  useLayoutEffect(() => {
-    if (caret.current === null) return;
-    input.current?.focus();
-    input.current?.setSelectionRange(caret.current, caret.current);
-    caret.current = null;
-  }, [value]);
-
-  function insertMention(name: string) {
-    const start = input.current?.selectionStart ?? value.length;
-    const end = input.current?.selectionEnd ?? start;
-    const rawPrefix = value.slice(0, start);
-    const prefix = rawPrefix.endsWith("@") ? rawPrefix.slice(0, -1) : rawPrefix;
-    const suffix = value.slice(end);
-    const leading = prefix && !/\s$/.test(prefix) ? " " : "";
-    const trailing = suffix && /^\s/.test(suffix) ? "" : " ";
-    const insertion = `${prefix}${leading}@${name}${trailing}`;
-    caret.current = insertion.length;
-    onChange(`${insertion}${suffix}`);
-    setMentionsOpen(false);
-  }
-
-  function setActiveMention(index: number) {
-    activeMentionIndexRef.current = index;
-    setActiveMentionIndex(index);
-  }
-
-  function openMentions() {
-    setActiveMention(0);
-    setMentionsOpen(true);
-  }
-
-  function selectActiveMention() {
-    const item = mentionItems[activeMentionIndexRef.current] ?? mentionItems[0];
-    if (!item) return false;
-    insertMention(item.name);
-    return true;
-  }
-
-  function moveActiveMention(delta: number) {
-    if (!mentionItems.length) return;
-    setActiveMention(
-      (activeMentionIndexRef.current + delta + mentionItems.length) %
-        mentionItems.length,
-    );
-  }
+  const submit = (draft: string) => {
+    const { body, mentions } = issueCommentSubmission(draft);
+    onSubmit(body, mentions);
+  };
 
   return (
     <IssueCommentComposer
       data-testid={testIds.form}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          setMentionsOpen(false);
-      }}
       canSend={canSend}
-      onSubmit={() => {
-        setMentionsOpen(false);
-        onSubmit();
-      }}
+      onSubmit={() => submit(value)}
       sendLabel={labels.send}
       sendTestId={testIds.send}
       before={attachments}
       input={
-        <>
-          <textarea
-            ref={input}
-            data-testid={testIds.input}
-            aria-label={labels.placeholder}
-            placeholder={labels.placeholder}
-            value={value}
-            rows={2}
-            disabled={disabled || sending}
-            onChange={(event) => {
-              onChange(event.target.value);
-              if (
-                event.target.value
-                  .slice(0, event.target.selectionStart)
-                  .endsWith("@")
-              ) {
-                openMentions();
-              } else {
-                setMentionsOpen(false);
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && mentionsOpen) {
-                event.preventDefault();
-                event.stopPropagation();
-                setMentionsOpen(false);
-                return;
-              }
-              if (
-                mentionsOpen &&
-                mentionItems.length > 0 &&
-                event.key === "ArrowDown"
-              ) {
-                event.preventDefault();
-                moveActiveMention(1);
-                return;
-              }
-              if (
-                mentionsOpen &&
-                mentionItems.length > 0 &&
-                event.key === "ArrowUp"
-              ) {
-                event.preventDefault();
-                moveActiveMention(-1);
-                return;
-              }
-              if (
-                mentionsOpen &&
-                mentionItems.length > 0 &&
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.nativeEvent.isComposing
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                selectActiveMention();
-                return;
-              }
-              if (
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.nativeEvent.isComposing &&
-                (sendKey === "enter" || event.metaKey || event.ctrlKey)
-              ) {
-                event.preventDefault();
-                if (canSend) {
-                  setMentionsOpen(false);
-                  onSubmit();
-                }
-              }
-            }}
-            onPaste={(event) => {
-              const files = Array.from(event.clipboardData.files);
-              if (onSelectFiles && files.length) {
-                event.preventDefault();
-                void onSelectFiles(files);
-              }
-            }}
-          />
-          {mentionsOpen && mentionGroups.some((group) => group.items.length) ? (
-            <div className="issue-comment-mention">
-              <div
-                className="issue-comment-mention-popup"
-                data-testid={testIds.mentions}
-              >
-                {mentionGroups
-                  .filter((group) => group.items.length)
-                  .map((group) => {
-                    const groupStart = mentionItems.findIndex(
-                      (item) => item === group.items[0],
-                    );
-                    return (
-                      <section key={group.label}>
-                        <h4>{group.label}</h4>
-                        {group.items.map((item, itemIndex) => {
-                          const flatIndex = groupStart + itemIndex;
-                          const active = flatIndex === activeMentionIndex;
-                          return (
-                            <button
-                              type="button"
-                              key={item.id}
-                              data-testid={
-                                item.testId ??
-                                `issue-comment-mention-${item.id}`
-                              }
-                              data-active={active ? "true" : "false"}
-                              aria-selected={active}
-                              onMouseEnter={() => setActiveMention(flatIndex)}
-                              onClick={() => insertMention(item.name)}
-                            >
-                              <span>
-                                {item.avatar ?? item.name.slice(0, 1)}
-                              </span>
-                              {item.name}
-                            </button>
-                          );
-                        })}
-                      </section>
-                    );
-                  })}
-              </div>
-            </div>
-          ) : null}
-        </>
+        <ComposerAutocompleteInput
+          ref={inputRef}
+          value={value}
+          onChange={onChange}
+          onSubmit={(nextValue) => submit(nextValue ?? value)}
+          canSend={canSend}
+          disabled={disabled || sending}
+          placeholder={labels.placeholder}
+          testId={testIds.input}
+          translate={translate}
+          className=""
+          rows={2}
+          textareaRef={editorRef}
+          mentionScope="external"
+          externalMentionCandidates={mentionCandidates}
+          sendKey={sendKey}
+          onPasteFiles={
+            onSelectFiles ? (files) => void onSelectFiles(files) : undefined
+          }
+        />
       }
       actions={
         <>

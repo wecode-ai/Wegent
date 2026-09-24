@@ -6,6 +6,7 @@ import type {
   RuntimeSendRequest,
 } from './runtime-task-api-types'
 import type { CodeCommentContext } from './code-comment'
+import type { ProjectChatMention } from './project-chat'
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
 export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
 
@@ -26,6 +27,7 @@ export interface QueuedWorkbenchMessage {
 
 export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   attachments?: Attachment[]
+  mentions?: ProjectChatMention[]
   displayContent?: string
   codeComments?: CodeCommentContext[]
   modelId?: string
