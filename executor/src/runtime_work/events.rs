@@ -517,7 +517,8 @@ impl CodexNotificationEventMapper {
                     .as_deref()
                     .is_some_and(|item_id| self.active_output_item_id.as_deref() == Some(item_id));
                 let can_reuse_active_output_id = item_id.is_none()
-                    && codex_phase_is_final(tracked_phase.as_deref())
+                    && (codex_phase_is_final(tracked_phase.as_deref())
+                        || codex_phase_is_process(completed_phase.as_deref()))
                     && self.active_output_item_id.is_some();
                 let resolved_phase = completed_phase.or_else(|| {
                     if active_output_matches || can_reuse_active_output_id {
@@ -1341,6 +1342,11 @@ impl CodexNotificationEventMapper {
                 item_id,
                 text,
             })) => {
+                let item_id = item_id.or_else(|| {
+                    (process_kind == "assistant_message" && codex_phase_is_process(resolved_phase))
+                        .then(|| output_item_id_fallback.map(str::to_owned))
+                        .flatten()
+                });
                 let replaces_item_id = item_id
                     .as_deref()
                     .filter(|item_id| {
@@ -3343,7 +3349,6 @@ mod tests {
                 "method": "item/completed",
                 "params": {
                     "item": {
-                        "id": "msg-progress",
                         "type": "agentMessage",
                         "phase": "commentary",
                         "text": "I will inspect."
