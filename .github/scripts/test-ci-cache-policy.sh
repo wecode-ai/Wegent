@@ -218,11 +218,20 @@ if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
   fail "Provider-native E2E coverage must be distributed across the existing platform shards"
 fi
 
+if [[ "$(grep -Fc 'name: Prepare Chat Shell tokenizers' \
+  "$platform_e2e_workflow")" -ne 2 ]] ||
+  [[ "$(grep -Fc '../.github/scripts/prepare-chat-shell-tokenizers.sh' \
+    "$platform_e2e_workflow")" -ne 2 ]]; then
+  fail "Platform and Executor E2E must provision Chat Shell tokenizers before starting services"
+fi
+
 wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
 if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
   "$wework_e2e_workflow")" -ne 1 ]] ||
+  [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"' \
+    "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
-    "$wework_e2e_workflow")" -ne 3 ]] ||
+    "$wework_e2e_workflow")" -ne 2 ]] ||
   ! grep -Fq 'name: Restore Rust runtimes and build shared Wework desktop E2E runtime' \
     "$action_dir/build-wework-core-e2e/action.yml"; then
   fail "Linux Wework desktop E2E must use bounded checkpoint parallelism"

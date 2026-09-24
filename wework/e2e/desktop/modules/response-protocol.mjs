@@ -605,7 +605,9 @@ function selectToolSearch(request, query) {
     `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
   )
   assert.equal(
-    tools.some(tool => tool?.type === 'namespace' && tool.name !== 'image_gen'),
+    tools.some(
+      tool => tool?.type === 'namespace' && !['collaboration', 'image_gen'].includes(tool.name)
+    ),
     false,
     'Real Codex eagerly advertised deferred namespace tools before tool_search'
   )

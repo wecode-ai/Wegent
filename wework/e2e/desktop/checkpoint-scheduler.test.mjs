@@ -61,3 +61,36 @@ test('starts resource-constrained checkpoint chains before independent work', as
   release.get('independent-b')()
   await runPromise
 })
+
+test('serializes checkpoints that overlap on any declared resource', async () => {
+  const active = new Set()
+  const overlaps = []
+
+  await runWithCheckpointResources({
+    checkpoints: ['collaboration', 'resilience', 'other-collaboration'],
+    workerCount: 3,
+    resourceFor: checkpoint => {
+      if (checkpoint === 'collaboration') {
+        return ['collaboration-runtime', 'desktop-runtime-intensive']
+      }
+      if (checkpoint === 'resilience') return ['desktop-runtime-intensive']
+      return ['collaboration-runtime']
+    },
+    run: async checkpoint => {
+      const resources =
+        checkpoint === 'collaboration'
+          ? ['collaboration-runtime', 'desktop-runtime-intensive']
+          : checkpoint === 'resilience'
+            ? ['desktop-runtime-intensive']
+            : ['collaboration-runtime']
+      for (const resource of resources) {
+        if (active.has(resource)) overlaps.push(resource)
+        active.add(resource)
+      }
+      await new Promise(resolve => setTimeout(resolve, 10))
+      for (const resource of resources) active.delete(resource)
+    },
+  })
+
+  assert.deepEqual(overlaps, [])
+})

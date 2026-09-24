@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import { reservePort } from './port-reservation.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -17,9 +18,13 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
-  ['collaboration-shared-core', 'collaboration-runtime'],
-  ['collaboration-settings-matrix', 'collaboration-runtime'],
-  ['collaboration-issue-comment-notification', 'collaboration-runtime'],
+  ['resilience', ['desktop-runtime-intensive']],
+  ['environment-panel-scroll', ['desktop-runtime-intensive']],
+  ['workspace-attachments', ['desktop-runtime-intensive']],
+  ['automation-lifecycle', ['desktop-runtime-intensive']],
+  ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-settings-matrix', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-issue-comment-notification', ['collaboration-runtime']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
@@ -371,17 +376,21 @@ async function runDesktopBuild() {
 }
 
 async function sharedBuildEnvironment(environment = process.env) {
-  const build = await prepareDesktopE2EBuild({
-    environment,
-    runBuild: runDesktopBuild,
-    weworkDir,
-  })
+  const [build, codexBinary] = await Promise.all([
+    prepareDesktopE2EBuild({
+      environment,
+      runBuild: runDesktopBuild,
+      weworkDir,
+    }),
+    resolveDesktopCodexBinary(),
+  ])
   console.log(
-    `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}`
+    `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
   )
   return {
     ...environment,
     WEWORK_E2E_APP_BIN: build.appBinary,
+    WEWORK_E2E_CODEX_BIN: codexBinary,
     WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
   }
 }

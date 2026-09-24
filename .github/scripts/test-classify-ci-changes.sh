@@ -1373,7 +1373,7 @@ wework_desktop_core_job="$(
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_core_job" != *"max-parallel: 17"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
