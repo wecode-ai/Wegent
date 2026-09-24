@@ -1077,7 +1077,7 @@ def test_issue_actions_are_authorized_independently(
     )
     assert project_response.status_code == 201
     project = project_response.json()
-    for user, role in ((reporter, "Reporter"), (maintainer, "Maintainer")):
+    for user, role in ((reporter, "Developer"), (maintainer, "Maintainer")):
         response = test_client.post(
             f"/api/v1/cloud-projects/{project['id']}/members",
             headers=_auth(test_token),
@@ -1099,7 +1099,7 @@ def test_issue_actions_are_authorized_independently(
     )
     assert reporter_view.status_code == 200
     assert reporter_view.json()["permissions"] == {
-        "edit_content": False,
+        "edit_content": True,
         "comment": True,
         "assign": False,
         "execute": True,
@@ -1108,7 +1108,7 @@ def test_issue_actions_are_authorized_independently(
         test_client.post(
             f"/api/v1/loop-items/{issue['id']}/comments",
             headers=_auth(reporter_token),
-            json={"body": "Reporter 可以评论"},
+            json={"body": "Developer 可以评论"},
         ).status_code
         == 201
     )
@@ -1116,9 +1116,9 @@ def test_issue_actions_are_authorized_independently(
         test_client.patch(
             f"/api/v1/loop-items/{issue['id']}",
             headers=_auth(reporter_token),
-            json={"version": issue["version"], "title": "不允许修改"},
+            json={"version": issue["version"], "title": "允许修改"},
         ).status_code
-        == 403
+        == 200
     )
     assert (
         test_client.post(
@@ -1193,7 +1193,7 @@ def test_project_maintainer_can_add_project_member_without_workspace_membership(
     response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "RestrictedAnalyst"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
 
     assert response.status_code == 201
@@ -1223,7 +1223,7 @@ def test_project_member_can_read_minimal_parent_workspace_navigation_context(
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
 
@@ -1276,7 +1276,7 @@ def test_invalid_project_member_role_cannot_read_project_or_navigation_context(
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
     membership = test_db.get(ResourceMember, member_response.json()["id"])
@@ -1720,7 +1720,7 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
     issue = test_client.post(

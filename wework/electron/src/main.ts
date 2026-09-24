@@ -1,5 +1,6 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
+import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 
 import {
   app,
@@ -67,6 +68,7 @@ import { createSingleFlight, presentWindow } from './host/window-presentation.js
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
+  createStartupReadyHandler,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -286,6 +288,33 @@ const pendingEmbeddedBrowserAttachments = new Map<
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+const runtimeDiagnosticsLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'runtime-launch.log')
+)
+app.on('web-contents-created', (_event, contents) => {
+  const logLoadEvent = (event: string) => () => {
+    console.info('[renderer-load]', { event, webContentsId: contents.id })
+  }
+  contents.on('did-start-loading', logLoadEvent('did-start-loading'))
+  contents.on('dom-ready', logLoadEvent('dom-ready'))
+  contents.on('did-finish-load', logLoadEvent('did-finish-load'))
+  contents.on('did-stop-loading', logLoadEvent('did-stop-loading'))
+  contents.on('will-prevent-unload', logLoadEvent('will-prevent-unload'))
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    console.warn('[renderer-load]', {
+      event: 'did-fail-load',
+      webContentsId: contents.id,
+      errorCode,
+      errorDescription,
+      isMainFrame,
+    })
+  })
+  contents.on('console-message', (_event, _level, message) => {
+    void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
+      console.warn('[Wework] Failed to write runtime diagnostics', error)
+    })
+  })
+})
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
 const configuredExecutorLogFile = process.env.WEGENT_EXECUTOR_LOG_FILE?.trim()
@@ -1562,7 +1591,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           hideMainWindow: hideMainWindowToBackground,
           dockVisible: () => dockVisible,
-          rendererStartupReady: async source => {
+          rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
             if (!keepE2EWindowInBackground) mainWindow.show()
@@ -1576,7 +1605,7 @@ async function configureDesktopRuntime(): Promise<void> {
               mainWindow.webContents.focus()
             }
             scheduleComputerUseStartup()
-          },
+          }),
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
             return startupSplash?.showError()

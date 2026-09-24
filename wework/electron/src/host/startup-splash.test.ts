@@ -3,6 +3,7 @@ import { basename, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  createStartupReadyHandler,
   createStartupSplash,
   resolveStartupSplashTheme,
   startupSplashBlocksMainWindowActivation,
@@ -10,6 +11,27 @@ import {
   type StartupSplashTheme,
   type StartupSplashWindow,
 } from './startup-splash.js'
+
+describe('startup readiness notifications', () => {
+  test('presents the main window only once across concurrent and later notifications', async () => {
+    const presentMainWindow = vi.fn(async () => {})
+    const ready = createStartupReadyHandler<string>(presentMainWindow)
+    await Promise.all([ready('task-list'), ready('other')])
+    await ready('task-list')
+    expect(presentMainWindow).toHaveBeenCalledExactlyOnceWith('task-list')
+  })
+
+  test('allows startup completion after a failed attempt', async () => {
+    const complete = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('close failed'))
+      .mockResolvedValue(undefined)
+    const ready = createStartupReadyHandler(complete)
+    await expect(ready('task-list')).rejects.toThrow('close failed')
+    await ready('task-list')
+    expect(complete).toHaveBeenCalledTimes(2)
+  })
+})
 
 class FakeSplashWindow implements StartupSplashWindow {
   private readonly closeListeners: Array<(event: { preventDefault: () => void }) => void> = []

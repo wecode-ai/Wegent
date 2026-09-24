@@ -8,6 +8,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from './RuntimeTaskLifecycleStore'
 import { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
+import { deriveRuntimePaneStatus } from '../runtimePaneStatus'
 
 const address: RuntimeTaskAddress = {
   deviceId: 'local-device',
@@ -769,6 +770,40 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('starting')
     expect(store.getTask(address)?.turn.phase).toBe('submitting')
+  })
+
+  test('keeps worktree preparation visible when history arrives before task creation', () => {
+    const store = new RuntimeTaskLifecycleStore('pending-worktree')
+    store.sendRequested(address, { workspaceCreationKind: 'worktree' })
+
+    // An executor without a task link returns history but no execution state.
+    store.syncTranscript(address, transcript())
+    expect(store.getTask(address)?.turn.phase).toBe('submitting')
+    expect(store.getTask(address)?.workspaceCreationKind).toBe('worktree')
+    expect(store.getTask(address)?.derived.isThinking).toBe(true)
+
+    store.sendAccepted(address)
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+
+    // The active cache arrives after worktree creation, before MCP startup and
+    // the model produce any assistant events.
+    store.syncTranscript(address, transcript({ running: true }))
+    expect(
+      deriveRuntimePaneStatus({
+        messages: [],
+        currentRuntimeTask: address,
+        lifecycle: store.getTask(address),
+      }).isWaitingForAssistantIndicator
+    ).toBe(true)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'completed-turn', items: [], status: 'completed', completedAt: 123 }],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
   })
 
   test('does not clear an in-flight send from an early idle transcript', () => {

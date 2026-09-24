@@ -711,7 +711,7 @@ describe("ProjectExecutionEnvironments", () => {
 
   it("lets read-only members filter assigned devices without management controls", async () => {
     await render({
-      role: "Reporter",
+      role: "Viewer",
       assigned: [
         environment(21, "Assigned online", "online"),
         environment(22, "Assigned offline", "offline"),

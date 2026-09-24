@@ -11,7 +11,12 @@ describe('logRuntimeTaskCreateStage', () => {
       taskId: 'runtime-123',
       deviceId: 'cloud-device',
     })
-    expect(infoMock).toHaveBeenCalledWith('[Wework] Runtime task create diagnostic', {
+    expect(infoMock).toHaveBeenCalledWith(
+      '[Wework] Runtime task create diagnostic',
+      expect.any(String)
+    )
+    expect(JSON.parse(infoMock.mock.calls[0][1] as string)).toEqual({
+      timestamp: expect.any(String),
       stage: 'hybrid-create-started',
       taskId: 'runtime-123',
       deviceId: 'cloud-device',
