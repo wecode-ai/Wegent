@@ -6192,3 +6192,50 @@ fn local_project_execution_never_inherits_backend_credentials() {
     assert!(request.runtime_auth_token.is_none());
     assert!(request.skill_identity_token.is_none());
 }
+
+#[test]
+fn context_compaction_cache_preserves_started_and_completed_outcomes() {
+    for completed in [false, true] {
+        let (handler, root) = isolated_runtime_work_handler("context-compaction-cache");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        for method in if completed {
+            vec!["item/started", "item/completed"]
+        } else {
+            vec!["item/started"]
+        } {
+            handler.record_active_codex_transcript_item(
+                "task-1",
+                "turn-1",
+                &json!({
+                    "method": method,
+                    "params": {"item": {"id": "compact-1", "type": "contextCompaction"}}
+                }),
+            );
+        }
+        let active = handler.active_codex_transcript_messages("task-1");
+        assert_eq!(
+            active[0]["blocks"][0]["status"],
+            if completed { "done" } else { "pending" }
+        );
+
+        handler.persist_and_clear_active_codex_transcript("task-1", "interrupted");
+        let link = handler.local_task_link("task-1").unwrap();
+        let persisted = completed_transcript_messages(&link);
+        assert_eq!(persisted[0]["status"], "cancelled");
+        assert_eq!(
+            persisted[0]["blocks"][0]["status"],
+            if completed { "done" } else { "error" }
+        );
+        assert!(handler
+            .active_codex_transcript_messages("task-1")
+            .is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+}

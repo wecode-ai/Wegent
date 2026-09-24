@@ -53,6 +53,20 @@ turn has settled. While output is streaming, Wework keeps the processing layout
 stable so the completed state cannot repeatedly appear and disappear or make
 following text flicker.
 
+## Composer Submission State
+
+发送包含附件的消息时，输入文本与本次提交的附件必须作为同一个快照立即从输入框清除，
+不得等待任务创建或模型响应完成。异步发送期间新添加的附件属于下一次提交，不得被上一
+次发送的延迟清理移除；如果任务创建失败，文本、附件和错误提示必须一起恢复到用户当前
+可见的原始会话。
+
+When a message includes attachments, the composer must clear the submitted text
+and attachment snapshot together without waiting for task creation or the model
+response. Attachments added while that send is pending belong to the next
+submission and must not be removed by delayed cleanup from the previous send. If
+task creation fails, restore the text, attachments, and error to the original
+conversation that remains visible to the user.
+
 ## Embedded Browser Navigation
 
 内嵌浏览器首次加载实际页面时会移除初始化用的 `about:blank` 历史项，

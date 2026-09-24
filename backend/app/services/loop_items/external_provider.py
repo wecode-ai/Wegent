@@ -48,6 +48,7 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
+from app.services.notification_copy import NotificationTarget
 from app.services.project_automation_domain import runnable_wegent_team
 
 logger = logging.getLogger(__name__)
@@ -737,10 +738,7 @@ class ExternalLoopItemProvider:
                 db,
                 actor_user_id=user_id,
                 user_id=values.assignee_user_id,
-                project_id=str(project.id),
-                project_name=project.name,
-                item_id=item_id,
-                item_title=str(issue.get("title") or item_id),
+                target=self._notification_target(project, issue, item_id),
                 assigner_name=actor.user_name,
             )
         if assignee_change:
@@ -1206,10 +1204,7 @@ class ExternalLoopItemProvider:
                 db,
                 actor_user_id=user_id,
                 user_id=target_user_id,
-                project_id=str(project.id),
-                project_name=project.name or "",
-                item_id=item_id,
-                item_title=str(issue.get("title") or item_id),
+                target=self._notification_target(project, issue, item_id),
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
         db.commit()
@@ -2288,6 +2283,26 @@ class ExternalLoopItemProvider:
             "none",
         )
         return value if value in {"low", "medium", "high", "urgent"} else "none"
+
+    @staticmethod
+    def _notification_target(
+        project: CloudProject, issue: dict[str, Any], item_id: str
+    ) -> NotificationTarget:
+        """Describe an external issue, which has no local board row to read."""
+
+        labels = ExternalLoopItemProvider._labels(issue)
+        priority = ExternalLoopItemProvider._priority(labels)
+        return NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name or "",
+            item_id=item_id,
+            item_key=item_id,
+            item_title=str(issue.get("title") or item_id),
+            item_status=ExternalLoopItemProvider._status(
+                labels, str(issue.get("state") or "")
+            ),
+            item_priority=None if priority == "none" else priority,
+        )
 
     @staticmethod
     def _body_key(project: CloudProject) -> str:

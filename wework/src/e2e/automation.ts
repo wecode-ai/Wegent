@@ -28,6 +28,7 @@ import type { DesktopControlCommand } from '@/extensions/desktop-control-contrac
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessagesForLogicalAddress,
@@ -2706,6 +2707,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerPluginInventoryDiagnostics': {
+      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
+      const installed =
+        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
+        peekLocalCodexPluginsReadState()
+      return JSON.stringify({
+        composerApps: getComposerApps().map(app => ({
+          id: app.id,
+          isAccessible: app.isAccessible,
+          isEnabled: app.isEnabled,
+          name: app.name,
+          pluginKey: app.pluginKey ?? null,
+          source: app.source,
+        })),
+        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+          enabled: plugin.spec.enabled,
+          installState: plugin.spec.installState,
+          marketplace: plugin.spec.source.marketplace,
+          name: plugin.metadata.name,
+          pluginKey: plugin.spec.source.pluginKey,
+          skillCount: plugin.spec.components.skills.length,
+        })),
+      })
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {

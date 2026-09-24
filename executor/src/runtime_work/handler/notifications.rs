@@ -155,9 +155,16 @@ impl RuntimeWorkRpcHandler {
         ) {
             return;
         }
-        let item = notification_item(notification.params);
+        let mut item = notification_item(notification.params);
         if !item.is_object() {
             return;
+        }
+        if is_codex_context_compaction_item_type(&item_type(&item)) {
+            item["status"] = json!(if notification.method == "item/completed" {
+                "done"
+            } else {
+                "pending"
+            });
         }
         let Some(item_id) = string_field(&item, "id") else {
             return;

@@ -21,6 +21,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
+from app.services.notification_copy import NotificationTarget
 from tests.utils.agent_resources import create_runnable_wegent_team
 
 
@@ -340,10 +341,47 @@ def test_assign_to_other_member_sends_notification(
         test_db,
         actor_user_id=test_user.id,
         user_id=member.id,
-        project_id=str(project.id),
-        project_name=project.name,
-        item_id=item.id,
-        item_title=item.title,
+        target=NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name,
+            item_id=item.id,
+            item_title=item.title,
+            item_status="收集箱",
+            assignee_name=member.user_name,
+        ),
+        assigner_name=test_user.user_name,
+    )
+
+
+def test_update_assignee_notifies_the_new_owner(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "next-owner", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    with patch(
+        "app.services.loop_items.service.notify_project_task_assignee"
+    ) as notify:
+        loop_item_service.update(
+            test_db,
+            item.id,
+            test_user.id,
+            LoopItemUpdate(version=item.version, assignee_user_id=member.id),
+        )
+
+    notify.assert_called_once_with(
+        test_db,
+        actor_user_id=test_user.id,
+        user_id=member.id,
+        target=NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name,
+            item_id=item.id,
+            item_title=item.title,
+            item_status="收集箱",
+            assignee_name="next-owner",
+        ),
         assigner_name=test_user.user_name,
     )
 

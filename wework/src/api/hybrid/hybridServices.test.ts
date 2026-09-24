@@ -841,6 +841,23 @@ describe('createHybridWorkbenchServices', () => {
     info.mockRestore()
   })
 
+  it('loads the cloud catalog even when the local catalog fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
+    const services = createServices()
+
+    const initial = await services.modelApi.listModels()
+    expect(initial.data).toEqual([])
+
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
+    })
+
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    warning.mockRestore()
+  })
+
   it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void

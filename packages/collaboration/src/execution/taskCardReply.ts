@@ -158,13 +158,16 @@ export async function dispatchTaskCardReply<
       // A local self-managed reply is continued below through the card's
       // runtime address. Mention-driven enqueue is reserved for a new root
       // comment; including the mention here would create a second session.
-      mentions:
-        !serverExecution &&
+      mentions: [
+        ...(!serverExecution &&
         agent &&
         !customManager &&
         !(input.selfManagedExecution && address)
-          ? [{ type: "agent", id: agent.id, label: agent.name }]
-          : [],
+          ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
+          : []),
+        // Members the reply composer mentioned are addressed, not enqueued.
+        ...(reply.mentions ?? []).filter((mention) => mention.type === "user"),
+      ],
       replyToMessageId: rootId,
       model: null,
     });

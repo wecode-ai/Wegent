@@ -5,7 +5,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { webApi } from '../../utils/collaboration-test-support'
+import { webApi, writeSharedComposer } from '../../utils/collaboration-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
@@ -577,7 +577,10 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       const issueId = createdIssue.id
 
-      await page.getByTestId('collaboration-issue-comment').fill('Cloud E2E persistent comment')
+      await writeSharedComposer(
+        page.getByTestId('collaboration-issue-comment'),
+        'Cloud E2E persistent comment'
+      )
       await page.getByTestId('collaboration-issue-comment-submit').click()
       await expect(page.getByTestId('collaboration-comments')).toContainText(
         'Cloud E2E persistent comment'
