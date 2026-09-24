@@ -5469,9 +5469,16 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
         assert "submit_workflow_plan" in payload["projectInstructions"]
         assert "Handle the task" in payload["projectInstructions"]
     if executor_type == "workflow_manager_robot":
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
-        assert "submit_workflow_plan" in payload["message"]
-        assert "Coordinate this Issue" in payload["message"]
+        assert f"project_id: {project.id}" in payload["message"]
+        assert f"task_id: {item.id}" in payload["message"]
+        assert f"automation_run_id: {run.id}" in payload["message"]
+        assert "AI 管家" not in payload["message"]
+        assert "submit_workflow_plan" not in payload["message"]
+        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in (
+            payload["projectInstructions"]
+        )
+        assert "submit_workflow_plan" in payload["projectInstructions"]
+        assert "Coordinate this Issue" in payload["projectInstructions"]
         assert payload["origin"]["automationRole"] == "manager"
     if executor_type == "workflow_child_robot":
         assert "Manager-generated child task instruction" in payload["message"]
