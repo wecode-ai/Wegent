@@ -21,6 +21,8 @@ const FLASH_ANIMATION = 'task-detail-comment-flash'
  */
 const COMMENT_BUDGET_MS = 6_000
 const FLASH_BUDGET_MS = 8_000
+/** How long the landed comment must stay on screen to count as the one arrived at. */
+const LANDED_STABILITY_MS = 400
 
 function commentSelectorFor(activeSurface, commentId) {
   return `${activeSurface} [data-testid="cloud-task-activity-message-${commentId}"]`
@@ -124,16 +126,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     const deadline = Date.now() + timeoutMs
     let latest = ''
     while (Date.now() < deadline) {
-      latest = await control.command('getComputedStyleValue', selector, {
-        value: 'animation-name',
-      })
+      // The surface the notification opened can still be swapping in, so a
+      // missing comment means "not yet", not "never flashed".
+      latest = await control
+        .command('getComputedStyleValue', selector, { value: 'animation-name' })
+        .catch(() => '')
       if (latest.includes(FLASH_ANIMATION)) return latest
       await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
     }
     assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
   }
 
-  /** Wait until the notification's Issue and its comment are both on screen. */
+  /**
+   * Wait until the notification's Issue and its comment are both on screen.
+   *
+   * The click a notification answers only navigates once the read it persists
+   * comes back, so the surface that was on screen when the click was dispatched
+   * can answer a single probe and be replaced right after. Only a surface that
+   * keeps showing the Issue and its comment counts as the reader arriving.
+   */
   async function waitForComment(
     control,
     { activeSurface, commentId, issueTitle },
@@ -141,10 +152,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     timeoutMs
   ) {
     const issueTitleSelector = `${activeSurface} [data-testid="cloud-todo-detail-title"]`
-    await control.command('waitFor', issueTitleSelector, { timeoutMs })
+    await control.command('waitFor', issueTitleSelector, {
+      stableMs: LANDED_STABILITY_MS,
+      timeoutMs,
+    })
     assert.equal(await control.command('getValue', issueTitleSelector), issueTitle)
     const commentSelector = commentSelectorFor(activeSurface, commentId)
-    await control.command('waitFor', commentSelector, { text: '@', timeoutMs })
+    await control.command('waitFor', commentSelector, {
+      stableMs: LANDED_STABILITY_MS,
+      text: '@',
+      timeoutMs,
+    })
     return Date.now() - startedAt
   }
 
@@ -270,8 +288,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
 
-      // A fresh window puts the board back at its home, so the inbox click is
-      // measured from the same cold start as the link above.
+      // A fresh window restores the board tab the link opened, which already
+      // shows the mentioned comment, so the inbox click is measured from the
+      // board home just like the link above.
       await reloadMainWindow(
         control,
         'The main window did not come back after reloading for the inbox click'
@@ -279,6 +298,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="wework-notifications-button"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command(
+        'waitFor',
+        `${activeSurface} [data-testid="collaboration-platform-root"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')
       // A mention is board work, so the bell files it under collaboration.
