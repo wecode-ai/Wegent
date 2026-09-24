@@ -1275,6 +1275,10 @@ export function createDesktopScenario({
       text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: SUBAGENT_PARENT_COMPLETION,
+      timeoutMs: uiTimeoutMs,
+    })
     assert.equal(
       (await control.command('getText', '[data-testid="subagent-conversation-scroll"]')).includes(
         SUBAGENT_PARENT_COMPLETION
@@ -1347,6 +1351,10 @@ export function createDesktopScenario({
     })
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_TOOL_MARKER,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: SUBAGENT_PARENT_COMPLETION,
       timeoutMs: uiTimeoutMs,
     })
     assert.equal(
