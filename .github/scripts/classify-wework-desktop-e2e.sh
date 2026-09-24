@@ -159,10 +159,10 @@ core_shards=(
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-capabilities,collaboration-local-executor-issue-tools,collaboration-agent-automation-chain
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle,collaboration-settings-matrix
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,collaboration-issue-comment-notification
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention
   rendering-extensions
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
-  local-harness,running-conversation-history,running-plan-history,native-window-chrome
+  local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
 )

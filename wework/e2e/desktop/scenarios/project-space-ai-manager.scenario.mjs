@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 
-import {
-  declineInitialTelemetryConsent,
-  ensureExperimentalFeaturesEnabled,
-} from '../modules/preferences-automation-flows.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
@@ -269,7 +266,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         timeoutMs: workbenchReadyTimeoutMs,
       })
       assert.equal(modelCallCount, 3, 'New chat must create a fresh project AI task')
-      await declineInitialTelemetryConsent(control)
       await captureScreenshot(control, 'project-ai-conversation.png')
       await control.command('click', scoped('[data-testid^="project-ai-response-issue-"]'))
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {

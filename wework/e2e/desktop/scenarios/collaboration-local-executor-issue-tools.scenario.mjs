@@ -311,10 +311,9 @@ export async function createDesktopScenario({ executorHome, modelResponseTimeout
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
-      )
+      const groupOption = `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
+      await control.command('waitFor', groupOption, { timeoutMs: uiTimeoutMs })
+      await control.command('click', groupOption)
       await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
         timeoutMs: uiTimeoutMs,
       })
