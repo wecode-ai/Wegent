@@ -839,6 +839,7 @@ class DesktopE2EServer {
         'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
+        'attachment_submit_cleanup',
         'pasted_zip_attachment',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
@@ -4271,6 +4272,21 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'attachment_submit_cleanup') {
+      this.recordScenarioRequest('attachment_submit_cleanup', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(ATTACHMENT_ONLY_FILENAME),
+        'The attachment cleanup request did not contain the selected file'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`),
         responseCompleted(responseId),
       ])
       return

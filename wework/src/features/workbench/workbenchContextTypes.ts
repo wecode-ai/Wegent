@@ -96,6 +96,8 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  attachments?: Attachment[]
+  preserveAttachments?: boolean
   runtime?: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'

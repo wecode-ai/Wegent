@@ -9218,15 +9218,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
       })
     )
+    const createResponse =
+      deferred<
+        Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
+      >()
     const transcript = deferred<RuntimeTranscriptResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      createRuntimeTask: vi.fn(async request => ({
-        accepted: true,
-        deviceId: request.deviceId,
-        taskId: request.taskId,
-        workspacePath: request.workspacePath,
-        runtime: 'claude_code',
-      })),
+      createRuntimeTask: vi.fn().mockReturnValue(createResponse.promise),
       getRuntimeTranscript: vi.fn().mockReturnValue(transcript.promise),
     })
     const services = createWorkbenchServices({
@@ -9244,6 +9242,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('0')
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         attachmentIds: [45],
@@ -9253,6 +9252,45 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(
       previews.some(preview => preview.getAttribute('src') === 'blob:runtime-message-image-preview')
     ).toBe(true)
+
+    await act(async () => {
+      createResponse.resolve({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+      })
+      await createResponse.promise
+    })
+  })
+
+  test('restores the draft and image attachment when runtime task creation fails', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'device-1',
+        taskId: 'runtime-rejected',
+        error: 'create rejected',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+    )
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent('create rejected')
   })
 
   test('uploads local image attachments before creating a cloud runtime task', async () => {

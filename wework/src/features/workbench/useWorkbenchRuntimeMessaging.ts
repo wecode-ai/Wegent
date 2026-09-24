@@ -1629,7 +1629,8 @@ export function useWorkbenchRuntimeMessaging({
       const rawInput = inputOverride ?? ''
       const trimmedMessage = rawInput.trim()
       const effectiveCodeCommentContexts = options?.codeCommentContexts ?? []
-      const hasAttachments = attachmentSelection.attachments.length > 0
+      const selectedAttachments = options?.attachments ?? attachmentSelection.attachments
+      const hasAttachments = selectedAttachments.length > 0
       const hasCodeComments = effectiveCodeCommentContexts.length > 0
       if (!trimmedMessage && !hasAttachments && !hasCodeComments) {
         reportSendBlocked('请输入内容或添加附件后再发送', undefined, options)
@@ -1658,7 +1659,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'), undefined, options)
           return false
         }
-        const currentAttachments = attachmentSelection.attachments
+        const currentAttachments = selectedAttachments
         const attachmentIds = remoteAttachmentIds(currentAttachments)
         const attachments = localRuntimeAttachments(currentAttachments)
         const sent = await sendRuntimePaneMessage(
@@ -1683,7 +1684,7 @@ export function useWorkbenchRuntimeMessaging({
 
       const prepared = buildSendPayload(
         payloadMessage,
-        undefined,
+        selectedAttachments,
         undefined,
         options?.forceNewTask || !isOptionsLocked,
         options?.additionalSkills
@@ -1761,9 +1762,10 @@ export function useWorkbenchRuntimeMessaging({
           ...(options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
             ? { modelSelection: options.modelSelection }
             : {}),
+          preserveAttachments: options?.preserveAttachments,
         }
       )
-      if (sent) {
+      if (sent && !options?.preserveAttachments) {
         attachmentSelection.resetAttachments()
       }
       return sent

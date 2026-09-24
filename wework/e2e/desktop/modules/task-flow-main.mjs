@@ -284,6 +284,7 @@ import {
 } from './task-state-flows.mjs'
 
 import {
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
   verifyCrossProviderSwitchRetry,
@@ -1856,6 +1857,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
         appBundlePath,
@@ -4293,6 +4302,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'attachment-only-sidebar'
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector,
+        control,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({
