@@ -14,8 +14,8 @@ from typing import Any
 BOARD_LABEL = "看板"
 RUNTIME_REPLY_HINT = "引用本通知回复，即可继续该任务。"
 COMMENT_PREVIEW_MAX_CHARS = 200
-WEWORK_LINK_LABEL = "在 Wework 打开"
-WEB_LINK_LABEL = "在浏览器打开"
+WEWORK_LINK_LABEL = "在 Wework 中打开"
+WEB_LINK_LABEL = "查看任务"
 
 # The kinds the desktop bell files under its collaboration category: board work
 # a member is pulled into — assigned, mentioned or run — rather than a message

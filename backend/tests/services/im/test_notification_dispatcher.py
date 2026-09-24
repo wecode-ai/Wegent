@@ -458,10 +458,10 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
         ),
         links=[
             NotificationLink(
-                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+                label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"
             ),
             NotificationLink(
-                label="在浏览器打开",
+                label="查看任务",
                 url="http://localhost:3000/collaboration/12/issues/ISSUE-1",
             ),
         ],
@@ -474,8 +474,8 @@ async def test_dingtalk_notification_pushes_the_inbox_headline_above_a_link(
         "text": (
             "**hajimi 在「修复登录」提到了你**\n\n"
             "看板：test-pro\n\n"
-            "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
-            " · [在浏览器打开](http://localhost:3000/collaboration/12/issues/ISSUE-1)"
+            "[在 Wework 中打开](wework://boards/12/issues/ISSUE-1)"
+            " · [查看任务](http://localhost:3000/collaboration/12/issues/ISSUE-1)"
         ),
     }
 
@@ -530,7 +530,7 @@ async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
         ),
         links=[
             NotificationLink(
-                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+                label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"
             ),
         ],
     )
@@ -539,7 +539,7 @@ async def test_dingtalk_markdown_escapes_link_syntax_from_a_comment(
     assert calls[1]["text"] == (
         "**hajimi 在「修复登录」提到了你**\n\n"
         "评论内容：\\[点这里\\](https://tracker.example/login)\n\n"
-        "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
+        "[在 Wework 中打开](wework://boards/12/issues/ISSUE-1)"
     )
 
 
@@ -610,7 +610,7 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
         ),
         links=[
             NotificationLink(
-                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+                label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"
             ),
         ],
     )
@@ -625,7 +625,7 @@ async def test_dingtalk_notification_card_uses_the_builtin_template(
     assert card_param_map["markdown"] == "**任务编号**：WORK-582"
     assert json.loads(card_param_map["sys_full_json_obj"])["msgButtons"] == [
         {
-            "text": "在 Wework 打开",
+            "text": "在 Wework 中打开",
             "url": "wework://boards/12/issues/ISSUE-1",
             "color": "blue",
         }
@@ -695,7 +695,7 @@ async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
         ),
         links=[
             NotificationLink(
-                label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"
+                label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"
             ),
         ],
     )
@@ -713,7 +713,7 @@ async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
         "text": (
             "**hajimi 在「修复登录」提到了你**\n\n"
             "任务编号：WORK-582\n\n"
-            "[在 Wework 打开](wework://boards/12/issues/ISSUE-1)"
+            "[在 Wework 中打开](wework://boards/12/issues/ISSUE-1)"
         ),
     }
 

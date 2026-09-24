@@ -190,8 +190,8 @@ async def test_mentioning_a_member_pushes_the_comment_to_dingtalk(
                     f"看板：{project.name}",
                     "评论内容：@recipient 这个改动麻烦你确认下",
                 )
-                + f"\n\n[在 Wework 打开]({notification.url})"
-                f" · [在浏览器打开]({web_link})"
+                + f"\n\n[在 Wework 中打开]({notification.url})"
+                f" · [查看任务]({web_link})"
             ),
         }
     ]
@@ -249,8 +249,8 @@ async def test_execution_lifecycle_pushes_start_blocked_and_end(
             f"看板：{project.name}",
             "任务结果：实现完成，已通过自测。",
         )
-        + f"\n\n[在 Wework 打开]({destination})"
-        f" · [在浏览器打开]({settings.FRONTEND_URL.rstrip('/')}"
+        + f"\n\n[在 Wework 中打开]({destination})"
+        f" · [查看任务]({settings.FRONTEND_URL.rstrip('/')}"
         f"/collaboration/{project.id}/issues/{item.id})"
     )
     assert all(

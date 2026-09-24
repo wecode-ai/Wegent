@@ -34,9 +34,9 @@ TARGET = NotificationTarget(
 )
 
 LINKS = [
-    NotificationLink(label="在 Wework 打开", url="wework://boards/12/issues/ISSUE-1"),
+    NotificationLink(label="在 Wework 中打开", url="wework://boards/12/issues/ISSUE-1"),
     NotificationLink(
-        label="在浏览器打开",
+        label="查看任务",
         url="http://localhost:3000/collaboration/12/issues/ISSUE-1",
     ),
 ]
@@ -73,12 +73,12 @@ def test_card_paints_the_headline_in_the_template_header() -> None:
     assert params[TIPS_KEY] == ""
     assert json.loads(params["sys_full_json_obj"])[BUTTONS_KEY] == [
         {
-            "text": "在 Wework 打开",
+            "text": "在 Wework 中打开",
             "url": "wework://boards/12/issues/ISSUE-1",
             "color": "blue",
         },
         {
-            "text": "在浏览器打开",
+            "text": "查看任务",
             "url": "http://localhost:3000/collaboration/12/issues/ISSUE-1",
             "color": "gray",
         },
@@ -217,9 +217,9 @@ def test_custom_card_exposes_a_mention_as_separate_plain_text_fields() -> None:
         "detailLabel": "评论内容",
         "detail": "[点这里](https://tracker.example/login)",
         "showDetail": "true",
-        "primaryLabel": "在浏览器打开",
+        "primaryLabel": "查看任务",
         "primaryUrl": "http://localhost:3000/collaboration/12/issues/ISSUE-1",
-        "secondaryLabel": "在 Wework 打开",
+        "secondaryLabel": "在 Wework 中打开",
         "secondaryUrl": "wework://boards/12/issues/ISSUE-1",
     }
 

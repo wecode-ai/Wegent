@@ -398,9 +398,9 @@ def test_push_offers_the_desktop_deep_link_and_the_web_page(test_db, test_user):
     test_db.commit()
 
     assert [(link.label, link.url) for link in notification_links(row)] == [
-        ("在 Wework 打开", row.url),
+        ("在 Wework 中打开", row.url),
         (
-            "在浏览器打开",
+            "查看任务",
             f"{settings.FRONTEND_URL.rstrip('/')}/collaboration/123/issues/WEG-12",
         ),
     ]
