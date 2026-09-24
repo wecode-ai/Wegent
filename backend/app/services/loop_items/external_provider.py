@@ -356,6 +356,26 @@ class ExternalLoopItemProvider:
                 priority=values.priority,
             )
             db.commit()
+        elif values.assignee_group_id:
+            from app.services.workspaces import workspace_service
+
+            group = next(
+                entry
+                for entry in workspace_service.list_project_collaboration_groups(
+                    db, project.id, user_id
+                )
+                if str(entry["id"]) == values.assignee_group_id
+            )
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+                assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
+            db.commit()
         return self._response(db, project, issue, access, user_id)
 
     def attach_gitlab_upload(

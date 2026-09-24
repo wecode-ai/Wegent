@@ -18,7 +18,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemUpdate
+from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
 from app.services.notification_copy import NotificationTarget
@@ -181,6 +181,44 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
     )
     assert not restored.metadata_json.get("collaboration_group")
     assert restored.assignee_user_id == test_user.id
+
+
+def test_create_with_collaboration_group_preserves_group_as_owner(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "members": [],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        item = loop_item_service.create(
+            test_db,
+            project.id,
+            test_user.id,
+            LoopItemCreate(
+                title="Group-owned task",
+                assignee_group_id="group-1",
+            ),
+        )
+
+    assert item.assignee_user_id is None
+    assert item.assignee_agent_id == ""
+    assert item.assignee_team_id is None
+    assert item.metadata_json["collaboration_group"] == {
+        "id": "group-1",
+        "name": "Delivery team",
+    }
+    values = loop_item_service.response_values(test_db, item, test_user.id)
+    assert values["assignee_group_id"] == "group-1"
+    assert values["assignee_group_name"] == "Delivery team"
 
 
 def _make_member(db: Session, project: CloudProject, name: str, role: BaseRole) -> User:

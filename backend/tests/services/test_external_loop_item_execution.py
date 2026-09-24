@@ -11,6 +11,7 @@ execution table and never creates a local task row.
 import logging
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime
 from threading import Event
 from unittest.mock import patch
 
@@ -634,6 +635,46 @@ def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
     assert execution.team_id == team.id
     assert execution.agent_id == bot.id
     assert execution.executor_type == "project_robot"
+
+
+def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    _mock_issue(monkeypatch)
+    group = {
+        "id": "group-1",
+        "name": "Delivery team",
+        "members": [],
+        "stages": [],
+        "created_at": datetime.now(),
+    }
+    monkeypatch.setattr(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        lambda _db, _project_id, _user_id: [group],
+    )
+
+    created = loop_item_provider_router.create(
+        test_db,
+        project,
+        test_user,
+        LoopItemCreate(
+            title="Created for collaboration group",
+            assignee_group_id="group-1",
+        ),
+    )
+
+    assert created.values["assignee_group_id"] == "group-1"
+    assert created.values["assignee_group_name"] == "Delivery team"
+    assert created.internal_item is not None
+    assert created.internal_item.assignee_user_id in {None, 0}
+    assert created.internal_item.assignee_agent_id == ""
+    assert created.internal_item.assignee_team_id is None
+    assert created.internal_item.metadata_json["collaboration_group"] == {
+        "id": "group-1",
+        "name": "Delivery team",
+    }
+    assert _active_execution(test_db, str(created.values["id"])) is None
 
 
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
