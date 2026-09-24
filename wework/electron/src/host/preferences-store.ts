@@ -38,8 +38,9 @@ export class PreferencesStore {
       content = await readFile(this.path(), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      await this.quarantineUnreadableFile(error)
-      return {}
+      // A permission, sharing, or I/O error says nothing about the contents:
+      // keep the file where it is instead of moving valid settings aside.
+      throw error
     }
     try {
       const value = JSON.parse(content) as unknown
@@ -47,17 +48,17 @@ export class PreferencesStore {
         ? (value as Record<string, unknown>)
         : {}
     } catch (error) {
-      await this.quarantineUnreadableFile(error)
+      await this.quarantineDamagedFile(error)
       return {}
     }
   }
 
   /**
-   * A damaged preferences file must not break every consumer: keep the original
-   * bytes for diagnosis, then continue with defaults so the store heals itself
-   * on the next write instead of failing permanently.
+   * Content that cannot be parsed must not break every consumer: keep the
+   * original bytes for diagnosis, then continue with defaults so the store
+   * heals itself on the next write instead of failing permanently.
    */
-  private async quarantineUnreadableFile(reason: unknown): Promise<void> {
+  private async quarantineDamagedFile(reason: unknown): Promise<void> {
     const path = this.path()
     const quarantined = `${path}.corrupt-${Date.now()}`
     try {

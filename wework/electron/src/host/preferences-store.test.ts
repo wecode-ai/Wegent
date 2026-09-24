@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -65,5 +65,19 @@ describe('PreferencesStore', () => {
     await expect(store.update({ locale: 'zh-CN' })).resolves.toEqual({ locale: 'zh-CN' })
     await expect(new PreferencesStore(root).read()).resolves.toEqual({ locale: 'zh-CN' })
     warning.mockRestore()
+  })
+
+  test('propagates read errors without moving the file aside', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
+    roots.push(root)
+    const path = join(root, 'app-preferences.json')
+    await mkdir(path)
+    const store = new PreferencesStore(root)
+
+    const error = (await store.read().catch(caught => caught)) as NodeJS.ErrnoException
+
+    expect(['EISDIR', 'EPERM', 'EACCES']).toContain(error.code)
+    expect((await stat(path)).isDirectory()).toBe(true)
+    expect(await readdir(root)).toEqual(['app-preferences.json'])
   })
 })
