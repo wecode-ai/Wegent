@@ -113,6 +113,7 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  onRuntimeTaskOptimisticRemoved?: (address: RuntimeTaskAddress) => void
   prepareRuntimeTask?: (
     address: RuntimeTaskAddress
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>

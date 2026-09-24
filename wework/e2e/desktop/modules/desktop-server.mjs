@@ -406,10 +406,11 @@ function readyPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
-const HELD_WORKTREE_SCENARIOS = new Set([
+const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
+  'attachment_submit_cleanup',
 ])
 
 class DesktopE2EServer {
@@ -834,12 +835,11 @@ class DesktopE2EServer {
         'model_proxy_restart',
         'checkpoint_task',
         'late_bound_project_space',
-        ...HELD_WORKTREE_SCENARIOS,
+        ...HELD_RESPONSE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
-        'attachment_submit_cleanup',
         'pasted_zip_attachment',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
@@ -871,7 +871,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      HELD_WORKTREE_SCENARIOS.has(scenario),
+      HELD_RESPONSE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -4015,11 +4015,17 @@ class DesktopE2EServer {
       return
     }
 
-    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
+    if (HELD_RESPONSE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
       this.recordScenarioRequest(scenario, modelRequest)
+      if (scenario === 'attachment_submit_cleanup') {
+        assert.ok(
+          JSON.stringify(body).includes(ATTACHMENT_ONLY_FILENAME),
+          'The attachment cleanup request did not contain the selected file'
+        )
+      }
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
@@ -4030,12 +4036,11 @@ class DesktopE2EServer {
       response.write(createSse([responseCreated(responseId)]))
       await held.promise
       if (!response.writableEnded && !response.destroyed) {
-        response.end(
-          createSse([
-            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
-            responseCompleted(responseId),
-          ])
-        )
+        const completionText =
+          scenario === 'attachment_submit_cleanup'
+            ? `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`
+            : `${scenario.toUpperCase()}_COMPLETE`
+        response.end(createSse([assistantMessage(completionText), responseCompleted(responseId)]))
       }
       return
     }
@@ -4272,21 +4277,6 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'attachment_submit_cleanup') {
-      this.recordScenarioRequest('attachment_submit_cleanup', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(ATTACHMENT_ONLY_FILENAME),
-        'The attachment cleanup request did not contain the selected file'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`),
         responseCompleted(responseId),
       ])
       return

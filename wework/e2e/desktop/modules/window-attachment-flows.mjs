@@ -1028,6 +1028,7 @@ async function attachAndSendOnlyFile(control, composerSelector) {
 }
 
 async function verifyAttachmentComposerClearsOnSubmit({ composerSelector, control }) {
+  control.holdScenarioResponse('attachment_submit_cleanup')
   control.setScenario('attachment_submit_cleanup')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1050,24 +1051,29 @@ async function verifyAttachmentComposerClearsOnSubmit({ composerSelector, contro
     'The attachment cleanup fixture did not finish staging'
   )
 
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  try {
+    await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.awaitScenarioRequestCount('attachment_submit_cleanup', 1)
 
-  assert.equal(
-    await control.command('getValue', composerSelector),
-    '',
-    'Submitting text with an image did not clear the composer text immediately'
-  )
-  const submittedSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
-  assert.equal(
-    submittedSnapshot.testIds.includes('attachment-badge'),
-    false,
-    'Submitting text with an image left the attachment in the composer'
-  )
-
-  await control.awaitScenarioRequestCount('attachment_submit_cleanup', 1)
+    assert.equal(
+      await control.command('getValue', composerSelector),
+      '',
+      'Submitting text with an image did not clear the composer text immediately'
+    )
+    const submittedSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      submittedSnapshot.testIds.includes('attachment-badge'),
+      false,
+      'Submitting text with an image left the attachment in the composer'
+    )
+  } finally {
+    control.releaseScenarioResponse('attachment_submit_cleanup')
+  }
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

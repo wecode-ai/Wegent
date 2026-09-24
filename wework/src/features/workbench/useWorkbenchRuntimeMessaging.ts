@@ -933,6 +933,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'initialSupervisor'
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
+        | 'onRuntimeTaskOptimisticRemoved'
         | 'prepareRuntimeTask'
         | 'additionalContext'
         | 'runtime'
@@ -1588,6 +1589,7 @@ export function useWorkbenchRuntimeMessaging({
           if (runtimeTasks.isCurrentRuntimeTask(optimisticAddress)) {
             runtimeTasks.clearCurrentRuntimeTaskView()
           }
+          options?.onRuntimeTaskOptimisticRemoved?.(optimisticAddress)
         }
         reportError(message, options)
         return false
@@ -1746,6 +1748,7 @@ export function useWorkbenchRuntimeMessaging({
           initialSupervisor: options?.initialSupervisor,
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
+          onRuntimeTaskOptimisticRemoved: options?.onRuntimeTaskOptimisticRemoved,
           clientUserMessageId: options?.clientUserMessageId,
           optimisticUserMessage: options?.optimisticUserMessage,
           additionalContext: options?.additionalContext,

@@ -2283,8 +2283,13 @@ export function useWorkbenchPaneSession({
                   seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
                 })
               },
+              onRuntimeTaskOptimisticRemoved: () => {
+                errorScopeKey = inputScopeKey
+                submissionScopeKey = inputScopeKey
+              },
             })
           } catch (error) {
+            setInputForScope(submissionScopeKey, visibleSubmittedInput)
             currentAttachments.forEach(attachment =>
               addExistingAttachmentForScope(submissionScopeKey, attachment)
             )

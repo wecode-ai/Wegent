@@ -1285,6 +1285,9 @@ function ProjectSendProbe({
       <button type="button" onClick={() => workbench.startStandaloneChat()}>
         start standalone chat
       </button>
+      <button type="button" onClick={() => workbench.selectStandaloneDevice('device-1')}>
+        select standalone device
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -9291,6 +9294,45 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
     expect(screen.getByTestId('pane-session-error')).toHaveTextContent('create rejected')
+  })
+
+  test('restores a rejected standalone draft to the blank chat scope', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'device-1',
+        taskId: 'standalone-rejected',
+        error: 'standalone create rejected',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(services.deviceApi.listDevices).toHaveBeenCalled())
+    await userEvent.click(await screen.findByText('start standalone chat'))
+    await userEvent.click(screen.getByText('select standalone device'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-1')
+    )
+    const blankChatKey = screen.getByTestId('standalone-chat-key').textContent
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(blankChatKey ?? '')
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent('standalone create rejected')
   })
 
   test('uploads local image attachments before creating a cloud runtime task', async () => {
