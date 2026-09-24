@@ -67,8 +67,8 @@ describe('desktop resource migration', () => {
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:codex', '--materialize']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
     expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
     expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
@@ -338,10 +338,18 @@ describe('desktop resource migration', () => {
   })
 
   test('allows the packaged CI build to opt into a prebuilt executor', async () => {
-    const source = await readFile(join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'), 'utf8')
+    const [buildSource, packageSource] = await Promise.all([
+      readFile(join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+    ])
 
-    expect(source).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_PATH')
-    expect(source).toContain('WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath)')
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_PATH')
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath)')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_WAIT_SECONDS: prebuiltExecutorWaitSeconds')
+    expect(packageSource).toContain('waitForConfiguredExecutor(')
+    expect(packageSource).toContain('process.env.WEWORK_EXECUTOR_WAIT_SECONDS')
+    expect(packageSource).toContain('await delay(250)')
   })
 
   test.each([

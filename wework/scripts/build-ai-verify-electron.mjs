@@ -12,6 +12,7 @@ const weworkDir = resolve(scriptDir, '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(process.env)
 const prebuiltExecutorPath = process.env.WEWORK_E2E_PREBUILT_EXECUTOR_PATH?.trim()
+const prebuiltExecutorWaitSeconds = process.env.WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS?.trim()
 const buildEnvironment = {
   ...resolveHarnessRuntimeAssetCacheEnvironment(
     isolatedEnvironment,
@@ -21,7 +22,14 @@ const buildEnvironment = {
   VITE_WEWORK_E2E: 'true',
   VITE_WEWORK_RELEASE_CHANNEL: 'stable',
   VITE_WEWORK_RUNTIME_MODE: 'local-first',
-  ...(prebuiltExecutorPath ? { WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath) } : {}),
+  ...(prebuiltExecutorPath
+    ? {
+        WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath),
+        ...(prebuiltExecutorWaitSeconds
+          ? { WEWORK_EXECUTOR_WAIT_SECONDS: prebuiltExecutorWaitSeconds }
+          : {}),
+      }
+    : {}),
 }
 
 function run(command, args, environment = process.env) {
@@ -41,8 +49,4 @@ function run(command, args, environment = process.env) {
 }
 
 await run(pnpmCommand, ['run', 'prepare:electron'])
-await Promise.all([
-  run(pnpmCommand, ['run', 'prepare:codex', '--materialize']),
-  run(pnpmCommand, ['run', 'prepare:dws']),
-])
 await run(pnpmCommand, ['--dir', 'electron', 'run', 'build:package'], buildEnvironment)

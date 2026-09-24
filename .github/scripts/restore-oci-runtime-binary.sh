@@ -36,8 +36,10 @@ while true; do
     restored_source="$temp_dir/bundle/rootfs/${source_path#/}"
     test -f "$restored_source"
     mkdir -p "$(dirname "$destination")"
-    cp "$restored_source" "$destination"
-    chmod 0755 "$destination"
+    restored_destination="${destination}.restore.$$"
+    cp "$restored_source" "$restored_destination"
+    chmod 0755 "$restored_destination"
+    mv -f "$restored_destination" "$destination"
     exit 0
   fi
 

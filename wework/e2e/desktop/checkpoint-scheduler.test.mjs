@@ -31,3 +31,33 @@ test('serializes checkpoints that share an exclusive resource', async () => {
     new Set(['collaboration-a', 'independent', 'collaboration-b'])
   )
 })
+
+test('starts resource-constrained checkpoint chains before independent work', async () => {
+  const started = []
+  const release = new Map()
+
+  const runPromise = runWithCheckpointResources({
+    checkpoints: ['independent-a', 'collaboration-a', 'independent-b', 'collaboration-b'],
+    workerCount: 2,
+    resourceFor: checkpoint =>
+      checkpoint.startsWith('collaboration-') ? 'collaboration-runtime' : null,
+    run: checkpoint =>
+      new Promise(resolve => {
+        started.push(checkpoint)
+        release.set(checkpoint, resolve)
+      }),
+  })
+
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(started, ['collaboration-a', 'independent-a'])
+
+  release.get('collaboration-a')()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(started, ['collaboration-a', 'independent-a', 'collaboration-b'])
+
+  release.get('independent-a')()
+  release.get('collaboration-b')()
+  await new Promise(resolve => setImmediate(resolve))
+  release.get('independent-b')()
+  await runPromise
+})

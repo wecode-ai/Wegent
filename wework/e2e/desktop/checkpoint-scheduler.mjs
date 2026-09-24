@@ -1,5 +1,17 @@
 export async function runWithCheckpointResources({ checkpoints, workerCount, resourceFor, run }) {
-  const pending = [...checkpoints]
+  const constrainedResources = new Set()
+  const resourceCounts = new Map()
+  for (const checkpoint of checkpoints) {
+    const resource = resourceFor(checkpoint)
+    if (!resource) continue
+    const count = (resourceCounts.get(resource) ?? 0) + 1
+    resourceCounts.set(resource, count)
+    if (count > 1) constrainedResources.add(resource)
+  }
+  const pending = [
+    ...checkpoints.filter(checkpoint => constrainedResources.has(resourceFor(checkpoint))),
+    ...checkpoints.filter(checkpoint => !constrainedResources.has(resourceFor(checkpoint))),
+  ]
   const activeResources = new Set()
   const waiters = new Set()
 

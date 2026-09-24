@@ -316,18 +316,6 @@ jobs:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
 
-      - name: Restore legacy shared Wework Electron build dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            ~/Library/Caches/electron
-          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-app-v1-
-
       - name: Restore shared Wework Electron build dependencies
         id: wework-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -343,12 +331,6 @@ jobs:
             ${{ runner.os }}-wework-electron-app-v2-
             ${{ runner.os }}-wework-electron-app-v1-
 
-      - name: Prepare bundled sidecars
-        working-directory: ./wework
-        run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
-
       - name: Build Wework Electron E2E application
         env:
           CI: true
@@ -357,7 +339,8 @@ jobs:
           WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
           WEWORK_EXECUTOR_PROFILE: release
         run: |
-          pnpm --filter wework ai:verify:electron:build &
+          CARGO_BUILD_TARGET=aarch64-apple-darwin \
+            pnpm --filter wework ai:verify:electron:build &
           wework_pid=$!
           cargo build \
             --locked \
@@ -375,11 +358,9 @@ jobs:
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           test -x "$CARGO_TARGET_DIR/debug/wegent-backend-rs"
 
-      - name: Warm macOS release executor compiler cache
+      - name: Warm macOS x64 release executor compiler cache
         working-directory: ./executor
-        run: |
-          cargo build --release --locked --target aarch64-apple-darwin --bin wegent-executor
-          cargo build --release --locked --target x86_64-apple-darwin --bin wegent-executor
+        run: cargo build --release --locked --target x86_64-apple-darwin --bin wegent-executor
 
       - name: Save shared Wework Electron build dependencies
         if: steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'

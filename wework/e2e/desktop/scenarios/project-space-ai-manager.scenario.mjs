@@ -249,7 +249,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         timeoutMs: workbenchReadyTimeoutMs,
       })
       assert.equal(modelCallCount, 2, 'Project AI follow-up must continue the Runtime session')
-      await control.command('click', scoped('[data-testid="project-ai-new-conversation"]'))
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="project-ai-new-conversation"]'),
+        { timeoutMs: workbenchReadyTimeoutMs }
+      )
       await control.command('fill', scoped('[data-testid="project-ai-message"]'), {
         value: 'Start a new project AI session',
       })
@@ -274,7 +278,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       })
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
       await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-      await control.command('click', scoped('[data-testid="project-ai-new-conversation"]'))
+      await control.command(
+        'clickWhenEnabled',
+        scoped('[data-testid="project-ai-new-conversation"]'),
+        { timeoutMs: workbenchReadyTimeoutMs }
+      )
       await control.command('fill', scoped('[data-testid="project-ai-message"]'), {
         value: 'Stop this project AI session',
       })
@@ -286,14 +294,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         scoped('[data-testid="project-ai-composer"] [data-testid="pause-response-button"]'),
         { timeoutMs: workbenchReadyTimeoutMs }
       )
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="project-ai-conversation-history"]'),
-        {
-          text: '项目 AI 正在执行可取消的检查。',
-          timeoutMs: workbenchReadyTimeoutMs,
-        }
-      )
+      await control.command('waitFor', scoped('[data-testid="project-ai-conversation-history"]'), {
+        text: '项目 AI 正在执行可取消的检查。',
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command(
         'click',
         scoped('[data-testid="project-ai-composer"] [data-testid="pause-response-button"]')

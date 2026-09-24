@@ -216,7 +216,7 @@ if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
   "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
     "$wework_e2e_workflow")" -ne 3 ]] ||
-  ! grep -Fq 'name: Build shared Wework desktop E2E runtime' \
+  ! grep -Fq 'name: Restore Rust runtimes and build shared Wework desktop E2E runtime' \
   "$wework_e2e_workflow"; then
   fail "Linux Wework desktop E2E must use bounded checkpoint parallelism"
 fi
