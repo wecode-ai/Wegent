@@ -3018,7 +3018,8 @@ class DesktopE2EServer {
       const tool = selectShellToolCommand(
         body,
         `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
-        this.cloudWorkspacePath
+        this.cloudWorkspacePath,
+        { yieldTimeMs: 10_000 }
       )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'

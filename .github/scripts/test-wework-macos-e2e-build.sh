@@ -79,10 +79,13 @@ printf 'changed source\n' >"$repo/wework/src/app.ts"
 reference_after_source="$(resolve_reference)"
 test "$reference_before" != "$reference_after_source"
 
-/bin/bash "$repo/.github/scripts/resolve-wework-macos-e2e-build-ref.sh" \
-  WECODE-AI \
-  executor-source \
-  backend-source |
-  grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-build:v1-'
+(
+  cd "$repo"
+  GITHUB_OUTPUT=/dev/stdout \
+    /bin/bash .github/scripts/resolve-wework-macos-e2e-build-ref.sh \
+    WECODE-AI \
+    executor-source \
+    backend-source
+) | grep -Fq 'ghcr.io/wecode-ai/wegent-wework-macos-e2e-build:v1-'
 
 echo "Wework macOS E2E build tests passed"
