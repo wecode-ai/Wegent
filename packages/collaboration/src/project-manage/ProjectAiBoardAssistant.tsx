@@ -358,6 +358,11 @@ export function ProjectAiBoardAssistant({
         }
         await api.automations.cancelRun(project.id, activeRun.id);
       }
+      setRuns((current) =>
+        current.map((run) =>
+          run.id === activeRun.id ? { ...run, status: "cancelled" } : run,
+        ),
+      );
       await refresh();
     } catch (cause) {
       setError(String(cause));

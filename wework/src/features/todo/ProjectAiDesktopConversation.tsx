@@ -9,6 +9,7 @@ import {
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { projectManagerConversationMessages } from './projectAiConversationMessages'
 
 const EMPTY_MESSAGES: WorkbenchMessage[] = []
 
@@ -86,9 +87,7 @@ export function ProjectAiDesktopConversation({
           (run.status === 'failed'
             ? `${locale === 'zh-CN' ? '运行失败' : 'Run failed'}: ${run.error ?? ''}`
             : run.status === 'cancelled'
-              ? locale === 'zh-CN'
-                ? '任务已取消'
-                : 'Task cancelled'
+              ? ''
               : waiting
                 ? locale === 'zh-CN'
                   ? '等待执行器启动…'
@@ -112,7 +111,14 @@ export function ProjectAiDesktopConversation({
       index === firstUserIndex ? { ...message, content: instruction } : message
     )
   }, [activeRun?.instruction, runtimeMessages])
-  const messages = visibleRuntimeMessages.length > 0 ? visibleRuntimeMessages : fallbackMessages
+  const messages = useMemo(
+    () =>
+      projectManagerConversationMessages(
+        visibleRuntimeMessages.length > 0 ? visibleRuntimeMessages : fallbackMessages,
+        activeRun
+      ),
+    [activeRun, fallbackMessages, visibleRuntimeMessages]
+  )
   const isWaitingForAssistant =
     messages.some(message => message.status === 'streaming') ||
     messages.at(-1)?.role === 'user' ||

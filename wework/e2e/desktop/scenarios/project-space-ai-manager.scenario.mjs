@@ -287,6 +287,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         { timeoutMs: workbenchReadyTimeoutMs }
       )
       await control.command(
+        'waitFor',
+        scoped('[data-testid="project-ai-conversation-history"]'),
+        {
+          text: '项目 AI 正在执行可取消的检查。',
+          timeoutMs: workbenchReadyTimeoutMs,
+        }
+      )
+      await control.command(
         'click',
         scoped('[data-testid="project-ai-composer"] [data-testid="pause-response-button"]')
       )
