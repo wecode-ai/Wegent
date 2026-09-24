@@ -109,15 +109,17 @@ The executor binary does not include Claude Code, so `executor/dist/wegent-execu
 Pass executor connection settings as runtime environment variables when running the device image. Do not bake the token into the image:
 
 ```bash
+DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 docker run -d --platform linux/amd64 \
   --name wegent-device \
-  -p 17888:17888 \
+  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
+  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \
   ghcr.io/wecode-ai/wegent-device:<version>
 ```
 
-`WEGENT_BACKEND_URL` is the HTTP API address used by the Executor. Port 17888 exposes the token-gated device session gateway; make sure the address generated from `client_origin` is reachable from the user's browser. You can customize public package and system mirrors through the Dockerfile build arguments without changing the Dockerfile.
+`WEGENT_BACKEND_URL` is the HTTP API address used by the Executor. `DEVICE_SESSION_GATEWAY_PORT` controls the token-gated device session gateway port and defaults to `17888`. The published host port and container port must match. Backend builds the browser-facing address from that port and the address it observes for the device, so the port must be reachable from the user's browser. You can customize public package and system mirrors through the Dockerfile build arguments without changing the Dockerfile.
 
 Interactive sessions can be disabled independently when the container starts. Both switches default to `true`:
 
@@ -167,6 +169,7 @@ In Wework, open **Settings** -> **Connections**, or click **Add device** on Wege
 The generated command contains parameters like:
 
 ```bash
+DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
@@ -178,13 +181,13 @@ docker run -d \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN=<generated-api-key> \
-  -e DEVICE_PUBLIC_BASE_URL=http://device.example.com:17888 \
-  -p 17888:17888 \
+  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \
+  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \
   -v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor \
   ghcr.io/wecode-ai/wegent-device:latest
 ```
 
-The generation API keeps `client_origin` optional for compatibility. It uses that origin, the request origin, or the Backend address to generate `DEVICE_PUBLIC_BASE_URL`. `WEGENT_AUTH_TOKEN` is a newly created remote device API key for each command and only appears in that command.
+The startup command defaults `DEVICE_SESSION_GATEWAY_PORT` to `17888`; export a different value before running the command to update the container environment and published port together. Backend builds the browser-facing IDE address from the address it observes for the device plus the gateway port the Executor reports, so the device must reach Backend without hiding its own address. When Backend observes no usable address, add `-e RUNTIME_TRANSFER_HOST=<reachable-device-address>` to the command to set it explicitly. `WEGENT_AUTH_TOKEN` is a newly created remote device API key for each command and only appears in that command.
 
 `-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` mounts the Docker named volume `wegent-remote-device-home` as the Executor home. It persists workspaces, downloaded capabilities, configuration, and runtime data so a recreated container can reuse them. `WEGENT_EXECUTOR_HOME_ID` pins that volume to the logical device. `WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` declares that this startup command has provided and verified a stable volume, a fixed absolute mount path, and single-writer ownership; only then does Executor advertise Remote Worktrees to Wework. Never set it for a temporary directory, anonymous volume, or deployment that has not passed persistence acceptance. `DEVICE_ID` and the connection token come from the startup command environment rather than this volume. To keep upgrades from using an old binary stored in the volume, each container start refreshes `bin/wegent-executor` from the current image while preserving the remaining data. Removing the container does not remove the named volume; only an explicit `docker volume rm wegent-remote-device-home` clears it.
 
@@ -199,9 +202,9 @@ WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> 
 
 Set `WEGENT_REMOTE_DEVICE_REBUILD_IMAGE=<new-version-or-digest>` to include an image-upgrade check. The script uses an isolated named volume and verifies initial container startup, real Executor Runtime Instance initialization, the Worktree capability durability attestation, real Executor Worktree prepare/list/delete RPCs, rejection of a second writer, container deletion, image rebuild, preservation of the same volume identity and Runtime Instance, binary refresh, rejection of a different logical device, a second persistence verification, and cleanup. A missing Docker CLI, unavailable daemon, or failed invariant produces a nonzero exit instead of a skip. Set `WEGENT_ACCEPTANCE_KEEP_ARTIFACTS=1` to retain the containers and volume for diagnostics.
 
-The intranet firewall on the target host must allow the browser to reach port 17888, but this port must not be exposed to the public internet. Port 17888 only serves token-protected IDE sessions. The session gateway validates the token, sets an HttpOnly cookie, and redirects to a URL without the token; it does not expose anonymous code-server access.
+The intranet firewall on the target host must allow the browser to reach the configured session gateway port (default `17888`), but this port must not be exposed to the public internet. The port only serves token-protected IDE sessions. The session gateway validates the token, sets an HttpOnly cookie, and redirects to a URL without the token; it does not expose anonymous code-server access.
 
-By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at the automatically detected address, so the detected device IP must be reachable from the user's browser.
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway port the device reports, with Backend supplying the browser-facing address, so the device address Backend observes must be reachable from the user's browser.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process only listens on the container loopback address with `auth: none`; the session gateway validates the short-lived token before the browser can reach it.

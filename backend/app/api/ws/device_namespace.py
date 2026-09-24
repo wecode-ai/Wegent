@@ -63,7 +63,11 @@ from app.api.ws.wework_runtime_namespace import (
     wework_runtime_user_room,
 )
 from app.core.auth_utils import is_api_key, verify_api_key
-from app.core.constants import get_wework_task_room, get_wework_user_room
+from app.core.constants import (
+    EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT,
+    get_wework_task_room,
+    get_wework_user_room,
+)
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
@@ -232,6 +236,7 @@ class DeviceRegistrationFingerprint:
     device_type: str
     bind_shell: str
     runtime_transfer_host: str
+    runtime_transfer_port: Optional[int]
     runtime_instance_id: str
     app_device_id: str
 
@@ -342,6 +347,7 @@ def _register_device(
     runtime_transfer_host: Optional[str] = None,
     runtime_instance_id: Optional[str] = None,
     app_device_id: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -354,6 +360,7 @@ def _register_device(
         device_type: Device type ('local', 'app', 'cloud', or 'remote')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         runtime_transfer_host: Host peers should use for direct transfers
+        runtime_transfer_port: Executor session gateway port
         runtime_instance_id: Stable runtime installation ID shared by all routes
         app_device_id: Desktop app IPC device ID for app registrations
 
@@ -370,6 +377,8 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
+                update_runtime_transfer_port=True,
                 runtime_instance_id=runtime_instance_id,
                 app_device_id=app_device_id,
             )
@@ -399,6 +408,15 @@ def _normalize_runtime_transfer_host(value: Any) -> Optional[str]:
     return candidate.strip("[]") or None
 
 
+def _registration_runtime_transfer_port(
+    payload: DeviceRegisterPayload,
+) -> Optional[int]:
+    """Resolve reported gateway port with the legacy Executor default."""
+    if "runtime_transfer_port" not in payload.model_fields_set:
+        return EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT
+    return payload.runtime_transfer_port
+
+
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
     """
     Update device heartbeat timestamp.
@@ -426,6 +444,9 @@ def _match_cloud_device_sync(
     client_ip: str,
     executor_device_id: str,
     runtime_instance_id: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
+    update_runtime_transfer_port: bool = False,
 ) -> Optional[tuple[str, bool, Optional[dict]]]:
     """
     Synchronous helper to match cloud device by device_id.
@@ -483,11 +504,19 @@ def _match_cloud_device_sync(
                         runtime_instance_id,
                         device_id=sandbox_id,
                     )
-                    if runtime_instance_id:
+                    if (
+                        runtime_instance_id
+                        or runtime_transfer_host is not None
+                        or update_runtime_transfer_port
+                    ):
                         device_json = copy.deepcopy(device.json)
-                        device_json.setdefault("spec", {})[
-                            "runtimeInstanceId"
-                        ] = runtime_instance_id
+                        device_spec = device_json.setdefault("spec", {})
+                        if runtime_instance_id:
+                            device_spec["runtimeInstanceId"] = runtime_instance_id
+                        if runtime_transfer_host is not None:
+                            device_spec["runtimeTransferHost"] = runtime_transfer_host
+                        if update_runtime_transfer_port:
+                            device_spec["runtimeTransferPort"] = runtime_transfer_port
                         device.json = device_json
                         flag_modified(device, "json")
                         db.add(device)
@@ -536,6 +565,9 @@ def _update_cloud_device_id_sync(
     executor_device_id: str,
     sandbox_id: str,
     runtime_instance_id: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
+    update_runtime_transfer_port: bool = False,
 ) -> str:
     """
     Synchronous helper to update cloud device ID in CRD for backward compatibility.
@@ -585,6 +617,10 @@ def _update_cloud_device_id_sync(
         device_json["spec"]["deviceId"] = executor_device_id
         if runtime_instance_id:
             device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
+        if runtime_transfer_host is not None:
+            device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
+        if update_runtime_transfer_port:
+            device_json["spec"]["runtimeTransferPort"] = runtime_transfer_port
 
         # Update cloudConfig with deviceId for future matching
         if "cloudConfig" in device_json["spec"]:
@@ -1629,6 +1665,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
         client_ip: str,
         executor_device_id: str,
         runtime_instance_id: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
     ) -> Optional[str]:
         """Match cloud device by verifying server-generated device_id.
 
@@ -1655,6 +1693,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 client_ip,
                 executor_device_id,
                 runtime_instance_id,
+                runtime_transfer_host,
+                runtime_transfer_port,
+                True,
             )
 
             if result is None:
@@ -1671,6 +1712,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     executor_device_id,
                     device_data["sandbox_id"],
                     runtime_instance_id,
+                    runtime_transfer_host,
+                    runtime_transfer_port,
+                    True,
                 )
 
             return logical_device_id
@@ -1948,12 +1992,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host or payload.client_ip
         )
+        runtime_transfer_port = _registration_runtime_transfer_port(payload)
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
             f"name={payload.name}, executor_version={payload.executor_version}, "
             f"tcp_client_ip={session.get('client_ip')}, "
             f"reported_client_ip={payload.client_ip}, "
-            f"runtime_transfer_host={runtime_transfer_host}"
+            f"runtime_transfer_host={runtime_transfer_host}, "
+            f"runtime_transfer_port={runtime_transfer_port}"
         )
 
         # Check if this is a cloud device registration (by IP matching)
@@ -1966,6 +2012,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_type=payload.device_type.value,
             bind_shell=payload.bind_shell.value,
             runtime_transfer_host=str(runtime_transfer_host or "").strip(),
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=str(payload.runtime_instance_id or "").strip(),
             app_device_id=str(payload.app_device_id or "").strip(),
         )
@@ -1979,6 +2026,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     client_ip or "",
                     payload.device_id,
                     payload.runtime_instance_id,
+                    runtime_transfer_host,
+                    runtime_transfer_port,
                 )
             except RuntimeInstanceMismatchError as exc:
                 logger.warning(
@@ -2022,6 +2071,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         runtime_transfer_host,
                         payload.runtime_instance_id,
                         payload.app_device_id,
+                        runtime_transfer_port,
                     )
                 )
                 if not success:
@@ -2045,6 +2095,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["logical_device_id"] = logical_device_id or route_id
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
+        session["runtime_transfer_port"] = runtime_transfer_port
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["device_type"] = payload.device_type.value
         session["execution_target_id"] = payload.app_device_id or payload.device_id
@@ -2079,6 +2130,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             executor_version=payload.executor_version,
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=payload.runtime_instance_id,
             runtime_features=(
                 payload.runtime_features.model_dump(
@@ -2304,7 +2356,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host
         ) or session.get("runtime_transfer_host")
+        runtime_transfer_port = (
+            payload.runtime_transfer_port
+            if "runtime_transfer_port" in payload.model_fields_set
+            else session.get("runtime_transfer_port")
+        )
         session["runtime_transfer_host"] = runtime_transfer_host
+        session["runtime_transfer_port"] = runtime_transfer_port
         await self.save_session(sid, session)
 
         # Refresh Redis TTL and update running_task_ids
@@ -2314,6 +2372,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             payload.running_task_ids,
             payload.executor_version,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=payload.runtime_instance_id,
             runtime_capacity=(
                 payload.runtime_capacity.model_dump()
@@ -2345,6 +2404,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 executor_version=payload.executor_version,
                 client_ip=session.get("client_ip"),
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
                 runtime_instance_id=payload.runtime_instance_id,
                 runtime_features=(
                     payload.runtime_features.model_dump(
@@ -2361,6 +2421,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 payload.running_task_ids,
                 payload.executor_version,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
                 runtime_instance_id=payload.runtime_instance_id,
                 runtime_capacity=(
                     payload.runtime_capacity.model_dump()

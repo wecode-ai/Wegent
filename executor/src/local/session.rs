@@ -599,6 +599,12 @@ pub struct LocalSessionHandler {
     pub gateway_enabled: bool,
     pub code_server_enabled: bool,
     pub terminal_enabled: bool,
+    /// Base URL of the session gateway, always on loopback.
+    ///
+    /// The Executor cannot know a browser-reachable address, so it reports the
+    /// bound port and lets the backend replace the host for cloud and remote
+    /// devices. Local and app devices keep this URL because their browser runs
+    /// on the same machine.
     pub public_base_url: String,
     pub code_server_port: u16,
     pub workspace_root: PathBuf,
@@ -607,6 +613,12 @@ pub struct LocalSessionHandler {
     terminal_event_notifier: Arc<Notify>,
     terminal_drain_offset: usize,
 }
+
+/// Session gateway base URL for a standalone device, whose gateway is
+/// published on this port unless `DEVICE_SESSION_GATEWAY_PORT` overrides it.
+pub const DEFAULT_SESSION_PUBLIC_BASE_URL: &str = "http://localhost:17888";
+/// Session gateway base URL for an app sidecar, which binds an ephemeral port.
+pub const APP_SIDECAR_SESSION_PUBLIC_BASE_URL: &str = "http://localhost:0";
 
 const MAX_TERMINAL_READS_PER_DRAIN: usize = 16;
 const MAX_TERMINAL_SESSIONS_PER_DRAIN: usize = 32;
