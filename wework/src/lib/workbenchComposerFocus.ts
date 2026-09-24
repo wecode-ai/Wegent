@@ -52,9 +52,9 @@ export function requestNewChatComposerFocus() {
 }
 
 export function requestWorkbenchComposerFocus(scopeKey: string) {
-  const pending = {
+  const pending: PendingWorkbenchComposerFocus = {
     scopeKey,
-    consumers: new Set(),
+    consumers: new Set<symbol>(),
     expiresAt: Date.now() + WORKBENCH_COMPOSER_FOCUS_TTL_MS,
   }
   pendingWorkbenchComposerFocus = pending
