@@ -143,10 +143,10 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；每个 job
+完整 Core 套件固定使用 13 个 GitHub Actions matrix job，Cloud 套件使用 10 个；每个 job
 串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
 GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 32 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+跨 runner 的 23 个 Core/Cloud matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
@@ -154,11 +154,15 @@ Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint �
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
 Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
 构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
-执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
+执行 Vite、Electron 和 Executor 构建。桌面分片不依赖构建 job 完成才启动，而是在
+准备自身依赖后轮询共享 artifact；这会把分片初始化与唯一一次打包重叠起来，但不会
+增加 matrix job 数量或减少任何 checkpoint。Rust gateway 和 Executor 都以 debug
+profile 构建，避免为 E2E 产物执行无用的 release 优化。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 32 个分片的
-上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短所有桌面分片的
+上传和下载时间。`backend-rs/**` 或 `executor/**` 的源码变化会选择桌面 target
+cache warmup，防止主分支只在 lockfile 变化时刷新缓存。桌面 E2E 和对应的 cache warmup 显式设置
 `WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
@@ -271,6 +275,12 @@ Runtime、Executor Home、工作区、测试归档或组件目录。
 在 macOS 上，桌面 E2E 默认注入测试专用的 `WEWORK_E2E_BACKGROUND_WINDOW=1`，让 Electron 保持主窗口隐藏、禁止应用激活并隐藏 Dock 图标；隐藏 WebView 会关闭后台节流，因此 DOM 控制、计时器和截图仍正常工作。需要观察真实窗口交互时，可显式设置 `WEWORK_E2E_BACKGROUND_WINDOW=0` 恢复前台运行。该环境变量只影响桌面 E2E，不改变正常开发或生产启动行为。
 
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。为缩短冷启动时间，Executor 构建与 Backend/Redis/数据库准备并行，远端 Executor 注册与 Electron 应用构建并行；应用启动前仍必须同时等待两组前置任务完成。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+
+混合 Backend 启动脚本会让 Python Uvicorn 在每次响应后显式关闭上游 HTTP
+连接。Rust gateway 当前会复用连接池；如果让 Uvicorn 独立过期空闲连接，gateway
+可能复用已经被上游关闭的 socket，并把并发 API 请求错误地返回为 `502 fallback
+upstream unavailable`。该设置只约束本机 Rust → Python fallback 连接，不改变
+外部客户端到 gateway 的连接复用。
 
 云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
 
