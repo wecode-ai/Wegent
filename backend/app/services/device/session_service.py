@@ -11,8 +11,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from app.core.constants import EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT
 from app.core.socketio import get_sio
 from app.schemas.device import DeviceType
+from app.services.device.device_gateway_address import (
+    reported_gateway_port,
+    usable_device_host,
+    usable_device_ip,
+)
 from app.services.device.remote_control_policy import (
     REMOTE_CONTROL_DISABLED_MESSAGE,
     device_kind_type,
@@ -44,6 +50,8 @@ SESSION_DISABLED_MESSAGES = {
     "terminal": "Terminal sessions are disabled on this device",
     "code_server": "Code-server sessions are disabled on this device",
 }
+# Hosts a device uses to describe itself rather than to be reached.
+LOOPBACK_SESSION_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 CloudSessionHostResolver = Callable[[str], Awaitable[Any]]
 _cloud_session_host_resolver: CloudSessionHostResolver | None = None
@@ -193,11 +201,7 @@ class LocalDeviceSessionService:
 
         access_token = payload["access_token"]
         result = _ensure_session_url_token(result, access_token)
-        result = await _rewrite_cloud_localhost_url(
-            result,
-            device_kind,
-            online_info.get("runtime_transfer_host"),
-        )
+        result = await _rewrite_device_session_url(result, device_kind, online_info)
         result.setdefault("transport", "url")
         return result
 
@@ -265,58 +269,99 @@ def _ensure_session_url_token(
     return rewritten
 
 
-async def _rewrite_cloud_localhost_url(
+async def _rewrite_device_session_url(
     result: dict[str, Any],
     device_kind: Any,
-    runtime_transfer_host: Any = None,
+    online_info: dict[str, Any],
 ) -> dict[str, Any]:
-    """Rewrite cloud session URLs that point to device-local localhost."""
+    """Point a device-local session URL at an address the browser can reach.
+
+    The Executor only knows its own loopback address, so the browser-facing host
+    belongs to the backend. Local and app devices keep loopback: their browser
+    runs on the same machine as the Executor.
+    """
     url = result.get("url")
     if not isinstance(url, str) or not url:
         return result
     spec = getattr(device_kind, "json", {}).get("spec", {})
-    if spec.get("deviceType", DeviceType.LOCAL.value) != DeviceType.CLOUD.value:
+    device_type = spec.get("deviceType", DeviceType.LOCAL.value)
+    if device_type not in {DeviceType.CLOUD.value, DeviceType.REMOTE.value}:
         return result
 
     parsed = urlsplit(url)
-    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+    if parsed.hostname not in LOOPBACK_SESSION_HOSTS:
         return result
 
-    host = _extract_cloud_session_host(runtime_transfer_host)
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        host = ""
-    if not host:
-        sandbox_id = (spec.get("cloudConfig") or {}).get("sandboxId")
-        if not sandbox_id:
-            return result
-
-        try:
-            if _cloud_session_host_resolver is None:
-                return result
-            vm_status = await _cloud_session_host_resolver(sandbox_id)
-        except Exception as exc:
-            logger.warning(
-                "[LocalDeviceSessionService] Failed to resolve cloud session host: "
-                "sandbox_id=%s, error=%s",
-                sandbox_id,
-                exc,
-            )
-            return result
-        host = _extract_cloud_session_host(vm_status.get("ip_address"))
+    if device_type == DeviceType.CLOUD.value:
+        host = _cloud_session_host(online_info.get("runtime_transfer_host"))
+        if not host:
+            host = await _resolve_sandbox_session_host(spec)
+    else:
+        host = _remote_session_host(spec, online_info)
     if not host:
         return result
 
+    # The reported port is the one the Executor actually bound; the port in the
+    # URL is derived from its configuration, which older Executors got wrong.
+    port = (
+        reported_gateway_port(spec)
+        or parsed.port
+        or EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT
+    )
     rewritten = dict(result)
     rewritten["url"] = urlunsplit(
         (
             parsed.scheme or "http",
-            _format_netloc(host, parsed.port),
+            _format_netloc(host, port),
             parsed.path,
             parsed.query,
             parsed.fragment,
         )
     )
     return rewritten
+
+
+def _cloud_session_host(reported_host: Any) -> str:
+    """Return the address a cloud provider reported for its device."""
+    host = _extract_cloud_session_host(reported_host)
+    if host.lower() in LOOPBACK_SESSION_HOSTS:
+        return ""
+    return host
+
+
+async def _resolve_sandbox_session_host(spec: dict[str, Any]) -> str:
+    """Resolve the current sandbox address when the device reported none."""
+    sandbox_id = (spec.get("cloudConfig") or {}).get("sandboxId")
+    if not sandbox_id:
+        return ""
+    try:
+        if _cloud_session_host_resolver is None:
+            return ""
+        vm_status = await _cloud_session_host_resolver(sandbox_id)
+        return _extract_cloud_session_host(vm_status.get("ip_address"))
+    except Exception as exc:
+        logger.warning(
+            "[LocalDeviceSessionService] Failed to resolve cloud session host: "
+            "sandbox_id=%s, error=%s",
+            sandbox_id,
+            exc,
+        )
+        return ""
+
+
+def _remote_session_host(spec: dict[str, Any], online_info: dict[str, Any]) -> str:
+    """Return a host other machines can use to reach a self-managed device.
+
+    Docker rewrites the source address of outbound container traffic, so the
+    address the backend observed belongs to the device host, while the address
+    the Executor reports is its own container address.
+    """
+    observed = usable_device_ip(online_info.get("client_ip") or spec.get("clientIp"))
+    if observed:
+        return observed
+    return usable_device_host(
+        online_info.get("runtime_transfer_host") or spec.get("runtimeTransferHost")
+    )
 
 
 def register_cloud_session_host_resolver(

@@ -341,6 +341,9 @@ spec:
   connectionMode: websocket
   bindShell: claudecode
   isDefault: false
+  clientIp: 10.0.0.24
+  runtimeTransferHost: 10.0.0.24
+  runtimeTransferPort: 17888
   capabilities: null
   remoteConfig:
     provider: docker
@@ -348,7 +351,6 @@ spec:
     deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
     deviceName: alice-remote-a931
     backendUrl: https://backend.example.com
-    publicBaseUrl: http://localhost:17888
     createdAt: "2026-06-17T10:00:00"
 status:
   state: Available
@@ -356,21 +358,24 @@ status:
 
 ### 字段说明
 
-| 字段                  | 类型                       | 必填 | 说明                                                  |
-| --------------------- | -------------------------- | ---- | ----------------------------------------------------- |
-| `metadata.name`       | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
-| `metadata.namespace`  | string                     | 是   | 命名空间，通常为 `default`                            |
-| `spec.deviceId`       | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
-| `spec.displayName`    | string                     | 否   | 前端展示名称                                          |
-| `spec.deviceType`     | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
-| `spec.connectionMode` | `websocket`                | 是   | 设备连接后端的方式                                    |
-| `spec.bindShell`      | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
-| `spec.isDefault`      | boolean                    | 否   | 是否为同类型默认设备                                  |
-| `spec.capabilities`   | array 或 null              | 否   | 设备能力标签                                          |
-| `spec.cloudConfig`    | object                     | 否   | 云设备元数据，仅云设备使用                            |
-| `spec.remoteConfig`   | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
+| 字段                       | 类型                       | 必填 | 说明                                                  |
+| -------------------------- | -------------------------- | ---- | ----------------------------------------------------- |
+| `metadata.name`            | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
+| `metadata.namespace`       | string                     | 是   | 命名空间，通常为 `default`                            |
+| `spec.deviceId`            | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
+| `spec.displayName`         | string                     | 否   | 前端展示名称                                          |
+| `spec.deviceType`          | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
+| `spec.connectionMode`      | `websocket`                | 是   | 设备连接后端的方式                                    |
+| `spec.bindShell`           | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
+| `spec.isDefault`           | boolean                    | 否   | 是否为同类型默认设备                                  |
+| `spec.clientIp`            | string                     | 否   | Backend 从设备连接观测到的客户端 IP                   |
+| `spec.runtimeTransferHost` | string                     | 否   | Executor 上报且可供其他机器访问的设备地址             |
+| `spec.runtimeTransferPort` | integer                    | 否   | Executor session gateway 实际监听端口                 |
+| `spec.capabilities`        | array 或 null              | 否   | 设备能力标签                                          |
+| `spec.cloudConfig`         | object                     | 否   | 云设备元数据，仅云设备使用                            |
+| `spec.remoteConfig`        | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
 
-`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成；`publicBaseUrl` 是浏览器访问设备 session gateway 的地址。
+`runtimeTransferHost` 必须是其他机器可访问的地址；回环、未指定、链路本地和组播地址不会用于生成设备访问地址。`runtimeTransferPort` 由 Executor 上报；旧版 Executor 未上报该字段时，Backend 使用默认端口 `17888`。远程设备的浏览器访问地址由 Backend 生成：优先使用它观测到的设备地址，其次使用 `runtimeTransferHost`，再拼上 `runtimeTransferPort`。`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成。
 
 ---
 
