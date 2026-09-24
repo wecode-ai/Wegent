@@ -1948,6 +1948,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
       await verifyPendingTaskAcrossTabs({ control, workspacePath })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
@@ -2296,9 +2297,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
-    }
-
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+      phase = 'pending-task-across-tabs'
       await verifyPendingTaskAcrossTabs({ control, workspacePath })
     }
 

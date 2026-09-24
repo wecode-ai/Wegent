@@ -515,7 +515,11 @@ impl RuntimeWorkRpcHandler {
             });
             // Creation may not have registered the task yet. Absence of a local
             // execution is unknown state, not evidence that the send has settled.
-            if !local_execution_running {
+            if !local_execution_running
+                && !local_link
+                    .as_ref()
+                    .is_some_and(|link| link.completed_at.is_some())
+            {
                 response.as_object_mut().unwrap().remove("running");
             }
             return Ok(response);

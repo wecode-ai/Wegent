@@ -348,6 +348,8 @@ URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 UR
 
 显式发送操作直接更新共享 `RuntimeTaskLifecycleStore`。切换标签页或隐藏发起发送的界面不应阻止 `sendRequested`、`sendAccepted` 或发送失败的状态更新；后台列表和历史同步继续受界面所有权限制。
 
+保留挂载的隐藏工作台不得订阅创建项目、绑定工作目录和打开云端设备设置的全局交互事件；这些事件仅由 `routeActive` 的工作台处理，避免切换标签页后重复打开 Portal 对话框。已知任务在创建 provider 会话前失败时，transcript 仍须返回 `running=false`，让客户端结束等待。
+
 排查发送后的空白时，用 `deviceId + taskId` 关联 Electron 日志目录中的 `runtime-launch.log` 与 executor 日志。前者记录历史响应接收、状态机转换、等待提示状态和 `web_contents_id`；后者的 `runtime worktree stage` 记录锁等待、预检查、Git worktree 创建与持久化耗时。后端返回 `running=true` 不等于前端已经渲染等待提示，必须核对两侧时间。这些日志不需要记录消息正文。Electron 日志采集器和 executor 的修改需要重启对应进程，前端热更新不能替代重启。
 
 ## 兼容性

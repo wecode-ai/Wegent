@@ -354,6 +354,8 @@ After sending, the frontend displays the user message and loads history while th
 
 Explicit sends update the shared `RuntimeTaskLifecycleStore` directly. Switching tabs or hiding the initiating view must not block `sendRequested`, `sendAccepted`, or send-failure updates. Background list and transcript synchronization remain subject to view ownership.
 
+Hidden workbenches kept mounted must not subscribe to global project creation, workspace binding, or cloud device settings events. Only the `routeActive` workbench handles these interactions, preventing duplicate portal dialogs after switching tabs. When a known task fails before creating its provider session, its transcript must still return `running=false` so clients can settle the pending state.
+
 To investigate a blank interval after sending, correlate `deviceId + taskId` between `runtime-launch.log` in the Electron log directory and executor logs. The former records transcript receipt, lifecycle transitions, waiting-indicator state, and `web_contents_id`; executor `runtime worktree stage` entries measure lock waits, preflight, Git worktree creation, and persistence. A backend `running=true` response does not prove that the frontend rendered a waiting indicator: compare both timelines. Message bodies are not required for these diagnostics. Changes to Electron log capture or the executor require restarting the corresponding process; frontend hot reload does not update either process.
 
 ## Compatibility
