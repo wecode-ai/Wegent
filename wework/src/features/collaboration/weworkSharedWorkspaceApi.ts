@@ -995,13 +995,6 @@ export function createWeworkWorkspaceRuntimePort(
       )
       return { issue: toIssue(result.item) }
     },
-    async updateTrackedTaskStatus(task, executionStatus) {
-      const issue = await deliveryApi.updateTaskTrackingStatus(
-        toRuntimeTaskAddress(task),
-        executionStatus
-      )
-      return issue ? toIssue(issue) : null
-    },
     async updateTrackedTaskTitle(task, title) {
       const issue = await deliveryApi.updateTaskTrackingTitle(toRuntimeTaskAddress(task), title)
       return issue ? toIssue(issue) : null

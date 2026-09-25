@@ -1,5 +1,5 @@
 import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
-import type { CloudLoopItem, CloudProject, TaskExecutionStatus } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
 
@@ -21,10 +21,6 @@ export interface ProjectTaskRuntimeApi {
     title: string,
     description: string
   ): Promise<{ item: CloudLoopItem }>
-  updateTaskTrackingStatus(
-    task: RuntimeTaskAddress,
-    executionStatus: TaskExecutionStatus
-  ): Promise<CloudLoopItem | null>
   updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string): Promise<CloudLoopItem | null>
 }
 
@@ -85,10 +81,6 @@ export function createCloudProjectTaskRuntimeApi(
     async trackProjectTask(projectId, task, title, description) {
       const result = await port.trackProjectTask(projectId, task, title, description)
       return { item: toCloudLoopItem(result.issue) }
-    },
-    async updateTaskTrackingStatus(task, executionStatus) {
-      const issue = await port.updateTrackedTaskStatus(task, executionStatus)
-      return issue ? toCloudLoopItem(issue) : null
     },
     async updateTaskTrackingTitle(task, title) {
       const issue = await port.updateTrackedTaskTitle(task, title)

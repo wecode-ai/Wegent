@@ -260,7 +260,7 @@ describe('AiChatModal', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('opens a blank embedded task composer in the right sidebar', () => {
+  it('opens the bound Issue composer in the right sidebar', () => {
     render(
       <AiChatModal
         project={project}
@@ -286,7 +286,7 @@ describe('AiChatModal', () => {
       'bg-background'
     )
     expect(sidebar).not.toHaveClass('fixed', 'inset-0')
-    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('新建任务')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-panel-testid',
       'work-item-new-task-chat-panel'

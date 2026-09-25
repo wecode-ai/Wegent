@@ -2,7 +2,6 @@ import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueTaskTrackingMutation,
-  type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -11,7 +10,6 @@ import {
   type CloudProjectId,
   type CloudProjectMember,
   type ProjectBoardSnapshot,
-  type CloudTaskContext,
   type ProjectTaskAttachment,
   type Delivery,
   type DeliveryAsset,
@@ -1056,13 +1054,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         })),
       }
     },
-    async submitWorkflowReviewFeedback(
-      itemId: string,
-      version: number,
-      feedback: string
-    ): Promise<void> {
-      await request('todos.review_feedback', { item_id: itemId, version, feedback })
-    },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.get', {
@@ -1366,50 +1357,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
-      })
-    },
-    async updateTaskTrackingStatus(task: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) {
-      return enqueueTaskTrackingMutation(task, async () => {
-        console.info('[IssueTaskStatusSync] local status update requested', {
-          deviceId: task.deviceId,
-          taskId: task.taskId,
-          executionStatus,
-        })
-        let context: CloudTaskContext
-        try {
-          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
-          console.info('[IssueTaskStatusSync] local task binding resolved', {
-            deviceId: task.deviceId,
-            taskId: task.taskId,
-            executionStatus,
-            bindingType: binding.binding_type,
-            loopItemId: binding.loop_item_id,
-          })
-          const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
-          const projectRecord = projectRecords.find(
-            record => record.id === binding.cloud_project_id
-          )
-          if (!projectRecord) return null
-          context = {
-            ...binding,
-            id: binding.id,
-            project: localProject(projectRecord),
-            loop_item: binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null,
-          }
-        } catch (error) {
-          console.warn('[IssueTaskStatusSync] local task binding lookup failed', {
-            deviceId: task.deviceId,
-            taskId: task.taskId,
-            executionStatus,
-            error: error instanceof Error ? error.message : String(error),
-          })
-          return null
-        }
-        if (!context.loop_item_id || !context.loop_item) return null
-        return context.loop_item
       })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {

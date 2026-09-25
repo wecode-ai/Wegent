@@ -120,6 +120,7 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
+- For manager-bound Issue dispatch, use `get_board_item` and `get_assignment_candidates` before creating a dispatch round. Each round must name the task, assignee, and configured workflow stage when one applies. Only the manager may update the parent Issue status.
 "#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[

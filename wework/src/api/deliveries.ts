@@ -644,44 +644,12 @@ export interface CloudMyWorkItem extends CloudLoopItem {
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
 export const DEFAULT_WORK_ITEM_PROJECT_ID = 'default-work-items'
 
-export type TaskExecutionStatus =
-  | 'queued'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled'
-  | 'archived'
-
 export function isDefaultWorkItemProject(project: CloudProject | null | undefined): boolean {
   return (
     String(project?.id) === DEFAULT_WORK_ITEM_PROJECT_ID &&
     project?.project_key === DEFAULT_WORK_ITEM_PROJECT_KEY &&
     (!project.metadata?.system_kind || project.metadata.system_kind === 'default_work_items')
   )
-}
-
-export function nextTaskTrackingStatus(
-  itemStatus: CloudLoopItem['status'],
-  executionStatus: TaskExecutionStatus
-): CloudLoopItem['status'] | null {
-  if (executionStatus === 'queued' && itemStatus !== 'pending') {
-    return 'pending'
-  }
-  if (executionStatus === 'running' && itemStatus !== 'in_progress') {
-    return 'in_progress'
-  }
-  if (executionStatus === 'succeeded' && itemStatus !== 'completed' && itemStatus !== 'in_review') {
-    return 'in_review'
-  }
-  if (
-    (executionStatus === 'failed' || executionStatus === 'cancelled') &&
-    itemStatus !== 'completed' &&
-    itemStatus !== 'in_review'
-  ) {
-    return 'in_review'
-  }
-  if (executionStatus === 'archived' && itemStatus !== 'completed') return 'completed'
-  return null
 }
 
 function projectTaskTrackingKey(projectId: CloudProjectIdInput, task: RuntimeTaskAddress): string {
@@ -714,7 +682,7 @@ export function createProjectTaskTrackingSingleFlight() {
   }
 }
 
-export function createTaskTrackingStatusQueue() {
+export function createTaskTrackingMutationQueue() {
   const tails = new Map<string, Promise<void>>()
 
   return <T>(task: RuntimeTaskAddress, update: () => Promise<T>): Promise<T> => {
@@ -733,7 +701,7 @@ export function createTaskTrackingStatusQueue() {
   }
 }
 
-export const enqueueTaskTrackingMutation = createTaskTrackingStatusQueue()
+export const enqueueTaskTrackingMutation = createTaskTrackingMutationQueue()
 
 export function createDeliveryApi(client: HttpClient) {
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
@@ -1231,40 +1199,6 @@ export function createDeliveryApi(client: HttpClient) {
         await api.bindTask(item.id, task, taskTitle)
         pendingTrackedItems.delete(trackingKey)
         return { item }
-      })
-    },
-    async updateTaskTrackingStatus(
-      task: RuntimeTaskAddress,
-      executionStatus: TaskExecutionStatus
-    ): Promise<CloudLoopItem | null> {
-      return enqueueTaskTrackingMutation(task, async () => {
-        console.info('[IssueTaskStatusSync] status update requested', {
-          deviceId: task.deviceId,
-          taskId: task.taskId,
-          executionStatus,
-        })
-        let context: CloudTaskContext
-        try {
-          context = await api.findCloudContextForTask(task)
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 404) {
-            console.warn('[IssueTaskStatusSync] task binding not found', {
-              deviceId: task.deviceId,
-              taskId: task.taskId,
-              executionStatus,
-            })
-            return null
-          }
-          throw error
-        }
-        console.info('[IssueTaskStatusSync] task binding resolved', {
-          deviceId: task.deviceId,
-          taskId: task.taskId,
-          executionStatus,
-          loopItemId: context.loop_item_id,
-        })
-        if (!context.loop_item_id) return null
-        return context.loop_item ?? api.getLoopItem(context.loop_item_id)
       })
     },
     async updateTaskTrackingTitle(

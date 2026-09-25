@@ -970,16 +970,6 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskStatus(
-    task: WorkspaceRuntimeTaskAddress,
-    executionStatus:
-      | "queued"
-      | "running"
-      | "succeeded"
-      | "failed"
-      | "cancelled"
-      | "archived",
-  ): Promise<CollaborationIssue | null>;
   updateTrackedTaskTitle(
     task: WorkspaceRuntimeTaskAddress,
     title: string,
