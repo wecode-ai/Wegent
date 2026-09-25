@@ -204,7 +204,7 @@ describe("Issue Dispatch activity", () => {
     ).toBe("1");
   });
 
-  it("renders the dispatch dialog even when the activity feed is empty", async () => {
+  it("does not expose a second manual dispatch entry in the activity feed", async () => {
     await act(async () =>
       root.render(
         <Harness
@@ -214,20 +214,14 @@ describe("Issue Dispatch activity", () => {
         />,
       ),
     );
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="issue-dispatch-open"]')
-        ?.click();
-    });
-
     expect(
-      container.querySelector('[data-testid="issue-dispatch-dialog"]'),
-    ).not.toBeNull();
+      container.querySelector('[data-testid="issue-dispatch-open"]'),
+    ).toBeNull();
     expect(
       container.querySelector(
         '[data-testid="issue-dispatch-activity-count"]',
       )?.textContent,
-    ).toBe("1");
+    ).toBe("0");
   });
 
   it("cancels immediately on web and confirms cancellation on desktop", async () => {
@@ -255,25 +249,20 @@ describe("Issue Dispatch activity", () => {
     ).not.toBeNull();
   });
 
-  it("uses host-specific candidate and submit controls", async () => {
+  it("keeps dispatch creation out of the desktop activity timeline", async () => {
     const api = createApi();
     await act(async () => root.render(<Harness api={api} desktop />));
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="issue-dispatch-open"]')
-        ?.click();
-    });
     expect(
-      container.querySelector('[data-testid="issue-dispatch-dialog"]'),
-    ).not.toBeNull();
+      container.querySelector('[data-testid="issue-dispatch-open"]'),
+    ).toBeNull();
     expect(
       container.querySelector(
         '[data-testid="issue-dispatch-task-instructions"]',
       ),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(
       container.querySelector('[data-testid="issue-dispatch-submit"]'),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 
   it("enables a mixed agent and human round after every task is complete", async () => {

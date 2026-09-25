@@ -131,5 +131,9 @@ describe("ProjectBoardBody", () => {
       nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
         ?.props.className,
     ).toContain("overflow-x-auto");
+    expect(
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
+        ?.props.className,
+    ).not.toContain("[&>div]");
   });
 });

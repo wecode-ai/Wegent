@@ -165,10 +165,10 @@ describe('TaskActivityView Issue Dispatch integration', () => {
 
     renderActivity()
 
-    expect(await screen.findByTestId('issue-dispatch-open')).toBeInTheDocument()
-    expect(screen.getByTestId('issue-dispatch-assignment-event-dispatch-task-1')).toHaveTextContent(
-      'Ada（负责人）将「采集两轮 CPU 快照」分配给 CPU 诊断智能体'
-    )
+    expect(
+      await screen.findByTestId('issue-dispatch-assignment-event-dispatch-task-1')
+    ).toHaveTextContent('Ada（负责人）将「采集两轮 CPU 快照」分配给 CPU 诊断智能体')
+    expect(screen.queryByTestId('issue-dispatch-open')).not.toBeInTheDocument()
     expect(screen.getByTestId('issue-dispatch-task-dispatch-task-1')).toHaveTextContent(
       '采集两轮 CPU 快照'
     )

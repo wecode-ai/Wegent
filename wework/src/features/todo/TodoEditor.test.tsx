@@ -158,7 +158,7 @@ describe('TodoEditor external item sync', () => {
     expect(updateLoopItem).not.toHaveBeenCalled()
   })
 
-  it('uses the shared execution entry for an accessible Issue assigned to someone else', async () => {
+  it('does not add a manual execution entry to the Issue drawer', async () => {
     const onCreateTask = vi.fn()
     const assignedToSomeoneElse = {
       ...baseItem,
@@ -185,14 +185,11 @@ describe('TodoEditor external item sync', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
-    const startWork = await screen.findByTestId('cloud-todo-create-task')
-    expect(startWork).toHaveClass('task-detail-state-action-primary')
-    expect(startWork.querySelector('svg')).toBeInTheDocument()
-    await userEvent.click(startWork)
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
-  it('presents the current-device execution entry as the default assistant', async () => {
+  it('does not add a default-assistant execution entry to the Issue drawer', async () => {
     const onCreateTask = vi.fn()
 
     render(
@@ -215,11 +212,9 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(await screen.findByTestId('cloud-todo-default-assistant')).toHaveTextContent('本机助手')
-    expect(screen.getByTestId('cloud-todo-default-assistant')).toHaveTextContent('我的 Mac')
+    expect(screen.queryByTestId('cloud-todo-default-assistant')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-start-default-assistant'))
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
   it('keeps trusted local Issue editing enabled through an explicit local marker', async () => {

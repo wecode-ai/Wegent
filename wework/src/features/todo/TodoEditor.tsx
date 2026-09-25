@@ -243,7 +243,7 @@ export function TodoEditor(props: TodoEditorProps) {
         ) : null}
       </>
     ),
-    canStartWork: props.mode === 'edit' && props.item.human_work ? false : undefined,
+    canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
     onCreateTask: props.onCreateTask,

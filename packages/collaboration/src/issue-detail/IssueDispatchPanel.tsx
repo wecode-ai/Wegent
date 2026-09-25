@@ -1,12 +1,4 @@
-import {
-  Bot,
-  CircleStop,
-  RotateCcw,
-  Send,
-  UserRound,
-  UsersRound,
-  X,
-} from "lucide-react";
+import { CircleStop, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -14,7 +6,6 @@ import type {
   IssueDispatch,
   IssueDispatchCandidate,
   IssueDispatchRound,
-  IssueDispatchTargetKind,
   IssueDispatchTask,
   SharedWorkspaceDispatchesApi,
 } from "../ports/IssueDispatch";
@@ -33,15 +24,6 @@ const finishedTaskStatuses = new Set([
   "cancelled",
 ]);
 
-function targetLabel(
-  kind: IssueDispatchTargetKind,
-  t: CollaborationTranslate,
-): string {
-  if (kind === "human") return t("dispatch.target_human", "成员");
-  if (kind === "agent") return t("dispatch.target_agent", "智能体");
-  return t("dispatch.target_group", "协作小组");
-}
-
 function taskStatusLabel(
   status: IssueDispatchTask["status"],
   t: CollaborationTranslate,
@@ -56,187 +38,6 @@ function taskStatusLabel(
     cancelled: t("dispatch.task_cancelled", "已取消"),
   };
   return labels[status];
-}
-
-interface DispatchDialogProps {
-  api: SharedWorkspaceDispatchesApi;
-  issueId: string;
-  desktop: boolean;
-  translate: CollaborationTranslate;
-  onClose(): void;
-  onCreated(dispatch: IssueDispatch): void;
-}
-
-function DispatchDialog({
-  api,
-  issueId,
-  desktop,
-  translate: t,
-  onClose,
-  onCreated,
-}: DispatchDialogProps) {
-  const [kind, setKind] = useState<IssueDispatchTargetKind>("human");
-  const [candidates, setCandidates] = useState<IssueDispatchCandidate[]>([]);
-  const [selected, setSelected] = useState<IssueDispatchCandidate | null>(null);
-  const [title, setTitle] = useState("");
-  const [instruction, setInstruction] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setSelected(null);
-    setCandidates([]);
-    void api
-      .listCandidates(issueId, kind)
-      .then((items) => {
-        if (active) setCandidates(items);
-      })
-      .catch((cause) => {
-        if (active)
-          setError(cause instanceof Error ? cause.message : String(cause));
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, issueId, kind]);
-
-  const submit = async () => {
-    if (!selected || !title.trim() || !instruction.trim() || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      onCreated(
-        await api.create(issueId, {
-          target: { kind: selected.kind, id: selected.id },
-          taskTitle: title.trim(),
-          instructions: instruction.trim(),
-        }),
-      );
-      onClose();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/30 p-4"
-      data-testid="issue-dispatch-dialog"
-    >
-      <section className="w-full max-w-lg rounded-2xl border border-border bg-background p-5 shadow-xl">
-        <header className="flex items-center gap-3">
-          <h2 className="text-base font-semibold text-text-primary">
-            {t("dispatch.title", "分配任务")}
-          </h2>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t("common.close", "关闭")}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          {(["human", "agent", "collaboration_group"] as const).map((value) => {
-            const testKind = value === "collaboration_group" ? "group" : value;
-            return (
-              <button
-                key={value}
-                type="button"
-                data-testid={`issue-dispatch-target-${testKind}`}
-                data-selected={kind === value ? "true" : "false"}
-                onClick={() => setKind(value)}
-                className="rounded-lg border border-border px-3 py-2 text-sm data-[selected=true]:border-blue-500 data-[selected=true]:bg-blue-500/10"
-              >
-                {targetLabel(value, t)}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-3 max-h-40 space-y-1 overflow-y-auto">
-          {candidates.map((candidate) => {
-            const testKind =
-              candidate.kind === "collaboration_group"
-                ? "group"
-                : candidate.kind;
-            const hostTestId = desktop
-              ? `issue-dispatch-candidate-${testKind}-${candidate.id}`
-              : `issue-dispatch-target-option-${testKind}:${candidate.id}`;
-            return (
-              <button
-                key={`${candidate.kind}:${candidate.id}`}
-                type="button"
-                data-testid={hostTestId}
-                data-selected={selected?.id === candidate.id ? "true" : "false"}
-                onClick={() => setSelected(candidate)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted data-[selected=true]:bg-blue-500/10"
-              >
-                {candidate.kind === "human" ? (
-                  <UserRound className="h-4 w-4" />
-                ) : candidate.kind === "agent" ? (
-                  <Bot className="h-4 w-4" />
-                ) : (
-                  <UsersRound className="h-4 w-4" />
-                )}
-                <span>{candidate.name}</span>
-              </button>
-            );
-          })}
-        </div>
-        <label className="mt-4 block text-xs font-medium text-text-secondary">
-          {t("dispatch.task_title", "任务标题")}
-          <input
-            data-testid="issue-dispatch-task-title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-          />
-        </label>
-        <label className="mt-3 block text-xs font-medium text-text-secondary">
-          {t("dispatch.instructions", "执行说明")}
-          <textarea
-            data-testid={
-              desktop
-                ? "issue-dispatch-task-instructions"
-                : "issue-dispatch-instructions"
-            }
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            className="mt-1 min-h-24 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm"
-          />
-        </label>
-        {error ? (
-          <p className="mt-2 text-sm text-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3 py-2 text-sm text-text-secondary"
-          >
-            {t("common.cancel", "取消")}
-          </button>
-          <button
-            type="button"
-            data-testid={
-              desktop ? "issue-dispatch-submit" : "issue-dispatch-confirm"
-            }
-            disabled={!selected || !title.trim() || !instruction.trim() || busy}
-            onClick={() => void submit()}
-            className="rounded-lg bg-text-primary px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
-          >
-            {t("dispatch.submit", "分配")}
-          </button>
-        </div>
-      </section>
-    </div>
-  );
 }
 
 interface RoundDraftTask {
@@ -558,7 +359,6 @@ export function useIssueDispatchController({
   onIssueChanged?(): void | Promise<void>;
 }) {
   const [dispatches, setDispatches] = useState<IssueDispatch[]>([]);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [roundDialogDispatch, setRoundDialogDispatch] =
     useState<IssueDispatch | null>(null);
   const [cancelTask, setCancelTask] = useState<IssueDispatchTask | null>(null);
@@ -661,25 +461,15 @@ export function useIssueDispatchController({
     void api.cancelTask(task.id).then(replace);
   };
 
-  const tools = api ? (
+  const tools = api && retryable ? (
     <div className="flex items-center gap-2">
-      {retryable ? (
-        <button
-          type="button"
-          data-testid="issue-dispatch-retry"
-          onClick={() => void api.retry(retryable.id).then(replace)}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-secondary hover:bg-muted"
-        >
-          <RotateCcw className="h-3.5 w-3.5" /> {t("dispatch.retry", "重试")}
-        </button>
-      ) : null}
       <button
         type="button"
-        data-testid="issue-dispatch-open"
-        onClick={() => setDialogOpen(true)}
-        className="inline-flex items-center gap-1 rounded-lg bg-text-primary px-3 py-1.5 text-xs font-medium text-background"
+        data-testid="issue-dispatch-retry"
+        onClick={() => void api.retry(retryable.id).then(replace)}
+        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-secondary hover:bg-muted"
       >
-        <Send className="h-3.5 w-3.5" /> {t("dispatch.open", "分配任务")}
+        <RotateCcw className="h-3.5 w-3.5" /> {t("dispatch.retry", "重试")}
       </button>
     </div>
   ) : null;
@@ -786,16 +576,6 @@ export function useIssueDispatchController({
         >
           {activeGroup.managerTurnCount ?? activeGroup.rounds.length + 1}
         </span>
-      ) : null}
-      {dialogOpen && api ? (
-        <DispatchDialog
-          api={api}
-          issueId={issueId}
-          desktop={desktop}
-          translate={t}
-          onClose={() => setDialogOpen(false)}
-          onCreated={replace}
-        />
       ) : null}
       {roundDialogDispatch && api ? (
         <RoundDialog
@@ -926,7 +706,6 @@ export function useIssueDispatchController({
           ),
         0,
       ) +
-      (leaderActionRequired ? 1 : 0) +
-      (dialogOpen ? 1 : 0),
+      (leaderActionRequired ? 1 : 0),
   };
 }

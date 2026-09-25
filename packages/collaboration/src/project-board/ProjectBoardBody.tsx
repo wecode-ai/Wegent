@@ -40,7 +40,7 @@ export function ProjectBoardScrollArea({
       <div
         ref={viewportRef}
         data-testid="cloud-board-scroll"
-        className="h-full w-full overflow-x-auto [&>div]:!block [&>div]:h-full [&>div]:w-max [&>div]:min-w-full"
+        className="h-full w-full overflow-x-auto"
       >
         {children}
       </div>
