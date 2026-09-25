@@ -600,6 +600,36 @@ export class EmbeddedBrowserManager {
     return this.required(label).contents.executeJavaScript(expression, true)
   }
 
+  async uploadFiles(
+    label: string,
+    selector: string | null,
+    files: string[]
+  ): Promise<{ selector: string }> {
+    const contents = this.required(label).contents
+    const target = contents.debugger
+    const ownsAttach = !target.isAttached()
+    if (ownsAttach) target.attach('1.3')
+    try {
+      const effectiveSelector = selector?.trim() || 'input[type="file"]'
+      const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
+        root: { nodeId: number }
+      }
+      const { nodeId } = (await target.sendCommand('DOM.querySelector', {
+        nodeId: root.nodeId,
+        selector: effectiveSelector,
+      })) as { nodeId: number }
+      if (!nodeId) {
+        throw new Error(
+          `No file input element matches selector "${effectiveSelector}" in the embedded browser.`
+        )
+      }
+      await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
+      return { selector: effectiveSelector }
+    } finally {
+      if (ownsAttach && target.isAttached()) target.detach()
+    }
+  }
+
   clickAt(label: string, x: number, y: number): void {
     const contents = this.required(label).contents
     const point = {
