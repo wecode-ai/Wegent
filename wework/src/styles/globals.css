@@ -470,7 +470,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 .sidebar-task-title-viewport {
   --sidebar-title-fade-start: 0px;
-  --sidebar-title-fade-end: 0px;
+  --sidebar-title-fade-end: 12px;
   display: block;
   position: relative;
   max-width: 100%;

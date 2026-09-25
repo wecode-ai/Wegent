@@ -24,7 +24,11 @@ import {
   type WorkspaceTabKind,
   type WorkspaceTabLabels,
 } from './workspaceTabs'
-import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
+import {
+  WorkspaceTabActivityContext,
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from './workspaceTabsContextValue'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
 import { writeSettingsReturnPath } from './settingsReturnPath'
@@ -170,10 +174,20 @@ function workspaceTabsReducer(
         : undefined
       const kind = inferWorkspaceTabKind(action.pathname)
       if (requested) {
+        const title =
+          location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels)
+        if (
+          state.activeTabId === requested.id &&
+          requested.kind === kind &&
+          requested.title === title &&
+          requested.contentRoute === location.contentRoute
+        ) {
+          return state
+        }
         const updated = {
           ...requested,
           kind,
-          title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
+          title,
           contentRoute: location.contentRoute,
         }
         return {
@@ -185,10 +199,18 @@ function workspaceTabsReducer(
       if (!location.tabId) {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
         if (activeTab) {
+          const title = workspaceTabTitle(kind, location.contentRoute, action.labels)
+          if (
+            activeTab.kind === kind &&
+            activeTab.title === title &&
+            activeTab.contentRoute === location.contentRoute
+          ) {
+            return state
+          }
           const updated = {
             ...activeTab,
             kind,
-            title: workspaceTabTitle(kind, location.contentRoute, action.labels),
+            title,
             contentRoute: location.contentRoute,
           }
           return {
@@ -337,6 +359,11 @@ export function WorkspaceTabsProvider({
   useLayoutEffect(() => {
     stateRef.current = state
   }, [state])
+
+  const isWorkspaceTabActive = useCallback(
+    (tabId: string) => stateRef.current.activeTabId === tabId,
+    []
+  )
 
   useEffect(() => {
     if (fixedTabs.length > 0) dispatch({ type: 'syncFixed', tabs: fixedTabs })
@@ -509,5 +536,9 @@ export function WorkspaceTabsProvider({
     ]
   )
 
-  return <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+  return (
+    <WorkspaceTabActivityContext.Provider value={isWorkspaceTabActive}>
+      <WorkspaceTabsContext.Provider value={value}>{children}</WorkspaceTabsContext.Provider>
+    </WorkspaceTabActivityContext.Provider>
+  )
 }

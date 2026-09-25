@@ -49,7 +49,8 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const deleteAttachment = options.deleteAttachment
   const scopeKey = options.scopeKey ?? DEFAULT_ATTACHMENT_SCOPE_KEY
   const [stateByScope, setStateByScope] = useState<Record<string, MultiAttachmentUploadState>>({})
-  const state = stateByScope[scopeKey] ?? emptyAttachmentState()
+  const storedState = stateByScope[scopeKey]
+  const state = useMemo(() => storedState ?? emptyAttachmentState(), [scopeKey, storedState])
 
   const updateScopeState = useCallback(
     (

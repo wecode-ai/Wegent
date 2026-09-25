@@ -169,7 +169,7 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
@@ -213,9 +213,9 @@ export function WorkbenchProvider({
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
-  const workspaceTabs = useOptionalWorkspaceTabs()
+  const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
   const canNavigateWorkspaceTab = useStableEvent(
-    () => !workspaceTabId || !workspaceTabs || workspaceTabs.activeTabId === workspaceTabId
+    () => !workspaceTabId || !isWorkspaceTabActive || isWorkspaceTabActive(workspaceTabId)
   )
   // Preferences can change while a turn is running. Runtime transports only
   // need the account identity, so keep their service graph stable across those
@@ -296,6 +296,14 @@ export function WorkbenchProvider({
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
   const remoteProjectSyncRevisionRef = useRef(0)
+  const remoteProjectSyncAttemptRef = useRef<{
+    signature: string
+    queued: boolean
+    activationRevision: number
+  } | null>(null)
+  const remoteProjectSyncActiveRef = useRef(syncRemoteProjects)
+  const remoteProjectSyncActivationRevisionRef = useRef(0)
+  const [remoteProjectSyncRetryRevision, setRemoteProjectSyncRetryRevision] = useState(0)
   const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectWorkPreferenceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -906,6 +914,8 @@ export function WorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
+  const selectModelAndOptions = modelSelection.setSelectedModelAndOptions
+  const selectModelForScope = modelSelection.setSelectionForScope
   const continueInNewConversation = useCallback(
     (
       model: UnifiedModel,
@@ -917,7 +927,7 @@ export function WorkbenchProvider({
     ) => {
       const sourceTask = source?.address ?? state.currentRuntimeTask
       if (!sourceTask) {
-        modelSelection.setSelectedModelAndOptions(model, options)
+        selectModelAndOptions(model, options)
         return
       }
 
@@ -943,7 +953,7 @@ export function WorkbenchProvider({
             'Continue from the referenced conversation.'
           )}`
 
-      modelSelection.setSelectionForScope(
+      selectModelForScope(
         nextModelScopeKey,
         model,
         options,
@@ -976,7 +986,8 @@ export function WorkbenchProvider({
     [
       currentUser.id,
       draftInputByScope,
-      modelSelection,
+      selectModelAndOptions,
+      selectModelForScope,
       projectChatScopeKey,
       projectModelSelection,
       setDraftInputForScope,
@@ -1074,9 +1085,17 @@ export function WorkbenchProvider({
   }, [])
 
   useEffect(() => {
+    if (syncRemoteProjects && !remoteProjectSyncActiveRef.current) {
+      remoteProjectSyncActivationRevisionRef.current += 1
+    }
+    remoteProjectSyncActiveRef.current = syncRemoteProjects
     if (!syncRemoteProjects) {
       remoteProjectSyncRevisionRef.current += 1
-      remoteProjectSyncSignatureRef.current = ''
+      const attempt = remoteProjectSyncAttemptRef.current
+      if (attempt?.queued && remoteProjectSyncSignatureRef.current === attempt.signature) {
+        remoteProjectSyncSignatureRef.current = ''
+        remoteProjectSyncAttemptRef.current = null
+      }
       return
     }
     const projects = getRuntimeRemoteProjectRegistrations(
@@ -1098,16 +1117,48 @@ export function WorkbenchProvider({
     if (remoteProjectSyncSignatureRef.current === signature) return
     remoteProjectSyncSignatureRef.current = signature
     const revision = remoteProjectSyncRevisionRef.current
-    void enqueueRemoteProjectStateMutation(() =>
-      revision !== remoteProjectSyncRevisionRef.current ||
-      remoteProjectSyncSignatureRef.current !== signature
-        ? Promise.resolve()
-        : executorClient.runtime
-            .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-            .then(() => refreshWorkLists())
-    ).catch(error => {
-      if (remoteProjectSyncSignatureRef.current === signature) {
+    const attempt = {
+      signature,
+      queued: true,
+      activationRevision: remoteProjectSyncActivationRevisionRef.current,
+    }
+    remoteProjectSyncAttemptRef.current = attempt
+    void enqueueRemoteProjectStateMutation(() => {
+      if (
+        remoteProjectSyncAttemptRef.current !== attempt ||
+        revision !== remoteProjectSyncRevisionRef.current ||
+        remoteProjectSyncSignatureRef.current !== signature
+      ) {
+        if (remoteProjectSyncAttemptRef.current === attempt) {
+          remoteProjectSyncAttemptRef.current = null
+          if (remoteProjectSyncSignatureRef.current === signature) {
+            remoteProjectSyncSignatureRef.current = ''
+          }
+        }
+        return Promise.resolve()
+      }
+      attempt.queued = false
+      return executorClient.runtime
+        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+        .then(response => {
+          if (!response.accepted) {
+            throw new Error(response.error || 'Failed to sync remote projects')
+          }
+          return refreshWorkLists()
+        })
+    }).catch(error => {
+      if (
+        remoteProjectSyncAttemptRef.current === attempt &&
+        remoteProjectSyncSignatureRef.current === signature
+      ) {
         remoteProjectSyncSignatureRef.current = ''
+        remoteProjectSyncAttemptRef.current = null
+        if (
+          remoteProjectSyncActiveRef.current &&
+          remoteProjectSyncActivationRevisionRef.current > attempt.activationRevision
+        ) {
+          setRemoteProjectSyncRetryRevision(revision => revision + 1)
+        }
       }
       console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
     })
@@ -1116,6 +1167,7 @@ export function WorkbenchProvider({
     executorClient,
     localRuntimeStateDeviceId,
     refreshWorkLists,
+    remoteProjectSyncRetryRevision,
     state.runtimeWork,
     syncRemoteProjects,
   ])
@@ -2704,209 +2756,10 @@ export function WorkbenchProvider({
     ]
   )
   const paneProjectChatValue = useMemo(
-    () => ({
-      scopeKey: projectChatScopeKey,
-      inputByScope: draftInputByScope,
-      models: conversationModels,
-      skills: skillSelection.skills,
-      selectedModel: modelSelection.selectedModel,
-      activeModel,
-      selectedModelOptions: modelSelection.selectedModelOptions,
-      isModelSelectionReady: modelSelection.isSelectionReady,
-      input: draftInput,
-      composerError,
-      composerErrorByScope,
-      trialTemplates,
-      trialPluginName,
-      trialPluginApp,
-      hasConversationContext: Boolean(state.currentRuntimeTask),
-      dismissTrialGuide: dismissTrialGuideForScope,
-      showTrialGuide,
-      selectedSkills: skillSelection.selectedSkills,
-      attachmentStateByScope: attachmentSelection.stateByScope,
-      attachments: attachmentSelection.attachments,
-      uploadingFiles: attachmentSelection.uploadingFiles,
-      errors: attachmentSelection.errors,
-      contextUsage: currentContextUsage,
-      isOptionsLocked: false,
-      isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
-      setSelectedModel: modelSelection.setSelectedModel,
-      setSelectedModelAndOptions: modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
-      setSelectedModelOption: modelSelection.setSelectedModelOption,
-      getSelectedModel: modelSelection.getSelectedModel,
-      getSelectedModelOptions: modelSelection.getSelectedModelOptions,
-      resolveRuntimeTaskModelSelection,
-      setRuntimeTaskSelectedModel,
-      setRuntimeTaskSelectedModelAndOptions,
-      setRuntimeTaskSelectedModelOption,
-      onBlockedModelSelect: handleBlockedModelSelect,
-      setInput: setDraftInput,
-      setInputForScope: setDraftInputForScope,
-      setComposerError,
-      setComposerErrorForScope,
-      setSelectedSkills: skillSelection.setSelectedSkills,
-      toggleSkill: skillSelection.toggleSkill,
-      handleFileSelect: attachmentSelection.handleFileSelect,
-      handleFileSelectForScope: attachmentSelection.handleFileSelectForScope,
-      addExistingAttachment: attachmentSelection.addExistingAttachment,
-      addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
-      removeAttachment: attachmentSelection.removeAttachment,
-      removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
-      resetAttachments: attachmentSelection.resetAttachments,
-      resetAttachmentsForScope: attachmentSelection.resetAttachmentsForScope,
-      listLocalSkills,
-      listLocalApps,
-      requestCatalogs: requestTaskComposerCatalogs,
-    }),
-    [
-      attachmentSelection.addExistingAttachment,
-      attachmentSelection.addExistingAttachmentForScope,
-      attachmentSelection.attachments,
-      attachmentSelection.errors,
-      attachmentSelection.handleFileSelect,
-      attachmentSelection.handleFileSelectForScope,
-      attachmentSelection.isAttachmentReadyToSend,
-      attachmentSelection.removeAttachment,
-      attachmentSelection.removeAttachmentForScope,
-      attachmentSelection.resetAttachments,
-      attachmentSelection.resetAttachmentsForScope,
-      attachmentSelection.stateByScope,
-      attachmentSelection.uploadingFiles,
-      projectChatScopeKey,
-      requestTaskComposerCatalogs,
-      draftInput,
-      draftInputByScope,
-      composerError,
-      composerErrorByScope,
-      trialTemplates,
-      trialPluginName,
-      trialPluginApp,
-      state.currentRuntimeTask,
-      dismissTrialGuideForScope,
-      showTrialGuide,
-      handleBlockedModelSelect,
-      currentContextUsage,
-      listLocalSkills,
-      listLocalApps,
-      modelSelection.isSelectionReady,
-      conversationModels,
-      activeModel,
-      modelSelection.selectedModel,
-      modelSelection.selectedModelOptions,
-      modelSelection.setSelectedModel,
-      modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
-      modelSelection.setSelectedModelOption,
-      modelSelection.getSelectedModel,
-      modelSelection.getSelectedModelOptions,
-      resolveRuntimeTaskModelSelection,
-      setRuntimeTaskSelectedModel,
-      setRuntimeTaskSelectedModelAndOptions,
-      setRuntimeTaskSelectedModelOption,
-      setDraftInput,
-      setDraftInputForScope,
-      setComposerError,
-      setComposerErrorForScope,
-      skillSelection.selectedSkills,
-      skillSelection.setSelectedSkills,
-      skillSelection.skills,
-      skillSelection.toggleSkill,
-    ]
+    () => ({ ...projectChatValue, isOptionsLocked: false }),
+    [projectChatValue]
   )
 
-  const value: WorkbenchContextValue = {
-    services: resolvedServices,
-    workspaceTabId,
-    state,
-    isStartupReady,
-    workspaceFileApi,
-    runtimeTaskReminders,
-    cloudWorkStatus,
-    upgradingDevices,
-    projectExecutionMode,
-    setProjectExecutionMode: selectProjectExecutionMode,
-    updateUserPreferences,
-    setWorkbenchError,
-    projectWorktreeBranch,
-    setProjectWorktreeBranch,
-    projectChat: projectChatValue,
-    selectProject,
-    selectProjectWorkspace,
-    selectStandaloneDevice,
-    openStandaloneWorkspace,
-    startNewChat,
-    startNewSkillChat,
-    startStandaloneChat,
-    startNewProjectChat,
-    openRuntimeTask: runtimeTasks.openRuntimeTask,
-    cancelRuntimeTask: stableCancelRuntimeTask,
-    forceStartRuntimeTask: stableForceStartRuntimeTask,
-    reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
-    searchRuntimeWork: runtimeTasks.searchRuntimeWork,
-    loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
-    subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
-    renameRuntimeTask: runtimeTasks.renameRuntimeTask,
-    archiveRuntimeTask: runtimeTasks.archiveRuntimeTask,
-    archiveProjectConversations: runtimeTasks.archiveProjectConversations,
-    archiveProjectsConversations: runtimeTasks.archiveProjectsConversations,
-    archiveChatConversations: runtimeTasks.archiveChatConversations,
-    forkCurrentRuntimeTask: runtimeTasks.forkCurrentRuntimeTask,
-    getRuntimeGoal: runtimeTasks.getRuntimeGoal,
-    setRuntimeGoal: runtimeTasks.setRuntimeGoal,
-    clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
-    listImPrivateSessions,
-    bindRuntimeTaskToImSessions,
-    getImNotificationSettings,
-    updateGlobalImNotification,
-    subscribeRuntimeTaskNotifications,
-    unsubscribeRuntimeTaskNotifications,
-    refreshWorkLists,
-    refreshDevices,
-    getRemoteDeviceStartupCommand,
-    upgradeDevice,
-    createProject: projectActions.createProject,
-    createLocalRuntimeProject: projectActions.createLocalRuntimeProject,
-    createGitWorkspaceProject: projectActions.createGitWorkspaceProject,
-    prepareDeviceWorkspace: projectActions.prepareDeviceWorkspace,
-    deleteDeviceWorkspace: projectActions.deleteDeviceWorkspace,
-    listGitRepositories: projectActions.listGitRepositories,
-    listGitBranches: projectActions.listGitBranches,
-    updateProjectName: projectActions.updateProjectName,
-    updateLocalRuntimeProject: projectActions.updateLocalRuntimeProject,
-    removeProject: projectActions.removeProject,
-    reorderRuntimeProjects: projectActions.reorderRuntimeProjects,
-    setRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
-    setRuntimeProjectAppearance: projectActions.setRuntimeProjectAppearance,
-    reorderRuntimeProjectTasks: projectActions.reorderRuntimeProjectTasks,
-    setRuntimeTaskPinned: projectActions.setRuntimeTaskPinned,
-    getDeviceHomeDirectory: projectActions.getDeviceHomeDirectory,
-    getProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
-    listDeviceDirectories: projectActions.listDeviceDirectories,
-    createDeviceDirectory: projectActions.createDeviceDirectory,
-    cloneGitRepository: projectActions.cloneGitRepository,
-    loadEnvironmentInfo: projectActions.loadEnvironmentInfo,
-    loadEnvironmentDiff: projectActions.loadEnvironmentDiff,
-    commitEnvironmentChanges: projectActions.commitEnvironmentChanges,
-    commitAndPushEnvironmentChanges: projectActions.commitAndPushEnvironmentChanges,
-    pushEnvironmentChanges: projectActions.pushEnvironmentChanges,
-    listEnvironmentBranches: projectActions.listEnvironmentBranches,
-    checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
-    createEnvironmentBranch: projectActions.createEnvironmentBranch,
-    sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
-    interruptAndSendRuntimePaneMessage: runtimeMessaging.interruptAndSendRuntimePaneMessage,
-    sendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,
-    compactRuntimePaneTask: runtimeMessaging.compactRuntimePaneTask,
-    editLastUserMessage: runtimeMessaging.editLastUserMessage,
-    cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
-    sendCurrentInput: runtimeMessaging.sendCurrentInput,
-    createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
-    createEphemeralRuntimeTask: runtimeMessaging.createEphemeralRuntimeTask,
-    createProjectRuntimeTask: runtimeMessaging.createProjectRuntimeTask,
-    pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
-    loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
-    revertTurnFileChanges: runtimeMessaging.revertTurnFileChanges,
-  }
   const paneValue: WorkbenchPaneContextValue = useMemo(
     () => ({
       services: resolvedServices,
@@ -3086,6 +2939,20 @@ export function WorkbenchProvider({
       upgradingDevices,
       workspaceFileApi,
     ]
+  )
+
+  // The pane context already owns stable action wrappers. Reuse them so
+  // activation-only provider props do not broadcast a new workbench value.
+  const value: WorkbenchContextValue = useMemo(
+    () => ({
+      ...paneValue,
+      workspaceTabId,
+      state,
+      cloudWorkStatus,
+      projectChat: projectChatValue,
+      updateUserPreferences,
+    }),
+    [paneValue, workspaceTabId, state, cloudWorkStatus, projectChatValue, updateUserPreferences]
   )
 
   return (

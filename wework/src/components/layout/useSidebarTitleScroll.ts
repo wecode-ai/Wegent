@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from 'react'
+import { useEffect, type RefObject } from 'react'
 import {
   getSidebarTitleMotion,
   SIDEBAR_TITLE_DELAY_MS,
@@ -9,31 +9,59 @@ import {
   WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
 } from './workbenchPaneDrag'
 
+const activeDragListeners = new Set<() => void>()
+let mountedTitles = 0
+let paneDragging = false
+
+function handlePaneDragStart() {
+  paneDragging = true
+  activeDragListeners.forEach(listener => listener())
+}
+
+function handlePaneDragEnd() {
+  paneDragging = false
+  activeDragListeners.forEach(listener => listener())
+}
+
+function listenForPaneDrag() {
+  if (mountedTitles++ === 0) {
+    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handlePaneDragStart)
+    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handlePaneDragEnd)
+  }
+  return () => {
+    if (--mountedTitles === 0) {
+      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handlePaneDragStart)
+      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handlePaneDragEnd)
+      paneDragging = false
+    }
+  }
+}
+
 export function useSidebarTitleScroll(
   containerRef: RefObject<HTMLSpanElement | null>,
   viewportRef: RefObject<HTMLSpanElement | null>,
   textRef: RefObject<HTMLSpanElement | null>,
   text: string
 ) {
-  useLayoutEffect(() => {
+  useEffect(() => {
     const container = containerRef.current
     const viewport = viewportRef.current
     const content = textRef.current
     const row = container?.closest<HTMLElement>('[data-sidebar-task-row]')
     if (!container || !viewport || !content || !row) return
     const actions = row.querySelector<HTMLElement>('[data-sidebar-title-actions]')
-    const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     let hovered = row.matches(':hover')
     let keyboardFocused =
       row.contains(document.activeElement) &&
       Boolean(document.activeElement?.matches(':focus-visible'))
-    let dragging = false
     let pointerDown = false
     let disposed = false
     let distance = 0
     let position = 0
     let timer: number | undefined
     let frame: number | undefined
+    let observer: ResizeObserver | undefined
+    let media: MediaQueryList | undefined
 
     const isActive = () => hovered || keyboardFocused
     const cancel = () => {
@@ -79,21 +107,51 @@ export function useSidebarTitleScroll(
       frame = window.requestAnimationFrame(tick)
     }
     const refresh = () => {
-      if (disposed) return
+      if (disposed || !isActive()) return
       cancel()
       measure()
       paint(0)
       container.dataset.scrollState = 'idle'
-      if (!isActive() || media?.matches || dragging || pointerDown || distance <= 0) return
+      if (media?.matches || paneDragging || pointerDown || distance <= 0) return
       container.dataset.scrollState = 'waiting'
       timer = window.setTimeout(start, SIDEBAR_TITLE_DELAY_MS)
     }
+    const stopTracking = () => {
+      observer?.disconnect()
+      observer = undefined
+      media?.removeEventListener('change', refresh)
+      media = undefined
+      activeDragListeners.delete(refresh)
+    }
+    const activate = () => {
+      if (!observer) {
+        media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+        media?.addEventListener('change', refresh)
+        activeDragListeners.add(refresh)
+        observer = new ResizeObserver(refresh)
+        observer.observe(container)
+        observer.observe(content)
+        if (actions) observer.observe(actions)
+        if (document.fonts?.status === 'loading') void document.fonts.ready.then(refresh)
+      }
+      refresh()
+    }
+    const resetIdle = () => {
+      viewport.style.removeProperty('width')
+      viewport.style.removeProperty('--sidebar-title-fade-start')
+      viewport.style.removeProperty('--sidebar-title-fade-end')
+      content.style.removeProperty('transform')
+      delete container.dataset.overflow
+      container.dataset.scrollState = 'idle'
+      position = 0
+    }
     const restore = () => {
       cancel()
-      measure()
-      if (media?.matches || position === 0) {
-        paint(0)
-        container.dataset.scrollState = 'idle'
+      const reducedMotion = media?.matches
+      stopTracking()
+      viewport.style.removeProperty('width')
+      if (reducedMotion || position === 0) {
+        resetIdle()
         return
       }
       const from = position
@@ -105,14 +163,14 @@ export function useSidebarTitleScroll(
         if (progress < 1) frame = window.requestAnimationFrame(tick)
         else {
           frame = undefined
-          container.dataset.scrollState = 'idle'
+          resetIdle()
         }
       }
       frame = window.requestAnimationFrame(tick)
     }
     const enter = () => {
       hovered = true
-      refresh()
+      activate()
     }
     const leave = () => {
       hovered = false
@@ -120,61 +178,50 @@ export function useSidebarTitleScroll(
     }
     const focus = (event: FocusEvent) => {
       keyboardFocused = event.target instanceof Element && event.target.matches(':focus-visible')
-      if (keyboardFocused) refresh()
+      if (keyboardFocused) activate()
     }
     const blur = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && row.contains(event.relatedTarget)) return
       keyboardFocused = false
       if (!hovered) restore()
     }
-    const press = () => {
-      pointerDown = true
-      refresh()
-    }
     const release = () => {
       if (!pointerDown) return
       pointerDown = false
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', release)
       refresh()
     }
-    const dragStart = () => {
-      dragging = true
-      refresh()
-    }
-    const dragEnd = () => {
-      dragging = false
+    const press = () => {
+      if (pointerDown) return
+      pointerDown = true
+      window.addEventListener('pointerup', release)
+      window.addEventListener('pointercancel', release)
       refresh()
     }
 
-    const observer = new ResizeObserver(refresh)
-    observer.observe(container)
-    observer.observe(content)
-    if (actions) observer.observe(actions)
+    const stopListeningForPaneDrag = listenForPaneDrag()
     row.addEventListener('pointerenter', enter)
     row.addEventListener('pointerleave', leave)
     row.addEventListener('focusin', focus)
     row.addEventListener('focusout', blur)
     row.addEventListener('pointerdown', press)
-    window.addEventListener('pointerup', release)
-    window.addEventListener('pointercancel', release)
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, dragStart)
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, dragEnd)
-    media?.addEventListener('change', refresh)
-    refresh()
-    void document.fonts?.ready.then(refresh)
+    if (isActive()) activate()
     return () => {
       disposed = true
       cancel()
-      observer.disconnect()
+      stopTracking()
+      if (pointerDown) {
+        window.removeEventListener('pointerup', release)
+        window.removeEventListener('pointercancel', release)
+      }
+      stopListeningForPaneDrag()
       row.removeEventListener('pointerenter', enter)
       row.removeEventListener('pointerleave', leave)
       row.removeEventListener('focusin', focus)
       row.removeEventListener('focusout', blur)
       row.removeEventListener('pointerdown', press)
-      window.removeEventListener('pointerup', release)
-      window.removeEventListener('pointercancel', release)
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, dragStart)
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, dragEnd)
-      media?.removeEventListener('change', refresh)
+      if (position !== 0 || viewport.style.width) resetIdle()
     }
   }, [containerRef, viewportRef, textRef, text])
 }
