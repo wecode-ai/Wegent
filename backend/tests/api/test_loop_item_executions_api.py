@@ -14,10 +14,17 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import loop_item_executions
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    Delivery,
+    LoopItem,
+    LoopItemTaskBinding,
+    ProjectChatAgent,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.project_chat import (
     LoopItemExecutionBatchCreate,
     LoopItemExecutionBatchItem,
@@ -297,14 +304,20 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
         "agent",
         "human",
     ]
-    human_item_id = first["executions"][1]["loop_item_id"]
-    assert second["executions"][1]["loop_item_id"] == human_item_id
-    human_item = test_db.get(LoopItem, human_item_id)
-    assert human_item is not None
-    assert human_item.parent_id == parent.id
-    assert human_item.assignee_user_id == test_user.id
-    assert human_item.title == "Human task"
-    assert human_item.metadata_json["automation"]["assignment_id"] == "human-assignment"
+    human_assignment_id = first["executions"][1]["human_assignment_id"]
+    assert second["executions"][1]["human_assignment_id"] == human_assignment_id
+    assert test_db.query(LoopItem).filter(LoopItem.parent_id == parent.id).count() == 0
+    notifications = (
+        test_db.query(WeworkNotification)
+        .filter(
+            WeworkNotification.user_id == test_user.id,
+            WeworkNotification.kind == "issue_dispatch_assignment",
+        )
+        .all()
+    )
+    assert len(notifications) == 1
+    assert notifications[0].payload["humanAssignmentId"] == human_assignment_id
+    assert notifications[0].payload["itemId"] == parent.id
     activities = (
         test_db.query(ProjectChatMessage)
         .filter(
@@ -318,49 +331,53 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
     assert assignments[0]["agent_name"] == "Worker"
     assert assignments[1]["human_user_name"] == test_user.user_name
 
-    submission = ProjectChatMessage(
-        message_id=f"submission-{uuid4().hex}",
-        client_message_id=f"submission-{uuid4().hex}",
-        project_id=str(project.id),
-        task_id=human_item.id,
-        sender_type="user",
-        sender_id=str(test_user.id),
-        sender_name=test_user.user_name,
-        message_type="text",
-        content="Business evidence delivered.",
-        metadata_json={"human_work_action": "submitted"},
-        status="completed",
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=parent.id,
+        task_user_id=test_user.id,
+        device_id="human-device",
+        task_id="human-runtime-task",
+        task_title="Human task",
+        linked_by_user_id=test_user.id,
+        metadata_json={"human_assignment_id": human_assignment_id},
     )
-    test_db.add(submission)
-    human_item.status = "in_review"
-    human_item.metadata_json = {
-        **human_item.metadata_json,
-        "human_work": {
-            "state": "submitted",
-            "submission_message_id": submission.message_id,
-        },
-    }
+    test_db.add(binding)
+    test_db.flush()
+    delivery = Delivery(
+        id=str(uuid4()),
+        loop_item_id=parent.id,
+        created_by_user_id=test_user.id,
+        source_task_binding_id=str(binding.id),
+        source_task_snapshot={},
+        status="delivered",
+        markdown_object_key="human-delivery.md",
+    )
+    test_db.add(delivery)
     test_db.commit()
+    monkeypatch.setattr(
+        loop_item_executions.collaboration_human_assignment_status.__globals__[
+            "delivery_service"
+        ],
+        "read_markdown",
+        lambda _delivery: "Business evidence delivered.",
+    )
     status_result = loop_item_executions.execution_statuses(
         project.id,
         LoopItemExecutionStatusQuery(
+            loop_item_id=parent.id,
             execution_ids=[first["executions"][0]["execution_id"]],
-            loop_item_ids=[human_item.id],
+            human_assignment_ids=[human_assignment_id],
         ),
         test_db,
         test_user,
     )
 
     assert status_result["items"][0]["assignee_type"] == "agent"
-    assert status_result["items"][1] == {
-        "assignee_type": "human",
-        "work_id": f"loop_item:{human_item.id}",
-        "loop_item_id": human_item.id,
-        "assignment_id": "human-assignment",
-        "status": "completed",
-        "item_status": "in_review",
-        "human_user_id": test_user.id,
-        "delivery_state": "submitted",
-        "result": "Business evidence delivered.",
-        "error": "",
-    }
+    assert status_result["items"][1]["assignee_type"] == "human"
+    assert status_result["items"][1]["work_id"] == (
+        f"human_assignment:{human_assignment_id}"
+    )
+    assert status_result["items"][1]["status"] == "completed"
+    assert status_result["items"][1]["human_user_id"] == test_user.id
+    assert status_result["items"][1]["delivery_id"] == delivery.id
+    assert status_result["items"][1]["result"] == "Business evidence delivered."

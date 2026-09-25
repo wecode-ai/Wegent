@@ -68,6 +68,14 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    humanAssignmentId: nullableString(
+      row.human_assignment_id ?? row.humanAssignmentId,
+    ),
+    dispatchId: nullableString(row.dispatch_id ?? row.dispatchId),
+    dispatchRoundId: nullableString(
+      row.dispatch_round_id ?? row.dispatchRoundId,
+    ),
+    assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
       (row.modelSelection as Record<string, unknown> | null | undefined) ??
       (row.model_selection as Record<string, unknown> | null | undefined) ??

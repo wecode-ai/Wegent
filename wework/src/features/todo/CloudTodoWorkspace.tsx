@@ -414,6 +414,7 @@ type TaskComposerRequest = {
   backgroundAfterSend: boolean
   taskRequest?: RuntimeTaskCreateRequest
   inheritFromTask?: RuntimeTaskAddress | null
+  dispatch?: import('@/features/notifications/NotificationTaskSourceContext').IssueDispatchPersonalTaskAction
 }
 
 type AssigneeQuickAddRequest = {
@@ -1713,12 +1714,44 @@ export function CloudTodoWorkspace({
       },
       runtimeTaskLifecycle
     )
-    return mergeRuntimeMyWorkItems(
+    const mergedItems = mergeRuntimeMyWorkItems(
       persistedBoardItems,
       runtimeItems,
       bindings,
       selectedProjectBoardItems.map(item => item.id)
     )
+    const runtimeStatusByItemId = new Map<
+      string,
+      Pick<CloudLoopItem, 'status' | 'execution_state'>
+    >()
+    for (const binding of bindings) {
+      if (!binding.loop_item_id) continue
+      const lifecycle = runtimeTaskLifecycle?.tasks.get(
+        getRuntimeTaskLifecycleKey({
+          deviceId: binding.device_id,
+          taskId: binding.task_id,
+        })
+      )
+      const runtimeStatus = lifecycle ? runtimeTaskTrackingExecutionStatus(lifecycle) : null
+      if (runtimeStatus === 'running') {
+        runtimeStatusByItemId.set(binding.loop_item_id, {
+          status: 'in_progress',
+          execution_state: 'running',
+        })
+      } else if (
+        runtimeStatus === 'queued' &&
+        runtimeStatusByItemId.get(binding.loop_item_id)?.status !== 'in_progress'
+      ) {
+        runtimeStatusByItemId.set(binding.loop_item_id, {
+          status: 'pending',
+          execution_state: null,
+        })
+      }
+    }
+    return mergedItems.map(item => {
+      const runtimeStatus = runtimeStatusByItemId.get(item.id)
+      return runtimeStatus ? { ...item, ...runtimeStatus } : item
+    })
   }, [
     activeItemTaskBindings,
     isMyTasksBoard,
@@ -2361,7 +2394,9 @@ export function CloudTodoWorkspace({
         action.itemId,
         action.projectId
       )
-      const existing = existingBindings[0]
+      const existing = existingBindings.find(
+        binding => binding.humanAssignmentId === action.humanAssignmentId
+      )
       if (existing) {
         acceptedDispatchTaskActions.current.add(action.idempotencyKey)
         await onOpenRuntimeTask({
@@ -2383,7 +2418,7 @@ export function CloudTodoWorkspace({
           ...toCloudLoopItem(issue),
           project_store: project.project_store,
         }
-        const initialInput = workItemTaskInput(item)
+        const initialInput = action.instructions
         const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
           project as CollaborationProject
         )
@@ -2396,17 +2431,22 @@ export function CloudTodoWorkspace({
           workItemId: item.id,
           initialInput,
           backgroundAfterSend: true,
+          dispatch: action,
           taskRequest: preparedEnvironmentTaskRequest
             ? {
                 ...preparedEnvironmentTaskRequest,
                 message: initialInput,
-                title: item.title,
+                title: action.taskTitle,
                 cloudProjectId: String(project.id),
                 origin: {
-                  type: 'board_task',
+                  type: 'issue_dispatch',
                   cloudProjectId: String(project.id),
                   loopItemId: String(item.id),
                   projectStore: project.project_store,
+                  dispatchId: action.dispatchId,
+                  roundId: action.roundId,
+                  assignmentId: action.assignmentId,
+                  humanAssignmentId: action.humanAssignmentId,
                 },
               }
             : undefined,
@@ -3849,7 +3889,24 @@ export function CloudTodoWorkspace({
               return toCloudLoopItem(item)
             })
           : await localApi!.getLoopItem(selectedItem.id)
-      await runtimeBindingApi.bindTask(latest.id, address, latest.title)
+      const dispatch = taskComposerRequest?.dispatch
+      if (selectedItemProject.location === 'cloud') {
+        await services.workspaceRuntimePort!.bindTask(
+          latest.id,
+          address,
+          dispatch?.taskTitle ?? latest.title,
+          dispatch
+            ? {
+                humanAssignmentId: dispatch.humanAssignmentId,
+                dispatchId: dispatch.dispatchId,
+                dispatchRoundId: dispatch.roundId,
+                assignmentId: dispatch.assignmentId,
+              }
+            : null
+        )
+      } else {
+        await localApi!.bindTask(latest.id, address, latest.title)
+      }
       rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
@@ -5300,9 +5357,7 @@ export function CloudTodoWorkspace({
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
-                  showAdditionalTaskAction={
-                    (activeItemTaskBindings[selectedItem.id]?.length ?? 0) > 0
-                  }
+                  showAdditionalTaskAction={selectedItem.can_edit !== false}
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                   taskExecutionStates={taskExecutionStatesByBindingId}
                   deviceNamesById={deviceNamesById}

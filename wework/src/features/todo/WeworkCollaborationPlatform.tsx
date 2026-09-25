@@ -48,6 +48,7 @@ import { createWeworkProjectAgentConfigurationHost } from '@/features/collaborat
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
+import type { IssueDispatchPersonalTaskAction } from '@/features/notifications/NotificationTaskSourceContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -171,7 +172,17 @@ export function toWeworkIssueTaskBinding(binding: WorkspaceTaskBinding): LoopIte
 }
 
 interface IssueRuntimeBindingPort {
-  bindTask(issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void>
+  bindTask(
+    issueId: string,
+    task: RuntimeTaskAddress,
+    taskTitle?: string | null,
+    dispatch?: {
+      humanAssignmentId: string
+      dispatchId: string
+      dispatchRoundId: string
+      assignmentId: string
+    } | null
+  ): Promise<void>
   unbindTask(issueId: string, task: RuntimeTaskAddress): Promise<void>
 }
 
@@ -277,6 +288,7 @@ export function WeworkSharedProject({
     issue: CollaborationIssue
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
+    dispatch?: IssueDispatchPersonalTaskAction
   } | null>(null)
   const taskComposerSequenceRef = useRef(0)
   const acceptedDispatchTaskActions = useRef(new Set<string>())
@@ -565,7 +577,7 @@ export function WeworkSharedProject({
   }, [detailServices?.projectChatClient, project.id])
 
   const openNewTaskConversation = useCallback(
-    async (issue: CollaborationIssue) => {
+    async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
       const environments = await scopedApi.projects
         .listExecutionEnvironments(String(project.id))
@@ -579,10 +591,32 @@ export function WeworkSharedProject({
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
-        taskRequest: projectExecutionEnvironmentTaskRequest(project, {
-          workspace,
-          environments,
-        }),
+        dispatch,
+        taskRequest: {
+          ...(projectExecutionEnvironmentTaskRequest(project, {
+            workspace,
+            environments,
+          }) ?? {
+            runtime: 'codex',
+            message: '',
+          }),
+          ...(dispatch
+            ? {
+                message: dispatch.instructions,
+                title: dispatch.taskTitle,
+                cloudProjectId: String(project.id),
+                origin: {
+                  type: 'issue_dispatch',
+                  cloudProjectId: String(project.id),
+                  loopItemId: issue.id,
+                  dispatchId: dispatch.dispatchId,
+                  roundId: dispatch.roundId,
+                  assignmentId: dispatch.assignmentId,
+                  humanAssignmentId: dispatch.humanAssignmentId,
+                },
+              }
+            : {}),
+        },
       })
       projectHost.navigate({ ...projectHost.location, issueId: issue.id })
     },
@@ -597,7 +631,9 @@ export function WeworkSharedProject({
         throw new Error('请先打开任务所属项目')
       }
       const issue = await scopedApi.issues.get(action.itemId)
-      const existing = (await scopedApi.taskBindings?.list(action.itemId, action.projectId))?.[0]
+      const existing = (await scopedApi.taskBindings?.list(action.itemId, action.projectId))?.find(
+        binding => binding.humanAssignmentId === action.humanAssignmentId
+      )
       if (existing) {
         acceptedDispatchTaskActions.current.add(action.idempotencyKey)
         if (runtimePort) {
@@ -622,7 +658,7 @@ export function WeworkSharedProject({
       if (acceptedDispatchTaskActions.current.has(action.idempotencyKey)) return
       acceptedDispatchTaskActions.current.add(action.idempotencyKey)
       try {
-        await openNewTaskConversation(issue)
+        await openNewTaskConversation(issue, action)
       } catch (cause) {
         acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
         throw cause
@@ -643,7 +679,11 @@ export function WeworkSharedProject({
         initialTaskRequest={taskComposer.taskRequest}
         open
         embedded
-        initialTaskInput={taskComposer.issue.description || taskComposer.issue.title}
+        initialTaskInput={
+          taskComposer.dispatch?.instructions ||
+          taskComposer.issue.description ||
+          taskComposer.issue.title
+        }
         initialAddress={taskComposer.address}
         onClose={() => setTaskComposer(null)}
         onAddressChange={address => {
@@ -655,7 +695,19 @@ export function WeworkSharedProject({
         }}
         onOpenRuntimeTask={onOpenRuntimeTask}
         prepareTask={async address => {
-          await runtimePort.bindTask(taskComposer.issue.id, address, taskComposer.issue.title)
+          await runtimePort.bindTask(
+            taskComposer.issue.id,
+            address,
+            taskComposer.dispatch?.taskTitle ?? taskComposer.issue.title,
+            taskComposer.dispatch
+              ? {
+                  humanAssignmentId: taskComposer.dispatch.humanAssignmentId,
+                  dispatchId: taskComposer.dispatch.dispatchId,
+                  dispatchRoundId: taskComposer.dispatch.roundId,
+                  assignmentId: taskComposer.dispatch.assignmentId,
+                }
+              : null
+          )
           const projectRef = {
             projectStore: project.project_store,
             projectId: String(project.id),
@@ -1339,7 +1391,17 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
           const runtimePort =
             project.project_store === 'local' && localDeliveryApi
               ? {
-                  bindTask: localDeliveryApi.bindTask,
+                  bindTask: (
+                    issueId: string,
+                    task: RuntimeTaskAddress,
+                    taskTitle?: string | null,
+                    dispatch?: {
+                      humanAssignmentId: string
+                      dispatchId: string
+                      dispatchRoundId: string
+                      assignmentId: string
+                    } | null
+                  ) => localDeliveryApi.bindTask(issueId, task, taskTitle, null, dispatch),
                   unbindTask: localDeliveryApi.unbindTask,
                 }
               : props.services.workspaceRuntimePort

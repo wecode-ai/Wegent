@@ -46,7 +46,7 @@ pub(crate) struct CloudCollaborationRoundCommand {
     pub(crate) dispatch_id: String,
     pub(crate) round_id: String,
     pub(crate) execution_ids: Vec<i64>,
-    pub(crate) loop_item_ids: Vec<String>,
+    pub(crate) human_assignment_ids: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -2011,19 +2011,19 @@ async fn call_backend_tool(
             })
             .filter_map(|assignment| assignment.get("execution_id").and_then(Value::as_i64))
             .collect::<Vec<_>>();
-        let loop_item_ids = assignments
+        let human_assignment_ids = assignments
             .iter()
             .filter(|assignment| {
                 assignment.get("assignee_type").and_then(Value::as_str) == Some("human")
             })
             .filter_map(|assignment| {
                 assignment
-                    .get("loop_item_id")
+                    .get("human_assignment_id")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned)
             })
             .collect::<Vec<_>>();
-        if execution_ids.len() + loop_item_ids.len() != assignments.len() {
+        if execution_ids.len() + human_assignment_ids.len() != assignments.len() {
             return Err("Backend returned an invalid collaboration assignment".to_owned());
         }
         collaboration_dispatcher
@@ -2035,7 +2035,7 @@ async fn call_backend_tool(
                 dispatch_id: dispatch_id.clone(),
                 round_id: round_id.to_owned(),
                 execution_ids,
-                loop_item_ids,
+                human_assignment_ids,
             })?;
         return Ok(json!({
             "dispatch_id": dispatch_id,
@@ -4321,7 +4321,7 @@ mod tests {
                         },
                         {
                             "assignee_type": "human",
-                            "loop_item_id": "ISSUE-HUMAN-1",
+                            "human_assignment_id": "human-assignment-1",
                             "task_title": "Review evidence"
                         }
                     ]
@@ -4383,7 +4383,7 @@ mod tests {
         assert_eq!(commands[0].manager_runtime_task_id, "manager-task");
         assert_eq!(commands[0].round_id, "round-1");
         assert_eq!(commands[0].execution_ids, vec![41]);
-        assert_eq!(commands[0].loop_item_ids, vec!["ISSUE-HUMAN-1"]);
+        assert_eq!(commands[0].human_assignment_ids, vec!["human-assignment-1"]);
         server.abort();
     }
 

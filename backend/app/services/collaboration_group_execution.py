@@ -26,7 +26,7 @@ from app.services.loop_item_executions.profile import (
     native_runtime_contract,
 )
 from app.services.loop_item_executions.service import loop_item_execution_service
-from app.services.project_chat.service import compiled_bot_config
+from app.services.project_chat.service import bot_config, compiled_bot_config
 from app.services.workspaces import workspace_service
 
 MANAGER_SYSTEM_INSTRUCTIONS = """You are the manager for one project Issue.

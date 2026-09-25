@@ -755,8 +755,8 @@ export function createWeworkWorkspaceRuntimePort(
         issueId: context.loop_item_id,
       }
     },
-    bindTask(issueId, task, taskTitle) {
-      return deliveryApi.bindTask(issueId, toRuntimeTaskAddress(task), taskTitle)
+    bindTask(issueId, task, taskTitle, dispatch) {
+      return deliveryApi.bindTask(issueId, toRuntimeTaskAddress(task), taskTitle, null, dispatch)
     },
     unbindTask(issueId, task) {
       return deliveryApi.unbindTask(issueId, toRuntimeTaskAddress(task))

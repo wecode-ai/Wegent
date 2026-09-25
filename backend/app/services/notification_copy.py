@@ -26,6 +26,7 @@ COLLABORATION_NOTIFICATION_KINDS = (
     "mention",
     "execution",
     "human_work",
+    "issue_dispatch_assignment",
 )
 
 

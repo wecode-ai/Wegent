@@ -402,11 +402,18 @@ describe('notification center', () => {
       url: null,
       payload: {
         projectId: '12',
-        itemId: 'child-item-1',
+        itemId: 'issue-1',
         issueId: 'issue-1',
-        dispatchTaskId: 'dispatch-task-1',
+        dispatchTaskId: 'human-assignment-1',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'dispatch-1',
+        roundId: 'round-1',
+        assignmentId: 'collect-cpu',
+        taskTitle: '采集 CPU 证据',
+        instructions: '只读采集 CPU 证据并提交交付。',
+        workflowStageId: 'investigate',
         action: 'create_personal_task',
-        idempotencyKey: 'dispatch-task:dispatch-task-1',
+        idempotencyKey: 'human-assignment:human-assignment-1',
       },
     }
     api.list.mockImplementation((_offset, category) =>
@@ -429,10 +436,17 @@ describe('notification center', () => {
     await waitFor(() =>
       expect(issueDispatchNotificationAction).toHaveBeenCalledWith({
         projectId: '12',
-        itemId: 'child-item-1',
+        itemId: 'issue-1',
         issueId: 'issue-1',
-        dispatchTaskId: 'dispatch-task-1',
-        idempotencyKey: 'dispatch-task:dispatch-task-1',
+        dispatchTaskId: 'human-assignment-1',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'dispatch-1',
+        roundId: 'round-1',
+        assignmentId: 'collect-cpu',
+        taskTitle: '采集 CPU 证据',
+        instructions: '只读采集 CPU 证据并提交交付。',
+        workflowStageId: 'investigate',
+        idempotencyKey: 'human-assignment:human-assignment-1',
       })
     )
     expect(screen.queryByTestId('wework-notifications-popover')).toBeNull()

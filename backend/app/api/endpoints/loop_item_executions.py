@@ -24,7 +24,6 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
-from app.schemas.delivery import LoopItemCreate
 from app.schemas.project_chat import (
     LoopItemExecutionBatchCreate,
     LoopItemExecutionBatchItem,
@@ -43,6 +42,11 @@ from app.schemas.project_chat import (
 from app.schemas.runtime_profile import ExecutionRuntimeSelect
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.collaboration_group_execution import collaboration_group_for_item
+from app.services.collaboration_human_assignments import (
+    collaboration_human_assignment_id,
+    collaboration_human_assignment_status,
+    notify_collaboration_human_assignment,
+)
 from app.services.device.capacity import get_runtime_capacity_sync
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import (
@@ -54,7 +58,6 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.loop_items.access import visible_item_filter
-from app.services.loop_items.service import loop_item_service
 from app.services.runtime_profiles import runtime_profile_service
 from app.services.workspaces.storage import workspace_id_for_project
 
@@ -123,77 +126,6 @@ def _collaboration_group_members(group: dict[str, object]) -> set[tuple[str, str
         for kind, member_id in values
         if kind in {"agent", "human"} and member_id
     }
-
-
-def _human_assignment_item(
-    db: Session,
-    *,
-    project_id: int,
-    parent_item: LoopItem,
-    assignee_user_id: int,
-    run_id: str,
-    command: LoopItemExecutionBatchItem,
-    values: LoopItemExecutionBatchCreate,
-    created_by_user_id: int,
-) -> LoopItem:
-    children = (
-        db.query(LoopItem)
-        .filter(
-            LoopItem.cloud_project_id == project_id,
-            LoopItem.parent_id == parent_item.id,
-        )
-        .all()
-    )
-    for child in children:
-        metadata = child.metadata_json if isinstance(child.metadata_json, dict) else {}
-        automation = metadata.get("automation")
-        if isinstance(automation, dict) and automation.get("run_id") == run_id:
-            return child
-    return loop_item_service.create(
-        db,
-        project_id,
-        created_by_user_id,
-        LoopItemCreate(
-            title=command.title,
-            description=command.instructions,
-            assignee_user_id=assignee_user_id,
-            parent_id=parent_item.id,
-            priority=parent_item.priority or "none",
-            notify_assignee=True,
-        ),
-        commit=False,
-        automation_context={
-            "run_id": run_id,
-            "dispatch_id": values.dispatch_id,
-            "dispatch_task_id": parent_item.id,
-            "dispatch_role": "human_member",
-            "manager_agent_id": values.manager_agent_id,
-            "manager_runtime_task_id": values.manager_runtime_task_id,
-            "coordination_round_id": values.round_id,
-            "assignment_id": command.assignment_id,
-            "workflow_task_title": command.title,
-            "workflow_stage_id": command.workflow_stage_id,
-        },
-        instruction=command.instructions,
-        assign_creator_if_unassigned=False,
-        apply_project_workflow=False,
-    )
-
-
-def _human_delivery(db: Session, item: LoopItem) -> tuple[str, str]:
-    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-    human_work = metadata.get("human_work")
-    if not isinstance(human_work, dict):
-        return "", ""
-    message_id = str(human_work.get("submission_message_id") or "")
-    message = (
-        db.query(ProjectChatMessage)
-        .filter(ProjectChatMessage.message_id == message_id)
-        .first()
-        if message_id
-        else None
-    )
-    return str(human_work.get("state") or ""), message.content if message else ""
 
 
 def _execution_view(
@@ -517,21 +449,30 @@ def enqueue_execution_batch(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human assignee is not active",
                 )
-            child = _human_assignment_item(
+            human_assignment_id = collaboration_human_assignment_id(
+                dispatch_id=values.dispatch_id,
+                round_id=values.round_id,
+                assignment_id=command.assignment_id,
+            )
+            notify_collaboration_human_assignment(
                 db,
-                project_id=project_id,
-                parent_item=item,
-                assignee_user_id=human.id,
-                run_id=run_id,
-                command=command,
-                values=values,
-                created_by_user_id=current_user.id,
+                project=project,
+                issue=item,
+                human=human,
+                actor_user_id=current_user.id,
+                human_assignment_id=human_assignment_id,
+                dispatch_id=values.dispatch_id,
+                round_id=values.round_id,
+                assignment_id=command.assignment_id,
+                task_title=command.title,
+                instructions=command.instructions,
+                workflow_stage_id=command.workflow_stage_id,
             )
             response = {
                 "assignee_type": "human",
-                "work_id": f"loop_item:{child.id}",
-                "loop_item_id": child.id,
-                "status": child.status,
+                "work_id": f"human_assignment:{human_assignment_id}",
+                "human_assignment_id": human_assignment_id,
+                "status": "queued",
                 "assignment_id": command.assignment_id,
                 "task_title": command.title,
                 "human_user_id": human.id,
@@ -647,53 +588,14 @@ def execution_statuses(
                 "error": row.error_message or "",
             }
         )
-    human_rows = (
-        db.query(LoopItem)
-        .filter(
-            LoopItem.id.in_(values.loop_item_ids),
-            LoopItem.cloud_project_id == project_id,
-        )
-        .all()
-        if values.loop_item_ids
-        else []
-    )
-    human_by_id = {row.id: row for row in human_rows}
-    for loop_item_id in values.loop_item_ids:
-        row = human_by_id.get(loop_item_id)
-        if row is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-        delivery_state, result = _human_delivery(db, row)
-        if row.status in {"in_review", "completed"} and delivery_state in {
-            "submitted",
-            "accepted",
-        }:
-            execution_status = "completed"
-        elif row.status in {"inbox", "pending"}:
-            execution_status = "queued"
-        else:
-            execution_status = "running"
-        automation = (
-            (row.metadata_json or {}).get("automation")
-            if isinstance(row.metadata_json, dict)
-            else {}
-        )
+    for human_assignment_id in values.human_assignment_ids:
         items.append(
-            {
-                "assignee_type": "human",
-                "work_id": f"loop_item:{row.id}",
-                "loop_item_id": row.id,
-                "assignment_id": (
-                    str(automation.get("assignment_id") or "")
-                    if isinstance(automation, dict)
-                    else ""
-                ),
-                "status": execution_status,
-                "item_status": row.status,
-                "human_user_id": row.assignee_user_id,
-                "delivery_state": delivery_state,
-                "result": result,
-                "error": "",
-            }
+            collaboration_human_assignment_status(
+                db,
+                project_id=project_id,
+                issue_id=values.loop_item_id,
+                human_assignment_id=human_assignment_id,
+            )
         )
     return {"items": items}
 

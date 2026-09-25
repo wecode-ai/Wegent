@@ -12,6 +12,13 @@ export interface IssueDispatchPersonalTaskAction {
   issueId: string
   dispatchTaskId: string
   idempotencyKey: string
+  humanAssignmentId: string
+  dispatchId: string
+  roundId: string
+  assignmentId: string
+  taskTitle: string
+  instructions: string
+  workflowStageId?: string
 }
 
 export type IssueDispatchNotificationAction = (

@@ -140,6 +140,15 @@ def _task_binding_metadata(
         metadata["workflow_node_id"] = values.workflow_node_id
     if values.model_selection:
         metadata["model_selection"] = values.model_selection.model_dump(by_alias=True)
+    for key in (
+        "human_assignment_id",
+        "dispatch_id",
+        "dispatch_round_id",
+        "assignment_id",
+    ):
+        value = getattr(values, key)
+        if value:
+            metadata[key] = value
     return metadata
 
 

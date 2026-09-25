@@ -314,14 +314,17 @@ class LoopItemExecutionBatchCreate(ProjectChatSchema):
 
 
 class LoopItemExecutionStatusQuery(ProjectChatSchema):
+    loop_item_id: str = Field(min_length=1, max_length=64)
     execution_ids: list[int] = Field(default_factory=list, max_length=20)
-    loop_item_ids: list[str] = Field(default_factory=list, max_length=20)
+    human_assignment_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_targets(self) -> "LoopItemExecutionStatusQuery":
-        target_count = len(self.execution_ids) + len(self.loop_item_ids)
+        target_count = len(self.execution_ids) + len(self.human_assignment_ids)
         if target_count < 1 or target_count > 20:
-            raise ValueError("Provide between 1 and 20 execution or Issue ids")
+            raise ValueError(
+                "Provide between 1 and 20 execution or human assignment ids"
+            )
         return self
 
 

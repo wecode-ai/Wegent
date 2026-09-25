@@ -359,6 +359,27 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
+            binding_metadata = (
+                source_binding.metadata_json
+                if source_binding is not None
+                and isinstance(source_binding.metadata_json, dict)
+                else {}
+            )
+            if binding_metadata.get("human_assignment_id"):
+                item.current_delivery_id = delivery.id
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
+                item.version += 1
+                db.commit()
+                db.refresh(delivery)
+                publish_loop_item_changed(
+                    db,
+                    item=item,
+                    reason="collaboration_human_delivery_finalized",
+                    actor_user_id=user_id,
+                )
+                return delivery
             from app.services.human_issue_work import human_issue_work_service
 
             if human_issue_work_service.is_direct_human_assignment(db, item):
@@ -648,12 +669,25 @@ class DeliveryService:
                 status.HTTP_409_CONFLICT,
                 "Source Task is not linked to this TODO",
             )
-        return binding, {
+        snapshot = {
             "taskId": binding.task_id,
             "deviceId": binding.device_id,
             "userId": binding.task_user_id,
             "backendTaskId": binding.backend_task_id,
         }
+        metadata = (
+            binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
+        )
+        for source_key, target_key in (
+            ("human_assignment_id", "humanAssignmentId"),
+            ("dispatch_id", "dispatchId"),
+            ("dispatch_round_id", "dispatchRoundId"),
+            ("assignment_id", "assignmentId"),
+        ):
+            value = metadata.get(source_key)
+            if isinstance(value, str) and value:
+                snapshot[target_key] = value
+        return binding, snapshot
 
     @staticmethod
     def _require_active_task_binding(

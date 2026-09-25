@@ -115,6 +115,10 @@ export interface WorkspaceTaskBinding {
   backendTaskId: number | null;
   modelSelection?: Record<string, unknown> | null;
   bindingType?: "system" | "user";
+  humanAssignmentId?: string | null;
+  dispatchId?: string | null;
+  dispatchRoundId?: string | null;
+  assignmentId?: string | null;
   linkedAt: string;
 }
 
@@ -918,6 +922,12 @@ export interface WeworkWorkspaceRuntimePort {
     issueId: string,
     task: WorkspaceRuntimeTaskAddress,
     taskTitle?: string | null,
+    dispatch?: {
+      humanAssignmentId: string;
+      dispatchId: string;
+      dispatchRoundId: string;
+      assignmentId: string;
+    } | null,
   ): Promise<void>;
   unbindTask(issueId: string, task: WorkspaceRuntimeTaskAddress): Promise<void>;
   unbindCloudContext(task: WorkspaceRuntimeTaskAddress): Promise<void>;

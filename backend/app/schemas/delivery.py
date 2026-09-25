@@ -414,6 +414,30 @@ class LoopItemTaskBind(BaseModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    human_assignment_id: str | None = Field(
+        default=None,
+        alias="humanAssignmentId",
+        min_length=1,
+        max_length=64,
+    )
+    dispatch_id: str | None = Field(
+        default=None,
+        alias="dispatchId",
+        min_length=1,
+        max_length=255,
+    )
+    dispatch_round_id: str | None = Field(
+        default=None,
+        alias="dispatchRoundId",
+        min_length=1,
+        max_length=128,
+    )
+    assignment_id: str | None = Field(
+        default=None,
+        alias="assignmentId",
+        min_length=1,
+        max_length=128,
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -432,6 +456,10 @@ class LoopItemTaskBindingResponse(BaseModel):
         alias="modelSelection",
     )
     workflow_node_id: str | None = None
+    human_assignment_id: str | None = None
+    dispatch_id: str | None = None
+    dispatch_round_id: str | None = None
+    assignment_id: str | None = None
     change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime

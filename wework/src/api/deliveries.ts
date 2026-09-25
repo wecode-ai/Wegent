@@ -550,6 +550,10 @@ export interface LoopItemTaskBinding {
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
   binding_type?: 'system' | 'user'
+  human_assignment_id?: string | null
+  dispatch_id?: string | null
+  dispatch_round_id?: string | null
+  assignment_id?: string | null
   linked_at: string
 }
 

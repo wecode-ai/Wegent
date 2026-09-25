@@ -234,7 +234,7 @@ fn terminal_turn_status_is_not_persisted() {
         "cloudCollaborationRound": {
             "round_id": "round-1",
             "execution_ids": [41, 42],
-            "loop_item_ids": ["ISSUE-HUMAN-1"]
+            "human_assignment_ids": ["ISSUE-HUMAN-1"]
         },
         "modelSelection": {"modelName": "gpt-5.6-sol"},
         "wegentTeam": {
@@ -298,7 +298,7 @@ fn terminal_turn_status_is_not_persisted() {
     assert!(restored.runtime_handle.get("queuePosition").is_none());
     assert!(restored.runtime_handle.get("lastError").is_none());
     assert_eq!(
-        restored.runtime_handle["cloudCollaborationRound"]["loop_item_ids"][0],
+        restored.runtime_handle["cloudCollaborationRound"]["human_assignment_ids"][0],
         "ISSUE-HUMAN-1"
     );
 }

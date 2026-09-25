@@ -505,14 +505,33 @@ function ConnectedNotificationCenter({
         }
       })
       if (read.payload.action === 'create_personal_task') {
-        const { projectId, itemId, issueId, dispatchTaskId, idempotencyKey } = read.payload
+        const {
+          projectId,
+          itemId,
+          issueId,
+          dispatchTaskId,
+          idempotencyKey,
+          humanAssignmentId,
+          dispatchId,
+          roundId,
+          assignmentId,
+          taskTitle,
+          instructions,
+          workflowStageId,
+        } = read.payload
         if (
           !issueDispatchAction ||
           !projectId ||
           !itemId ||
           !issueId ||
           !dispatchTaskId ||
-          !idempotencyKey
+          !idempotencyKey ||
+          !humanAssignmentId ||
+          !dispatchId ||
+          !roundId ||
+          !assignmentId ||
+          !taskTitle ||
+          !instructions
         ) {
           throw new Error(t('notifications.invalid_link'))
         }
@@ -522,6 +541,13 @@ function ConnectedNotificationCenter({
           issueId,
           dispatchTaskId,
           idempotencyKey,
+          humanAssignmentId,
+          dispatchId,
+          roundId,
+          assignmentId,
+          taskTitle,
+          instructions,
+          workflowStageId,
         })
         close()
         return

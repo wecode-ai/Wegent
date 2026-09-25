@@ -42,6 +42,13 @@ const notificationActionMocks = vi.hoisted(() => ({
         issueId: string
         dispatchTaskId: string
         idempotencyKey: string
+        humanAssignmentId: string
+        dispatchId: string
+        roundId: string
+        assignmentId: string
+        taskTitle: string
+        instructions: string
+        workflowStageId?: string
       }) => Promise<void>),
 }))
 
@@ -443,6 +450,10 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
           task_id: 'runtime-248868498',
           task_title: 'Implement cloud delivery',
           backend_task_id: null,
+          human_assignment_id: 'human-assignment-1',
+          dispatch_id: 'dispatch-1',
+          dispatch_round_id: 'round-1',
+          assignment_id: 'collect-cpu',
           linked_at: '2026-07-22T00:00:00Z',
         },
       ]),
@@ -2485,8 +2496,15 @@ describe('CloudTodoWorkspace', () => {
         projectId: String(project.id),
         itemId: item.id,
         issueId: 'parent-issue',
-        dispatchTaskId: 'dispatch-task-1',
-        idempotencyKey: 'dispatch-task:dispatch-task-1',
+        dispatchTaskId: 'human-assignment-1',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'dispatch-1',
+        roundId: 'round-1',
+        assignmentId: 'collect-cpu',
+        taskTitle: 'Collect CPU evidence',
+        instructions: 'Collect read-only CPU evidence and deliver it.',
+        workflowStageId: 'investigate',
+        idempotencyKey: 'human-assignment:human-assignment-1',
       })
     })
 
@@ -2505,8 +2523,15 @@ describe('CloudTodoWorkspace', () => {
       projectId: String(project.id),
       itemId: item.id,
       issueId: 'parent-issue',
-      dispatchTaskId: 'dispatch-task-2',
-      idempotencyKey: 'dispatch-task:dispatch-task-2',
+      dispatchTaskId: 'human-assignment-2',
+      humanAssignmentId: 'human-assignment-2',
+      dispatchId: 'dispatch-1',
+      roundId: 'round-1',
+      assignmentId: 'review-cpu',
+      taskTitle: 'Review CPU evidence',
+      instructions: 'Review the CPU evidence and deliver a verdict.',
+      workflowStageId: 'review',
+      idempotencyKey: 'human-assignment:human-assignment-2',
     }
 
     render(
@@ -2532,7 +2557,14 @@ describe('CloudTodoWorkspace', () => {
       expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
         item.id,
         { deviceId: 'local-device', taskId: 'runtime-created' },
-        item.title
+        'Review CPU evidence',
+        null,
+        {
+          humanAssignmentId: 'human-assignment-2',
+          dispatchId: 'dispatch-1',
+          dispatchRoundId: 'round-1',
+          assignmentId: 'review-cpu',
+        }
       )
     )
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()

@@ -621,6 +621,72 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert immutable.status_code == 409
 
 
+def test_collaboration_human_delivery_closes_assignment_without_completing_issue(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review CPU evidence", "status": "in_progress"},
+    )
+    assert item_response.status_code == 201
+    item_id = item_response.json()["id"]
+    source_task = {
+        "deviceId": "human-device",
+        "taskId": "human-runtime-task",
+        "taskTitle": "Review CPU evidence",
+        "humanAssignmentId": "human-assignment-1",
+        "dispatchId": "dispatch-1",
+        "dispatchRoundId": "round-1",
+        "assignmentId": "review-cpu",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+    assert binding_response.json()["human_assignment_id"] == "human-assignment-1"
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={
+            "markdown": "# Review\nEvidence accepted.",
+            "source_task": source_task,
+        },
+    )
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=_auth(test_token),
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["status"] == "delivered"
+    assert finalized.json()["source_task_snapshot"] == {
+        "taskId": "human-runtime-task",
+        "deviceId": "human-device",
+        "userId": item_response.json()["created_by_user_id"],
+        "backendTaskId": None,
+        "humanAssignmentId": "human-assignment-1",
+        "dispatchId": "dispatch-1",
+        "dispatchRoundId": "round-1",
+        "assignmentId": "review-cpu",
+    }
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "in_progress"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+
+
 def test_delivery_response_reads_expired_orm_fields(
     test_client: TestClient,
     test_token: str,

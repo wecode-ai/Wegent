@@ -20,6 +20,13 @@ export interface WeworkNotificationPayload {
   idempotencyKey?: string
   issueId?: string
   dispatchTaskId?: string
+  humanAssignmentId?: string
+  dispatchId?: string
+  roundId?: string
+  assignmentId?: string
+  taskTitle?: string
+  instructions?: string
+  workflowStageId?: string
 }
 
 export interface WeworkNotification {
