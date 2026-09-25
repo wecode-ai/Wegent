@@ -16,6 +16,7 @@ from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from wecode.cache.skill_mcp import skill_mcp_config_cache
 
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
@@ -1834,17 +1835,16 @@ class TaskRequestBuilder:
         *,
         skill_id: int,
     ) -> Kind | None:
-        """Resolve an exact Skill dependency already validated on Agent save."""
-        return (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == skill_id,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
+        """Resolve an exact Skill dependency already validated on Agent save.
+
+        The row read goes through `kindReader` so it reuses the cached Kind
+        reader, the same way the name based lookups above do.
+        """
+
+        skill = kindReader.get_by_id(self.db, KindType.SKILL, skill_id)
+        if skill is None or skill.name != skill_name:
+            return None
+        return skill
 
     @staticmethod
     def _build_request_task_data(user: User | None) -> dict[str, Any] | None:
@@ -1877,6 +1877,39 @@ class TaskRequestBuilder:
         Returns:
             Dictionary containing skill metadata for chat configuration
         """
+        skill_data, skill_name, skill_namespace = self._get_skill_data(skill)
+        self._apply_user_provider_skill_config(
+            skill_data,
+            skill_name=skill_name,
+            skill_namespace=skill_namespace,
+            skill_user_id=getattr(skill, "user_id", None),
+            user=user,
+        )
+        return skill_data
+
+    def _get_skill_data(self, skill: Kind) -> tuple[dict, str, str]:
+        """Return the request-independent Skill configuration.
+
+        The result only depends on the Skill row, so it is reused from the
+        Skill/MCP cache while that row is unchanged.
+        """
+
+        skill_id = getattr(skill, "id", None)
+        if skill_id is None:
+            return self._build_skill_data_base(skill)
+
+        return skill_mcp_config_cache.get_skill_data(
+            skill_id,
+            lambda: self._build_skill_data_base(skill),
+        )
+
+    def _build_skill_data_base(self, skill: Kind) -> tuple[dict, str, str]:
+        """Assemble the request-independent part of a Skill configuration.
+
+        Returns the skill data together with the CRD name and namespace, which
+        the user-scoped provider overlay needs after this value is cached.
+        """
+
         skill_crd = SkillCRD.model_validate(skill.json)
 
         skill_data = {
@@ -1898,36 +1931,6 @@ class TaskRequestBuilder:
         if skill_crd.spec.mcpServers:
             skill_data["mcpServers"] = skill_crd.spec.mcpServers
 
-        is_public_default_runtime_skill = (
-            skill.user_id == 0 and skill_crd.metadata.namespace == "default"
-        )
-        runtime_service = (
-            get_mcp_service_by_skill_name(skill_crd.metadata.name)
-            if is_public_default_runtime_skill
-            else None
-        )
-        if runtime_service:
-            provider, service = runtime_service
-            if provider["configuration_mode"] == "user":
-                configured_server = None
-                if user:
-                    configured_server = user_mcp_service.get_enabled_mcp_server(
-                        getattr(user, "preferences", None),
-                        provider["provider_id"],
-                        service["service_id"],
-                    )
-
-                if not configured_server:
-                    skill_data.pop("mcpServers", None)
-                    skill_data["prompt"] = (
-                        self._build_unconfigured_provider_skill_prompt(
-                            skill_data.get("prompt"),
-                            provider_id=provider["provider_id"],
-                            provider_display_name=provider["display_name"],
-                            service=service,
-                        )
-                    )
-
         if skill_crd.spec.tools:
             skill_data["tools"] = [
                 tool.model_dump(exclude_none=True) for tool in skill_crd.spec.tools
@@ -1946,7 +1949,52 @@ class TaskRequestBuilder:
                     f"{base_url}/api/internal/skills/{skill.id}/binary"
                 )
 
-        return skill_data
+        return skill_data, skill_crd.metadata.name, skill_crd.metadata.namespace
+
+    def _apply_user_provider_skill_config(
+        self,
+        skill_data: dict,
+        *,
+        skill_name: str,
+        skill_namespace: str,
+        skill_user_id: int | None,
+        user: User | None,
+    ) -> None:
+        """Apply the user-scoped runtime provider decision to skill data.
+
+        Public default-namespace Skills can be backed by a per-user MCP
+        service. Whether the caller configured that service is a request-scoped
+        decision, so it stays outside the cached assembly.
+        """
+
+        if skill_user_id != 0 or skill_namespace != "default":
+            return
+
+        runtime_service = get_mcp_service_by_skill_name(skill_name)
+        if not runtime_service:
+            return
+
+        provider, service = runtime_service
+        if provider["configuration_mode"] != "user":
+            return
+
+        configured_server = None
+        if user:
+            configured_server = user_mcp_service.get_enabled_mcp_server(
+                getattr(user, "preferences", None),
+                provider["provider_id"],
+                service["service_id"],
+            )
+        if configured_server:
+            return
+
+        skill_data.pop("mcpServers", None)
+        skill_data["prompt"] = self._build_unconfigured_provider_skill_prompt(
+            skill_data.get("prompt"),
+            provider_id=provider["provider_id"],
+            provider_display_name=provider["display_name"],
+            service=service,
+        )
 
     @staticmethod
     def _build_unconfigured_provider_skill_prompt(
@@ -2213,11 +2261,20 @@ Response template:
             List of MCP server configurations in the format:
             [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]
         """
-        import json
-
         mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
         if not mcp_servers_config or mcp_servers_config == "{}":
             return []
+
+        return skill_mcp_config_cache.get_system_mcp_servers(
+            mcp_servers_config,
+            lambda: self._parse_system_mcp_servers(mcp_servers_config),
+        )
+
+    @staticmethod
+    def _parse_system_mcp_servers(mcp_servers_config: str) -> list[dict]:
+        """Parse the CHAT_MCP_SERVERS payload into chat_shell MCP entries."""
+
+        import json
 
         try:
             config_data = json.loads(mcp_servers_config)
