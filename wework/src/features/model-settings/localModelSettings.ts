@@ -1,3 +1,4 @@
+import { getProviderModelConfigs, markProviderModelCatalogReady } from './providerModelState'
 import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
@@ -12,6 +13,7 @@ export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
   id: string
+  providerConnectionId?: string
   providerProfileId?: string
   displayName: string
   group?: string
@@ -369,6 +371,17 @@ export function buildLocalModelRequestUrl(
   )}`
 }
 
+/** Provider files store a base prefix, never an inferred complete request URL. */
+export function localModelConfigRequestUrl(config: LocalModelConfig): string {
+  if (config.providerConnectionId) {
+    return `${normalizeLocalModelBaseUrl(config.baseUrl)}${normalizeLocalModelRequestPath(
+      config.requestPath,
+      config.apiFormat
+    )}`
+  }
+  return buildLocalModelRequestUrl(config.baseUrl, config.requestPath, config.apiFormat)
+}
+
 export function splitLocalModelRequestUrl(
   value: string,
   preferredPath?: string | null,
@@ -456,11 +469,28 @@ function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
   return new Date(timestamp).toISOString()
 }
 
-export function listLocalModelConfigs(): LocalModelConfig[] {
+/** Read standalone local models that have not been moved into provider configuration. */
+export function listLegacyLocalModelConfigs(): LocalModelConfig[] {
   return readStoredConfigs()
 }
 
+/** Combine legacy models with the provider projection, preferring provider-owned identities. */
+export function listLocalModelConfigs(): LocalModelConfig[] {
+  const owned = getProviderModelConfigs()
+  const ids = new Set(owned.map(model => model.id))
+  return [...readStoredConfigs().filter(model => !ids.has(model.id)), ...owned]
+}
+
+/** Remove only legacy records whose IDs were successfully persisted as provider models. */
+export function removeMigratedLocalModelConfigs(ids: ReadonlySet<string>): void {
+  writeStoredConfigs(readStoredConfigs().filter(model => !ids.has(model.id)))
+}
+
+/** Validate and save a standalone model while preventing edits to provider-owned records. */
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
+  if (input.id && getProviderModelConfigs().some(model => model.id === input.id)) {
+    throw new Error('Edit this model in Provider settings or its YAML file')
+  }
   const modelId = normalizeLocalModelId(input.modelId)
   const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
   const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
@@ -571,7 +601,9 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   return next
 }
 
+/** Acknowledge matching catalog versions across provider and standalone model sources. */
 export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
+  markProviderModelCatalogReady(snapshot)
   const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
   const configs = readStoredConfigs().map(config => {
     if (writtenVersions.get(config.id) !== config.updatedAt) return config
@@ -639,7 +671,7 @@ export function findLocalModelConfigByModelName(
   modelName?: string | null
 ): LocalModelConfig | null {
   const id = localModelIdFromModelName(modelName)
-  const configs = readStoredConfigs()
+  const configs = listLocalModelConfigs()
   if (id) return configs.find(config => config.id === id) ?? null
   if (!modelName) return null
   return (

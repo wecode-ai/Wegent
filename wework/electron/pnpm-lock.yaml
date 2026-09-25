@@ -34,6 +34,9 @@ importers:
       tar:
         specifier: 7.5.22
         version: 7.5.22
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
     devDependencies:
       '@electron/packager':
         specifier: 20.3.0
@@ -1815,6 +1818,12 @@ packages:
   zip-stream@7.0.5:
     resolution: {integrity: sha512-dSvYKdvLsAHCDqPOhIwk/q5CvuWtTB3Dgpoe0uVEFjTzIOAmsQpprX25InCvrvJsirEbu1OHyy67n/kAj1Sw/w==}
     engines: {node: '>=18'}
+
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
 
 snapshots:
 
@@ -3634,3 +3643,5 @@ snapshots:
       compress-commons: 7.0.1
       normalize-path: 3.0.0
       readable-stream: 4.7.0
+
+  yaml@2.9.0: {}
