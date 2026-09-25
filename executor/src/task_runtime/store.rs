@@ -695,24 +695,24 @@ impl LocalTaskStore {
         }
         if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if requested_group_id.is_some() {
-                return Err(TaskRuntimeError::Invalid(
-                    "collaboration Issue execution is not available".to_owned(),
-                ));
-            } else if let Some(agent_id) = assignee_agent_id {
-                let agent =
-                    get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-                        TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-                    })?;
-                create_local_execution(
-                    &transaction,
-                    task_id,
-                    project_id,
-                    agent_id,
-                    &agent,
-                    current.priority.as_deref().unwrap_or("none"),
-                    input.execution_payload.unwrap_or(Value::Null),
-                )?;
+            if requested_group_id.is_none() {
+                if let Some(agent_id) = assignee_agent_id {
+                    let agent =
+                        get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
+                            TaskRuntimeError::Invalid(
+                                "Robot is not active in this project".to_owned(),
+                            )
+                        })?;
+                    create_local_execution(
+                        &transaction,
+                        task_id,
+                        project_id,
+                        agent_id,
+                        &agent,
+                        current.priority.as_deref().unwrap_or("none"),
+                        input.execution_payload.unwrap_or(Value::Null),
+                    )?;
+                }
             }
         }
         if !added_tags.is_empty() {
