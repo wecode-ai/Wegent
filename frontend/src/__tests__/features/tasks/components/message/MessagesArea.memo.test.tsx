@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import MessagesArea, {
   deriveSaveToKnowledgeTitle,
 } from '@/features/tasks/components/message/MessagesArea'
@@ -47,6 +47,7 @@ let mockTaskSession = {
   refreshTasks: jest.fn(),
   selectTask: jest.fn(),
   cleanupMessagesAfterEdit: jest.fn(),
+  recoverCurrentTask: jest.fn(),
   taskState: null as TaskStateSnapshot | null,
 }
 
@@ -248,6 +249,7 @@ describe('MessagesArea memoization', () => {
       refreshTasks: jest.fn(),
       selectTask: jest.fn(),
       cleanupMessagesAfterEdit: jest.fn(),
+      recoverCurrentTask: jest.fn(),
       taskState: null,
     }
   })
@@ -497,5 +499,41 @@ describe('MessagesArea memoization', () => {
     expect(watermark).toHaveAttribute('data-runtime-code', 's4-p5-r0-q1-e0-m0')
     expect(watermark.querySelectorAll('[data-runtime-symbol]')).toHaveLength(6)
     jest.useRealTimers()
+  })
+
+  it('shows an actionable error instead of the runtime watermark when history loading fails', () => {
+    mockMessages = []
+    mockTaskSession = {
+      ...mockTaskSession,
+      selectedTaskDetail: { id: 707, title: 'Task 707', status: 'RUNNING' },
+      taskState: createTaskStateSnapshot({
+        taskId: 707,
+        phase: 'error',
+        error: 'Unable to load task messages',
+        runtime: {
+          phase: 'error',
+          recoveryError: 'Unable to load task messages',
+        },
+      }),
+    }
+
+    render(
+      <MessagesArea
+        selectedTeam={null}
+        selectedRepo={null}
+        selectedBranch={null}
+        isGroupChat={false}
+        hasMessages
+      />
+    )
+
+    expect(screen.getByTestId('task-history-load-error')).toHaveTextContent(
+      'Unable to load task messages'
+    )
+    expect(screen.queryByTestId('task-runtime-watermark')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('retry-task-history-load'))
+
+    expect(mockTaskSession.recoverCurrentTask).toHaveBeenCalledTimes(1)
   })
 })
