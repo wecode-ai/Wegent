@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
@@ -468,6 +468,79 @@ describe('TodoEditor external item sync', () => {
     })
 
     expect(screen.queryByText('过期刷新结果')).not.toBeInTheDocument()
+  })
+
+  it('preserves loaded collaboration groups while the same Issue refreshes', async () => {
+    const pendingRefresh = deferred<never[]>()
+    const collaborationGroup = {
+      id: 'group-1',
+      name: '性能诊断协作小组',
+      members: [],
+      stages: [],
+    }
+    const listCollaborationGroups = vi
+      .fn()
+      .mockResolvedValueOnce([collaborationGroup])
+      .mockImplementationOnce(() => pendingRefresh.promise)
+    const sharedApi = {
+      projects: { listCollaborationGroups },
+      issues: { update: vi.fn(), assign: vi.fn() },
+      attachments: {
+        list: vi.fn(async () => []),
+        upload: vi.fn(),
+        read: vi.fn(),
+        download: vi.fn(),
+        remove: vi.fn(),
+      },
+      collaborators: {
+        list: vi.fn(async () => []),
+        add: vi.fn(),
+        remove: vi.fn(),
+      },
+      taskBindings: { list: vi.fn(async () => []) },
+      members: { list: vi.fn(async () => []) },
+      agents: { list: vi.fn(async () => []) },
+      deliveries: {
+        list: vi.fn(async () => []),
+        get: vi.fn(),
+      },
+    } as never
+    const renderEditor = (taskRefreshKey: number) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={{ ...project, access_role: 'Owner', collaboration_groups: [] }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        sharedApi={sharedApi}
+        taskRefreshKey={taskRefreshKey}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor(0))
+
+    await waitFor(() => expect(listCollaborationGroups).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    expect(
+      await screen.findByTestId('cloud-todo-detail-assignee-option-group:group-1')
+    ).toHaveTextContent('性能诊断协作小组')
+
+    view.rerender(renderEditor(1))
+
+    expect(listCollaborationGroups).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('cloud-todo-detail-assignee-option-group:group-1')).toHaveTextContent(
+      '性能诊断协作小组'
+    )
+
+    await act(async () => {
+      pendingRefresh.resolve([])
+      await pendingRefresh.promise
+    })
+    expect(
+      screen.queryByTestId('cloud-todo-detail-assignee-option-group:group-1')
+    ).not.toBeInTheDocument()
   })
 
   it('shows the automation provenance on a generated task', () => {

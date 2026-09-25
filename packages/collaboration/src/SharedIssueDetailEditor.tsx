@@ -233,6 +233,16 @@ const todoDraftPriorities: CloudLoopItem["priority"][] = [
 // module memory under the same key.
 const draftAttachmentStore = new Map<string, File[]>();
 
+function mergeCollaborationGroups(
+  ...sources: ReadonlyArray<readonly CollaborationGroup[]>
+): CollaborationGroup[] {
+  return Array.from(
+    new Map(
+      sources.flatMap((groups) => groups).map((group) => [group.id, group]),
+    ).values(),
+  );
+}
+
 function isIssueAssigneeTarget(value: unknown): value is IssueAssigneeTarget {
   if (value === "") return true;
   if (typeof value !== "string") return false;
@@ -801,6 +811,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const editProjectId = item?.cloud_project_id ?? null;
   const createProjectId = createProps?.project.id ?? null;
   const loadedEditItemIdRef = useRef(editItemId);
+  const loadedGroupProjectIdRef = useRef(editProjectId);
   const itemLoadGenerationRef = useRef(0);
   const initialTaskBindingsRef = useRef(props.initialTaskBindings);
   initialTaskBindingsRef.current = props.initialTaskBindings;
@@ -1013,7 +1024,15 @@ export function TodoEditor(props: TodoEditorProps) {
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return;
     let active = true;
-    setProjectGroups(project?.collaboration_groups ?? []);
+    const configuredGroups = project?.collaboration_groups ?? [];
+    if (loadedGroupProjectIdRef.current !== editProjectId) {
+      loadedGroupProjectIdRef.current = editProjectId;
+      setProjectGroups(configuredGroups);
+    } else if (configuredGroups.length > 0) {
+      setProjectGroups((current) =>
+        mergeCollaborationGroups(current, configuredGroups),
+      );
+    }
     const applyResult = <T,>(
       request: Promise<T>,
       apply: (value: T) => void,
@@ -1035,15 +1054,7 @@ export function TodoEditor(props: TodoEditorProps) {
       setProjectAgents(agents.filter((agent) => agent.status !== "inactive")),
     );
     applyResult(editorPort.collaborationGroups.list(editProjectId), (groups) =>
-      setProjectGroups(
-        Array.from(
-          new Map(
-            [...(project?.collaboration_groups ?? []), ...groups].map(
-              (group) => [group.id, group],
-            ),
-          ).values(),
-        ),
-      ),
+      setProjectGroups(mergeCollaborationGroups(configuredGroups, groups)),
     );
     applyResult(props.loadTeams?.() ?? Promise.resolve([]), (teams) =>
       setWegentTeams(teams.filter((team) => team.is_active !== false)),
@@ -1107,13 +1118,9 @@ export function TodoEditor(props: TodoEditorProps) {
       }
       if (groupResult.status === "fulfilled") {
         setProjectGroups(
-          Array.from(
-            new Map(
-              [
-                ...(project?.collaboration_groups ?? []),
-                ...groupResult.value,
-              ].map((group) => [group.id, group]),
-            ).values(),
+          mergeCollaborationGroups(
+            project?.collaboration_groups ?? [],
+            groupResult.value,
           ),
         );
       }
