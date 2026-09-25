@@ -16,7 +16,6 @@ export function issueTaskSummaryForMessage<
   const address = message.runtimeAddress;
   if (
     message.sender.type !== "agent" ||
-    message.metadata.executor_type === "automation_manager" ||
     message.metadata.conversation_only === true
   )
     return;

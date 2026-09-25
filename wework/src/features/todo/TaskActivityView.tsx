@@ -9,9 +9,7 @@ import { useTaskActivityRefresh } from './useTaskActivityRefresh'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
-  cardSessionAddress,
   cardSessionActive as sharedCardSessionActive,
-  isCustomAutomationManager,
   type TaskReplyCard,
   type TaskCardDispatchResult,
 } from '@wegent/collaboration/execution/taskCardReply'
@@ -799,12 +797,6 @@ export function TaskActivityView({
     attachments: Attachment[]
   ): Promise<CardCommentSendResult> {
     if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
-    if (
-      !client.executeTaskComment &&
-      isCustomAutomationManager(card.root) &&
-      (!client.continueAutomationManager || !cardSessionAddress(card))
-    )
-      return { ok: false, error: t('workbench.project_chat_agent_start_failed') }
     return replyQueue.enqueue(card.root.messageId, text, attachments, mentions)
   }
 
@@ -895,7 +887,7 @@ export function TaskActivityView({
     hideTime = false
   ) => {
     const role = issueActivityRole(message)
-    const agentRole = role === 'manager' || role === 'manager_review' ? 'manager' : role
+    const agentRole = role
     const address = messageRuntimeAddress(message)
     const binding = address
       ? taskBindings.find(
@@ -1108,7 +1100,7 @@ export function TaskActivityView({
               const card = activity.card
               const rootId = card.root.messageId
               const role = issueActivityRole(card.root)
-              if (issueTimeline && (role === 'manager' || role === 'manager_review')) {
+              if (issueTimeline && role === 'manager') {
                 const address = messageRuntimeAddress(card.root)
                 const binding = address
                   ? taskBindings.find(
@@ -1138,10 +1130,6 @@ export function TaskActivityView({
                   variant={issueTimeline ? 'timeline' : 'card'}
                   cardAttributes={{
                     'data-testid': `cloud-task-activity-card-${rootId}`,
-                    ...{
-                      'data-executor-type': String(card.root.metadata.executor_type ?? ''),
-                      'data-manager-type': String(card.root.metadata.manager_type ?? ''),
-                    },
                   }}
                   message={renderActivityMessage(card.root, false, issueTimeline)}
                   replies={

@@ -285,6 +285,7 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         team_id=8,
         user_id=7,
         prompt="Review the task",
+        developer_instruction="",
         source="board_team_assignment",
         execution_id=61,
     )
@@ -1164,7 +1165,13 @@ async def test_completion_handler_persists_comment_and_run_once(
         description="Choose a robot",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+        metadata_json={
+            "dispatch_target": {
+                "kind": "collaboration_group",
+                "id": "1",
+                "name": "Team",
+            }
+        },
     )
     run = ProjectAutomationRun(
         id="run-1",
@@ -1255,113 +1262,6 @@ async def test_completion_handler_persists_comment_and_run_once(
 
 
 @pytest.mark.asyncio
-async def test_manager_callback_failure_keeps_completed_member_assignment(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    task = TaskResource(
-        user_id=test_user.id,
-        kind="Task",
-        name="assigned-manager-task",
-        namespace="default",
-        json={
-            "metadata": {
-                "labels": {
-                    "source": "project_automation",
-                    "projectAutomationSubtaskId": "63",
-                    "projectAutomationRunId": "assigned-run-1",
-                    "projectChatMessageId": "assigned-message-1",
-                    "weworkSpaceProjectId": "project-1",
-                    "weworkSpaceTaskId": "assigned-board-task-1",
-                }
-            }
-        },
-    )
-    board_item = LoopItem(
-        id="assigned-board-task-1",
-        cloud_project_id="project-1",
-        title="Assigned board task",
-        status="inbox",
-        created_by_user_id=test_user.id,
-        assignee_user_id=test_user.id,
-        metadata_json={},
-    )
-    rule = ProjectAutomationRule(
-        id="assigned-rule-1",
-        cloud_project_id="project-1",
-        title="Assigned managed rule",
-        description="Choose a project member",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
-    )
-    run = ProjectAutomationRun(
-        id="assigned-run-1",
-        cloud_project_id="project-1",
-        parent_id=rule.id,
-        task_id=board_item.id,
-        title="Assigned managed run",
-        status="succeeded",
-        created_by_user_id=test_user.id,
-        metadata_json={"activity_message_id": "assigned-message-1"},
-    )
-    message = ProjectChatMessage(
-        message_id="assigned-message-1",
-        client_message_id="assigned-message-1",
-        project_id="project-1",
-        task_id=board_item.id,
-        sender_type="agent",
-        sender_id="wegent_team:8",
-        sender_name="Wegent manager",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "automation_run_id": run.id,
-            "run_status": "running",
-            "selected_assignee_type": "user",
-            "selected_assignee_id": str(test_user.id),
-        },
-        status="streaming",
-    )
-    test_db.add_all([task, board_item, rule, run, message])
-    test_db.commit()
-
-    @contextmanager
-    def session():
-        yield test_db
-
-    pushed = MagicMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_completion.get_db_session", session
-    )
-    monkeypatch.setattr(
-        "app.services.project_automation_completion.push_project_chat_message",
-        pushed,
-    )
-    from app.services.project_automation_completion import (
-        handle_project_automation_task_completed,
-    )
-
-    await handle_project_automation_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=63,
-            user_id=test_user.id,
-            status="FAILED",
-            error="result stream closed",
-        )
-    )
-
-    test_db.refresh(run)
-    test_db.refresh(message)
-    assert run.status == "succeeded"
-    assert board_item.assignee_user_id == test_user.id
-    assert message.status == "completed"
-    assert message.content == "AI 调度员已完成分派，但调度结果回传失败。"
-    pushed.assert_called_once()
-
-
 @pytest.mark.asyncio
 async def test_executor_callback_projects_managed_parent_comment(
     test_db,
@@ -1401,7 +1301,13 @@ async def test_executor_callback_projects_managed_parent_comment(
         description="Choose a robot",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+        metadata_json={
+            "dispatch_target": {
+                "kind": "collaboration_group",
+                "id": "1",
+                "name": "Team",
+            }
+        },
     )
     run = ProjectAutomationRun(
         id="callback-run-1",

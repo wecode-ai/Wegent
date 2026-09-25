@@ -2125,12 +2125,7 @@ describe('Wework collaboration workspace API', () => {
     const delivery = {
       ...createLocalDeliveryApi(),
       createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
-      updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
-        id: 'new-local',
-        name: 'New local',
-        version: 2,
-        project_manager: input.project_manager,
-      })),
+      updateCloudProject: vi.fn(),
     }
     const details = {
       ...createLocalDetailServices(),
@@ -2156,15 +2151,7 @@ describe('Wework collaboration workspace API', () => {
         capabilityMode: 'follow_device',
       })
     )
-    expect(delivery.updateCloudProject).toHaveBeenCalledWith(
-      'new-local',
-      expect.objectContaining({
-        project_manager: expect.objectContaining({
-          enabled: true,
-          agentId: 'LA-new-local',
-        }),
-      })
-    )
+    expect(delivery.updateCloudProject).not.toHaveBeenCalled()
   })
 
   it('does not add the default local Agent when local project creation opts out', async () => {
@@ -2301,10 +2288,14 @@ describe('Wework collaboration workspace API', () => {
 
     const created = await api?.automations?.create('local-project', {
       name: '新 Issue 自动处理',
+      prompt: '处理新 Issue',
       enabled: true,
       triggerType: 'event',
       eventType: 'task.created',
       eventConfig: { executionTarget: 'existing_issue' },
+      cronExpression: null,
+      timezone: 'Asia/Shanghai',
+      executionDeviceId: null,
       targetKind: 'agent',
       targetId: 'agent-1',
     })
@@ -2314,6 +2305,10 @@ describe('Wework collaboration workspace API', () => {
       name: '新 Issue 自动处理',
       targetKind: 'agent',
       targetId: 'agent-1',
+      targetName: 'agent-1',
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: null,
       version: 1,
     })
     await expect(api?.automations?.list('local-project')).resolves.toEqual([created])

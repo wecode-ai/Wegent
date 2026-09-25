@@ -284,7 +284,6 @@ class WeworkExecutionProfile:
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
-    manager_mode: bool = False
     workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     additional_skills: tuple[Any, ...] = ()
@@ -395,34 +394,6 @@ class WeworkExecutionProfile:
         )
 
     @classmethod
-    def for_automation_manager(
-        cls,
-        *,
-        owner_user_id: int,
-        display_name: str,
-        instruction: str,
-        developer_instruction: str,
-        model: str,
-        model_type: str | None = None,
-        model_options: dict[str, str] | None = None,
-        local_project_id: int = 0,
-    ) -> "WeworkExecutionProfile":
-        if not model:
-            raise ValueError("Custom AI manager model is required")
-        return cls(
-            owner_user_id=owner_user_id,
-            display_name=display_name or "AI 托管",
-            execution_prompt="",
-            instruction=instruction,
-            system_prompt=developer_instruction,
-            model=model,
-            model_type=model_type,
-            model_options=dict(model_options or {}),
-            local_project_id=local_project_id,
-            manager_mode=True,
-        )
-
-    @classmethod
     def for_generic_robot(
         cls,
         *,
@@ -469,8 +440,6 @@ class WeworkExecutionProfile:
         task_id: str,
         execution_id: int,
     ) -> str:
-        if self.manager_mode:
-            return self.instruction.strip()
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
@@ -566,7 +535,7 @@ class WeworkExecutionProfile:
             "type": (
                 "board_comment"
                 if origin_context.get("comment_trigger_message_id")
-                else "project_automation" if self.manager_mode else "board_task"
+                else "board_task"
             ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
@@ -598,8 +567,6 @@ class WeworkExecutionProfile:
                     target_stage.get("name") or workflow_stage_id
                 )
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
-        if self.manager_mode:
-            origin["automationRole"] = "manager"
         configured_runtime = origin_context.get("runtime")
         runtime, shell_type = native_runtime_contract(
             configured_runtime if configured_runtime is not None else self.runtime

@@ -196,8 +196,10 @@ export async function createProjectAgent(
   modelName: string
 ): Promise<ProjectAgent> {
   const issueDetail = page.getByTestId('collaboration-issue-detail')
-  if (await issueDetail.isVisible()) {
-    await page.getByTestId('cloud-todo-detail-close').click()
+  if ((await issueDetail.count()) > 0) {
+    const closeButton = page.getByTestId('cloud-todo-detail-close')
+    await expect(closeButton).toBeVisible()
+    await closeButton.click()
     await expect(issueDetail).toHaveCount(0)
   }
   await page.getByTestId('collaboration-tab-manage').click()

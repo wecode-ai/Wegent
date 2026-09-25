@@ -623,7 +623,6 @@ const sharedMessages: Record<
       "协作小组服务当前不可用。Issue 的手动负责人设置不受影响。",
     "todo.current_user": "我自己",
     "todo.assignment_source": "分配来源",
-    "todo.assignment_mode": "分配方式",
     "todo.agent_executor_from_definition": "执行器由智能体定义",
     "todo.shared_agent": "共享智能体",
     "todo.shared_agent_execution_hint":
@@ -1029,7 +1028,6 @@ const sharedMessages: Record<
       "The collaboration group service is unavailable. Manual Issue assignment is unaffected.",
     "todo.current_user": "Me",
     "todo.assignment_source": "Assignment source",
-    "todo.assignment_mode": "Assignment mode",
     "todo.agent_executor_from_definition": "Agent-defined executor",
     "todo.shared_agent": "Shared agent",
     "todo.shared_agent_execution_hint":

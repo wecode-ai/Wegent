@@ -121,7 +121,7 @@ def _response(
         project_id=request.project_id,
         task_id=request.task_id,
         sender_type="agent",
-        sender_id=agent_id or f"automation_manager:{execution.automation_run_id}",
+        sender_id=agent_id or f"execution:{execution.id}",
         sender_name=name,
         agent_id=agent_id or "",
         content="",

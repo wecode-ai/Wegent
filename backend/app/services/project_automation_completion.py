@@ -203,71 +203,14 @@ async def handle_project_automation_task_completed(
         )
         if activity is None:
             return
-        if event.status.upper() == "COMPLETED":
-            content = _result_text(event.result)
-            from app.services.project_automation_execution import (
-                project_automation_execution,
-            )
-
-            try:
-                changed = project_automation_execution.finalize_manager_result(
-                    db,
-                    run_id=str(activity.run.id),
-                    content=content,
-                    backend_task_id=event.task_id,
-                    activity_message_id=activity.message.message_id,
-                    push_activity=False,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "[ProjectAutomationCompletion] Manager finalization failed "
-                    "task_id=%s run_id=%s",
-                    event.task_id,
-                    activity.run.id,
-                )
-                db.rollback()
-                activity = _managed_activity(
-                    db,
-                    task_id=event.task_id,
-                    subtask_id=event.subtask_id,
-                    user_id=event.user_id,
-                )
-                changed = bool(
-                    activity
-                    and _apply_terminal_state(
-                        db,
-                        activity=activity,
-                        task_id=event.task_id,
-                        status="FAILED",
-                        result=None,
-                        error=str(exc) or "AI manager finalization failed",
-                    )
-                )
-        else:
-            from app.services.project_automation_execution import (
-                project_automation_execution,
-            )
-
-            if project_automation_execution.has_recorded_manager_assignment(
-                db, run_id=str(activity.run.id)
-            ):
-                changed = project_automation_execution.finalize_manager_result(
-                    db,
-                    run_id=str(activity.run.id),
-                    content="AI 调度员已完成分派，但调度结果回传失败。",
-                    backend_task_id=event.task_id,
-                    activity_message_id=activity.message.message_id,
-                    push_activity=False,
-                )
-            else:
-                changed = _apply_terminal_state(
-                    db,
-                    activity=activity,
-                    task_id=event.task_id,
-                    status=event.status,
-                    result=event.result,
-                    error=event.error,
-                )
+        changed = _apply_terminal_state(
+            db,
+            activity=activity,
+            task_id=event.task_id,
+            status=event.status,
+            result=event.result,
+            error=event.error,
+        )
         if not changed:
             return
         db.commit()

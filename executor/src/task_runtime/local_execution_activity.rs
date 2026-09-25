@@ -114,7 +114,6 @@ pub(super) fn create_execution_comment(
         "trigger_message_id": trigger,
         "workflow_node_id": payload.get("workflow_node_id"),
         "workflow_task_title": workflow_task_title,
-        "automation_role": payload.get("automation_role"),
         "automation_run_id": payload.get("automation_run_id"),
     });
     if let (Some(device), Some(task)) = (&execution.runtime_device_id, &execution.runtime_task_id) {

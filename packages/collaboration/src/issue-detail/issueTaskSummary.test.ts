@@ -23,7 +23,7 @@ describe("issueTaskSummaryForMessage", () => {
     expect(
       issueTaskSummaryForMessage(
         message({
-          automation_role: "executor",
+          dispatch_role: "executor",
           dispatch_task_id: "execute",
           dispatch_task_title: "检查当前设备磁盘空间",
         }),
@@ -43,7 +43,7 @@ describe("issueTaskSummaryForMessage", () => {
       issueTaskSummaryForMessage(
         {
           ...message({
-            automation_role: "executor",
+            dispatch_role: "executor",
             dispatch_task_title: "Initial title",
           }),
           runtimeAddress: { deviceId: "device", taskId: "task" },

@@ -18,13 +18,9 @@ from app.mcp_server.tools import wework_space
 from app.models.delivery import (
     CloudProject,
     LoopItem,
-    ProjectAutomationRule,
-    ProjectAutomationRun,
     ProjectChatAgent,
 )
-from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanSubmit
 
 
 class _SessionContext:
@@ -175,7 +171,6 @@ async def test_finalize_delivery_reports_dispatch_outcome(
     delivery = SimpleNamespace(id="delivery-1")
     reported: dict[str, object] = {}
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(wework_space, "_forbid_project_manager_tool", lambda *_: None)
     monkeypatch.setattr(wework_space, "_space_id", lambda *_args: "1")
     monkeypatch.setattr(
         wework_space,
@@ -222,123 +217,6 @@ async def test_finalize_delivery_reports_dispatch_outcome(
 
     assert result == {"id": "delivery-1"}
     assert reported == {"delivery": delivery, "user_id": test_user.id}
-
-
-def _workflow_issue(
-    db: Session,
-    project: CloudProject,
-    user: User,
-) -> tuple[LoopItem, ProjectChatAgent]:
-    robot = ProjectChatAgent(
-        id=f"robot-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Implementation robot",
-        name="Implementation robot",
-        status="active",
-        created_by_user_id=user.id,
-        metadata_json={
-            "runtime": "codex",
-            "execution_mode": "auto",
-            "execution_environment": "local",
-        },
-    )
-    item = LoopItem(
-        id=f"{project.project_key}-1",
-        cloud_project_id=project.id,
-        sequence_number=1,
-        title="Coordinate this task",
-        description="Implement and verify the requested change.",
-        status="pending",
-        priority="medium",
-        created_by_user_id=user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    db.add_all([robot, item])
-    project.next_item_number = 2
-    db.commit()
-    db.refresh(item)
-    return item, robot
-
-
-def _workflow_plan(robot: ProjectChatAgent) -> dict[str, object]:
-    return {
-        "summary": "Implement, then verify.",
-        "items": [
-            {
-                "client_key": "implement",
-                "title": "Implement the change",
-                "description": "Implement the requested change and add tests.",
-                "prompt": "Implement this change, add tests, and report verification evidence.",
-                "assignee_type": "agent",
-                "assignee_id": robot.id,
-                "assignee_name": robot.name,
-                "rationale": "The robot has implementation capability.",
-            }
-        ],
-    }
-
-
-def _manager_run(
-    db: Session,
-    project: CloudProject,
-    item: LoopItem,
-    user: User,
-    *,
-    status: str = "running",
-    workflow_run_id: str = "",
-) -> tuple[ProjectAutomationRun, ProjectChatMessage]:
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed planning",
-        status="enabled",
-        created_by_user_id=user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        status=status,
-        created_by_user_id=user.id,
-        metadata_json={},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id=f"automation_manager:{rule.id}",
-        sender_name="AI manager",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "automation_run_id": str(run.id),
-            "run_status": status,
-        },
-        status="streaming" if status == "running" else "failed",
-    )
-    run.metadata_json = {
-        "activity_message_id": message_id,
-        "event": {"payload": {"workflow_run_id": workflow_run_id}},
-    }
-    db.add_all([rule, run, activity])
-    db.commit()
-    return run, activity
 
 
 def test_local_project_tools_use_canonical_loop_item_service(
@@ -491,27 +369,17 @@ async def test_external_project_tools_route_list_read_and_assignment_to_provider
         calls.append(("get", (requested_id, user_id)))
         return dict(current)
 
-    def assign_from_manager(_db, **values):
-        calls.append(("assign", values))
-        return {**current, "assignee_user_id": int(values["assignee_id"])}
+    def assign_item(_db, requested_id, user_id, values):
+        calls.append(("assign", (requested_id, user_id, values)))
+        current["assignee_user_id"] = int(values.assignee_id)
 
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(wework_space.external_loop_item_provider, "list", list_items)
     monkeypatch.setattr(wework_space.external_loop_item_provider, "get", get_item)
     monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item_id,
-            "project_automation_run_id": "run-1",
-        },
-    )
-    monkeypatch.setattr(
-        wework_space.project_automation_execution,
-        "assign_from_manager",
-        assign_from_manager,
+        wework_space.external_loop_item_provider,
+        "assign",
+        assign_item,
     )
 
     listed = wework_space.list_board_items(_token(test_user), str(project.id))
@@ -527,11 +395,11 @@ async def test_external_project_tools_route_list_read_and_assignment_to_provider
     assert listed[0]["description"] == "Provider-owned details"
     assert detail["id"] == item_id
     assert assigned["assignee_user_id"] == test_user.id
-    assert [name for name, _ in calls] == ["list", "get", "get", "assign"]
-    assign_values = calls[-1][1]
-    assert assign_values["run_id"] == "run-1"
-    assert assign_values["assignee_type"] == "user"
-    assert assign_values["task_id"] == item_id
+    assert [name for name, _ in calls] == ["list", "get", "get", "assign", "get"]
+    assigned_item_id, assigned_user_id, assign_values = calls[-2][1]
+    assert assigned_item_id == item_id
+    assert assigned_user_id == test_user.id
+    assert assign_values.assignee_type == "user"
 
 
 async def test_board_robot_task_can_assign_item_to_another_project_robot(

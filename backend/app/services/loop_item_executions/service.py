@@ -44,11 +44,7 @@ from app.services.loop_item_executions.profile import (
     WeworkExecutionProfileError,
     validate_wework_execution_target,
 )
-from app.services.project_automation_domain import (
-    TERMINAL_RUN_STATUSES,
-    assignment_mode,
-    manager_type,
-)
+from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
 from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
@@ -226,8 +222,8 @@ def execution_scope_for(
         return f"project_robot:{loop_item_id}"
     if team_id:
         return f"wegent_team:{loop_item_id}"
-    manager_identity = automation_run_id or loop_item_id
-    return f"automation_manager:{manager_identity}"
+    automation_identity = automation_run_id or loop_item_id
+    return f"automation:{automation_identity}"
 
 
 PRIORITY_WEIGHTS = {
@@ -322,13 +318,9 @@ def execution_ai_state(
             "agent_id": execution.agent_id or None,
             "team_id": execution.team_id or None,
             "agent_name": (
-                "AI 托管"
-                if execution.executor_type == "automation_manager"
-                else (
-                    team.name
-                    if execution.executor_type == "wegent_team" and team is not None
-                    else ((agent.title or agent.name) if agent is not None else None)
-                )
+                team.name
+                if execution.executor_type == "wegent_team" and team is not None
+                else ((agent.title or agent.name) if agent is not None else None)
             ),
             "runtime_device_id": execution.runtime_device_id or None,
             "runtime_task_id": execution.runtime_task_id or None,
@@ -894,45 +886,6 @@ class LoopItemExecutionService:
             requires_approval=False,
         )
 
-    def enqueue_automation_manager(
-        self,
-        db: Session,
-        *,
-        loop_item_id: str,
-        cloud_project_id: str,
-        owner_user_id: int,
-        assigner_user_id: int,
-        environment: str,
-        execution_device_id: str | None,
-        priority: str | None,
-        automation_context: dict[str, Any] | None = None,
-        requires_approval: bool = False,
-        runtime_selection: dict[str, Any] | None = None,
-        waiting_runtime: bool = False,
-    ) -> LoopItemExecution:
-        """Queue a custom AI manager on the ordinary Wework transport."""
-
-        return self._enqueue(
-            db,
-            loop_item_id=loop_item_id,
-            cloud_project_id=cloud_project_id,
-            executor_type="automation_manager",
-            owner_user_id=owner_user_id,
-            agent_id="",
-            team_id=None,
-            assigner_user_id=assigner_user_id,
-            environment=environment,
-            execution_device_id=execution_device_id,
-            priority=priority,
-            automation_context=automation_context,
-            requires_approval=requires_approval,
-            runtime_selection={
-                "executor_kind": "automation_manager",
-                **(runtime_selection or {}),
-            },
-            waiting_runtime=waiting_runtime,
-        )
-
     def enqueue_generic_robot(
         self,
         db: Session,
@@ -1052,19 +1005,6 @@ class LoopItemExecutionService:
             if normalized:
                 execution_device_id = normalized
 
-        # Project robots keep the shipped assignment semantics: their target
-        # is validated when the robot is configured, and legacy local targets
-        # may be represented by the App rather than a backend device row.
-        # A custom manager has no robot entity, so the rule target is
-        # its only source of truth and must be validated here as well as when
-        # the rule is saved.
-        if executor_type == "automation_manager" and not waiting_runtime:
-            validate_wework_execution_target(
-                db,
-                user_id=owner_user_id,
-                environment=environment,
-                execution_device_id=execution_device_id,
-            )
         task = self.resolve_task_context(
             db,
             execution=LoopItemExecution(
@@ -2484,10 +2424,7 @@ class LoopItemExecutionService:
         agent = (
             db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
         )
-        if (
-            execution.executor_type != "automation_manager"
-            and execution.status == STATUS_RUNNING
-        ):
+        if execution.status == STATUS_RUNNING:
             visible_prompt = prompt or profile.user_input(
                 project_id=execution.cloud_project_id,
                 task_id=execution.loop_item_id,
@@ -2537,12 +2474,6 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
-        previous = db.get(LoopItemExecution, execution_id)
-        was_active_manager = bool(
-            previous is not None
-            and previous.status in ACTIVE_STATUSES
-            and previous.executor_type == "automation_manager"
-        )
         result = self._transition_terminal(
             db,
             execution_id=execution_id,
@@ -2556,16 +2487,6 @@ class LoopItemExecutionService:
             event_seq=event_seq,
             termination_reason="runtime_succeeded",
         )
-        if (
-            was_active_manager
-            and result is not None
-            and result.status == STATUS_COMPLETED
-        ):
-            self._finalize_manager_transport(
-                db,
-                execution=result,
-                content=content if content is not None else note,
-            )
         if result is not None and result.status == STATUS_COMPLETED:
             from app.services.issue_dispatch import issue_dispatch_service
 
@@ -2948,12 +2869,6 @@ class LoopItemExecutionService:
         )
         if execution is None or execution.status not in TERMINAL_STATUSES:
             return False
-        if (
-            execution.executor_type == "automation_manager"
-            and self._manager_assignment_recorded(db, run_id=run_id)
-        ):
-            return False
-
         activity = self._linked_activity(db, execution)
         before = self._projection_fingerprint(run, activity)
         content, error = self._terminal_projection_content(execution)
@@ -3071,16 +2986,6 @@ class LoopItemExecutionService:
             return execution.execution_note or "Automation run cancelled", None
         return execution.execution_note or "Automation run completed", None
 
-    @staticmethod
-    def _manager_assignment_recorded(db: Session, *, run_id: str) -> bool:
-        from app.services.project_automation_execution import (
-            project_automation_execution,
-        )
-
-        return project_automation_execution.has_recorded_manager_assignment(
-            db, run_id=run_id
-        )
-
     def _apply_terminal_projection(
         self,
         db: Session,
@@ -3095,43 +3000,10 @@ class LoopItemExecutionService:
         """Apply the elected execution outcome without committing or pushing."""
 
         from app.models.delivery import ProjectAutomationRun
-        from app.services.project_automation_execution import (
-            project_automation_execution,
-        )
         from app.services.project_chat.service import project_chat_service
 
         activity = self._linked_activity(db, execution)
-        manager_action_recorded = bool(
-            execution.executor_type in {"automation_manager", "project_robot"}
-            and execution.automation_run_id
-            and project_automation_execution.has_recorded_manager_assignment(
-                db, run_id=execution.automation_run_id
-            )
-        )
-        if activity is not None and execution.executor_type == "automation_manager":
-            if terminal_status != STATUS_COMPLETED and manager_action_recorded:
-                activity.status = STATUS_COMPLETED
-                activity.message_type = "text"
-                activity.content = "AI 调度员已完成分派，但调度结果回传失败。" + (
-                    f" {error}" if error else ""
-                )
-                activity_metadata = dict(activity.metadata_json or {})
-                activity.metadata_json = {
-                    **activity_metadata,
-                    "run_status": STATUS_COMPLETED,
-                    **({"transport_error": str(error)} if error else {}),
-                }
-            elif terminal_status != STATUS_COMPLETED:
-                activity.status = terminal_status
-                activity.message_type = "text"
-                activity.content = str(content or error or "AI manager failed")
-                activity_metadata = dict(activity.metadata_json or {})
-                activity.metadata_json = {
-                    **activity_metadata,
-                    "run_status": terminal_status,
-                    **({"error": str(error)} if error else {}),
-                }
-        elif activity is not None:
+        if activity is not None:
             project_chat_service._finish_activity(
                 db,
                 activity,
@@ -3148,17 +3020,6 @@ class LoopItemExecutionService:
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
-                if manager_action_recorded:
-                    if run.status not in TERMINAL_RUN_STATUSES:
-                        run.status = "succeeded"
-                        run.completed_at = completed_at
-                        run.version += 1
-                    return activity
-                if (
-                    execution.executor_type == "automation_manager"
-                    and terminal_status == STATUS_COMPLETED
-                ):
-                    return activity
                 run_status = {
                     STATUS_COMPLETED: "succeeded",
                     STATUS_FAILED: "failed",
@@ -3180,39 +3041,6 @@ class LoopItemExecutionService:
                     run.completed_at = completed_at
                     run.version += 1
         return activity
-
-    @staticmethod
-    def _finalize_manager_transport(
-        db: Session,
-        *,
-        execution: LoopItemExecution,
-        content: str | None,
-    ) -> None:
-        if not execution.automation_run_id:
-            raise WeworkRuntimeConfigurationError(
-                "AI manager execution is not linked to an automation run"
-            )
-        from app.services.project_automation_execution import (
-            project_automation_execution,
-        )
-
-        try:
-            project_automation_execution.finalize_manager_result(
-                db,
-                run_id=execution.automation_run_id,
-                content=content if isinstance(content, str) else None,
-            )
-        except Exception as exc:
-            logger.exception(
-                "[LoopItemExecution] AI manager finalization failed execution=%s",
-                execution.id,
-            )
-            db.rollback()
-            project_automation_execution._fail_run(
-                db,
-                run_id=execution.automation_run_id,
-                error=str(exc) or "AI manager finalization failed",
-            )
 
     def _apply_requeued_projection(
         self,
@@ -3680,11 +3508,11 @@ class LoopItemExecutionService:
 
         issue_dispatch_service.on_execution_running(db, execution=row)
         task = db.get(LoopItem, row.loop_item_id)
-        task_projection_is_stale = (
-            row.executor_type != "automation_manager"
-            and task is not None
-            and task.status not in {"in_progress", "in_review", "completed"}
-        )
+        task_projection_is_stale = task is not None and task.status not in {
+            "in_progress",
+            "in_review",
+            "completed",
+        }
         if not was_running or task_projection_is_stale:
             self.open_execution_activity(
                 db,
@@ -3943,53 +3771,9 @@ class LoopItemExecutionService:
                 model_options_override=origin_context.get("model_options"),
                 workspace_binding_override=origin_context.get("workspace_binding"),
             )
-            run_metadata = (
-                run.metadata_json
-                if run is not None and isinstance(run.metadata_json, dict)
-                else {}
-            )
-            if run_metadata.get("bypass_workflow_definition") and rule is not None:
-                from app.services.project_automation_execution import (
-                    project_automation_execution,
-                )
-
-                project = db.get(CloudProject, execution.cloud_project_id)
-                owner = db.get(User, rule.created_by_user_id)
-                if project is None or owner is None:
-                    raise WeworkRuntimeConfigurationError(
-                        "AI manager project or owner is unavailable"
-                    )
-                manager_prompt = project_automation_execution._managed_prompt(
-                    db,
-                    owner=owner,
-                    project=project,
-                    rule=rule,
-                    run=run,
-                    context=origin_context,
-                )
-                configured_system_prompt = str(
-                    origin_context.get("system_prompt") or profile.system_prompt or ""
-                ).strip()
-                combined_system_prompt = "\n\n".join(
-                    part for part in (configured_system_prompt, manager_prompt) if part
-                )
-                origin_context = {
-                    **origin_context,
-                    "system_prompt": combined_system_prompt,
-                }
-                profile = replace(
-                    profile,
-                    instruction=project_automation_execution._manager_user_message(
-                        rule,
-                        run,
-                    ),
-                    system_prompt=combined_system_prompt,
-                    manager_mode=True,
-                )
-            else:
-                assigned_prompt = origin_context.get("execution_prompt")
-                if isinstance(assigned_prompt, str) and assigned_prompt.strip():
-                    profile = replace(profile, execution_prompt=assigned_prompt)
+            assigned_prompt = origin_context.get("execution_prompt")
+            if isinstance(assigned_prompt, str) and assigned_prompt.strip():
+                profile = replace(profile, execution_prompt=assigned_prompt)
             return profile, origin_context
 
         if execution.executor_type == "generic_robot":
@@ -4050,94 +3834,8 @@ class LoopItemExecutionService:
                 origin_context,
             )
 
-        if execution.executor_type != "automation_manager":
-            raise WeworkRuntimeConfigurationError(
-                f"Unknown Wework executor type '{execution.executor_type}'"
-            )
-        if run is None or rule is None:
-            raise WeworkRuntimeConfigurationError(
-                "AI manager automation run or rule is unavailable"
-            )
-        runtime_profile = self._execution_runtime_profile(db, execution)
-        owner_user_id = int(
-            runtime_profile.user_id
-            if runtime_profile is not None
-            else getattr(rule, "created_by_user_id", 0) or 0
-        )
-        if owner_user_id != execution.executor_owner_user_id:
-            raise WeworkRuntimeConfigurationError(
-                "AI manager owner no longer matches the queued execution"
-            )
-        rule_metadata = getattr(rule, "metadata_json", None)
-        rule_metadata = rule_metadata if isinstance(rule_metadata, dict) else {}
-        if (
-            assignment_mode(rule_metadata) != "ai_managed"
-            or manager_type(rule_metadata) != "custom"
-        ):
-            raise WeworkRuntimeConfigurationError(
-                "Automation is no longer configured for a custom AI manager"
-            )
-        profile_metadata = (
-            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
-        )
-        selection = execution.runtime_selection
-        model = selection.get("model") or profile_metadata.get("model")
-        if not isinstance(model, str) or not model:
-            raise WeworkRuntimeConfigurationError(
-                "Custom AI manager model is unavailable"
-            )
-        from app.services.project_automation_execution import (
-            project_automation_execution,
-        )
-
-        project = db.get(CloudProject, execution.cloud_project_id)
-        owner = db.get(User, owner_user_id)
-        if project is None or owner is None:
-            raise WeworkRuntimeConfigurationError(
-                "Automation project or owner is unavailable"
-            )
-        automation_context = self._automation_runtime_context(run, rule)
-        manager_prompt = project_automation_execution._managed_prompt(
-            db,
-            owner=owner,
-            project=project,
-            rule=rule,
-            run=run,
-            context=automation_context,
-        )
-        configured_developer_instruction = str(
-            automation_context.get("system_prompt") or ""
-        ).strip()
-        combined_developer_instruction = "\n\n".join(
-            part for part in (configured_developer_instruction, manager_prompt) if part
-        )
-        origin_context = self._selection_context(
-            execution,
-            {
-                **automation_context,
-                "system_prompt": combined_developer_instruction,
-            },
-        )
-        return (
-            WeworkExecutionProfile.for_automation_manager(
-                owner_user_id=owner_user_id,
-                display_name="自定义 AI 调度员",
-                instruction=project_automation_execution._manager_user_message(
-                    rule,
-                    run,
-                ),
-                developer_instruction=combined_developer_instruction,
-                model=model,
-                model_type=(
-                    selection.get("model_type") or profile_metadata.get("model_type")
-                ),
-                model_options=dict(
-                    selection.get("model_options")
-                    or profile_metadata.get("model_options")
-                    or {}
-                ),
-            ),
-            origin_context,
+        raise WeworkRuntimeConfigurationError(
+            f"Unknown Wework executor type '{execution.executor_type}'"
         )
 
     @staticmethod

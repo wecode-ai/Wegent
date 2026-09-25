@@ -6,7 +6,6 @@ core_segments=(
   remote-device-onboarding
   workspace-tabs
   collaboration-shared-core
-  collaboration-settings-matrix
   collaboration-first-use
   collaboration-group-onboarding
   collaboration-local-executor-issue-tools
@@ -22,17 +21,13 @@ core_segments=(
   external-content-import
   automation-lifecycle
   project-automation
-  project-event-sources
   project-assignment-notification
   offline-local-project-space
-  board-focus-view
-  board-transcript-preload
   cloud-context-resilience
   cloud-login-proxy
   core-dsh-plugin-management
   plugin-development
   project-ai-settings
-  project-space-ai-manager
   model-routing
   fork-provider-preservation
   codex-account-login
@@ -155,14 +150,14 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  send-key-preference,system-proxy,system-pac,project-ai-settings,project-space-ai-manager,offline-local-project-space,cloud-context-resilience,cloud-space-mention
+  send-key-preference,system-proxy,system-pac,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round
   resilience,environment-panel-scroll,collaboration-shared-core,issue-dispatch-cancellation
-  workspace-attachments,automation-lifecycle,collaboration-settings-matrix
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view,board-transcript-preload,collaboration-issue-comment-mention,issue-dispatch-human
+  workspace-attachments,automation-lifecycle
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,issue-dispatch-human
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
@@ -539,20 +534,12 @@ classify_wework_path() {
       select_target "core:project-assignment-notification"
       return
       ;;
-    wework/e2e/desktop/scenarios/project-event-sources.scenario.mjs)
-      select_target "core:project-event-sources"
-      return
-      ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
       select_target "core:collaboration-shared-core"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-settings-matrix.scenario.mjs)
-      select_target "core:collaboration-settings-matrix"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs)
@@ -569,14 +556,6 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/issue-dispatch.scenario.mjs)
       select_issue_dispatch_checkpoints
-      return
-      ;;
-    wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
-      select_target "core:board-focus-view"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/board-transcript-preload.scenario.mjs)
-      select_target "core:board-transcript-preload"
       return
       ;;
     wework/src/components/layout/DesktopWorkbenchLayout.tsx)
@@ -628,9 +607,6 @@ classify_wework_path() {
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
         select_target "core:collaboration-first-use"
-      fi
-      if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
-        select_target "core:board-transcript-preload"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
         select_target "core:cloud-context-resilience"
@@ -1017,7 +993,6 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-executor-issue-tools"
@@ -1026,7 +1001,6 @@ classify_path() {
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-settings-matrix"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
       select_target "core:collaboration-local-executor-issue-tools"

@@ -8,7 +8,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type ComponentProps,
   type ReactNode,
 } from "react";
 
@@ -56,8 +55,6 @@ import {
   ProjectCollaborationParticipants,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
-  ProjectAiManager,
-  ProjectAiBoardAssistant,
   ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
@@ -97,21 +94,6 @@ interface CollaborationAppProps {
   onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
-  renderProjectAiComposer?: ComponentProps<
-    typeof ProjectAiBoardAssistant
-  >["renderComposer"];
-  renderProjectAiConversation?: ComponentProps<
-    typeof ProjectAiBoardAssistant
-  >["renderConversation"];
-  onOpenProjectAiTask?: ComponentProps<
-    typeof ProjectAiBoardAssistant
-  >["onOpenTask"];
-  onContinueProjectAiConversation?: ComponentProps<
-    typeof ProjectAiBoardAssistant
-  >["onContinueConversation"];
-  onStopProjectAiConversation?: ComponentProps<
-    typeof ProjectAiBoardAssistant
-  >["onStopConversation"];
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
       onMarkRead(): Promise<void>;
@@ -156,11 +138,6 @@ export function CollaborationApp({
   onPrepareIssueDelete,
   renderBoardIssueCard,
   renderIssueDetail,
-  renderProjectAiComposer,
-  renderProjectAiConversation,
-  onOpenProjectAiTask,
-  onContinueProjectAiConversation,
-  onStopProjectAiConversation,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const translate = useMemo(
@@ -174,9 +151,6 @@ export function CollaborationApp({
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
     );
-  const [requestedParticipantTab, setRequestedParticipantTab] = useState<
-    "manager" | undefined
-  >();
   const [deleteIssueTarget, setDeleteIssueTarget] =
     useState<CollaborationIssue | null>(null);
   const [deleteIssueBusy, setDeleteIssueBusy] = useState(false);
@@ -239,7 +213,6 @@ export function CollaborationApp({
   }, [host.location.projectSettingsSection, host.location.view, project?.id]);
 
   const navigateView = (view: CollaborationView) => {
-    if (view === "manage") setRequestedParticipantTab(undefined);
     host.navigate({
       projectId: project?.id ?? null,
       issueId: null,
@@ -653,34 +626,6 @@ export function CollaborationApp({
                         }
                       />
                     )}
-                    <ProjectAiBoardAssistant
-                      renderComposer={renderProjectAiComposer}
-                      renderConversation={renderProjectAiConversation}
-                      onOpenTask={onOpenProjectAiTask}
-                      onContinueConversation={onContinueProjectAiConversation}
-                      onStopConversation={onStopProjectAiConversation}
-                      api={api}
-                      project={project}
-                      issues={issues}
-                      agents={agents ?? []}
-                      locale={locale}
-                      onOpenIssue={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "board",
-                        })
-                      }
-                      onOpenSettings={() => {
-                        setRequestedParticipantTab("manager");
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: null,
-                          view: "manage",
-                          projectSettingsSection: "collaboration-participants",
-                        });
-                      }}
-                    />
                   </div>
                 ),
                 table: (
@@ -743,7 +688,6 @@ export function CollaborationApp({
                       const nextSectionId =
                         sectionId as ProjectSettingsSectionId;
                       setSettingsSectionId(nextSectionId);
-                      setRequestedParticipantTab(undefined);
                       host.navigate({
                         projectId: project.id,
                         issueId: null,
@@ -777,7 +721,6 @@ export function CollaborationApp({
                         testId: "collaboration-project-settings-participants",
                         content: (
                           <ProjectCollaborationParticipants
-                            requestedTab={requestedParticipantTab}
                             translate={translate}
                             membersContent={
                               <CollaborationSettings
@@ -813,16 +756,6 @@ export function CollaborationApp({
                                 translate={translate}
                                 section="agents"
                               />
-                            }
-                            managerContent={
-                              api.projectManager ? (
-                                <ProjectAiManager
-                                  api={api}
-                                  project={project}
-                                  agents={agents ?? []}
-                                  locale={locale}
-                                />
-                              ) : undefined
                             }
                             groupsContent={
                               api.projects.listCollaborationGroups ? (

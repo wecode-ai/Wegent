@@ -219,11 +219,11 @@ class LoopItemExecution(Base):
         """Return the transport role without persisting redundant state."""
 
         configured = self.runtime_selection.get("executor_kind")
-        if configured in {"generic_robot", "automation_manager"}:
+        if configured == "generic_robot":
             return str(configured)
         if self.agent_id:
             return "project_robot"
-        return "wegent_team" if self.team_id else "automation_manager"
+        return "wegent_team" if self.team_id else "generic_robot"
 
     @property
     def runtime_selection(self) -> dict:

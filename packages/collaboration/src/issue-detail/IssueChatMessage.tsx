@@ -267,11 +267,7 @@ export function IssueChatMessage({
   };
   const text = activityDisplayBody(message.content, "");
   const isAgent = message.sender.type === "agent";
-  const isManager =
-    agentRole === "manager" ||
-    message.metadata.automation_role === "manager" ||
-    message.metadata.automation_role === "manager_review" ||
-    typeof message.metadata.manager_type === "string";
+  const isManager = agentRole === "manager";
   const activityAuthor =
     isAgent && !isManager && taskSummary?.title
       ? taskSummary.title
@@ -285,9 +281,7 @@ export function IssueChatMessage({
   const modelName =
     typeof message.metadata.model === "string" ? message.metadata.model : null;
   const runStatus =
-    typeof message.metadata.manager_action_error === "string"
-      ? "failed"
-      : (executionStatus ?? resolveMessageRunStatus(taskAiState, message));
+    executionStatus ?? resolveMessageRunStatus(taskAiState, message);
   const displayStatus = executionDisplayStatus(runStatus);
   const isStreaming =
     executionStatus === undefined

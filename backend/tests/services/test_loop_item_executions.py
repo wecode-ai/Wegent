@@ -391,13 +391,15 @@ def _make_item(
 
 def _automation_metadata(
     *,
-    action: str = "execute",
-    manager_type: str | None = None,
     agent_id: str | None = None,
     **extra: object,
 ) -> dict:
     metadata = {
-        "action": action,
+        "dispatch_target": {
+            "kind": "agent" if agent_id else "human",
+            "id": agent_id or "1",
+            "name": "Automation target",
+        },
         "role": {
             "source": "agent" if agent_id else "generic",
             "agent_id": agent_id,
@@ -409,8 +411,6 @@ def _automation_metadata(
         },
         **extra,
     }
-    if manager_type:
-        metadata["manager"] = {"type": manager_type}
     return metadata
 
 
@@ -1782,12 +1782,9 @@ def test_later_runtime_event_cannot_overwrite_terminal_truth(
     assert claimed.last_event_seq == 1
 
 
-@pytest.mark.parametrize("manager_action_recorded", [False, True])
 def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
     test_db: Session,
     test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-    manager_action_recorded: bool,
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -1814,16 +1811,6 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
     test_db.add(run)
     test_db.add(child)
     test_db.commit()
-    if manager_action_recorded:
-        from app.services.project_automation_execution import (
-            project_automation_execution,
-        )
-
-        monkeypatch.setattr(
-            project_automation_execution,
-            "has_recorded_manager_assignment",
-            lambda _db, *, run_id: run_id == str(run.id),
-        )
     child_execution = _make_execution(
         test_db,
         child,
@@ -1862,7 +1849,7 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
     assert completed.status == "completed"
     test_db.refresh(run)
     assert run.status == "succeeded"
-    assert run.description == ("" if manager_action_recorded else "Run succeeded.")
+    assert run.description == "Run succeeded."
 
 
 def test_complete_truncates_long_execution_note(
@@ -1948,109 +1935,6 @@ def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
     assert re_claimed.retry_attempt == 0
 
 
-def test_recovery_scan_repairs_terminal_automation_projection(
-    test_db: Session, test_user: User
-) -> None:
-    """A terminal execution must repair its run and activity after a crash."""
-
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    _ensure_device(test_db, test_user, "cloud-device-1")
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed assignment",
-        description="Choose an assignee.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-            project_manager=True,
-            model="test-model",
-            execution_environment="cloud",
-            execution_device_id="cloud-device-1",
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        description="",
-        status="queued",
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "event"},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id="automation_manager:pending",
-        sender_name="Custom AI manager",
-        message_type="agent_status",
-        content="",
-        metadata_json={"run_status": "queued"},
-        status="pending",
-    )
-    test_db.add_all([rule, run, activity])
-    test_db.flush()
-    execution = loop_item_execution_service.enqueue_automation_manager(
-        test_db,
-        loop_item_id=item.id,
-        cloud_project_id=str(project.id),
-        owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        environment="cloud",
-        execution_device_id="cloud-device-1",
-        priority="medium",
-        automation_context={"run_id": str(run.id)},
-        runtime_selection={
-            "model": "test-model",
-            "model_type": None,
-            "model_options": {},
-        },
-    )
-    assert execution.team_id == 0
-    assert execution.backend_task_id == 0
-    assert execution.executor_type == "automation_manager"
-    run.metadata_json = {
-        "trigger": "event",
-        "activity_message_id": message_id,
-    }
-    activity.metadata_json = {
-        "execution_id": execution.id,
-        "run_status": "queued",
-    }
-    execution.status = "failed"
-    execution.retry_attempt = execution.max_retries
-    execution.error_message = "manager dispatch failed"
-    execution.completed_at = datetime(2026, 8, 14, 8, 22, 40)
-    test_db.commit()
-
-    requeued, failed = loop_item_execution_service.recovery_scan(test_db)
-
-    assert (requeued, failed) == (0, 0)
-    test_db.refresh(run)
-    test_db.refresh(activity)
-    assert run.status == "failed"
-    assert run.description == "manager dispatch failed"
-    assert run.completed_at == execution.completed_at
-    assert activity.status == "failed"
-    assert activity.message_type == "text"
-    assert activity.content == "manager dispatch failed"
-    assert activity.metadata_json["run_status"] == "failed"
-    repaired_version = run.version
-
-    loop_item_execution_service.recovery_scan(test_db)
-
-    test_db.refresh(run)
-    assert run.version == repaired_version
-
-
 @pytest.mark.asyncio
 async def test_retry_run_redispatches_the_same_processor_record_and_task(
     test_db: Session, test_user: User
@@ -2068,8 +1952,6 @@ async def test_retry_run_redispatches_the_same_processor_record_and_task(
         status="enabled",
         created_by_user_id=test_user.id,
         metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
             trigger_type="event",
             event_type="task.created",
             model="test-model",
@@ -3096,64 +2978,6 @@ def test_claude_code_project_agent_compiles_executor_payload(
         }
     ]
     assert execution_request["preload_skills"] == [{"name": "project-review"}]
-
-
-def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project(
-    test_db: Session, test_user: User
-) -> None:
-    project = _make_project(test_db, test_user)
-    _ensure_device(test_db, test_user, "local-device", "local")
-    code_project = Project(
-        user_id=test_user.id,
-        name="Bound code project",
-        client_origin="wework",
-        config={"path": "/tmp/bound-code-project", "device_id": "local-device"},
-        is_active=True,
-    )
-    test_db.add(code_project)
-    test_db.commit()
-    test_db.refresh(code_project)
-    profile = WeworkExecutionProfile.for_automation_manager(
-        owner_user_id=test_user.id,
-        display_name="Managed AI",
-        instruction="Run task",
-        developer_instruction="Coordinate the project without executing Issues.",
-        model="test-model",
-        local_project_id=code_project.id,
-    )
-    request = profile.build_runtime_request(
-        test_db,
-        execution_id=91,
-        runtime_task_id="runtime-task-1",
-        task=TaskContext(
-            id="item-1",
-            cloud_project_id=str(project.id),
-            title="Bound task",
-            description="",
-            status="inbox",
-            priority="medium",
-        ),
-        cloud_project_id=str(project.id),
-        origin_context={
-            "run_id": "run-1",
-            "rule_id": "rule-1",
-            "event": {"type": "task.created"},
-        },
-        execution_device_id="local-device",
-    )
-    payload = request.model_dump(by_alias=True, exclude_none=True)
-
-    assert payload["projectId"] == code_project.id
-    assert payload["standaloneChatWorkspace"] is False
-    assert "executionRequest" not in payload
-    assert payload["origin"]["automationRole"] == "manager"
-    assert payload["origin"]["type"] == "project_automation"
-    assert payload["message"] == "Run task"
-    assert (
-        payload["projectInstructions"]
-        == "Coordinate the project without executing Issues."
-    )
-    assert payload["additionalContext"] == {}
 
 
 def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
@@ -5829,480 +5653,6 @@ def test_wegent_runtime_enqueue_failure_does_not_leave_execution_queued(
     assert execution.termination_reason == ("wegent_runtime_activation_enqueue_failed")
 
 
-def test_custom_manager_assignment_survives_manager_transport_failure(
-    test_db: Session, test_user: User
-) -> None:
-    """The MCP assignment, not the manager's final text, is authoritative."""
-
-    from app.services.project_chat.service import project_chat_service
-
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user, title="Managed task")
-    item.description = "Implement the task described by the product owner."
-    # Newly created tasks may initially belong to their creator. The manager's
-    # MCP assignment must be allowed to replace that default ownership.
-    item.assignee_user_id = test_user.id
-    agent = _make_bot(test_db, project, test_user)
-    _ensure_device(test_db, test_user, "cloud-device-1")
-    profile = RuntimeProfile(
-        user_id=test_user.id,
-        created_by_user_id=test_user.id,
-        updated_by_user_id=test_user.id,
-        name="Assigned robot Runtime",
-        title="Assigned robot Runtime",
-        device_id="cloud-device-1",
-        metadata_json={
-            "execution_environment": "cloud",
-            "model": "test-model",
-            "model_options": {},
-            "workspace_policy": "project",
-        },
-    )
-    test_db.add(profile)
-    test_db.flush()
-    agent.metadata_json = {
-        **dict(agent.metadata_json or {}),
-        "default_runtime_profile_id": profile.id,
-    }
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed assignment",
-        description="Choose the project robot with the closest responsibility.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-            project_manager=True,
-            model="test-model",
-            execution_environment="cloud",
-            execution_device_id="cloud-device-1",
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        description="",
-        status="queued",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "trigger": "task_created",
-            "event": {"type": "task.created", "task_id": item.id},
-        },
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id=f"automation_manager:{rule.id}",
-        sender_name="自定义 AI 调度员",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "kind": "project_automation_run",
-            "automation_run_id": str(run.id),
-            "run_status": "queued",
-        },
-        agent_id="",
-        status="pending",
-    )
-    test_db.add_all([rule, run, activity])
-    test_db.flush()
-    run.metadata_json = {
-        **run.metadata_json,
-        "activity_message_id": message_id,
-    }
-    manager_execution = loop_item_execution_service.enqueue_automation_manager(
-        test_db,
-        loop_item_id=item.id,
-        cloud_project_id=str(project.id),
-        owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        environment="cloud",
-        execution_device_id="cloud-device-1",
-        priority="high",
-        automation_context={
-            "rule_id": str(rule.id),
-            "run_id": str(run.id),
-            "trigger": "task_created",
-            "event": {"type": "task.created", "task_id": item.id},
-            "activity_message_id": message_id,
-        },
-        runtime_selection={
-            "model": "test-model",
-            "model_type": None,
-            "model_options": {},
-        },
-    )
-    activity.metadata_json = {
-        **activity.metadata_json,
-        "execution_id": manager_execution.id,
-    }
-    test_db.commit()
-
-    assigned = project_automation_execution.assign_from_manager(
-        test_db,
-        run_id=str(run.id),
-        user_id=test_user.id,
-        project_id=str(project.id),
-        task_id=item.id,
-        assignee_type="agent",
-        assignee_id=agent.id,
-    )
-    assert assigned["assignee_agent_id"] == agent.id
-    repeated = project_automation_execution.assign_from_manager(
-        test_db,
-        run_id=str(run.id),
-        user_id=test_user.id,
-        project_id=str(project.id),
-        task_id=item.id,
-        assignee_type="agent",
-        assignee_id=agent.id,
-    )
-    assert repeated["assignee_agent_id"] == agent.id
-    with pytest.raises(RuntimeError, match="already selected another assignee"):
-        project_automation_execution.assign_from_manager(
-            test_db,
-            run_id=str(run.id),
-            user_id=test_user.id,
-            project_id=str(project.id),
-            task_id=item.id,
-            assignee_type="user",
-            assignee_id=str(test_user.id),
-        )
-
-    manager_result = loop_item_execution_service.fail(
-        test_db,
-        execution_id=manager_execution.id,
-        error="Manager result transport closed after the MCP assignment",
-    )
-
-    assert manager_result is not None
-    assert manager_result.status == "failed"
-    test_db.refresh(item)
-    test_db.refresh(run)
-    test_db.refresh(activity)
-    assert item.assignee_agent_id == agent.id
-    assert item.status != "in_review"
-    assert "ai_state" not in dict(item.metadata_json or {})
-    assert run.status == "succeeded"
-    assert run.assignee_agent_id == agent.id
-    assert activity.status == "completed"
-    assert activity.sender_id == f"automation_manager:{rule.id}"
-    assert activity.sender_name == "自定义 AI 调度员"
-    assert activity.agent_id == ""
-    assert activity.metadata_json["selected_assignee_type"] == "agent"
-    assert activity.metadata_json["selected_assignee_id"] == agent.id
-    assert activity.metadata_json["transport_error"].startswith(
-        "Manager result transport closed"
-    )
-    assert activity.content.startswith("AI 调度员已完成分派")
-
-    executions = (
-        test_db.query(LoopItemExecution)
-        .filter(LoopItemExecution.automation_run_id == str(run.id))
-        .order_by(LoopItemExecution.id)
-        .all()
-    )
-    assert [row.executor_type for row in executions] == [
-        "automation_manager",
-        "project_robot",
-    ]
-    robot_execution = executions[1]
-    assert robot_execution.agent_id == agent.id
-    assert robot_execution.status == "queued"
-
-    claimed = loop_item_execution_service.claim_next_for_device(
-        test_db,
-        execution_device_id="cloud-device-1",
-        environment="cloud",
-        runtime_instance_id="runtime-1",
-        device_capacity=1,
-        runtime_active=0,
-        runtime_active_task_ids=set(),
-        owner_user_id=test_user.id,
-    )
-    assert claimed is not None and claimed.id == robot_execution.id
-    robot_activity = loop_item_execution_service.open_execution_activity(
-        test_db, execution=claimed
-    )
-    assert robot_activity is not None
-    assert robot_activity.message_id != activity.message_id
-    assert robot_activity.agent_id == agent.id
-    robot_activity_row = (
-        test_db.query(ProjectChatMessage)
-        .filter(ProjectChatMessage.message_id == robot_activity.message_id)
-        .one()
-    )
-    assert not project_chat_service._project_automation_activity_is_terminal(
-        test_db, robot_activity_row
-    )
-    test_db.refresh(item)
-    assert item.status == "inbox"
-
-    completed = loop_item_execution_service.complete(
-        test_db,
-        execution_id=claimed.id,
-        content="Project robot completed the assigned task.",
-    )
-    assert completed is not None and completed.status == "completed"
-    test_db.refresh(item)
-    test_db.refresh(run)
-    assert item.status == "in_review"
-    assert run.status == "succeeded"
-    status_history = item.metadata_json.get("status_history", [])
-    assert status_history[-1]["to_status"] == "in_review"
-    assert status_history[-1]["trigger"] == "ai_completed"
-
-
-def test_manager_assigns_collaboration_group_without_parsing_final_output(
-    test_db: Session, test_user: User
-) -> None:
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user, title="Product decision")
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed assignment",
-        description="Choose by project capability.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "task_created"},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id=f"automation_manager:{rule.id}",
-        sender_name="自定义 AI 调度员",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "kind": "project_automation_run",
-            "automation_run_id": str(run.id),
-            "run_status": "running",
-        },
-        agent_id="",
-        status="streaming",
-    )
-    run.metadata_json = {
-        **run.metadata_json,
-        "activity_message_id": message_id,
-    }
-    test_db.add_all([rule, run, activity])
-    test_db.commit()
-
-    group = {
-        "id": "group-1",
-        "name": "Delivery team",
-        "members": [],
-        "stages": [],
-        "created_at": datetime.now(),
-    }
-    with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
-        return_value=[group],
-    ):
-        assigned = project_automation_execution.assign_from_manager(
-            test_db,
-            run_id=str(run.id),
-            user_id=test_user.id,
-            project_id=str(project.id),
-            task_id=item.id,
-            assignee_type="group",
-            assignee_id="group-1",
-        )
-        repeated = project_automation_execution.assign_from_manager(
-            test_db,
-            run_id=str(run.id),
-            user_id=test_user.id,
-            project_id=str(project.id),
-            task_id=item.id,
-            assignee_type="group",
-            assignee_id="group-1",
-        )
-    assert assigned["assignee_group_id"] == "group-1"
-    assert repeated["assignee_group_id"] == "group-1"
-    test_db.refresh(run)
-    assert run.status == "running"
-    project_automation_execution.finalize_manager_result(
-        test_db,
-        run_id=str(run.id),
-        content='This is not assignment JSON and is never parsed: {"wrong": true}',
-    )
-
-    test_db.refresh(item)
-    test_db.refresh(run)
-    assert item.assignee_user_id is None
-    assert item.assignee_agent_id in (None, "")
-    assert item.metadata_json["collaboration_group"]["id"] == "group-1"
-    assert run.status == "succeeded"
-    assert (
-        test_db.query(LoopItemExecution)
-        .filter(LoopItemExecution.automation_run_id == str(run.id))
-        .count()
-        == 0
-    )
-    assert run.status == "succeeded"
-
-
-def test_completed_manager_comment_repairs_stale_queued_rule_run(
-    test_db: Session, test_user: User
-) -> None:
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    agent = _make_bot(test_db, project, test_user)
-    item.assignee_agent_id = agent.id
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Wegent dispatcher",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="wegent",
-        ),
-    )
-    run = ProjectAutomationRun(
-        id=f"run-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Stale queued run",
-        status="queued",
-        created_by_user_id=test_user.id,
-        metadata_json={},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id="wegent_team:1",
-        sender_name="Wegent dispatcher",
-        message_type="text",
-        content="Assigned to the backend robot.",
-        metadata_json={
-            "automation_run_id": str(run.id),
-            "run_status": "completed",
-            "selected_assignee_type": "agent",
-            "selected_assignee_id": agent.id,
-        },
-        status="completed",
-    )
-    test_db.add_all([rule, run, activity])
-    test_db.flush()
-    run.metadata_json = {"activity_message_id": message_id}
-    test_db.commit()
-    _make_execution(
-        test_db,
-        item,
-        agent,
-        test_user,
-        automation_context={"run_id": str(run.id)},
-    )
-
-    changed = project_automation_execution.finalize_manager_result(
-        test_db,
-        run_id=str(run.id),
-        content=None,
-        push_activity=False,
-    )
-
-    test_db.refresh(run)
-    assert changed is True
-    assert run.status == "succeeded"
-    assert run.completed_at is not None
-
-
-@pytest.mark.asyncio
-async def test_cancel_stops_selected_robot_before_terminal_wegent_manager_task(
-    test_db: Session, test_user: User
-) -> None:
-    """A retained manager Task id must not hide the active business executor."""
-
-    from app.services.project_automations import project_automation_service
-
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    agent = _make_bot(test_db, project, test_user)
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed assignment",
-        description="Choose a project robot.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="wegent",
-            timezone="Asia/Shanghai",
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        status="queued",
-        backend_task_id=777,
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "task_created"},
-    )
-    test_db.add_all([rule, run])
-    test_db.flush()
-    execution = _make_execution(
-        test_db,
-        item,
-        agent,
-        test_user,
-        automation_context={"run_id": str(run.id)},
-    )
-
-    with patch(
-        "app.services.project_automation_managed_execution."
-        "project_automation_managed_execution_service.cancel",
-        new_callable=AsyncMock,
-    ) as cancel_manager:
-        view = await project_automation_service.cancel_run(
-            test_db,
-            str(project.id),
-            str(run.id),
-            test_user.id,
-        )
-
-    test_db.refresh(execution)
-    test_db.refresh(run)
-    assert execution.status == "cancelled"
-    assert run.status == "cancelled"
-    assert view["status"] == "cancelled"
-    cancel_manager.assert_not_awaited()
-
-
 @pytest.mark.asyncio
 async def test_cancel_running_automation_requires_runtime_confirmation(
     test_db: Session,
@@ -6336,269 +5686,6 @@ async def test_cancel_running_automation_requires_runtime_confirmation(
     assert run.status == "running"
 
 
-def test_cloud_execution_fails_when_selected_model_no_longer_exists(
-    test_db: Session, test_user: User
-) -> None:
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    _ensure_device(test_db, test_user, "cloud-device-1")
-    profile = RuntimeProfile(
-        user_id=test_user.id,
-        created_by_user_id=test_user.id,
-        updated_by_user_id=test_user.id,
-        name="Deleted model Runtime",
-        title="Deleted model Runtime",
-        device_id="cloud-device-1",
-        metadata_json={
-            "execution_environment": "cloud",
-            "model": "deleted-model",
-            "model_options": {},
-            "workspace_policy": "project",
-        },
-    )
-    test_db.add(profile)
-    test_db.flush()
-    rule = ProjectAutomationRule(
-        id="deleted-model-rule",
-        cloud_project_id=project.id,
-        title="Deleted model rule",
-        description="Handle this task",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-            project_manager=True,
-            runtime={
-                "source": "fixed_profile",
-                "runtime_profile_id": profile.id,
-                "user_id": None,
-            },
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "manual"},
-    )
-    test_db.add_all([rule, run])
-    test_db.flush()
-    execution = loop_item_execution_service.enqueue_automation_manager(
-        test_db,
-        loop_item_id=item.id,
-        cloud_project_id=str(project.id),
-        owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        environment="cloud",
-        execution_device_id="cloud-device-1",
-        priority="medium",
-        automation_context={"run_id": str(run.id)},
-        runtime_selection={
-            "runtime_source": "fixed_profile",
-            "runtime_profile_id": profile.id,
-            "runtime_profile_version": profile.version,
-            "workspace_policy": "project",
-        },
-    )
-    test_db.commit()
-
-    with pytest.raises(
-        WeworkRuntimeConfigurationError,
-        match="Execution model 'deleted-model' is unavailable",
-    ):
-        loop_item_execution_service.build_runtime_payload(
-            test_db,
-            execution=execution,
-        )
-
-
-def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
-    test_db: Session, test_user: User
-) -> None:
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    _ensure_device(test_db, test_user, "cloud-device-1")
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        task_id=item.id,
-        title="Managed run",
-        description="",
-        status="pending",
-        created_by_user_id=test_user.id,
-        metadata_json={},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id="automation_manager:rule-2",
-        sender_name="自定义 AI 调度员",
-        message_type="agent_chunk",
-        content="",
-        metadata_json={"run_status": "pending"},
-        status="pending",
-    )
-    test_db.add_all([run, activity])
-    test_db.commit()
-    rule = ProjectAutomationRule(
-        id="rule-2",
-        cloud_project_id=project.id,
-        title="Process event",
-        description="Process the event.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-            project_manager=True,
-            model="test-model",
-        ),
-    )
-    run.parent_id = rule.id
-    run.metadata_json = {
-        "trigger": "manual",
-        "activity_message_id": message_id,
-    }
-    test_db.add(rule)
-    test_db.commit()
-    execution = loop_item_execution_service.enqueue_automation_manager(
-        test_db,
-        loop_item_id=item.id,
-        cloud_project_id=str(project.id),
-        owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        environment="cloud",
-        execution_device_id="cloud-device-1",
-        priority="medium",
-        automation_context={
-            "run_id": str(run.id),
-            "activity_message_id": message_id,
-        },
-        runtime_selection={
-            "model": "test-model",
-            "model_type": None,
-            "model_options": {},
-        },
-    )
-    activity.metadata_json = {
-        **activity.metadata_json,
-        "execution_id": execution.id,
-    }
-    test_db.commit()
-    assert not execution.runtime_device_id
-
-    with patch(
-        "app.services.project_chat.push.push_project_chat_message"
-    ) as push_message:
-        cancelled = loop_item_execution_service.cancel(
-            test_db, execution_id=execution.id, note="Stopped by user"
-        )
-
-    test_db.refresh(activity)
-    test_db.refresh(run)
-    assert cancelled.status == "cancelled"
-    assert activity.status == "cancelled"
-    assert activity.metadata_json["run_status"] == "cancelled"
-    assert run.status == "cancelled"
-    push_message.assert_called_once()
-
-
-def test_enqueue_automation_manager_normalizes_ambiguous_app_device_id(
-    test_db: Session, test_user: User
-) -> None:
-    """A shared App registration id is persisted as the canonical logical id."""
-
-    project = _make_project(test_db, test_user)
-    item = _make_item(test_db, project, test_user)
-    # The desktop App registration and an ephemeral verification device claim
-    # the same appDeviceId; the App registration is the canonical target.
-    app = Kind(
-        kind="Device",
-        name="local-device",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={
-            "spec": {
-                "deviceType": "app",
-                "deviceId": "local-device",
-                "appDeviceId": "electron-shared",
-            }
-        },
-    )
-    verifier = Kind(
-        kind="Device",
-        name="verifier-1",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={
-            "spec": {
-                "deviceType": "local",
-                "deviceId": "verifier-1",
-                "appDeviceId": "electron-shared",
-            }
-        },
-    )
-    test_db.add_all([app, verifier])
-    test_db.commit()
-
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed assignment",
-        description="Choose an assignee.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(
-            action="ai_assign",
-            manager_type="custom",
-            project_manager=True,
-            model="test-model",
-            execution_environment="local",
-            execution_device_id="electron-shared",
-        ),
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        description="",
-        status="queued",
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "event"},
-    )
-    test_db.add_all([rule, run])
-    test_db.flush()
-
-    execution = loop_item_execution_service.enqueue_automation_manager(
-        test_db,
-        loop_item_id=item.id,
-        cloud_project_id=str(project.id),
-        owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        environment="local",
-        execution_device_id="electron-shared",
-        priority="medium",
-        automation_context={"run_id": str(run.id)},
-        runtime_selection={
-            "model": "test-model",
-            "model_type": None,
-            "model_options": {},
-        },
-    )
-
-    assert execution.execution_device_id == f"app-record-{app.id}"
-    assert execution.execution_environment == "local"
-
-
 def test_enqueue_generic_robot_normalizes_app_device_id(
     test_db: Session, test_user: User
 ) -> None:
@@ -6620,7 +5707,7 @@ def test_enqueue_generic_robot_normalizes_app_device_id(
         description="Handle this task",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(action="execute"),
+        metadata_json=_automation_metadata(),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -6671,7 +5758,7 @@ def test_enqueue_generic_robot_uses_codex_runtime_default_model(
         description="Handle this task",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json=_automation_metadata(action="execute"),
+        metadata_json=_automation_metadata(),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -6739,7 +5826,7 @@ def _generic_rule_and_run(
         description="Handle this task",
         status="enabled",
         created_by_user_id=user.id,
-        metadata_json=_automation_metadata(action="execute"),
+        metadata_json=_automation_metadata(),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,

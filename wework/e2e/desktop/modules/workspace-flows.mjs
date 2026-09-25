@@ -35,24 +35,35 @@ export function inCollaborationSidebar(selector, contentSelector = '') {
 }
 
 export async function selectCollaborationDomain(control, contentSelector, domain) {
-  const selector = `${contentSelector} [data-testid="collaboration-domain-${domain}"]`
-  await control.command('waitFor', selector, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  if (
-    (await control.command('getAttribute', selector, {
-      value: 'aria-pressed',
-    })) !== 'true'
-  ) {
-    await control.command('clickWhenEnabled', selector, {
+  assert.ok(domain === 'local' || domain === 'cloud', `Unknown collaboration domain: ${domain}`)
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="collaboration-platform-root"]`,
+    {
+      visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-  }
-  await control.command('waitFor', `${selector}[aria-pressed="true"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+    }
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-domain-local"]`
+      )
+    ),
+    0,
+    'The unified collaboration board still exposed a local selector'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${contentSelector} [data-testid="collaboration-domain-cloud"]`
+      )
+    ),
+    0,
+    'The unified collaboration board still exposed a cloud selector'
+  )
 }
 
 export async function waitForTestIdByText(
@@ -1073,14 +1084,10 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'click',
-    `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('click', `[data-testid="cloud-todo-card-open-task-${boardItemId}"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {

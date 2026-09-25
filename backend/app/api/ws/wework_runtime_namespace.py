@@ -19,7 +19,6 @@ from app.core.config import settings
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
-    ProjectChatAutomationManagerContinuation,
     ProjectChatCommentExecution,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -430,26 +429,6 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
-    async def on_project_chat_manager_continue(self, sid: str, data: dict) -> dict:
-        """Open a reply in the custom AI manager's existing Runtime session."""
-
-        identity = await self._project_chat_identity(sid)
-        if identity is None:
-            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
-        try:
-            request = ProjectChatAutomationManagerContinuation.model_validate(
-                project_chat_payload(data)
-            )
-            message = await run_sync_in_executor(
-                _start_project_chat_manager_continuation_sync,
-                int(identity["user_id"]),
-                request,
-            )
-        except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
-        await emit_project_chat_message(self, message)
-        return {"ok": True, "result": message}
-
     async def on_project_chat_comment_execute(self, sid: str, data: dict) -> dict:
         """Execute a saved project comment under its server-owned binding."""
         identity = await self._project_chat_identity(sid)
@@ -781,16 +760,6 @@ def _start_project_chat_agent_sync(
 ) -> dict[str, Any]:
     with get_db_session() as db:
         message = project_chat_service.start_agent_response(
-            db, user_id=user_id, request=request
-        )
-        return message.model_dump(mode="json", by_alias=True)
-
-
-def _start_project_chat_manager_continuation_sync(
-    user_id: int, request: ProjectChatAutomationManagerContinuation
-) -> dict[str, Any]:
-    with get_db_session() as db:
-        message = project_chat_service.start_automation_manager_response(
             db, user_id=user_id, request=request
         )
         return message.model_dump(mode="json", by_alias=True)

@@ -61,7 +61,6 @@ export interface WeworkAutomationSharedWorkspaceApi {
     NonNullable<SharedWorkspaceApi['automations']>,
     'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
   >
-  projectManager?: SharedWorkspaceApi['projectManager']
   incomingHooks?: Pick<
     NonNullable<SharedWorkspaceApi['incomingHooks']>,
     'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
@@ -421,12 +420,7 @@ function createWeworkAutomationsApi(
       return (await projectAutomationApi.list(projectId)).map(toAutomationRule)
     },
     async create(projectId, input) {
-      return toAutomationRule(
-        await projectAutomationApi.create(
-          projectId,
-          input as unknown as Parameters<ProjectAutomationApi['create']>[1]
-        )
-      )
+      return toAutomationRule(await projectAutomationApi.create(projectId, input))
     },
     async migrateWorkflow(projectId, input) {
       const result = await projectAutomationApi.migrateWorkflow(
@@ -439,13 +433,7 @@ function createWeworkAutomationsApi(
       }
     },
     async update(projectId, automationId, input) {
-      return toAutomationRule(
-        await projectAutomationApi.update(
-          projectId,
-          automationId,
-          input as unknown as Parameters<ProjectAutomationApi['update']>[2]
-        )
-      )
+      return toAutomationRule(await projectAutomationApi.update(projectId, automationId, input))
     },
     remove: projectAutomationApi.delete,
     async runNow(projectId, automationId) {
@@ -581,9 +569,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
               automatic_processing_rules: input.automaticProcessingRules as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['automatic_processing_rules'],
-              project_manager: input.projectManager as Parameters<
-                DeliveryApi['updateCloudProject']
-              >[1]['project_manager'],
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
@@ -946,14 +931,6 @@ export function createWeworkAutomationSharedWorkspaceApi(
     ...(projectAutomationApi
       ? {
           automations: createWeworkAutomationsApi(projectAutomationApi),
-          projectManager: {
-            get: projectAutomationApi.getProjectManager,
-            save: projectAutomationApi.saveProjectManager,
-            run: projectAutomationApi.runProjectManager,
-            listRuns: projectAutomationApi.listProjectManagerRuns,
-            getRun: projectAutomationApi.getProjectManagerRun,
-            decide: projectAutomationApi.decideProjectManagerAction,
-          },
         }
       : {}),
     ...(projectIncomingHookApi
@@ -1146,14 +1123,6 @@ export function createWeworkSharedWorkspaceApi<
       async retryRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.retryRun(projectId, runId))
       },
-    },
-    projectManager: {
-      get: projectAutomationApi.getProjectManager,
-      save: projectAutomationApi.saveProjectManager,
-      run: projectAutomationApi.runProjectManager,
-      listRuns: projectAutomationApi.listProjectManagerRuns,
-      getRun: projectAutomationApi.getProjectManagerRun,
-      decide: projectAutomationApi.decideProjectManagerAction,
     },
     incomingHooks: {
       ...createWeworkIncomingHooksApi(projectIncomingHookApi),

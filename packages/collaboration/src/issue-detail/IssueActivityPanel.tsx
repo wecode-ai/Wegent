@@ -313,14 +313,7 @@ export function IssueActivityPanel({
                   : entry.kind === "assignment"
                     ? entry.assignment.created_by_user_name ||
                       translate("todo.someone", "项目成员")
-                    : translate(
-                        entry.run.executor_type === "automation_manager"
-                          ? "todo.execution_manager_run"
-                          : "todo.execution_run",
-                        entry.run.executor_type === "automation_manager"
-                          ? "AI 调度"
-                          : "执行任务",
-                      );
+                    : translate("todo.execution_run", "执行任务");
               const content =
                 entry.kind === "comment"
                   ? activityDisplayBody(entry.comment.body, "")
@@ -401,15 +394,6 @@ export function IssueActivityPanel({
                             data-testid={`collaboration-run-error-${entry.run.id}`}
                           >
                             {entry.run.error_message}
-                          </p>
-                        ) : null}
-                        {entry.run.executor_type === "automation_manager" &&
-                        entry.run.display_state === "succeeded" ? (
-                          <p>
-                            {translate(
-                              "todo.execution_manager_completed",
-                              "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
-                            )}
                           </p>
                         ) : null}
                       </>

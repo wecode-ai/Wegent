@@ -2929,7 +2929,6 @@ class LoopItemService:
         from app.models.loop_item_execution import LoopItemExecution
 
         cancelled_runs = []
-        preserve_run_id = str((automation_context or {}).get("run_id") or "")
         if cancel_existing:
             active = (
                 db.query(LoopItemExecution)
@@ -2940,12 +2939,6 @@ class LoopItemService:
                 .all()
             )
             for execution in active:
-                if (
-                    preserve_run_id
-                    and execution.executor_type == "automation_manager"
-                    and str(execution.automation_run_id or "") == preserve_run_id
-                ):
-                    continue
                 cancelled = loop_item_execution_service.cancel(
                     db,
                     execution_id=execution.id,

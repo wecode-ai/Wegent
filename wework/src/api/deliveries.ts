@@ -300,7 +300,7 @@ export interface CloudLoopItemExecution {
   task_title: string
   task_status?: string | null
   task_priority?: string | null
-  executor_type: 'project_robot' | 'automation_manager' | 'wegent_team' | string
+  executor_type: 'project_robot' | 'wegent_team' | string
   agent_id: string | null
   team_id?: number | null
   backend_task_id?: number | null
@@ -415,7 +415,6 @@ export interface CloudProject {
   workflow_definition?: ProjectWorkflowDefinition
   collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
   automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
-  project_manager?: import('@wegent/collaboration').WorkspaceProjectManagerConfig
   execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
   workflow_automation_id?: string | null
   created_by_user_id: number
@@ -752,7 +751,6 @@ export function createDeliveryApi(client: HttpClient) {
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
-        project_manager?: CloudProject['project_manager']
         execution_environment?: {
           repositories: Array<{
             name: string

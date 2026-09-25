@@ -112,10 +112,8 @@ def _legacy_workflow_migration(
             trigger_type="event",
             event_type="task.status_changed",
             event_config={"transition": "entered_processing"},
-            assignment_mode="manual",
-            role_source="generic",
-            runtime_source="runtime_user",
-            runtime_user_id=user_id,
+            target_kind="human",
+            target_id=str(user_id),
         ),
         workflow_definition=workflow,
     )
@@ -251,81 +249,6 @@ def test_delete_canonical_workflow_clears_project_binding(
     }
     assert "workflow_automation_id" not in project.metadata_json
     assert not loop_datetime_value_is_unset(rule.deleted_at)
-
-
-def test_list_runs_hides_internal_ai_manager_runs(
-    test_db,
-    test_user,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = CloudProject(
-        project_key="RUNHISTORY",
-        name="Run history project",
-        created_by_user_id=test_user.id,
-        storage_prefix="projects/run-history",
-    )
-    test_db.add(project)
-    test_db.flush()
-    rule = ProjectAutomationRule(
-        cloud_project_id=project.id,
-        title="Canonical workflow",
-        description="Run the complete workflow",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.tag_added",
-            "event_config": {"tags": ["review"]},
-            "timezone": "Asia/Shanghai",
-        },
-    )
-    test_db.add(rule)
-    test_db.flush()
-    parent_run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id="issue-1",
-        task_title="Visible workflow run",
-        source="event",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "scheduled_for": datetime(2026, 8, 25).isoformat(),
-            "event": {"type": "task.tag_added", "subject_id": "issue-1"},
-        },
-    )
-    test_db.add(parent_run)
-    test_db.flush()
-    child_run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id="issue-1",
-        task_title="Internal AI manager run",
-        source="event",
-        status="succeeded",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "scheduled_for": datetime(2026, 8, 25).isoformat(),
-            "workflow_parent_run_id": str(parent_run.id),
-        },
-    )
-    test_db.add(child_run)
-    test_db.commit()
-    monkeypatch.setattr(
-        project_automations_module, "require_cloud_project_role", lambda *_args: None
-    )
-
-    result = project_automation_service.list_runs(
-        test_db,
-        str(project.id),
-        str(rule.id),
-        test_user.id,
-    )
-
-    assert [run["id"] for run in result] == [str(parent_run.id)]
-    assert result[0]["trigger_type"] == "event"
-    assert result[0]["event_type"] == "task.tag_added"
-    assert result[0]["event_config"] == {"tags": ["review"]}
 
 
 def test_list_runs_repairs_terminal_execution_projection(
@@ -489,11 +412,8 @@ def test_create_generic_manual_rule_does_not_persist_null_robot_id(
             triggerType="event",
             eventType="task.created",
             eventConfig={},
-            assignmentMode="manual",
-            roleSource="generic",
-            agentId=None,
-            runtimeSource="runtime_user",
-            runtimeUserId=test_user.id,
+            targetKind="human",
+            targetId=str(test_user.id),
             enabled=True,
         ),
     )
@@ -503,24 +423,20 @@ def test_create_generic_manual_rule_does_not_persist_null_robot_id(
     assert rule.assignee_agent_id == ""
 
 
-def test_generic_manual_rule_accepts_direct_runtime_configuration() -> None:
+def test_explicit_agent_target_accepts_execution_device() -> None:
     rule = ProjectAutomationCreate(
         name="Direct Codex workflow",
         prompt="Run the configured node",
         triggerType="event",
         eventType="task.created",
         eventConfig={},
-        assignmentMode="manual",
-        roleSource="generic",
-        model="gpt-5.6-codex",
-        executionEnvironment="local",
         executionDeviceId="55",
-        runtimeSource="runtime_user",
-        runtimeUserId=1,
+        targetKind="agent",
+        targetId="agent-1",
     )
 
-    assert rule.model == "gpt-5.6-codex"
-    assert rule.execution_environment == "local"
+    assert rule.target_kind == "agent"
+    assert rule.target_id == "agent-1"
     assert rule.execution_device_id == "55"
 
 
@@ -566,10 +482,8 @@ def test_create_rejects_invalid_runtime_workflow_definition(
                         ],
                     }
                 },
-                assignmentMode="manual",
-                roleSource="generic",
-                runtimeSource="runtime_user",
-                runtimeUserId=test_user.id,
+                targetKind="human",
+                targetId=str(test_user.id),
             ),
         )
 
@@ -611,10 +525,8 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
             triggerType="event",
             eventType="task.status_changed",
             eventConfig={"statuses": ["pending", "in_progress"]},
-            assignmentMode="manual",
-            roleSource="generic",
-            runtimeSource="runtime_user",
-            runtimeUserId=test_user.id,
+            targetKind="human",
+            targetId=str(test_user.id),
         ),
     )
 
@@ -697,45 +609,3 @@ async def test_due_scan_ignores_enabled_rule_from_archived_project(
 
     assert dispatched == 0
     assert dispatched_rules == []
-
-
-@pytest.mark.asyncio
-async def test_due_scan_dispatches_waiting_project_manager_turn(
-    test_db, test_user, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = CloudProject(
-        project_key="MANAGERDRAIN",
-        name="Manager drain",
-        created_by_user_id=test_user.id,
-        storage_prefix="projects/manager-drain",
-    )
-    test_db.add(project)
-    test_db.flush()
-    rule = ProjectAutomationRule(
-        cloud_project_id=project.id,
-        title="Project manager",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json={"project_manager": True},
-    )
-    test_db.add(rule)
-    test_db.flush()
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        status="queued",
-        backend_task_id=0,
-        created_by_user_id=test_user.id,
-    )
-    test_db.add(run)
-    test_db.commit()
-    dispatched_runs: list[str] = []
-
-    async def dispatch(_db, _rule, selected_run) -> None:
-        dispatched_runs.append(str(selected_run.id))
-        selected_run.backend_task_id = 42
-
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-
-    assert await project_automation_service.check_due(test_db) == 1
-    assert dispatched_runs == [str(run.id)]

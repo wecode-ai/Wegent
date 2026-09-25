@@ -627,7 +627,6 @@ mod tests {
                 "item_id": "ISSUE-1",
                 "device_id": null,
                 "automation_run_id": null,
-                "automation_manager": false,
                 "expires_at_unix": expires_at_unix
             }))
             .unwrap(),

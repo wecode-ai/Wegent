@@ -868,12 +868,6 @@ class ExternalLoopItemProvider:
             .all()
         )
         for execution in active:
-            if (
-                preserve_automation_run_id
-                and execution.executor_type == "automation_manager"
-                and str(execution.automation_run_id or "") == preserve_automation_run_id
-            ):
-                continue
             cancelled = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,

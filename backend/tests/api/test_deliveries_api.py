@@ -1702,10 +1702,8 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
                 "execution_target": "continue_binding",
                 "target_branches": ["main"],
             },
-            "assignmentMode": "manual",
-            "roleSource": "generic",
-            "runtimeSource": "runtime_user",
-            "runtimeUserId": test_user.id,
+            "targetKind": "human",
+            "targetId": str(test_user.id),
         },
     )
     assert rule_response.status_code == 201, rule_response.text
