@@ -661,6 +661,7 @@ fn supervisor_correction_request(
     request.auth_token = None;
     request.runtime_auth_token = None;
     request.skill_identity_token = None;
+    request.mcp_token = None;
     request.system_prompt = link.project_instructions.clone();
     request.project_workspace_path = Some(link.workspace_path.clone());
     request.runtime_workspace_roots = link.runtime_workspace_roots.clone();
@@ -979,6 +980,7 @@ mod tests {
             auth_token: Some("task-token".to_owned()),
             runtime_auth_token: Some("runtime-token".to_owned()),
             skill_identity_token: Some("skill-token".to_owned()),
+            mcp_token: Some("mcp-token".to_owned()),
             extra: serde_json::Map::from_iter([
                 ("skill_names".to_owned(), json!(["project-skill"])),
                 (
@@ -1026,6 +1028,7 @@ mod tests {
         assert_eq!(request.auth_token, None);
         assert_eq!(request.runtime_auth_token, None);
         assert_eq!(request.skill_identity_token, None);
+        assert_eq!(request.mcp_token, None);
         assert_eq!(request.extra["skill_names"], json!(["project-skill"]));
         assert_eq!(
             request.extra["runtime_permission_profile"],

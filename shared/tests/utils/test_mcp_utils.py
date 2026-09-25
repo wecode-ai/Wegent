@@ -39,6 +39,21 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders():
     assert replaced["s"]["url"] == "http://${{unknown}}/x"
 
 
+def test_replace_mcp_server_variables_replaces_mcp_token():
+    mcp_servers = {
+        "business": {
+            "type": "streamable-http",
+            "url": "https://mcp.business.example.com/mcp",
+            "headers": {"Authorization": "Bearer ${{mcp_token}}"},
+        }
+    }
+    task_data = ExecutionRequest(mcp_token="mcp-test-token")  # noqa: S106
+
+    replaced = replace_mcp_server_variables(mcp_servers, task_data)
+
+    assert replaced["business"]["headers"]["Authorization"] == "Bearer mcp-test-token"
+
+
 def test_replace_user_name_placeholder_with_execution_request_task_data() -> None:
     """Integration test: Simulate CHAT_MCP_SERVERS with ${{user.name}} placeholder
     being resolved using an ExecutionRequest object."""

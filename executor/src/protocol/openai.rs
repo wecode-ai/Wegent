@@ -112,6 +112,7 @@ impl OpenAIResponsesRequest {
             auth_token: get_string(&metadata, "auth_token"),
             runtime_auth_token: get_string(&metadata, "runtime_auth_token"),
             skill_identity_token: get_string(&metadata, "skill_identity_token"),
+            mcp_token: get_string(&metadata, "mcp_token"),
             extra: extra_metadata(&metadata),
         }
     }
@@ -286,6 +287,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "auth_token",
     "runtime_auth_token",
     "skill_identity_token",
+    "mcp_token",
 ];
 
 fn get_i64_optional(object: &Map<String, Value>, key: &str) -> Option<i64> {
