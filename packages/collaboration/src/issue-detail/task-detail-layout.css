@@ -2301,19 +2301,26 @@
 .task-detail-new-comment {
   position: relative;
   width: 100%;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
   background: rgb(var(--color-bg-base));
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.task-detail-new-comment > textarea {
+.task-detail-new-comment:focus-within {
+  border-color: rgb(var(--color-focus) / 70%);
+  box-shadow: 0 0 0 2px rgb(var(--color-focus) / 10%);
+}
+
+.task-detail-comment-editor {
   display: block;
   width: 100%;
-  min-height: 48px;
-  max-height: 240px;
-  field-sizing: content;
-  resize: none;
+  min-height: 40px;
+  max-height: 160px;
+  overflow-y: auto;
   border: 0;
   outline: none;
   background: transparent;
@@ -2321,7 +2328,7 @@
   font: inherit;
 }
 
-.task-detail-new-comment > textarea::placeholder {
+.task-detail-comment-editor.composer-prosemirror-placeholder {
   color: rgb(var(--color-text-muted));
 }
 
@@ -2330,6 +2337,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.task-detail-new-comment-actions {
+  margin-top: 4px;
 }
 
 .task-detail-comment-settings {

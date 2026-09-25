@@ -639,12 +639,6 @@ async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, St
     Ok(catalog)
 }
 
-pub(crate) async fn effective_catalog() -> Result<Value, String> {
-    let mut catalog = load_baseline_catalog(None).await?;
-    merge_capability_models(&mut catalog);
-    Ok(catalog)
-}
-
 fn merge_capability_models(catalog: &mut Value) {
     merge_base_models(catalog);
     apply_catalog_overrides(catalog, &read_catalog_overrides());

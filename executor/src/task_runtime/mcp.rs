@@ -4,10 +4,11 @@
 
 use std::{
     collections::{BTreeMap, HashSet},
-    env, fs,
+    env, fmt, fs,
     io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
 };
 
 #[cfg(not(test))]
@@ -17,15 +18,14 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 use super::{
-    BinaryInput, DeliveryCreate, ProjectCreate, RuntimeTaskAddress, TaskCreate, TaskRuntime,
-    TaskSearch, TaskUpdate,
+    BinaryInput, DeliveryCreate, LocalCommentCreate, ProjectCreate, RuntimeTaskAddress,
+    TaskRuntime, TaskSearch, TaskUpdate,
 };
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
@@ -37,6 +37,39 @@ pub(crate) const SPACE_MCP_TOOL_TIMEOUT_SECONDS: u64 = 60;
 static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLock::new();
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct CloudCollaborationRoundCommand {
+    pub(crate) manager_runtime_task_id: String,
+    pub(crate) project_id: String,
+    pub(crate) item_id: String,
+    pub(crate) dispatch_id: String,
+    pub(crate) round_id: String,
+    pub(crate) execution_ids: Vec<i64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CloudCollaborationRoundDispatcher(
+    Arc<dyn Fn(CloudCollaborationRoundCommand) -> Result<(), String> + Send + Sync>,
+);
+
+impl CloudCollaborationRoundDispatcher {
+    pub(crate) fn new(
+        dispatch: impl Fn(CloudCollaborationRoundCommand) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(dispatch))
+    }
+
+    fn dispatch(&self, command: CloudCollaborationRoundCommand) -> Result<(), String> {
+        (self.0)(command)
+    }
+}
+
+impl fmt::Debug for CloudCollaborationRoundDispatcher {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CloudCollaborationRoundDispatcher")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +93,7 @@ pub(crate) struct SpaceContextGrant {
     item_id: Option<String>,
     device_id: Option<String>,
     dispatch_id: Option<String>,
+    manager_agent_id: Option<String>,
     automation_run_id: Option<String>,
     #[serde(default)]
     role: Option<SpaceContextRole>,
@@ -74,6 +108,7 @@ pub(crate) struct SpaceMcpRequestContext {
     backend_url: Option<String>,
     auth_token: Option<String>,
     surface: WeworkMcpSurface,
+    cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,6 +136,7 @@ impl SpaceMcpRequestContext {
             backend_url,
             auth_token,
             surface: WeworkMcpSurface::ProjectSpace,
+            cloud_collaboration_dispatcher: None,
         }
     }
 
@@ -110,6 +146,7 @@ impl SpaceMcpRequestContext {
             backend_url,
             auth_token,
             surface: WeworkMcpSurface::Notifications,
+            cloud_collaboration_dispatcher: None,
         }
     }
 
@@ -134,6 +171,13 @@ impl SpaceMcpRequestContext {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
         }
+    }
+
+    pub(crate) fn set_cloud_collaboration_dispatcher(
+        &mut self,
+        dispatcher: Option<CloudCollaborationRoundDispatcher>,
+    ) {
+        self.cloud_collaboration_dispatcher = dispatcher;
     }
 }
 
@@ -300,6 +344,14 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
                 origin
                     .get("dispatchId")
                     .or_else(|| origin.get("dispatch_id"))
+            })
+            .and_then(id_value)
+            .filter(|value| !value.is_empty()),
+        manager_agent_id: origin
+            .and_then(|origin| {
+                origin
+                    .get("managerAgentId")
+                    .or_else(|| origin.get("manager_agent_id"))
             })
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
@@ -579,11 +631,13 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
             return Some("The requested project space is outside this Agent session".to_owned());
         }
     }
-    if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
-        if grant.item_id.as_deref().is_some_and(|item_id| {
-            !requested_item_id.trim().is_empty() && requested_item_id != item_id
-        }) {
-            return Some("The requested board item is outside this Agent session".to_owned());
+    if grant.role != Some(SpaceContextRole::Manager) {
+        if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
+            if grant.item_id.as_deref().is_some_and(|item_id| {
+                !requested_item_id.trim().is_empty() && requested_item_id != item_id
+            }) {
+                return Some("The requested board item is outside this Agent session".to_owned());
+            }
         }
     }
     None
@@ -838,6 +892,7 @@ async fn call_tool_with_context(
         context.grant.clone(),
         context.backend_url.as_deref(),
         context.auth_token.as_deref(),
+        context.cloud_collaboration_dispatcher.as_ref(),
     )
     .await
 }
@@ -864,6 +919,7 @@ async fn call_tool_with_grant(
         grant,
         backend_url.as_deref(),
         auth_token.as_deref(),
+        None,
     )
     .await
 }
@@ -875,6 +931,7 @@ async fn call_tool_with_runtime_context(
     grant: Option<SpaceContextGrant>,
     backend_url: Option<&str>,
     auth_token: Option<&str>,
+    collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
 ) -> Value {
     if is_role_bound(grant.as_ref()) && board_tool_category(name).is_none() {
         return text_result(
@@ -962,6 +1019,7 @@ async fn call_tool_with_runtime_context(
             name,
             &arguments,
             grant.as_ref(),
+            collaboration_dispatcher,
         )
         .await
         {
@@ -973,7 +1031,6 @@ async fn call_tool_with_runtime_context(
             Err(error) => text_result(error, true),
         };
     }
-
     let should_use_backend = backend_url.is_some()
         && auth_token.is_some()
         && (matches!(name, "create_space" | "send_notification")
@@ -987,6 +1044,7 @@ async fn call_tool_with_runtime_context(
             name,
             &arguments,
             grant.as_ref(),
+            collaboration_dispatcher,
         )
         .await
         {
@@ -1009,11 +1067,21 @@ async fn call_tool_with_runtime_context(
     }
     let result = match name {
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
-        "create_dispatch_round" => {
-            local_create_dispatch_round(runtime, &arguments, grant.as_ref()).await
-        }
         "update_issue_status" => {
             local_update_issue_status(runtime, &arguments, grant.as_ref()).await
+        }
+        "submit_workflow_plan" => {
+            let manager_task_id = manager_runtime_task_id(grant.as_ref());
+            let plan = arguments.get("plan").ok_or_else(|| {
+                super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
+            });
+            match (manager_task_id, plan) {
+                (Ok(manager_task_id), Ok(plan)) => {
+                    runtime.submit_collaboration_round(manager_task_id, plan)
+                }
+                (Err(error), _) => Err(super::TaskRuntimeError::Invalid(error)),
+                (_, Err(error)) => Err(error),
+            }
         }
         "get_current_context" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -1094,14 +1162,44 @@ async fn call_tool_with_runtime_context(
                     .ok_or(super::TaskRuntimeError::ProjectNotFound)
                     .and_then(|project| {
                         runtime.list_chat_agents(project_id).map(|agents| {
+                            let groups = project.metadata["collaboration_groups"]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default();
+                            let mut member_ids = HashSet::new();
+                            let members = groups
+                                .iter()
+                                .flat_map(|group| {
+                                    group
+                                        .get("members")
+                                        .and_then(Value::as_array)
+                                        .into_iter()
+                                        .flatten()
+                                })
+                                .filter(|member| {
+                                    member.get("kind").and_then(Value::as_str) == Some("human")
+                                })
+                                .filter_map(|member| {
+                                    let id = member.get("id")?.as_str()?.trim();
+                                    if id.is_empty() || !member_ids.insert(id.to_owned()) {
+                                        return None;
+                                    }
+                                    Some(json!({
+                                        "id": id,
+                                        "name": member.get("name").and_then(Value::as_str).unwrap_or(id),
+                                        "role": member.get("role").and_then(Value::as_str).unwrap_or("member"),
+                                        "capability": member.get("responsibility").or_else(|| member.get("capability")).and_then(Value::as_str).unwrap_or_default(),
+                                    }))
+                                })
+                                .collect::<Vec<_>>();
                             json!({
-                                "members": [],
+                                "members": members,
                                 "robots": agents.into_iter().filter(|agent| agent.status == "active").map(|agent| json!({
                                     "id": agent.id,
                                     "name": agent.display_name,
                                     "capability": agent.capability_description,
                                 })).collect::<Vec<_>>(),
-                                "groups": project.metadata["collaboration_groups"].as_array().cloned().unwrap_or_default().into_iter().map(|group| json!({
+                                "groups": groups.into_iter().map(|group| json!({
                                     "id": group["id"],
                                     "name": group["name"],
                                     "capability": group["description"],
@@ -1665,102 +1763,13 @@ async fn call_tool_with_runtime_context(
     }
 }
 
-async fn local_create_dispatch_round(
-    runtime: &TaskRuntime,
-    arguments: &Value,
-    grant: Option<&SpaceContextGrant>,
-) -> Result<Value, super::TaskRuntimeError> {
-    dispatch_manager_id(grant).map_err(super::TaskRuntimeError::Invalid)?;
-    let project_id = string_argument(arguments, "space_id")?;
-    let issue_id = string_argument(arguments, "item_id")?;
-    runtime.get_task(project_id, issue_id).await?;
-    let payload =
-        normalize_dispatch_round(arguments, grant).map_err(super::TaskRuntimeError::Invalid)?;
-    let tasks = payload
-        .get("tasks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| super::TaskRuntimeError::Invalid("tasks is required".to_owned()))?;
-    let mut created = Vec::with_capacity(tasks.len());
-    for task in tasks {
-        let title = string_argument(task, "task_title")?.to_owned();
-        let instructions = string_argument(task, "instructions")?.to_owned();
-        let assignee_type = string_argument(task, "assignee_type")?;
-        let assignee_id = string_argument(task, "assignee_id")?;
-        let workflow_stage_id = task
-            .get("workflow_stage_id")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-        let assignee_user_id = match assignee_type {
-            "human" => Some(assignee_id.parse::<i64>().map_err(|_| {
-                super::TaskRuntimeError::Invalid(
-                    "human dispatch assignee_id must be a user ID".to_owned(),
-                )
-            })?),
-            "agent" => None,
-            _ => {
-                return Err(super::TaskRuntimeError::Invalid(
-                    "assignee_type must be human or agent".to_owned(),
-                ));
-            }
-        };
-        let child = runtime
-            .create_task(
-                project_id,
-                TaskCreate {
-                    title: title.clone(),
-                    description: instructions.clone(),
-                    status: "pending".to_owned(),
-                    priority: "none".to_owned(),
-                    parent_id: Some(issue_id.to_owned()),
-                    tags: Vec::new(),
-                    assignee_user_id,
-                    workflow: None,
-                },
-            )
-            .await?;
-        let child = if assignee_type == "agent" {
-            runtime
-                .update_task(
-                    project_id,
-                    &child.id,
-                    TaskUpdate {
-                        version: child.version,
-                        assignee_agent_id: Some(Some(assignee_id.to_owned())),
-                        execution_payload: Some(json!({
-                            "message": instructions,
-                            "dispatch_id": grant.and_then(|value| value.dispatch_id.as_deref()),
-                            "dispatch_role": "executor",
-                            "workflow_stage_id": workflow_stage_id,
-                            "workflow_task_title": title,
-                        })),
-                        ..TaskUpdate::default()
-                    },
-                )
-                .await?
-        } else {
-            child
-        };
-        created.push(json!({
-            "item_id": child.id,
-            "task_title": child.title,
-            "assignee_type": assignee_type,
-            "assignee_id": assignee_id,
-            "workflow_stage_id": workflow_stage_id,
-        }));
-    }
-    Ok(json!({
-        "dispatch_id": grant.and_then(|value| value.dispatch_id.as_deref()),
-        "idempotency_key": payload.get("idempotency_key"),
-        "tasks": created,
-    }))
-}
-
 async fn local_update_issue_status(
     runtime: &TaskRuntime,
     arguments: &Value,
     grant: Option<&SpaceContextGrant>,
 ) -> Result<Value, super::TaskRuntimeError> {
-    dispatch_manager_id(grant).map_err(super::TaskRuntimeError::Invalid)?;
+    let manager_runtime_task_id =
+        manager_runtime_task_id(grant).map_err(super::TaskRuntimeError::Invalid)?;
     let project_id = string_argument(arguments, "space_id")?;
     let issue_id = string_argument(arguments, "item_id")?;
     let payload = normalize_issue_status_decision(arguments, grant)
@@ -1773,11 +1782,40 @@ async fn local_update_issue_status(
             issue_id,
             TaskUpdate {
                 version: current.version,
-                status: Some(status),
+                status: Some(status.clone()),
                 ..TaskUpdate::default()
             },
         )
         .await?;
+    if let Some(comment) = payload
+        .get("comment")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let manager = runtime
+            .execution_by_runtime_task_id(manager_runtime_task_id)?
+            .ok_or_else(|| {
+                super::TaskRuntimeError::Invalid(
+                    "Collaboration manager execution is unavailable".to_owned(),
+                )
+            })?;
+        runtime.create_comment(LocalCommentCreate {
+            project_id: project_id.to_owned(),
+            task_id: issue_id.to_owned(),
+            client_message_id: None,
+            sender_type: "agent".to_owned(),
+            sender_id: manager.agent_id,
+            sender_name: manager.agent_name,
+            content: comment.to_owned(),
+            metadata: json!({
+                "dispatch_role": "manager",
+                "activity_type": "manager_status_comment",
+                "target_status": status,
+            }),
+            reply_to_message_id: None,
+        })?;
+    }
     serde_json::to_value(updated).map_err(invalid_json)
 }
 
@@ -1816,64 +1854,24 @@ fn primary_document_read_failed(value: &Value) -> bool {
         .is_some()
 }
 
-fn dispatch_manager_id(grant: Option<&SpaceContextGrant>) -> Result<&str, String> {
-    let grant = grant.ok_or_else(|| "Issue Dispatch manager context is required".to_owned())?;
+fn manager_dispatch_id(grant: Option<&SpaceContextGrant>) -> Result<&str, String> {
+    let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
     if grant.role != Some(SpaceContextRole::Manager) {
-        return Err("Issue Dispatch manager context is required".to_owned());
+        return Err("Collaboration manager context is required".to_owned());
     }
     grant
         .dispatch_id
         .as_deref()
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Issue Dispatch ID is missing".to_owned())
+        .ok_or_else(|| "Collaboration manager dispatch identity is missing".to_owned())
 }
 
-fn normalize_dispatch_round(
-    arguments: &Value,
-    grant: Option<&SpaceContextGrant>,
-) -> Result<Value, String> {
-    let tasks = arguments
-        .get("tasks")
-        .and_then(Value::as_array)
-        .filter(|tasks| !tasks.is_empty())
-        .ok_or_else(|| "tasks must contain at least one dispatch task".to_owned())?;
-    let mut normalized = Vec::with_capacity(tasks.len());
-    for task in tasks {
-        let title = task
-            .get("task_title")
-            .or_else(|| task.get("title"))
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "dispatch task title is required".to_owned())?;
-        let instructions = task
-            .get("instructions")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "dispatch task instructions are required".to_owned())?;
-        let assignee_type = task
-            .get("assignee_type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "dispatch task assignee_type is required".to_owned())?;
-        if !matches!(assignee_type, "human" | "agent") {
-            return Err("dispatch task assignee_type must be human or agent".to_owned());
-        }
-        let assignee_id = task
-            .get("assignee_id")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "dispatch task assignee_id is required".to_owned())?;
-        normalized.push(json!({
-            "task_title": title,
-            "instructions": instructions,
-            "assignee_type": assignee_type,
-            "assignee_id": assignee_id,
-            "workflow_stage_id": task.get("workflow_stage_id").cloned().unwrap_or(Value::Null),
-        }));
-    }
-    Ok(json!({
-        "idempotency_key": dispatch_idempotency_key("round", arguments, grant),
-        "tasks": normalized,
-    }))
+fn manager_runtime_task_id(grant: Option<&SpaceContextGrant>) -> Result<&str, String> {
+    manager_dispatch_id(grant)?;
+    grant
+        .map(|grant| grant.task_id.as_str())
+        .filter(|task_id| !task_id.trim().is_empty())
+        .ok_or_else(|| "Collaboration manager Runtime task identity is missing".to_owned())
 }
 
 fn normalize_issue_status_decision(
@@ -1898,35 +1896,18 @@ fn normalize_issue_status_decision(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "reason is required".to_owned())?;
     Ok(json!({
-        "idempotency_key": dispatch_idempotency_key("decision", arguments, grant),
+        "idempotency_key": arguments
+            .get("idempotency_key")
+            .cloned()
+            .unwrap_or_else(|| json!(grant.map(|value| value.task_id.as_str()).unwrap_or_default())),
         "target_status": status,
         "reason": reason,
+        "comment": arguments
+            .get("comment")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
     }))
-}
-
-fn dispatch_idempotency_key(
-    operation: &str,
-    arguments: &Value,
-    grant: Option<&SpaceContextGrant>,
-) -> String {
-    if let Some(value) = arguments
-        .get("idempotency_key")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    {
-        return value.to_owned();
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(operation.as_bytes());
-    hasher.update([0]);
-    if let Some(grant) = grant {
-        hasher.update(grant.task_id.as_bytes());
-        hasher.update([0]);
-        hasher.update(grant.dispatch_id.as_deref().unwrap_or_default().as_bytes());
-        hasher.update([0]);
-    }
-    hasher.update(arguments.to_string().as_bytes());
-    format!("{operation}-{:x}", hasher.finalize())
 }
 
 async fn call_backend_tool(
@@ -1936,36 +1917,115 @@ async fn call_backend_tool(
     name: &str,
     arguments: &Value,
     grant: Option<&SpaceContextGrant>,
+    collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
-    if matches!(name, "create_dispatch_round" | "update_issue_status") {
-        let dispatch_id = dispatch_manager_id(grant)?;
-        let (path, payload) = if name == "create_dispatch_round" {
-            (
-                format!(
-                    "{base}/issue-dispatches/{}/rounds",
-                    encode_segment(dispatch_id)
-                ),
-                normalize_dispatch_round(arguments, grant)?,
-            )
-        } else {
-            (
-                format!(
-                    "{base}/issue-dispatches/{}/decisions",
-                    encode_segment(dispatch_id)
-                ),
-                normalize_issue_status_decision(arguments, grant)?,
-            )
-        };
+    if name == "update_issue_status" {
+        manager_dispatch_id(grant)?;
+        let item_id = arguments
+            .get("item_id")
+            .and_then(Value::as_str)
+            .or_else(|| grant.and_then(|value| value.item_id.as_deref()))
+            .ok_or_else(|| "item_id is required".to_owned())?;
+        let decision = normalize_issue_status_decision(arguments, grant)?;
+        let current = backend_json(
+            client
+                .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
+                .bearer_auth(auth_token)
+                .send()
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+        .await?;
         let response = client
-            .post(path)
+            .patch(format!("{base}/loop-items/{}", encode_segment(item_id)))
             .bearer_auth(auth_token)
-            .json(&payload)
+            .json(&json!({
+                "version": current.get("version"),
+                "status": decision.get("target_status"),
+            }))
             .send()
             .await
             .map_err(|error| error.to_string())?;
         return backend_json(response).await;
+    }
+    if name == "submit_workflow_plan" {
+        let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
+        let dispatch_id = manager_dispatch_id(Some(grant))?.to_owned();
+        let item_id = grant
+            .item_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Collaboration manager Issue identity is missing".to_owned())?;
+        let manager_agent_id = grant
+            .manager_agent_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Collaboration manager agent identity is missing".to_owned())?;
+        let plan = arguments
+            .get("plan")
+            .filter(|value| value.is_object())
+            .ok_or_else(|| "workflow plan is required".to_owned())?;
+        let round_id = plan
+            .get("round_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "workflow plan round_id is required".to_owned())?;
+        let items = plan
+            .get("items")
+            .and_then(Value::as_array)
+            .filter(|items| !items.is_empty())
+            .ok_or_else(|| "workflow plan items must not be empty".to_owned())?;
+        let response = backend_json(
+            client
+                .post(format!(
+                    "{base}/cloud-projects/{project_id}/executions/batch"
+                ))
+                .bearer_auth(auth_token)
+                .json(&json!({
+                    "loop_item_id": item_id,
+                    "dispatch_id": dispatch_id,
+                    "round_id": round_id,
+                    "manager_runtime_task_id": grant.task_id,
+                    "manager_agent_id": manager_agent_id,
+                    "items": items,
+                }))
+                .send()
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+        .await?;
+        let execution_ids = response
+            .get("executions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|execution| execution.get("execution_id").and_then(Value::as_i64))
+            .collect::<Vec<_>>();
+        if execution_ids.len() != items.len() {
+            return Err("Backend did not persist every collaboration assignment".to_owned());
+        }
+        collaboration_dispatcher
+            .ok_or_else(|| "Executor collaboration coordinator is unavailable".to_owned())?
+            .dispatch(CloudCollaborationRoundCommand {
+                manager_runtime_task_id: grant.task_id.clone(),
+                project_id: project_id.to_owned(),
+                item_id: item_id.to_owned(),
+                dispatch_id: dispatch_id.clone(),
+                round_id: round_id.to_owned(),
+                execution_ids,
+            })?;
+        return Ok(json!({
+            "dispatch_id": dispatch_id,
+            "round_id": round_id,
+            "state": "dispatched",
+            "assignments": response
+                .get("executions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+            "next_action": "End this manager turn. The Executor will restart the manager after every assignment in this round reaches a terminal state.",
+        }));
     }
     let task_id = || {
         arguments
@@ -2768,42 +2828,55 @@ fn delivery_fulfillments_schema() -> Value {
 fn tools() -> Vec<Value> {
     vec![
         tool(
-            "create_dispatch_round",
-            "Create one Issue Dispatch round with independently executable tasks. Each task must name its assignee and may reference the configured workflow stage.",
+            "submit_workflow_plan",
+            "Dispatch one concurrent collaboration round. Each item starts a separate Executor run for the selected group agent. After every run finishes, the Executor starts a fresh manager run with the batch results.",
             json!({
                 "type": "object",
                 "properties": {
-                    "idempotency_key": {"type": "string", "minLength": 1},
-                    "tasks": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string", "minLength": 1},
-                                "instructions": {"type": "string", "minLength": 1},
-                                "assignee_type": {"enum": ["human", "agent"]},
-                                "assignee_id": {"type": "string", "minLength": 1},
-                                "workflow_stage_id": {"type": "string", "minLength": 1}
-                            },
-                            "required": ["title", "instructions", "assignee_type", "assignee_id"],
-                            "additionalProperties": false
-                        }
+                    "plan": {
+                        "type": "object",
+                        "properties": {
+                            "round_id": {"type": "string", "minLength": 1},
+                            "summary": {"type": "string"},
+                            "items": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string", "minLength": 1},
+                                        "instructions": {"type": "string", "minLength": 1},
+                                        "assignee_type": {"const": "agent"},
+                                        "assignee_id": {"type": "string", "minLength": 1},
+                                        "workflow_stage_id": {"type": "string", "minLength": 1}
+                                    },
+                                    "required": ["title", "instructions", "assignee_type", "assignee_id"],
+                                    "additionalProperties": false
+                                }
+                            }
+                        },
+                        "required": ["round_id", "items"],
+                        "additionalProperties": false
                     }
                 },
-                "required": ["tasks"],
+                "required": ["plan"],
                 "additionalProperties": false
             }),
         ),
         tool(
             "update_issue_status",
-            "Record the Issue Dispatch manager's explicit status decision after evaluating the current round results.",
+            "Record the collaboration manager's explicit Issue status decision after evaluating the current round results.",
             json!({
                 "type": "object",
                 "properties": {
                     "idempotency_key": {"type": "string", "minLength": 1},
                     "status": {"enum": ["inbox", "pending", "in_progress", "in_review", "completed"]},
-                    "reason": {"type": "string", "minLength": 1}
+                    "reason": {"type": "string", "minLength": 1},
+                    "comment": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Optional comment shown in the Issue activity as the manager's explanation to collaborators."
+                    }
                 },
                 "required": ["status", "reason"],
                 "additionalProperties": false
@@ -3385,7 +3458,7 @@ fn board_tool_category(name: &str) -> Option<BoardToolCategory> {
         | "get_assignment_candidates"
         | "assign_board_item"
         | "update_board_item"
-        | "create_dispatch_round"
+        | "submit_workflow_plan"
         | "update_issue_status"
         | "reorder_board_items" => Some(BoardToolCategory::Management),
         "list_spaces"
@@ -3555,7 +3628,7 @@ mod tests {
     use super::*;
     use crate::task_runtime::{
         ChatAgentCreate, LocalExecutionClaim, LocalTaskStore, ProjectDescriptor, ProjectStoreKind,
-        TaskCreate, TaskProviderKind,
+        ProjectUpdate, TaskCreate, TaskProviderKind,
     };
 
     fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
@@ -3672,7 +3745,7 @@ mod tests {
     }
 
     #[test]
-    fn binds_issue_dispatch_manager_with_management_and_execution_tools() {
+    fn binds_collaboration_manager_with_management_and_execution_tools() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -3747,6 +3820,7 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             dispatch_id: None,
+            manager_agent_id: None,
             automation_run_id: None,
             role: None,
             categories: HashSet::new(),
@@ -3768,6 +3842,33 @@ mod tests {
     }
 
     #[test]
+    fn manager_can_manage_child_items_inside_the_bound_project() {
+        let grant = SpaceContextGrant {
+            version: 1,
+            task_id: "manager-task-1".to_owned(),
+            space_id: Some("space-1".to_owned()),
+            item_id: Some("ISSUE-1".to_owned()),
+            device_id: Some("device-1".to_owned()),
+            dispatch_id: Some("dispatch-1".to_owned()),
+            manager_agent_id: Some("manager-agent-1".to_owned()),
+            automation_run_id: None,
+            role: Some(SpaceContextRole::Manager),
+            categories: HashSet::from([
+                BoardToolCategory::Management,
+                BoardToolCategory::Execution,
+            ]),
+            expires_at_unix: Local::now().timestamp() + 60,
+        };
+
+        assert!(context_scope_error(
+            &grant,
+            &json!({"space_id": "space-1", "item_id": "ISSUE-2"})
+        )
+        .is_none());
+        assert!(context_scope_error(&grant, &json!({"space_id": "space-2"})).is_some());
+    }
+
+    #[test]
     fn rejects_expired_context_grant() {
         let grant = SpaceContextGrant {
             version: 1,
@@ -3776,6 +3877,7 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             dispatch_id: None,
+            manager_agent_id: None,
             automation_run_id: None,
             role: None,
             categories: HashSet::new(),
@@ -4069,6 +4171,7 @@ mod tests {
             "send_notification",
             &json!({"title": "Review", "body": "Review failed", "item_id": "ISSUE-1"}),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4080,32 +4183,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn backend_dispatch_tools_use_dispatch_endpoints_and_normalize_arguments() {
-        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
+    async fn gets_assignment_candidates_through_the_authenticated_backend() {
+        use axum::{extract::Path, http::HeaderMap, routing::get, Json, Router};
+
+        async fn candidates(Path(kind): Path<String>, headers: HeaderMap) -> Json<Value> {
+            assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
+            Json(match kind.as_str() {
+                "members" => json!([{
+                    "user_id": 7,
+                    "user_name": "Alice",
+                    "role": "Developer",
+                    "capability_description": "Frontend implementation"
+                }]),
+                "chat-agents" => json!([{
+                    "id": "agent-9",
+                    "name": "Review bot",
+                    "capabilityDescription": "Code review and release checks"
+                }]),
+                "collaboration-groups" => json!({
+                    "items": [{
+                        "id": "group-3",
+                        "name": "Release group",
+                        "description": "Coordinates release work"
+                    }]
+                }),
+                _ => panic!("unexpected candidate kind: {kind}"),
+            })
+        }
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let app = Router::new()
-            .route(
-                "/api/v1/issue-dispatches/dispatch-1/rounds",
-                post(|headers: HeaderMap, Json(body): Json<Value>| async move {
-                    assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
-                    assert_eq!(body["tasks"][0]["task_title"], "Inspect CPU");
-                    assert_eq!(body["tasks"][0]["assignee_type"], "agent");
-                    assert!(body["idempotency_key"]
-                        .as_str()
-                        .is_some_and(|value| value.starts_with("round-")));
-                    Json(body)
-                }),
-            )
-            .route(
-                "/api/v1/issue-dispatches/dispatch-1/decisions",
-                post(|headers: HeaderMap, Json(body): Json<Value>| async move {
-                    assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
-                    assert_eq!(body["target_status"], "in_review");
-                    assert_eq!(body["reason"], "Evidence is ready");
-                    Json(body)
-                }),
-            );
+        let app = Router::new().route("/api/v1/cloud-projects/12/{kind}", get(candidates));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = call_backend_tool(
+            &format!("http://{address}"),
+            "unit-token",
+            "12",
+            "get_assignment_candidates",
+            &json!({}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["members"][0]["id"], 7);
+        assert_eq!(result["robots"][0]["id"], "agent-9");
+        assert_eq!(result["groups"][0]["id"], "group-3");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn backend_manager_status_update_uses_the_generic_board_item_api() {
+        use axum::{extract::Json, http::HeaderMap, routing::get, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/loop-items/ISSUE-1",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                Json(json!({"id": "ISSUE-1", "version": 7, "status": "in_progress"}))
+            })
+            .patch(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                assert_eq!(body, json!({"version": 7, "status": "in_review"}));
+                Json(json!({"id": "ISSUE-1", "version": 8, "status": "in_review"}))
+            }),
+        );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let grant = SpaceContextGrant {
             task_id: "manager-task".to_owned(),
@@ -4115,25 +4260,6 @@ mod tests {
             ..role_grant(SpaceContextRole::Manager)
         };
 
-        let round = call_backend_tool(
-            &format!("http://{address}"),
-            "task-token",
-            "12",
-            "create_dispatch_round",
-            &json!({
-                "tasks": [{
-                    "title": "Inspect CPU",
-                    "instructions": "Collect two read-only samples",
-                    "assignee_type": "agent",
-                    "assignee_id": "agent-1"
-                }]
-            }),
-            Some(&grant),
-        )
-        .await
-        .unwrap();
-        assert_eq!(round["tasks"][0]["task_title"], "Inspect CPU");
-
         let decision = call_backend_tool(
             &format!("http://{address}"),
             "task-token",
@@ -4141,10 +4267,11 @@ mod tests {
             "update_issue_status",
             &json!({"status": "in_review", "reason": "Evidence is ready"}),
             Some(&grant),
+            None,
         )
         .await
         .unwrap();
-        assert_eq!(decision["target_status"], "in_review");
+        assert_eq!(decision["status"], "in_review");
         server.abort();
     }
 
@@ -4186,6 +4313,7 @@ mod tests {
                 item_id: Some("ISSUE-1".to_owned()),
                 device_id: None,
                 dispatch_id: None,
+                manager_agent_id: None,
                 automation_run_id: None,
                 role: None,
                 categories: HashSet::new(),
@@ -4198,6 +4326,7 @@ mod tests {
                 grant,
                 Some(&url),
                 Some("unit-token"),
+                None,
             )
             .await;
             assert_eq!(result["isError"], false, "{result}");
@@ -4223,6 +4352,7 @@ mod tests {
                 None,
                 backend,
                 token,
+                None,
             )
             .await;
             assert_eq!(result["isError"], true);
@@ -4274,7 +4404,7 @@ mod tests {
             "get_assignment_candidates",
             "create_board_item",
             "update_board_item",
-            "create_dispatch_round",
+            "submit_workflow_plan",
             "update_issue_status",
             "update_space",
             "reorder_board_items",
@@ -4310,7 +4440,6 @@ mod tests {
         assert!(names.contains(&"upload_item_attachment"));
         assert!(!names.contains(&"assign_board_item"));
         assert!(!names.contains(&"update_board_item"));
-        assert!(!names.contains(&"create_dispatch_round"));
         assert!(!names.contains(&"update_issue_status"));
 
         let denied = call_tool_with_grant(
@@ -4328,7 +4457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_dispatch_manager_creates_agent_work_and_updates_issue_explicitly() {
+    async fn local_collaboration_manager_updates_issue_explicitly() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let project = store
@@ -4340,19 +4469,18 @@ mod tests {
                 provider_config: json!({}),
             })
             .unwrap();
-        let runtime = TaskRuntime::new(store).unwrap();
-        let agent = runtime
+        let manager = store
             .create_chat_agent(
                 &project.id,
                 ChatAgentCreate {
-                    name: "worker".to_owned(),
-                    display_name: Some("Worker".to_owned()),
+                    name: "manager".to_owned(),
+                    display_name: Some("Issue manager".to_owned()),
                     namespace: None,
                     runtime: "codex".to_owned(),
                     model: None,
                     model_type: None,
                     model_namespace: None,
-                    capability_description: Some("Read-only diagnostics".to_owned()),
+                    capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
                     visibility: Some("creator_admin".to_owned()),
@@ -4369,6 +4497,25 @@ mod tests {
                 },
             )
             .unwrap();
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "group-1",
+                        "name": "Review group",
+                        "leader": {
+                            "kind": "agent",
+                            "id": manager.id,
+                        },
+                        "members": [],
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
         let issue = runtime
             .create_task(
                 &project.id,
@@ -4385,39 +4532,19 @@ mod tests {
             )
             .await
             .unwrap();
-        let grant = SpaceContextGrant {
-            task_id: "manager-task".to_owned(),
-            space_id: Some(project.id.clone()),
-            item_id: Some(issue.id.clone()),
-            dispatch_id: Some("dispatch-local".to_owned()),
-            expires_at_unix: Local::now().timestamp() + 60,
-            ..role_grant(SpaceContextRole::Manager)
-        };
-
-        let created = call_tool_with_grant(
-            &runtime,
-            "create_dispatch_round",
-            json!({
-                "tasks": [{
-                    "title": "Collect CPU evidence",
-                    "instructions": "Collect two read-only samples",
-                    "assignee_type": "agent",
-                    "assignee_id": agent.id,
-                    "workflow_stage_id": "diagnosis"
-                }]
-            }),
-            Some(grant.clone()),
-        )
-        .await;
-        assert_eq!(created["isError"], false, "{created}");
-        let created: Value =
-            serde_json::from_str(created["content"][0]["text"].as_str().unwrap()).unwrap();
-        let child_id = created["tasks"][0]["item_id"].as_str().unwrap();
-        let child = runtime.get_task(&project.id, child_id).await.unwrap();
-        assert_eq!(child.title.as_deref(), Some("Collect CPU evidence"));
-        assert_eq!(child.parent_id.as_deref(), Some(issue.id.as_str()));
-
-        let claimed = runtime
+        let issue = runtime
+            .update_task(
+                &project.id,
+                &issue.id,
+                TaskUpdate {
+                    version: issue.version,
+                    assignee_group_id: Some(Some("group-1".to_owned())),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        let manager_execution = runtime
             .claim_next_local_execution(LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
                 runtime_instance_id: "runtime-1".to_owned(),
@@ -4427,16 +4554,27 @@ mod tests {
                 lease_seconds: 300,
             })
             .unwrap()
-            .expect("dispatched execution");
-        let origin = &claimed.execution_payload.as_ref().unwrap()["origin"];
-        assert_eq!(origin["type"], "issue_dispatch");
-        assert_eq!(origin["dispatchId"], "dispatch-local");
-        assert_eq!(origin["dispatchRole"], "executor");
+            .expect("manager execution must be queued");
+        let grant = SpaceContextGrant {
+            task_id: manager_execution
+                .runtime_task_id
+                .clone()
+                .expect("manager Runtime task id"),
+            space_id: Some(project.id.clone()),
+            item_id: Some(issue.id.clone()),
+            dispatch_id: Some("dispatch-local".to_owned()),
+            expires_at_unix: Local::now().timestamp() + 60,
+            ..role_grant(SpaceContextRole::Manager)
+        };
 
         let updated = call_tool_with_grant(
             &runtime,
             "update_issue_status",
-            json!({"status": "in_review", "reason": "The round produced evidence"}),
+            json!({
+                "status": "in_review",
+                "reason": "The round produced evidence",
+                "comment": "执行结果已满足验收条件，请确认。"
+            }),
             Some(grant),
         )
         .await;
@@ -4450,10 +4588,19 @@ mod tests {
                 .as_deref(),
             Some("in_review")
         );
+        let comments = runtime.list_comments(&project.id, &issue.id, 0).unwrap();
+        let decision = comments
+            .iter()
+            .find(|comment| comment.metadata["activity_type"] == "manager_status_comment")
+            .expect("manager decision comment");
+        assert_eq!(decision.sender_id, manager.id);
+        assert_eq!(decision.sender_name, "Issue manager");
+        assert_eq!(decision.content, "执行结果已满足验收条件，请确认。");
+        assert_eq!(decision.metadata["target_status"], "in_review");
     }
 
     #[test]
-    fn dispatch_manager_receives_management_and_execution_tools() {
+    fn collaboration_manager_receives_management_and_execution_tools() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let runtime = TaskRuntime::new(store).unwrap();
@@ -4475,7 +4622,6 @@ mod tests {
 
         assert_eq!(names.len(), tools().len());
         assert!(names.contains(&"update_board_item"));
-        assert!(names.contains(&"create_dispatch_round"));
         assert!(names.contains(&"update_issue_status"));
         assert!(names.contains(&"upload_item_attachment"));
         assert!(names.contains(&"read_space_file"));

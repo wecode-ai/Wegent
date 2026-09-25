@@ -510,10 +510,14 @@ impl TaskRuntime {
         &self,
         project_id: &str,
         task_id: &str,
+        activity_sequence: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.mark_task_read(project_id, task_id),
+            TaskProviderKind::Local => {
+                self.local_store
+                    .mark_task_read(project_id, task_id, activity_sequence)
+            }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -700,6 +704,14 @@ impl TaskRuntime {
             .list_executions(project_id, agent_id, status, include_terminal)
     }
 
+    pub fn execution_by_runtime_task_id(
+        &self,
+        runtime_task_id: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store
+            .execution_by_runtime_task_id(runtime_task_id)
+    }
+
     pub fn list_comments(
         &self,
         project_id: &str,
@@ -747,6 +759,15 @@ impl TaskRuntime {
             payload,
             trigger_message_id,
         )
+    }
+
+    pub fn submit_collaboration_round(
+        &self,
+        manager_runtime_task_id: &str,
+        plan: &serde_json::Value,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.local_store
+            .submit_collaboration_round(manager_runtime_task_id, plan)
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {

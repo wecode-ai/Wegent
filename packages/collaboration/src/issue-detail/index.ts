@@ -4,7 +4,6 @@
 
 export * from "./IssueDetailCore";
 export * from "./IssueActivityPanel";
-export * from "./IssueDispatchPanel";
 export * from "./IssueActivityFeed";
 export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
@@ -30,6 +29,7 @@ export * from "./CompositedSpinner";
 export * from "./Tooltip";
 export * from "./executionStatus";
 export * from "./activityMessageUtils";
+export * from "./managerActivity";
 
 export * from "./IssueMainCommentComposer";
 export * from "./useIssueMentionCandidates";

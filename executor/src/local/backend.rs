@@ -844,9 +844,15 @@ async fn drain_available_runtime_work<T>(
             write_executor_error_line("runtime task pull returned no payload");
             return;
         };
+        let method =
+            if payload.get("dispatchKind").and_then(Value::as_str) == Some("collaboration_group") {
+                "runtime.collaboration.dispatch"
+            } else {
+                "runtime.tasks.create"
+            };
         let response = match handler
             .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.create",
+                "method": method,
                 "payload": payload,
             }))
             .await

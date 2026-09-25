@@ -23,6 +23,12 @@ const CHECKPOINT_RESOURCES = new Map([
   ['workspace-attachments', ['desktop-runtime-intensive']],
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  [
+    'collaboration-local-group-cancellation',
+    ['collaboration-runtime', 'desktop-runtime-intensive'],
+  ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
@@ -69,13 +75,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
-  'collaboration-local-executor-issue-tools':
-    './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
-  'issue-dispatch-unified-board': './scenarios/issue-dispatch.scenario.mjs',
-  'issue-dispatch-human': './scenarios/issue-dispatch.scenario.mjs',
-  'issue-dispatch-agent': './scenarios/issue-dispatch.scenario.mjs',
-  'issue-dispatch-group-round': './scenarios/issue-dispatch.scenario.mjs',
-  'issue-dispatch-cancellation': './scenarios/issue-dispatch.scenario.mjs',
+  'collaboration-local-group-coordinate':
+    './scenarios/collaboration-local-group-coordinate.scenario.mjs',
+  'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
+  'collaboration-local-group-cancellation':
+    './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -105,12 +109,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-shared-core',
   'collaboration-first-use',
   'collaboration-group-onboarding',
-  'collaboration-local-executor-issue-tools',
-  'issue-dispatch-unified-board',
-  'issue-dispatch-human',
-  'issue-dispatch-agent',
-  'issue-dispatch-group-round',
-  'issue-dispatch-cancellation',
+  'collaboration-local-group-coordinate',
+  'collaboration-human-round-resume',
+  'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
   'plugin-development',

@@ -1038,7 +1038,7 @@ function localRuntimeModelConfig(
       upstream_api_format: upstreamApiFormat,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
-      tool_profile: 'custom',
+      tool_profile: 'function',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -1350,7 +1350,8 @@ async function buildLocalRuntimeExecutionRequest(
     input.resolveProxy
   )
   const reasoning = runtimeReasoning(input.modelOptions)
-  const collaborationMode = runtimeCollaborationMode(input.modelOptions)
+  const collaborationMode =
+    runtimeCollaborationMode(input.modelOptions) || stringValue(input.origin?.collaborationMode)
   const skillNames = Array.from(
     new Set([...(input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)])
   )
@@ -1687,7 +1688,9 @@ async function createLocalRuntimeTaskPayload(
     normalizedData.origin?.projectStore !== 'local' && normalizedData.wegentTeamId
       ? await materializeTeamRuntimeTask(normalizedData, materializeRuntimeTask)
       : null
-  const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
+  const collaborationMode =
+    runtimeCollaborationMode(normalizedData.modelOptions) ||
+    stringValue(normalizedData.origin?.collaborationMode)
   const turnSeed = createRuntimeTurnSeed()
   const payload = {
     ...(materialized?.payload ?? normalizedData),

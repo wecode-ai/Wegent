@@ -30,6 +30,7 @@ pub(super) fn create_local_execution(
     } else {
         None
     };
+    let execution_scope = local_execution_scope(item_id, &payload);
     connection.execute(
         "INSERT INTO loop_item_executions (
             loop_item_id, cloud_project_id, agent_id, execution_environment,
@@ -55,12 +56,24 @@ pub(super) fn create_local_execution(
             } else {
                 Some(payload.to_string())
             },
-            format!("project_robot:{item_id}"),
+            execution_scope,
         ],
     )?;
     let execution_id = connection.last_insert_rowid();
     create_execution_comment(connection, execution_id, "pending", "")?;
     Ok(execution_id)
+}
+
+fn local_execution_scope(item_id: &str, payload: &Value) -> String {
+    if payload.get("dispatch_role").and_then(Value::as_str) == Some("member")
+        && payload
+            .get("coordination_round_id")
+            .and_then(Value::as_str)
+            .is_some_and(|round_id| !round_id.trim().is_empty())
+    {
+        return String::new();
+    }
+    format!("project_robot:{item_id}")
 }
 
 pub(super) fn insert_task_binding(
@@ -112,6 +125,8 @@ pub(super) fn create_execution_comment(
         "execution_id": execution_id,
         "previous_execution_id": execution.previous_execution_id,
         "trigger_message_id": trigger,
+        "dispatch_role": payload.get("dispatch_role"),
+        "dispatch_assignments": [],
         "workflow_node_id": payload.get("workflow_node_id"),
         "workflow_task_title": workflow_task_title,
         "automation_run_id": payload.get("automation_run_id"),

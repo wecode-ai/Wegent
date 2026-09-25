@@ -131,6 +131,7 @@ export interface CollaborationIssue {
   sort_order: number;
   current_delivery_id?: string | null;
   content_revision?: number;
+  activity_read_sequence?: number;
   is_unread?: boolean;
   version: number;
   created_at: string;

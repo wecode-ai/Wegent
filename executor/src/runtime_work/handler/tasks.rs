@@ -5,6 +5,60 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn create_collaboration_dispatch(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        if payload.get("dispatchKind").and_then(Value::as_str) != Some("collaboration_group") {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration dispatch kind is required",
+            ));
+        }
+        let dispatch_task_id = string_field(&payload, "dispatchTaskId")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration dispatch task identity is required",
+                )
+            })?;
+        let mut manager_request = payload
+            .get("managerRuntimeRequest")
+            .cloned()
+            .filter(Value::is_object)
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager Runtime request is required",
+                )
+            })?;
+        let manager_task_id = manager_request
+            .get("localTaskId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager task identity is required",
+                )
+            })?;
+        if manager_task_id != dispatch_task_id {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration manager must run inside the claimed dispatch",
+            ));
+        }
+        manager_request
+            .as_object_mut()
+            .expect("validated collaboration manager request")
+            .insert(
+                "collaborationDispatch".to_owned(),
+                json!({"taskId": dispatch_task_id}),
+            );
+        self.create_task(manager_request).await
+    }
+
     pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;

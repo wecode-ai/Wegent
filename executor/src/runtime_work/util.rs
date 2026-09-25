@@ -911,6 +911,21 @@ mod tests {
     }
 
     #[test]
+    fn copies_nested_collaboration_mode_into_execution_request_extra() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"modelOptions": {"collaborationMode": "coordinate"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("collaborationMode"),
+            Some(&json!("coordinate"))
+        );
+    }
+
+    #[test]
     fn normalizes_runtime_additional_skills_for_agent_consumers() {
         let mut request = ExecutionRequest::default();
 

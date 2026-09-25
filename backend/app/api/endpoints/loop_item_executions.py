@@ -10,6 +10,7 @@ cloud Celery dispatcher (which also calls the service directly).
 """
 
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -20,9 +21,11 @@ from app.core.distributed_lock import distributed_lock
 from app.core.security import get_current_user
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.project_chat import (
+    LoopItemExecutionBatchCreate,
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
     LoopItemExecutionDeviceClaim,
@@ -32,6 +35,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
     LoopItemExecutionRuntimeStart,
+    LoopItemExecutionStatusQuery,
     LoopItemExecutionView,
 )
 from app.schemas.runtime_profile import ExecutionRuntimeSelect
@@ -97,6 +101,26 @@ def _require_project_execution(
     return row
 
 
+def _collaboration_group_agent_ids(item: LoopItem) -> set[str]:
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    group = metadata.get("collaboration_group")
+    if not isinstance(group, dict):
+        return set()
+    values: set[str] = set()
+    leader = group.get("leader")
+    if isinstance(leader, dict) and leader.get("kind") == "agent":
+        values.add(str(leader.get("id") or ""))
+    members = group.get("members")
+    if isinstance(members, list):
+        values.update(
+            str(member.get("id") or "")
+            for member in members
+            if isinstance(member, dict) and member.get("kind") == "agent"
+        )
+    values.discard("")
+    return values
+
+
 def _execution_view(
     db: Session,
     row: object,
@@ -112,6 +136,14 @@ def _execution_view(
         agent_max_concurrent_executions = bot_max_concurrent_executions(agent)
     else:
         agent_max_concurrent_executions = 1
+    runtime_payload = (
+        loop_item_execution_service.build_runtime_payload(
+            db,
+            execution=row,
+        )
+        if include_runtime_payload
+        else None
+    )
     return LoopItemExecutionView.model_validate(
         {
             "id": row.id,
@@ -169,14 +201,7 @@ def _execution_view(
             "waiting_runtime_reason": (
                 row.execution_note if row.status == "waiting_runtime" else None
             ),
-            "runtime_payload": (
-                loop_item_execution_service.build_runtime_payload(
-                    db,
-                    execution=row,
-                )
-                if include_runtime_payload
-                else None
-            ),
+            "runtime_payload": runtime_payload,
             "version": row.version,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
@@ -274,6 +299,198 @@ def list_executions(
         items=[LoopItemExecutionView.model_validate(row) for row in rows],
         total=len(rows),
     )
+
+
+@router.post("/{project_id}/executions/batch")
+def enqueue_execution_batch(
+    project_id: int,
+    values: LoopItemExecutionBatchCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Persist an exact batch selected by an Executor-owned manager.
+
+    This endpoint does not decide when to create a batch, wait for it, resume a
+    manager, or move the Issue. Those responsibilities remain in Executor.
+    """
+
+    require_cloud_project_role(
+        db,
+        project_id,
+        current_user.id,
+        BaseRole.Developer,
+    )
+    item = db.get(LoopItem, values.loop_item_id)
+    if item is None or str(item.cloud_project_id) != str(project_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+    allowed_agent_ids = _collaboration_group_agent_ids(item)
+    if not allowed_agent_ids:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Issue is not assigned to a collaboration group",
+        )
+    manager = _require_project_agent(
+        db,
+        project_id=project_id,
+        agent_id=values.manager_agent_id,
+    )
+    if manager.id not in allowed_agent_ids:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Manager is not part of the collaboration group",
+        )
+
+    executions: list[dict[str, object]] = []
+    assignment_activity: list[dict[str, object]] = []
+    for command in values.items:
+        if command.assignee_id not in allowed_agent_ids:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Assignment target is not part of the collaboration group",
+            )
+        agent = _require_project_agent(
+            db,
+            project_id=project_id,
+            agent_id=command.assignee_id,
+        )
+        run_id = (
+            f"collaboration:{values.dispatch_id}:{values.round_id}:"
+            f"{command.assignment_id}"
+        )
+        existing = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.automation_run_id == run_id)
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        execution = existing or loop_item_execution_service.create_for_assignment(
+            db,
+            loop_item_id=item.id,
+            cloud_project_id=str(project_id),
+            agent=agent,
+            assigner_user_id=current_user.id,
+            environment="local",
+            execution_device_id=None,
+            priority=item.priority,
+            automation_context={
+                "run_id": run_id,
+                "dispatch_id": values.dispatch_id,
+                "dispatch_task_id": item.id,
+                "dispatch_role": "member",
+                "manager_agent_id": manager.id,
+                "manager_runtime_task_id": values.manager_runtime_task_id,
+                "coordination_round_id": values.round_id,
+                "assignment_id": command.assignment_id,
+                "workflow_task_title": command.title,
+                "workflow_stage_id": command.workflow_stage_id,
+            },
+            instruction=command.instructions,
+        )
+        executions.append(
+            {
+                "execution_id": execution.id,
+                "runtime_task_id": execution.runtime_task_id,
+                "status": execution.status,
+                "assignment_id": command.assignment_id,
+                "task_title": command.title,
+                "agent_id": agent.id,
+                "agent_name": agent.title or agent.name or "AI",
+                "workflow_stage_id": command.workflow_stage_id,
+            }
+        )
+        assignment_activity.append(
+            {
+                "assignment_id": command.assignment_id,
+                "task_title": command.title,
+                "agent_id": agent.id,
+                "agent_name": agent.title or agent.name or "AI",
+                "workflow_stage_id": command.workflow_stage_id,
+                "execution_id": execution.id,
+            }
+        )
+
+    message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+    db.add(
+        ProjectChatMessage(
+            message_id=message_id,
+            client_message_id=message_id,
+            project_id=str(project_id),
+            task_id=item.id,
+            sender_type="agent",
+            sender_id=manager.id,
+            sender_name=manager.title or manager.name or "AI manager",
+            message_type="text",
+            content="",
+            metadata_json={
+                "dispatch_role": "manager",
+                "activity_type": "manager_assignment",
+                "coordination_round_id": values.round_id,
+                "dispatch_assignments": assignment_activity,
+            },
+            agent_id=manager.id,
+            status="completed",
+        )
+    )
+    db.commit()
+    return {
+        "dispatch_id": values.dispatch_id,
+        "round_id": values.round_id,
+        "executions": executions,
+    }
+
+
+@router.post("/{project_id}/executions/statuses")
+def execution_statuses(
+    project_id: int,
+    values: LoopItemExecutionStatusQuery,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Read exact execution outcomes for an Executor-owned round barrier."""
+
+    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Viewer)
+    rows = (
+        db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.id.in_(values.execution_ids),
+            LoopItemExecution.cloud_project_id == str(project_id),
+        )
+        .all()
+    )
+    by_id = {row.id: row for row in rows}
+    items: list[dict[str, object]] = []
+    for execution_id in values.execution_ids:
+        row = by_id.get(execution_id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+        activities = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.project_id == str(project_id),
+                ProjectChatMessage.task_id == row.loop_item_id,
+            )
+            .order_by(ProjectChatMessage.created_at.desc())
+            .all()
+        )
+        activity = next(
+            (
+                message
+                for message in activities
+                if isinstance(message.metadata_json, dict)
+                and int(message.metadata_json.get("execution_id") or 0) == row.id
+            ),
+            None,
+        )
+        items.append(
+            {
+                "execution_id": row.id,
+                "status": row.status,
+                "agent_id": row.agent_id,
+                "result": activity.content if activity is not None else "",
+                "error": row.error_message or "",
+            }
+        )
+    return {"items": items}
 
 
 @router.post(

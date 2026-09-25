@@ -19,9 +19,6 @@ import type {
   CollaborationMember,
   CollaborationProject,
   CollaborationUser,
-  IssueDispatch,
-  IssueDispatchRound,
-  IssueDispatchTask,
   SharedWorkspaceApi,
   WeworkWorkspaceRuntimePort,
   WorkspaceBoardSnapshot,
@@ -36,7 +33,6 @@ import type {
 import type {
   CloudLoopItem,
   CloudProject,
-  IssueDispatchDto,
   ProjectBoardSnapshot,
   ProjectDeliveryFile,
   createDeliveryApi,
@@ -74,7 +70,6 @@ export interface WeworkDeliverySharedWorkspaceApi {
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
   taskBindings: SharedWorkspaceApi['taskBindings']
-  dispatches: SharedWorkspaceApi['dispatches']
   members: SharedWorkspaceApi['members']
   files: SharedWorkspaceApi['files']
   deliveries: SharedWorkspaceApi['deliveries']
@@ -110,17 +105,6 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   ],
   collaborators: ['list', 'add', 'remove'],
   taskBindings: ['list', 'bindTask', 'unbindTask'],
-  dispatches: [
-    'list',
-    'get',
-    'listCandidates',
-    'create',
-    'createRound',
-    'cancelTask',
-    'retry',
-    'decide',
-    'returnForRework',
-  ],
   members: ['list', 'searchUsers', 'add', 'update', 'remove'],
   files: [
     'list',
@@ -216,122 +200,6 @@ function toMyWorkItem(
   return {
     ...item,
     ...toIssue(item),
-  }
-}
-
-function toDispatchTask(
-  row: IssueDispatchDto['rounds'][number]['tasks'][number],
-  dispatchId: string,
-  roundId: string,
-  issueId: string
-): IssueDispatchTask {
-  const status: IssueDispatchTask['status'] =
-    row.status === 'running'
-      ? 'running'
-      : row.status === 'submitted'
-        ? 'submitted'
-        : row.status === 'queued'
-          ? 'queued'
-          : row.status === 'needs_rework'
-            ? 'needs_rework'
-            : row.status === 'failed'
-              ? 'failed'
-              : row.status === 'cancelled'
-                ? 'cancelled'
-                : 'assigned'
-  return {
-    id: row.id,
-    dispatchId,
-    roundId,
-    issueId,
-    title: row.task_title,
-    instruction: row.instructions,
-    target: {
-      kind: row.assignee_type,
-      id: row.assignee_id,
-      name: row.assignee_name,
-    },
-    workflowStageId: row.workflow_stage_id,
-    workflowStageName: null,
-    executionLocation: row.execution_location,
-    status,
-    outcome:
-      row.status === 'submitted' ||
-      row.status === 'failed' ||
-      row.status === 'needs_rework' ||
-      row.status === 'cancelled'
-        ? {
-            id: `${row.id}:latest`,
-            dispatchId,
-            roundId,
-            taskId: row.id,
-            status:
-              row.status === 'submitted'
-                ? 'passed'
-                : row.status === 'needs_rework'
-                  ? 'needs_rework'
-                  : row.status === 'cancelled'
-                    ? 'cancelled'
-                    : 'failed',
-            summary: row.summary,
-            evidence: [],
-            createdAt: row.updated_at,
-          }
-        : null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
-function toDispatchRound(
-  row: IssueDispatchDto['rounds'][number],
-  dispatchId: string,
-  issueId: string
-): IssueDispatchRound {
-  return {
-    id: row.id,
-    dispatchId,
-    sequence: row.sequence,
-    status:
-      row.status === 'executing'
-        ? 'executing'
-        : row.status === 'evaluating'
-          ? 'evaluating'
-          : row.status === 'closed'
-            ? 'closed'
-            : row.status === 'cancelled'
-              ? 'cancelled'
-              : 'planning',
-    tasks: row.tasks.map(task => toDispatchTask(task, dispatchId, row.id, issueId)),
-    createdAt: row.created_at,
-    completedAt: row.status === 'closed' || row.status === 'cancelled' ? row.updated_at : null,
-  }
-}
-
-function toIssueDispatch(row: IssueDispatchDto): IssueDispatch {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    issueId: row.issue_id,
-    target: {
-      kind: row.target_type === 'group' ? 'collaboration_group' : row.target_type,
-      id: row.target_id,
-      name: row.target_name,
-    },
-    leaderType: row.leader_type,
-    leaderId: row.leader_id,
-    leaderName: row.leader_name,
-    status:
-      row.status === 'completed'
-        ? 'completed'
-        : row.status === 'cancelled'
-          ? 'cancelled'
-          : 'active',
-    rounds: row.rounds.map(round => toDispatchRound(round, row.id, row.issue_id)),
-    managerTurnCount: row.manager_turn_count,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.status === 'completed' || row.status === 'cancelled' ? row.updated_at : null,
   }
 }
 
@@ -679,8 +547,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
           })
         ).items.map(toIssue)
       },
-      markRead(issueId) {
-        return deliveryApi.markLoopItemRead(issueId).then(toIssue)
+      markRead(issueId, activitySequence) {
+        return deliveryApi.markLoopItemRead(issueId, activitySequence).then(toIssue)
       },
     },
     attachments: {
@@ -733,73 +601,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listTaskBindings(issueId)).map(binding =>
           mapWorkspaceTaskBindingDto(binding, projectId)
         )
-      },
-    },
-    dispatches: {
-      async list(issueId) {
-        return (await deliveryApi.listIssueDispatches(issueId)).map(toIssueDispatch)
-      },
-      async get(dispatchId) {
-        return toIssueDispatch(await deliveryApi.getIssueDispatch(dispatchId))
-      },
-      async listCandidates(issueId, targetKind) {
-        return (
-          await deliveryApi.listIssueDispatchCandidates(
-            issueId,
-            targetKind === 'collaboration_group' ? 'group' : targetKind
-          )
-        ).map(candidate => ({
-          kind:
-            candidate.target_type === 'group'
-              ? ('collaboration_group' as const)
-              : candidate.target_type,
-          id: candidate.target_id,
-          name: candidate.name,
-          description: candidate.execution_location,
-        }))
-      },
-      async create(issueId, input) {
-        return toIssueDispatch(
-          await deliveryApi.createIssueDispatch(issueId, {
-            target_type: input.target.kind === 'collaboration_group' ? 'group' : input.target.kind,
-            target_id: input.target.id,
-            idempotency_key: crypto.randomUUID(),
-            task_title: input.taskTitle,
-            instructions: input.instructions,
-          })
-        )
-      },
-      async createRound(dispatchId, input) {
-        return toIssueDispatch(
-          await deliveryApi.createIssueDispatchRound(dispatchId, {
-            idempotency_key: crypto.randomUUID(),
-            tasks: input.tasks.map(task => ({
-              task_title: task.title,
-              instructions: task.instruction,
-              assignee_type: task.target.kind === 'human' ? 'human' : 'agent',
-              assignee_id: task.target.id,
-              workflow_stage_id: task.workflowStageId ?? null,
-            })),
-          })
-        )
-      },
-      async cancelTask(taskId) {
-        return toIssueDispatch(await deliveryApi.cancelIssueDispatchTask(taskId))
-      },
-      async retry(dispatchId) {
-        return toIssueDispatch(await deliveryApi.retryIssueDispatch(dispatchId))
-      },
-      async decide(dispatchId, input) {
-        return toIssueDispatch(
-          await deliveryApi.decideIssueDispatch(dispatchId, {
-            idempotency_key: crypto.randomUUID(),
-            target_status: input.status,
-            reason: input.reason,
-          })
-        )
-      },
-      async returnForRework(dispatchId) {
-        return toIssueDispatch(await deliveryApi.returnIssueDispatchForRework(dispatchId))
       },
     },
     members: {

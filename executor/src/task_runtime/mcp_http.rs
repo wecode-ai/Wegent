@@ -32,8 +32,8 @@ use crate::logging::log_executor_event;
 
 use super::{
     mcp::{
-        handle_request_with_context, SpaceMcpRequestContext, WeworkMcpSurface,
-        SPACE_MCP_SERVER_NAME,
+        handle_request_with_context, CloudCollaborationRoundDispatcher, SpaceMcpRequestContext,
+        WeworkMcpSurface, SPACE_MCP_SERVER_NAME,
     },
     TaskRuntime,
 };
@@ -65,6 +65,7 @@ struct SpaceMcpHttpState {
     token: String,
     sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
+    collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
 }
 
 static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
@@ -95,6 +96,14 @@ impl RunningSpaceMcpEndpoint {
 fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
     static RUNNING: OnceLock<StdMutex<Option<RunningSpaceMcpEndpoint>>> = OnceLock::new();
     RUNNING.get_or_init(|| StdMutex::new(None))
+}
+
+fn collaboration_dispatcher_registry(
+) -> &'static std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>> {
+    static DISPATCHER: OnceLock<
+        std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
+    > = OnceLock::new();
+    DISPATCHER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
 }
 
 fn local_mcp_token() -> &'static str {
@@ -136,6 +145,7 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         token: endpoint.token.clone(),
         sessions: std::sync::Arc::new(Mutex::new(HashMap::new())),
         contexts: contexts.clone(),
+        collaboration_dispatcher: collaboration_dispatcher_registry().clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -295,6 +305,16 @@ pub(crate) fn register_space_mcp_context(
     })
 }
 
+pub(crate) fn register_cloud_collaboration_dispatcher(
+    dispatcher: CloudCollaborationRoundDispatcher,
+) -> Result<(), String> {
+    *collaboration_dispatcher_registry()
+        .lock()
+        .map_err(|_| "Executor collaboration coordinator is unavailable".to_owned())? =
+        Some(dispatcher);
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
     Some(SpaceMcpEndpoint {
@@ -349,7 +369,7 @@ async fn handle_mcp_for_surface(
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let (session_id, context) = if method == "initialize" {
+    let (session_id, mut context) = if method == "initialize" {
         let expected_surface = if notifications_only {
             WeworkMcpSurface::Notifications
         } else {
@@ -389,6 +409,13 @@ async fn handle_mcp_for_surface(
         };
         (session_id, context)
     };
+    context.set_cloud_collaboration_dispatcher(
+        state
+            .collaboration_dispatcher
+            .lock()
+            .ok()
+            .and_then(|dispatcher| dispatcher.clone()),
+    );
 
     match handle_request_with_context(&state.runtime, &request, &context).await {
         Some(response) => json_rpc_response(response, &session_id),

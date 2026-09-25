@@ -1241,6 +1241,17 @@ impl RuntimeWorkRpcHandler {
                 handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
                 if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
                 {
+                    handler.finish_automation_run(
+                        &turn_local_task_id,
+                        AutomationRunStatus::Cancelled,
+                        Some("cancelled".to_owned()),
+                    );
+                    handler.finish_queue_run(
+                        &turn_local_task_id,
+                        AutomationRunStatus::Cancelled,
+                        Some("cancelled".to_owned()),
+                        None,
+                    );
                     emit_response_event(
                         &handler.event_tx,
                         &handler.device_id,

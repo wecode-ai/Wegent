@@ -115,6 +115,10 @@ class LoopItemPermissions(BaseModel):
     execute: bool = False
 
 
+class LoopItemRead(BaseModel):
+    activity_sequence: int | None = Field(default=None, ge=0)
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -164,6 +168,7 @@ class LoopItemResponse(BaseModel):
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
+    activity_read_sequence: int = 0
     is_unread: bool = False
     current_delivery_id: str | None
     version: int

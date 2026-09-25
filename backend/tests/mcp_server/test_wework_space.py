@@ -20,6 +20,7 @@ from app.models.delivery import (
     LoopItem,
     ProjectChatAgent,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 
 
@@ -62,77 +63,70 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
-def test_dispatch_management_tools_require_manager_task_labels(
+def test_update_issue_status_is_scoped_to_manager_board_task(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    project = _project(test_db, test_user, provider="local")
+    manager = ProjectChatAgent(
+        id="manager-agent",
+        cloud_project_id=project.id,
+        title="Issue manager",
+        name="Issue manager",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"runtime": "codex"},
+    )
+    item = LoopItem(
+        id=f"{project.project_key}-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Review executor results",
+        status="in_progress",
+        priority="medium",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add_all([manager, item])
+    test_db.commit()
     labels = {
-        "source": "issue_dispatch_manager",
-        "weworkSpaceProjectId": "1",
-        "weworkSpaceTaskId": "issue-1",
-        "dispatchId": "dispatch-1",
-        "taskId": "manager-turn-1",
+        "source": "board_team_assignment",
+        "weworkSpaceProjectId": str(project.id),
+        "weworkSpaceTaskId": item.id,
         "dispatchRole": "manager",
-        "managerAgentId": "leader-1",
+        "managerAgentId": manager.id,
     }
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(wework_space, "_task_labels", lambda *_args: labels)
-    round_view = SimpleNamespace(
-        model_dump=lambda **_kwargs: {"id": "round-1", "status": "executing"}
-    )
-    round_record = SimpleNamespace(parent_id="dispatch-1")
-    dispatch = SimpleNamespace(id="dispatch-1")
-    monkeypatch.setattr(
-        wework_space.issue_dispatch_service,
-        "create_round",
-        lambda *_args, **kwargs: (
-            round_record
-            if kwargs["actor_agent_id"] == "leader-1"
-            and kwargs["actor_dispatch_role"] == "manager"
-            else None
-        ),
-    )
-    monkeypatch.setattr(
-        wework_space.issue_dispatch_service,
-        "round_view",
-        lambda *_args: round_view,
-    )
-    monkeypatch.setattr(
-        wework_space.issue_dispatch_service,
-        "activate",
-        lambda *_args: None,
-    )
-    original_get = test_db.get
-    monkeypatch.setattr(
-        test_db,
-        "get",
-        lambda model, key: (
-            dispatch
-            if model is wework_space.IssueDispatch and key == "dispatch-1"
-            else original_get(model, key)
-        ),
-    )
 
-    result = wework_space.create_dispatch_round(
+    result = wework_space.update_issue_status(
         _token(test_user),
-        "round-key",
-        [
-            {
-                "task_title": "Implement",
-                "instructions": "Implement it.",
-                "assignee_type": "agent",
-                "assignee_id": "worker-1",
-            }
-        ],
+        "decision-1",
+        "in_review",
+        "Executor evidence is ready for confirmation.",
+        "执行结果已满足验收条件，请确认。",
     )
 
-    assert result == {"id": "round-1", "status": "executing"}
+    assert result["id"] == item.id
+    assert result["status"] == "in_review"
+    comment = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.task_id == item.id)
+        .one()
+    )
+    assert comment.sender_id == manager.id
+    assert comment.sender_name == "Issue manager"
+    assert comment.content == "执行结果已满足验收条件，请确认。"
+    assert comment.metadata_json == {
+        "dispatch_role": "manager",
+        "activity_type": "manager_status_comment",
+        "target_status": "in_review",
+    }
     labels["dispatchRole"] = "executor"
     with pytest.raises(ValueError, match="not a dispatch manager"):
         wework_space.update_issue_status(
             _token(test_user),
-            "decision-key",
+            "decision-2",
             "completed",
-            "Verified.",
+            "Executors cannot decide the Issue status.",
         )
 
 
@@ -163,60 +157,6 @@ def test_local_board_comment_uses_internal_provider(
     )
 
     assert comment["body"] == "Please check the plan"
-
-
-async def test_finalize_delivery_reports_dispatch_outcome(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    delivery = SimpleNamespace(id="delivery-1")
-    reported: dict[str, object] = {}
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(wework_space, "_space_id", lambda *_args: "1")
-    monkeypatch.setattr(
-        wework_space,
-        "_project",
-        lambda *_args: SimpleNamespace(id=1),
-    )
-    monkeypatch.setattr(wework_space, "_item_id", lambda *_args: "DSP-2")
-    monkeypatch.setattr(
-        wework_space,
-        "_read_item",
-        lambda *_args: {"id": "DSP-2", "status": "in_progress"},
-    )
-    monkeypatch.setattr(
-        wework_space,
-        "_delivery_draft_for_binding",
-        lambda *_args: None,
-    )
-    monkeypatch.setattr(
-        wework_space.delivery_service,
-        "finalize",
-        lambda *_args, **_kwargs: delivery,
-    )
-    monkeypatch.setattr(
-        wework_space.issue_dispatch_service,
-        "on_delivery_finalized",
-        lambda _db, *, delivery, user_id: reported.update(
-            {"delivery": delivery, "user_id": user_id}
-        ),
-    )
-    monkeypatch.setattr(
-        wework_space,
-        "_delivery_view",
-        lambda _db, value: {"id": value.id},
-    )
-    monkeypatch.setattr(
-        "app.tasks.robot_queue_tasks.consume_queues_background",
-        AsyncMock(),
-    )
-
-    result = await wework_space.finalize_delivery(
-        _token(test_user),
-        "delivery-1",
-    )
-
-    assert result == {"id": "delivery-1"}
-    assert reported == {"delivery": delivery, "user_id": test_user.id}
 
 
 def test_local_project_tools_use_canonical_loop_item_service(
@@ -330,6 +270,38 @@ def test_project_details_expose_assignable_members(
         }
     ]
     assert details["groups"] == []
+
+
+async def test_manager_mcp_assignment_to_human_exposes_human_work(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        "app.services.project_incoming_hooks."
+        "project_incoming_hook_service.ingest_internal",
+        AsyncMock(),
+    )
+
+    created = await wework_space.create_board_item(
+        _token(test_user),
+        {
+            "title": "Human evidence review",
+            "description": "Review the evidence and submit a decision.",
+            "status": "pending",
+        },
+        str(project.id),
+    )
+    assigned = await wework_space.assign_board_item(
+        _token(test_user),
+        "user",
+        str(test_user.id),
+        str(project.id),
+        str(created["id"]),
+    )
+
+    assert assigned["human_work"] is not None
+    assert assigned["human_work"]["can_start"] is True
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

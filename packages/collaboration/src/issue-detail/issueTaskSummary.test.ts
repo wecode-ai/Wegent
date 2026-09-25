@@ -38,7 +38,7 @@ describe("issueTaskSummaryForMessage", () => {
     });
   });
 
-  it("prefers the current runtime binding title when one is available", () => {
+  it("keeps the manager-assigned title when the runtime binds to the parent Issue", () => {
     expect(
       issueTaskSummaryForMessage(
         {
@@ -58,6 +58,20 @@ describe("issueTaskSummaryForMessage", () => {
         "Issue title",
         undefined,
       )?.title,
-    ).toBe("Updated title");
+    ).toBe("Initial title");
+  });
+
+  it("does not replace a missing assigned task title with the Issue title", () => {
+    expect(
+      issueTaskSummaryForMessage(
+        {
+          ...message({ dispatch_role: "executor" }),
+          runtimeAddress: { deviceId: "device", taskId: "task" },
+        },
+        [{ device_id: "device", task_id: "task", task_title: null }],
+        "Issue title",
+        undefined,
+      ),
+    ).toBeUndefined();
   });
 });

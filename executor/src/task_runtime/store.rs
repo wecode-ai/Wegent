@@ -35,6 +35,9 @@ use local_execution_activity::{
     create_execution_comment, create_local_execution, ensure_execution_binding, insert_task_binding,
 };
 
+#[path = "collaboration_dispatch.rs"]
+mod collaboration_dispatch;
+
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
@@ -431,6 +434,7 @@ impl LocalTaskStore {
         &self,
         project_id: &str,
         task_id: &str,
+        activity_sequence: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let connection = self.connection()?;
         let item = get_item_from(&connection, task_id, "task")?
@@ -440,12 +444,21 @@ impl LocalTaskStore {
             drop(connection);
             return self.get_task(project_id, task_id);
         }
-        if item.metadata["is_unread"] == json!(true) {
+        if item.metadata["is_unread"] == json!(true) || activity_sequence.is_some() {
             connection.execute(
                 "UPDATE loop_items
-                 SET metadata = json_set(metadata, '$.is_unread', json('false'))
+                 SET metadata = json_set(
+                    metadata,
+                    '$.is_unread',
+                    json('false'),
+                    '$.activity_read_sequence',
+                    MAX(
+                        COALESCE(json_extract(metadata, '$.activity_read_sequence'), 0),
+                        ?2
+                    )
+                 )
                  WHERE id = ?1",
-                [task_id],
+                params![task_id, activity_sequence.unwrap_or(0)],
             )?;
         }
         drop(connection);
@@ -575,14 +588,10 @@ impl LocalTaskStore {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let status_changed = input
-            .status
-            .as_ref()
-            .is_some_and(|status| current.status.as_ref() != Some(status));
         let previous_parent_id = current.parent_id.clone();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
-        let status = input.status.or(current.status);
+        let mut status = input.status.or_else(|| current.status.clone());
         let priority = input.priority.clone().or_else(|| current.priority.clone());
         let parent_id = input.parent_id.unwrap_or(current.parent_id);
         let previous_group_id = current.metadata["collaboration_group"]["id"]
@@ -591,24 +600,34 @@ impl LocalTaskStore {
         let requested_group_id = input.assignee_group_id.as_ref().cloned().flatten();
         let collaboration_group_changed = input.assignee_group_id.is_some()
             && previous_group_id.as_deref() != requested_group_id.as_deref();
-        let mut metadata = current.metadata;
-        if let Some(group_id) = &input.assignee_group_id {
-            metadata["collaboration_group"] = if let Some(group_id) = group_id {
+        let selected_collaboration_group =
+            if let Some(Some(group_id)) = input.assignee_group_id.as_ref() {
                 let project = get_item_from(&transaction, project_id, "project")?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
-                project
-                    .metadata
-                    .get("collaboration_groups")
-                    .and_then(Value::as_array)
-                    .and_then(|groups| {
-                        groups
-                            .iter()
-                            .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        TaskRuntimeError::Invalid("Team is not in this project".to_owned())
-                    })?
+                Some(
+                    project
+                        .metadata
+                        .get("collaboration_groups")
+                        .and_then(Value::as_array)
+                        .and_then(|groups| {
+                            groups.iter().find(|group| {
+                                group.get("id").and_then(Value::as_str) == Some(group_id)
+                            })
+                        })
+                        .cloned()
+                        .ok_or_else(|| {
+                            TaskRuntimeError::Invalid("Team is not in this project".to_owned())
+                        })?,
+                )
+            } else {
+                None
+            };
+        let mut metadata = current.metadata;
+        if let Some(group_id) = &input.assignee_group_id {
+            metadata["collaboration_group"] = if group_id.is_some() {
+                selected_collaboration_group
+                    .clone()
+                    .expect("selected collaboration group was validated")
             } else {
                 Value::Null
             };
@@ -653,6 +672,13 @@ impl LocalTaskStore {
             input.assignee_user_id.unwrap_or(current.assignee_user_id)
         };
         let assignee_changed = assignee_agent_id != current.assignee_agent_id.as_deref();
+        let starts_runtime_dispatch = (collaboration_group_changed
+            && selected_collaboration_group.is_some())
+            || (assignee_changed && assignee_agent_id.is_some());
+        if starts_runtime_dispatch && status.as_deref() != Some("completed") {
+            status = Some("in_progress".to_owned());
+        }
+        let status_changed = current.status.as_ref() != status.as_ref();
         let now = now();
         let completed_at = if status.as_deref() == Some("completed") {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -695,7 +721,19 @@ impl LocalTaskStore {
         }
         if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
-            if requested_group_id.is_none() {
+            if let Some(group) = selected_collaboration_group.as_ref() {
+                create_collaboration_group_execution(
+                    &transaction,
+                    task_id,
+                    project_id,
+                    group,
+                    title.as_deref().unwrap_or(task_id),
+                    &description,
+                    status.as_deref(),
+                    priority.as_deref().unwrap_or("none"),
+                    input.execution_payload.unwrap_or(Value::Null),
+                )?;
+            } else if requested_group_id.is_none() {
                 if let Some(agent_id) = assignee_agent_id {
                     let agent =
                         get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
@@ -1851,13 +1889,7 @@ impl LocalTaskStore {
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = execution_row(&transaction, execution_id)?;
-        let advance_direct_dispatch = current
-            .execution_payload
-            .as_ref()
-            .and_then(|payload| payload.get("dispatch_parent_transition"))
-            .and_then(Value::as_str)
-            == Some("in_review");
+        execution_row(&transaction, execution_id)?;
         let timestamp = now();
         let changed = transaction.execute(
             "UPDATE loop_item_executions
@@ -1879,16 +1911,10 @@ impl LocalTaskStore {
             content.unwrap_or(""),
             &timestamp,
         )?;
-        if advance_direct_dispatch {
-            transaction.execute(
-                "UPDATE loop_items
-                 SET status = 'in_review', completed_at = NULL,
-                     version = version + 1, updated_at = ?1
-                 WHERE id = ?2 AND status = 'in_progress'",
-                params![timestamp, current.loop_item_id],
-            )?;
-        }
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1949,6 +1975,9 @@ impl LocalTaskStore {
             return execution_row(&connection, retry_id).map(Some);
         }
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -1981,6 +2010,9 @@ impl LocalTaskStore {
         }
         update_agent_comment(&transaction, execution_id, "failed", &error, &timestamp)?;
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -2008,6 +2040,9 @@ impl LocalTaskStore {
         }
         update_agent_comment(&transaction, execution_id, "cancelled", message, &timestamp)?;
         transaction.commit()?;
+        drop(connection);
+        self.resume_manager_for_finished_round(execution_id)?;
+        let connection = self.connection()?;
         execution_row(&connection, execution_id).map(Some)
     }
 
@@ -4215,6 +4250,140 @@ fn execution_row(
         .map_err(TaskRuntimeError::from)
 }
 
+fn create_collaboration_group_execution(
+    connection: &Connection,
+    item_id: &str,
+    project_id: &str,
+    group: &Value,
+    issue_title: &str,
+    issue_description: &str,
+    issue_status: Option<&str>,
+    priority: &str,
+    payload: Value,
+) -> Result<i64, TaskRuntimeError> {
+    let project = get_item_from(connection, project_id, "project")?
+        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let leader = group
+        .get("leader")
+        .filter(|leader| leader.get("kind").and_then(Value::as_str) == Some("agent"))
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid(
+                "Collaboration team leader must be an active robot".to_owned(),
+            )
+        })?;
+    let leader_id = leader
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
+        })?;
+    let leader_agent = collaboration_agent(connection, project_id, leader_id)?;
+    let mut execution_payload = payload.as_object().cloned().unwrap_or_default();
+    execution_payload.insert(
+        "message".to_owned(),
+        Value::String(collaboration_manager_message(
+            group,
+            project
+                .metadata
+                .get("workflow_definition")
+                .unwrap_or(&Value::Null),
+            issue_title,
+            issue_description,
+            issue_status,
+        )),
+    );
+    execution_payload.insert("dispatch_id".to_owned(), json!(item_id));
+    execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
+    execution_payload.insert("collaboration_group".to_owned(), group.clone());
+    if let Some(workspace_roots) = project
+        .metadata
+        .get("workspace_roots")
+        .filter(|roots| roots.is_array())
+    {
+        execution_payload.insert(
+            "project_workspace_roots".to_owned(),
+            workspace_roots.clone(),
+        );
+    }
+    create_local_execution(
+        connection,
+        item_id,
+        project_id,
+        leader_id,
+        &leader_agent,
+        priority,
+        Value::Object(execution_payload),
+    )
+}
+
+fn collaboration_agent(
+    connection: &Connection,
+    project_id: &str,
+    agent_id: &str,
+) -> Result<LoopItem, TaskRuntimeError> {
+    let agent = get_item_from(connection, agent_id, "chat_agent")?.ok_or_else(|| {
+        TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
+    })?;
+    if agent.cloud_project_id.as_deref() != Some(project_id)
+        || agent.status.as_deref() == Some("archived")
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Collaboration team robot is not active in this project".to_owned(),
+        ));
+    }
+    Ok(agent)
+}
+
+fn collaboration_manager_message(
+    group: &Value,
+    project_workflow: &Value,
+    issue_title: &str,
+    issue_description: &str,
+    issue_status: Option<&str>,
+) -> String {
+    let group_name = group
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("协作小组");
+    let collaboration_context = json!({
+        "group": {
+            "id": group.get("id").cloned().unwrap_or(Value::Null),
+            "name": group.get("name").cloned().unwrap_or(Value::Null),
+            "description": group.get("description").cloned().unwrap_or(Value::Null),
+            "coordination_mode": group
+                .get("coordination_mode")
+                .cloned()
+                .unwrap_or_else(|| json!("manager")),
+        },
+        "group_instructions": group
+            .get("instructions")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "leader": group.get("leader").cloned().unwrap_or(Value::Null),
+        "members": group
+            .get("members")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "group_stages": group
+            .get("stages")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "project_workflow": project_workflow,
+    });
+    format!(
+        "Issue 标题：{issue_title}\nIssue 状态：{}\nIssue 描述：{}\n\n“{group_name}”的项目协作规则、成员与流程：{}",
+        issue_status.unwrap_or("inbox"),
+        if issue_description.trim().is_empty() {
+            "无"
+        } else {
+            issue_description
+        },
+        serde_json::to_string_pretty(&collaboration_context)
+            .unwrap_or_else(|_| "{}".to_owned()),
+    )
+}
+
 fn cancel_active_executions(
     connection: &Connection,
     item_id: &str,
@@ -4332,6 +4501,19 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned);
+    let project_workspace_roots = stored
+        .get("project_workspace_roots")
+        .and_then(Value::as_array)
+        .map(|roots| {
+            roots
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|root| !root.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|roots| !roots.is_empty())
+        .unwrap_or_default();
     let runtime_title = stored
         .get("workflow_task_title")
         .and_then(Value::as_str)
@@ -4402,6 +4584,11 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
     });
     if let Some(local_project_id) = execution.agent_local_project_id {
         payload["projectId"] = json!(local_project_id);
+    }
+    if let Some(workspace_path) = project_workspace_roots.first() {
+        payload["workspacePath"] = json!(workspace_path);
+        payload["runtimeWorkspaceRoots"] = json!(project_workspace_roots);
+        payload["standaloneChatWorkspace"] = json!(false);
     }
     if let Some(project_instructions) = project_instructions {
         payload["projectInstructions"] = json!(project_instructions);
@@ -4587,6 +4774,7 @@ mod tests {
             updated.assignee_agent_id.as_deref(),
             Some(agent.id.as_str())
         );
+        assert_eq!(updated.status.as_deref(), Some("in_progress"));
 
         let executions = store
             .list_executions(&project.id, None, None, false)
@@ -5007,6 +5195,34 @@ mod tests {
     }
 
     #[test]
+    fn local_read_cursor_persists_the_visible_activity_sequence() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Unread activity".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let updated = store
+            .mark_task_read(&project.id, &task.id, Some(17))
+            .unwrap();
+
+        assert_eq!(updated.metadata["activity_read_sequence"], json!(17));
+        assert_eq!(updated.metadata["is_unread"], json!(false));
+    }
+
+    #[test]
     fn local_complete_execution_does_not_project_issue_status() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
@@ -5064,7 +5280,7 @@ mod tests {
         assert_eq!(updated.status.as_deref(), Some("inbox"));
         assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
         assert_eq!(updated.metadata["is_unread"], Value::Null);
-        store.mark_task_read(&project.id, &task.id).unwrap();
+        store.mark_task_read(&project.id, &task.id, None).unwrap();
         store
             .complete_execution(claimed.id, Some("duplicate"))
             .unwrap();
@@ -5112,7 +5328,7 @@ mod tests {
             .claim_next_local_execution(&claim)
             .unwrap()
             .expect("second run must be claimable");
-        store.mark_task_read(&project.id, &second.id).unwrap();
+        store.mark_task_read(&project.id, &second.id, None).unwrap();
         store.complete_execution(claimed_second.id, None).unwrap();
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
@@ -5120,66 +5336,314 @@ mod tests {
     }
 
     #[test]
-    fn direct_issue_dispatch_completion_moves_issue_to_review() {
+    fn collaboration_group_round_runs_members_through_executor_then_restarts_manager() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
-        let agent = make_local_agent(&store, &project.id, "auto");
-        let task = store
+        let leader = make_local_agent(&store, &project.id, "auto");
+        let member = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Evidence Bot".to_owned(),
+                    display_name: Some("Evidence Bot".to_owned()),
+                    namespace: None,
+                    runtime: "codex".to_owned(),
+                    model: Some("gpt-6-mini".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: None,
+                    capability_description: Some("Collect evidence".to_owned()),
+                    capability_mode: Some("follow_device".to_owned()),
+                    system_prompt: Some("Only collect verifiable evidence.".to_owned()),
+                    visibility: Some("creator_admin".to_owned()),
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
+                    local_project_id: None,
+                    created_by_user_id: Some(7),
+                    plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({
+                        "evidence": {
+                            "command": "evidence-mcp",
+                            "args": ["--read-only"]
+                        }
+                    }),
+                },
+            )
+            .unwrap();
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    workflow_definition: Some(json!({
+                        "stages": [{
+                            "id": "evidence",
+                            "name": "Evidence",
+                            "acceptance": "Reproducible observations"
+                        }]
+                    })),
+                    collaboration_groups: Some(json!([{
+                        "id": "squad-1",
+                        "name": "Diagnostics",
+                        "instructions": "Use read-only diagnostics and cite evidence.",
+                        "leader": {
+                            "kind": "agent",
+                            "id": leader.id,
+                            "responsibility": "Plan, delegate, and review."
+                        },
+                        "members": [{
+                            "kind": "agent",
+                            "id": member.id,
+                            "responsibility": "Collect CPU evidence."
+                        }, {
+                            "kind": "human",
+                            "id": "42",
+                            "name": "Human reviewer",
+                            "responsibility": "Confirm the observed behavior."
+                        }],
+                        "stages": [{
+                            "id": "diagnosis",
+                            "name": "Diagnosis",
+                            "description": "Gather evidence",
+                            "assignee": null
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let issue = store
             .create_task(
                 &project.id,
                 TaskCreate {
-                    title: "Review direct dispatch".to_owned(),
-                    description: String::new(),
-                    status: "in_progress".to_owned(),
-                    priority: "none".to_owned(),
+                    title: "Investigate CPU".to_owned(),
+                    description: "Determine whether load is sustained.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
                     parent_id: None,
-                    tags: vec![],
+                    tags: Vec::new(),
                     assignee_user_id: None,
                     workflow: None,
                 },
             )
             .unwrap();
-        store
+
+        let dispatched = store
             .update_task(
                 &project.id,
-                &task.id,
+                &issue.id,
                 TaskUpdate {
-                    version: task.version,
-                    assignee_agent_id: Some(Some(agent.id.clone())),
-                    execution_payload: Some(json!({
-                        "message": "Run the delegated task",
-                        "dispatch_id": "dispatch-local",
-                        "dispatch_role": "executor",
-                        "dispatch_parent_transition": "in_review",
-                    })),
+                    version: issue.version,
+                    assignee_group_id: Some(Some("squad-1".to_owned())),
                     ..TaskUpdate::default()
                 },
             )
             .unwrap();
-        let claim = LocalExecutionClaim {
-            execution_device_id: Some("local-device".to_owned()),
-            runtime_instance_id: "runtime-1".to_owned(),
-            device_capacity: 5,
-            runtime_active: 0,
-            runtime_active_task_ids: vec![],
-            lease_seconds: 300,
-        };
+        assert_eq!(dispatched.status.as_deref(), Some("in_progress"));
+
         let claimed = store
-            .claim_next_local_execution(&claim)
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
             .unwrap()
-            .expect("dispatch run must be claimable");
-
-        store.complete_execution(claimed.id, Some("done")).unwrap();
-
-        let updated = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(updated.status.as_deref(), Some("in_review"));
+            .expect("manager execution must be queued");
+        let payload = claimed.execution_payload.as_ref().unwrap();
+        assert_eq!(claimed.agent_id, leader.id);
+        assert_eq!(payload["modelOptions"]["collaborationMode"], Value::Null);
+        assert_eq!(payload["bot"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["bot"][0]["id"], leader.id);
+        assert_eq!(payload["origin"]["dispatchRole"], "manager");
+        assert_eq!(payload["origin"]["dispatchId"], issue.id);
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Issue 状态：in_progress"));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Use read-only diagnostics and cite evidence."));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Human reviewer"));
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Reproducible observations"));
+        let runtime_task_id = claimed
+            .runtime_task_id
+            .as_deref()
+            .expect("manager execution must have a Runtime task id");
+        let round = store
+            .submit_collaboration_round(
+                runtime_task_id,
+                &json!({
+                    "round_id": "round-1",
+                    "items": [{
+                        "title": "采集运行证据",
+                        "instructions": "Collect verifiable evidence.",
+                        "assignee_type": "agent",
+                        "assignee_id": member.id,
+                        "workflow_stage_id": "diagnosis",
+                    }, {
+                        "title": "独立复核证据",
+                        "instructions": "Review the evidence independently.",
+                        "assignee_type": "agent",
+                        "assignee_id": leader.id,
+                        "workflow_stage_id": "diagnosis",
+                    }],
+                }),
+            )
+            .unwrap();
+        assert_eq!(round["state"], "dispatched");
+        assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
+        let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
+        let manager = comments
+            .iter()
+            .find(|comment| comment.metadata["dispatch_role"] == "manager")
+            .expect("manager activity must exist");
         assert_eq!(
-            updated.metadata["status_history"]
-                .as_array()
+            manager.metadata["dispatch_assignments"][0]["task_title"],
+            "采集运行证据"
+        );
+        assert_eq!(
+            manager.metadata["dispatch_assignments"][0]["agent_name"],
+            "Evidence Bot"
+        );
+        let member_activity = comments
+            .iter()
+            .find(|comment| comment.metadata["dispatch_role"] == "member")
+            .expect("member activity must exist");
+        assert_ne!(member_activity.metadata["execution_id"], claimed.id);
+        assert_eq!(
+            member_activity.metadata["workflow_task_title"],
+            "采集运行证据"
+        );
+        store
+            .complete_execution(claimed.id, Some("manager dispatched round"))
+            .unwrap();
+
+        let first_member_execution = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("first member execution must be queued");
+        assert_eq!(first_member_execution.agent_id, member.id);
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["title"],
+            "采集运行证据"
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["message"],
+            "Collect verifiable evidence."
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["bot"][0]["id"],
+            member.id
+        );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["bot"][0]["mcp_servers"]
+                ["evidence"]["command"],
+            "evidence-mcp"
+        );
+        assert_eq!(first_member_execution.execution_scope, "");
+
+        let second_member_execution = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 1,
+                runtime_active_task_ids: vec![first_member_execution
+                    .runtime_task_id
+                    .clone()
+                    .expect("first member must have a Runtime task id")],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .expect("second member execution must be claimable concurrently");
+        assert_eq!(second_member_execution.agent_id, leader.id);
+        assert_eq!(
+            second_member_execution.execution_payload.as_ref().unwrap()["title"],
+            "独立复核证据"
+        );
+        assert_eq!(second_member_execution.execution_scope, "");
+
+        store
+            .complete_execution(first_member_execution.id, Some("Evidence collected."))
+            .unwrap();
+        assert!(store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 2,
+                runtime_active: 1,
+                runtime_active_task_ids: vec![second_member_execution
+                    .runtime_task_id
+                    .clone()
+                    .expect("second member must have a Runtime task id")],
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .is_none());
+        store
+            .complete_execution(
+                second_member_execution.id,
+                Some("Evidence independently reviewed."),
+            )
+            .unwrap();
+
+        let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
+        let member_activity = comments
+            .iter()
+            .find(|comment| comment.metadata["dispatch_role"] == "member")
+            .expect("member activity must remain present");
+        assert_eq!(member_activity.status, "completed");
+        assert_eq!(member_activity.content, "Evidence collected.");
+
+        let resumed_manager = store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap();
+        let resumed_manager = resumed_manager.expect("manager must restart after the batch");
+        assert_eq!(resumed_manager.agent_id, leader.id);
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
+            "manager"
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
                 .unwrap()
-                .last()
-                .unwrap()["to_status"],
-            "in_review"
+                .contains("Evidence collected.")
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &issue.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
         );
     }
 

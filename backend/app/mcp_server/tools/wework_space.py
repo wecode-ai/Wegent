@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import uuid
 from io import BytesIO
 from typing import Any
 
@@ -24,11 +25,11 @@ from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
     CloudProject,
     Delivery,
-    IssueDispatch,
     LoopItem,
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_file import CloudFileResponse
@@ -45,16 +46,11 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
-from app.schemas.issue_dispatch import (
-    IssueDispatchDecisionCreate,
-    IssueDispatchRoundCreate,
-)
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
-from app.services.issue_dispatch import issue_dispatch_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -68,8 +64,6 @@ from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
-    "issue_dispatch",
-    "issue_dispatch_manager",
     "project_automation",
     "board_team_assignment",
     "board_team_continuation",
@@ -115,18 +109,13 @@ def _board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
     }
 
 
-def _dispatch_manager_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
-    """Return the authenticated manager scope encoded by the Runtime Task."""
+def _manager_board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
+    """Return the current board item scope for an authenticated manager Task."""
 
     if token_info.auth_type != "task" or token_info.task_id is None:
         raise ValueError("Dispatch management requires Task authentication")
     context = _board_context(db, token_info)
-    if (
-        context.get("dispatch_role") != "manager"
-        or not context.get("dispatch_id")
-        or not context.get("dispatch_task_id")
-        or not context.get("manager_agent_id")
-    ):
+    if context.get("dispatch_role") != "manager":
         raise ValueError("Authenticated Task is not a dispatch manager")
     return context
 
@@ -186,6 +175,19 @@ def _read_item(
     if str(item.cloud_project_id) != str(project.id):
         raise ValueError("Board item not found in this space")
     return _item_view(db, item, user_id)
+
+
+def _update_item(
+    db: Session,
+    project: CloudProject,
+    item_id: str,
+    user_id: int,
+    values: LoopItemUpdate,
+) -> LoopItem | None:
+    if project.task_provider in {"github", "gitlab"}:
+        external_loop_item_provider.update(db, item_id, user_id, values)
+        return db.get(LoopItem, item_id)
+    return loop_item_service.update(db, item_id, user_id, values)
 
 
 def _list_items(
@@ -306,60 +308,59 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
 
 
 @mcp_tool(server="wework_space")
-def create_dispatch_round(
-    token_info: MCPAuthInfo,
-    idempotency_key: str,
-    tasks: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Assign one concurrent round as the authenticated dispatch manager."""
-
-    with SessionLocal() as db:
-        context = _dispatch_manager_context(db, token_info)
-        values = IssueDispatchRoundCreate.model_validate(
-            {"idempotency_key": idempotency_key, "tasks": tasks}
-        )
-        round_record = issue_dispatch_service.create_round(
-            db,
-            dispatch_id=context["dispatch_id"],
-            user_id=token_info.user_id,
-            values=values,
-            actor_agent_id=context["manager_agent_id"],
-            actor_dispatch_role=context["dispatch_role"],
-        )
-        dispatch = db.get(IssueDispatch, context["dispatch_id"])
-        if dispatch is None:
-            raise ValueError("Issue dispatch disappeared after round creation")
-        result = issue_dispatch_service.round_view(db, round_record).model_dump(
-            mode="json"
-        )
-        issue_dispatch_service.activate(db, dispatch)
-        return result
-
-
-@mcp_tool(server="wework_space")
 def update_issue_status(
     token_info: MCPAuthInfo,
     idempotency_key: str,
     target_status: str,
     reason: str,
+    comment: str = "",
 ) -> dict[str, Any]:
-    """Complete a group dispatch with an explicit manager status decision."""
+    """Update the current Issue after an explicit manager decision."""
 
     with SessionLocal() as db:
-        context = _dispatch_manager_context(db, token_info)
-        dispatch = issue_dispatch_service.decide(
-            db,
-            dispatch_id=context["dispatch_id"],
-            user_id=token_info.user_id,
-            values=IssueDispatchDecisionCreate(
-                idempotency_key=idempotency_key,
-                target_status=target_status,
-                reason=reason,
-            ),
-            actor_agent_id=context["manager_agent_id"],
-            actor_dispatch_role=context["dispatch_role"],
+        context = _manager_board_context(db, token_info)
+        project = _project(db, context["space_id"], token_info.user_id)
+        item_id = context["item_id"]
+        current = _read_item(db, project, item_id, token_info.user_id)
+        values = LoopItemUpdate.model_validate(
+            {
+                "version": current["version"],
+                "status": target_status,
+            }
         )
-        return issue_dispatch_service.view(db, dispatch).model_dump(mode="json")
+        _update_item(db, project, item_id, token_info.user_id, values)
+        normalized_comment = comment.strip()
+        if normalized_comment:
+            manager_agent_id = context.get("manager_agent_id", "")
+            manager = db.get(ProjectChatAgent, manager_agent_id)
+            if manager is None:
+                raise ValueError("Dispatch manager agent is unavailable")
+            message_id = (
+                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+            )
+            db.add(
+                ProjectChatMessage(
+                    message_id=message_id,
+                    client_message_id=message_id,
+                    project_id=context["space_id"],
+                    task_id=item_id,
+                    sender_type="agent",
+                    sender_id=manager.id,
+                    sender_name=manager.title or manager.name or "AI manager",
+                    message_type="text",
+                    content=normalized_comment,
+                    metadata_json={
+                        "dispatch_role": "manager",
+                        "activity_type": "manager_status_comment",
+                        "target_status": target_status,
+                    },
+                    agent_id=manager.id,
+                    status="completed",
+                )
+            )
+            db.commit()
+        del idempotency_key, reason
+        return _read_item(db, project, item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -524,7 +525,10 @@ async def create_board_item(
                 created.values.get("id"),
             )
         internal = created.internal_item or db.get(LoopItem, str(created.values["id"]))
-        if internal is not None and internal.assignee_agent_id:
+        if internal is not None and (
+            internal.assignee_agent_id
+            or (internal.metadata_json or {}).get("collaboration_group")
+        ):
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             await dispatch_board_team_assignment(db, item=internal, user=user)
@@ -671,7 +675,7 @@ async def assign_board_item(
                 user_id=token_info.user_id,
                 values=values,
             )
-        if assignee_type == "agent" and assigned is not None:
+        if assignee_type in {"agent", "group"} and assigned is not None:
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             await dispatch_board_team_assignment(
@@ -694,20 +698,17 @@ async def update_board_item(
         resolved_item_id = _item_id(db, token_info, item_id)
         current = _read_item(db, project, resolved_item_id, token_info.user_id)
         values = LoopItemUpdate.model_validate(item)
-        if project.task_provider in {"github", "gitlab"}:
-            external_loop_item_provider.update(
-                db, resolved_item_id, token_info.user_id, values
-            )
-            updated = db.get(LoopItem, resolved_item_id)
-        else:
-            updated = loop_item_service.update(
-                db,
-                resolved_item_id,
-                token_info.user_id,
-                values,
-            )
+        updated = _update_item(
+            db,
+            project,
+            resolved_item_id,
+            token_info.user_id,
+            values,
+        )
         result = _read_item(db, project, resolved_item_id, token_info.user_id)
-        if values.assignee_agent_id and updated is not None:
+        if updated is not None and (
+            values.assignee_agent_id or values.assignee_group_id
+        ):
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             await dispatch_board_team_assignment(
@@ -1057,11 +1058,6 @@ async def finalize_delivery(
             delivery_id,
             token_info.user_id,
             DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
-        )
-        issue_dispatch_service.on_delivery_finalized(
-            db,
-            delivery=delivery,
-            user_id=token_info.user_id,
         )
         result = _delivery_view(db, delivery)
     if issue_status_changed:

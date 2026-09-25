@@ -528,7 +528,11 @@ class WeworkExecutionProfile:
         )
         if origin_context.get("comment_trigger_message_id"):
             prompt = str(origin_context["comment_prompt"])
-        title = str(getattr(task, "title", "") or "")
+        title = str(
+            origin_context.get("workflow_task_title")
+            or getattr(task, "title", "")
+            or ""
+        )
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
@@ -593,6 +597,24 @@ class WeworkExecutionProfile:
                 ],
             }
         ]
+        coordinate_bots = origin_context.get("coordinate_bots")
+        if coordinate_bots is not None:
+            if not isinstance(coordinate_bots, list) or not all(
+                isinstance(value, dict) for value in coordinate_bots
+            ):
+                raise WeworkExecutionProfileError(
+                    "Coordinate bots must be a list of objects"
+                )
+            if not coordinate_bots:
+                raise WeworkExecutionProfileError(
+                    "Coordinate execution requires at least one bot"
+                )
+            bot = [dict(value) for value in coordinate_bots]
+            origin["collaborationMode"] = str(
+                origin_context.get("collaborationMode")
+                or origin_context.get("collaboration_mode")
+                or "coordinate"
+            )
         configured_additional_context = origin_context.get("additional_context")
         additional_context: dict[str, dict[str, Any]] = (
             dict(configured_additional_context)

@@ -1414,17 +1414,23 @@ class ProjectChatService:
             return None
 
         child_name = self._subagent_name(data)
-        text = self._subagent_text(data)
-        if not child_name or not text:
+        if not child_name:
             return None
 
         child_id = self._subagent_identity(data)
+        text = self._subagent_text(data) or ""
+        subagent_status, message_status = self._subagent_run_status(data)
+        if parent.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+            message_status = self._normalized_terminal_status(parent.status)
+            subagent_status = message_status
         metadata = {
             "kind": "task_ai_subagent",
             "parent_agent_id": parent.agent_id,
             "parent_message_id": parent.message_id,
             "subagent_id": child_id,
             "subagent_name": child_name,
+            "subagent_status": subagent_status,
+            "run_status": subagent_status,
         }
         existing = (
             db.query(ProjectChatMessage)
@@ -1464,13 +1470,22 @@ class ProjectChatService:
                     parent.runtime_task_id or "",
                     f"{parent.message_id}:{child_id}",
                 ),
-                status="completed",
+                status=message_status,
             )
             db.add(existing)
         else:
-            existing.content = text
-            existing.metadata_json = metadata
-            existing.status = "completed"
+            if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+                durable_status = self._normalized_terminal_status(existing.status)
+                existing.metadata_json = {
+                    **metadata,
+                    "subagent_status": durable_status,
+                    "run_status": durable_status,
+                }
+            else:
+                if text:
+                    existing.content = text
+                existing.metadata_json = metadata
+                existing.status = message_status
             existing.message_type = "text"
         self._commit(db)
         db.refresh(existing)
@@ -1478,7 +1493,13 @@ class ProjectChatService:
 
     @staticmethod
     def _subagent_name(data: dict) -> str | None:
-        for key in ("subagent_name", "subagentName", "executor_name", "name"):
+        for key in (
+            "subagent_name",
+            "subagentName",
+            "executor_name",
+            "agent_name",
+            "name",
+        ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -1491,7 +1512,13 @@ class ProjectChatService:
 
     @staticmethod
     def _subagent_identity(data: dict) -> str:
-        for key in ("subagent_id", "subagentId", "executor_id", "id"):
+        for key in (
+            "subagent_id",
+            "subagentId",
+            "executor_id",
+            "agent_id",
+            "id",
+        ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -1509,6 +1536,26 @@ class ProjectChatService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    @staticmethod
+    def _subagent_run_status(data: dict) -> tuple[str, str]:
+        value = data.get("status") or data.get("kind")
+        normalized = (
+            value.strip().replace("_", "").replace("-", "").lower()
+            if isinstance(value, str)
+            else ""
+        )
+        if normalized in {"done", "completed", "taskcomplete"}:
+            return "completed", "completed"
+        if normalized in {"failed", "error"}:
+            return "failed", "failed"
+        if normalized in {"interrupted", "cancelled", "canceled", "aborted"}:
+            return "cancelled", "cancelled"
+        return "running", "streaming"
+
+    @staticmethod
+    def _normalized_terminal_status(value: str) -> str:
+        return "cancelled" if value == "canceled" else value
 
     @staticmethod
     def _agent_response_for_runtime(

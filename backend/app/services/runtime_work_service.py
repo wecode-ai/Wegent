@@ -4666,7 +4666,10 @@ def _apply_runtime_cloud_model_options(
     model_options: dict[str, Any],
 ) -> None:
     config["wework_model_kind"] = "cloud"
-    config["tool_profile"] = "custom"
+    # Cloud models run through the Executor compatibility proxy. Convert custom
+    # tools to function tools so Codex exposes built-in collaboration tools and
+    # deferred MCP namespaces consistently across providers.
+    config["tool_profile"] = "function"
     config["codex_responses_compat_proxy"] = True
     upstream_api_format = str(
         config.get("upstream_api_format") or "openai-responses"

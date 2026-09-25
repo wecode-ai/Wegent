@@ -4,11 +4,7 @@
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { REGULAR_USER } from '../../config/test-users'
-import {
-  addProjectMember,
-  createProjectFixture,
-  dispatchToFirstTarget,
-} from '../../utils/issue-dispatch-test-support'
+import { addProjectMember, createProjectFixture } from '../../utils/issue-dispatch-test-support'
 
 async function captureEvidence(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const path = testInfo.outputPath(`${name}.png`)
@@ -17,23 +13,25 @@ async function captureEvidence(page: Page, testInfo: TestInfo, name: string): Pr
 }
 
 test.describe('Issue Dispatch human assignment', () => {
-  test('records the concrete child task and recipient without auto-completing the Issue', async ({
+  test('assigns the Issue to a project member without auto-completing it', async ({
     page,
   }, testInfo) => {
     test.setTimeout(120_000)
     const suffix = `${Date.now()}`
-    const taskTitle = `Verify human delivery ${suffix}`
     const fixture = await createProjectFixture(page, suffix, `Human dispatch ${suffix}`)
-    await addProjectMember(page, REGULAR_USER.username)
+    const memberId = await addProjectMember(page, REGULAR_USER.username)
     await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
     await captureEvidence(page, testInfo, '01-issue-before-dispatch')
-    await dispatchToFirstTarget(page, 'human', taskTitle, REGULAR_USER.username)
 
-    const assignment = page
-      .locator('[data-testid^="issue-dispatch-event-assigned-"]')
-      .filter({ hasText: taskTitle })
-    await expect(assignment).toContainText(REGULAR_USER.username)
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_progress')
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${memberId}`
+    )
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
     await captureEvidence(page, testInfo, '02-human-assignment-recorded')
   })
 })

@@ -291,6 +291,32 @@ class LoopItemExecutionCancel(ProjectChatSchema):
     note: str | None = Field(default=None, max_length=2_000)
 
 
+class LoopItemExecutionBatchItem(ProjectChatSchema):
+    """One exact execution command submitted by an Executor-owned manager."""
+
+    assignment_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=500)
+    instructions: str = Field(min_length=1, max_length=100_000)
+    assignee_type: Literal["agent"]
+    assignee_id: str = Field(min_length=1, max_length=128)
+    workflow_stage_id: str | None = Field(default=None, max_length=128)
+
+
+class LoopItemExecutionBatchCreate(ProjectChatSchema):
+    """Persist an Executor-decided collaboration round without advancing it."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    round_id: str = Field(min_length=1, max_length=128)
+    manager_runtime_task_id: str = Field(min_length=1, max_length=255)
+    manager_agent_id: str = Field(min_length=1, max_length=128)
+    items: list[LoopItemExecutionBatchItem] = Field(min_length=1, max_length=20)
+
+
+class LoopItemExecutionStatusQuery(ProjectChatSchema):
+    execution_ids: list[int] = Field(min_length=1, max_length=20)
+
+
 class LoopItemExecutionView(ProjectChatSchema):
     id: int
     workspace_id: SnowflakeId | None = None

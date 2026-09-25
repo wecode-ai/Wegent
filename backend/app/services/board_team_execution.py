@@ -54,28 +54,26 @@ async def dispatch_board_team_assignment(
 
     del user
 
-    if not item.assignee_agent_id:
-        return None
-    agent = db.get(ProjectChatAgent, item.assignee_agent_id)
-    if agent is None:
-        return None
-    from app.services.project_chat.service import bot_config
-
-    config = bot_config(agent)
-    if config.get("runtime") != "wegent" or config.get("wegent_team_id") is None:
-        return None
-    team_id = int(config["wegent_team_id"])
-    execution = (
-        db.query(LoopItemExecution)
-        .filter(
-            LoopItemExecution.loop_item_id == item.id,
-            LoopItemExecution.agent_id == item.assignee_agent_id,
-            LoopItemExecution.team_id == team_id,
-            LoopItemExecution.status == "queued",
-        )
-        .order_by(LoopItemExecution.id.desc())
-        .first()
+    query = db.query(LoopItemExecution).filter(
+        LoopItemExecution.loop_item_id == item.id,
+        LoopItemExecution.status == "queued",
     )
+    if item.assignee_agent_id:
+        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        if agent is None:
+            return None
+        from app.services.project_chat.service import bot_config
+
+        config = bot_config(agent)
+        if config.get("runtime") != "wegent" or config.get("wegent_team_id") is None:
+            return None
+        query = query.filter(
+            LoopItemExecution.agent_id == item.assignee_agent_id,
+            LoopItemExecution.team_id == int(config["wegent_team_id"]),
+        )
+    else:
+        return None
+    execution = query.order_by(LoopItemExecution.id.desc()).first()
     if execution is None:
         return None
     return await dispatch_board_robot_execution(db, execution_id=execution.id)
@@ -104,12 +102,13 @@ async def dispatch_board_robot_execution(
 
     item = db.get(LoopItem, execution.loop_item_id)
     agent = db.get(ProjectChatAgent, execution.agent_id)
+    origin_context = execution.runtime_origin_context
     if (
         item is None
         or agent is None
         or item.cloud_project_id != execution.cloud_project_id
         or (
-            not execution.runtime_origin_context.get("comment_trigger_message_id")
+            not origin_context.get("comment_trigger_message_id")
             and item.assignee_agent_id != agent.id
         )
         or agent.cloud_project_id != execution.cloud_project_id
@@ -138,7 +137,11 @@ async def dispatch_board_robot_execution(
         db,
         item=item,
         execution=execution,
-        execution_prompt=str(config.get("execution_prompt") or ""),
+        execution_prompt=str(
+            origin_context.get("execution_prompt")
+            or config.get("execution_prompt")
+            or ""
+        ),
     )
     await project_automation_managed_execution_service.dispatch_board_team(
         db=db,

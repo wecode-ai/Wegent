@@ -52,6 +52,10 @@ export interface ToolScenarioStep {
   responseContent?: string
 }
 
+export interface ToolScenarioOptions {
+  matchHeaders?: Record<string, string | null>
+}
+
 export async function createProviderNativeResources(
   request: APIRequestContext,
   prefix: string
@@ -247,10 +251,11 @@ export async function openProviderNativeChat(
 export async function configureToolScenario(
   request: APIRequestContext,
   matchText: string,
-  steps: ToolScenarioStep[]
+  steps: ToolScenarioStep[],
+  options: ToolScenarioOptions = {}
 ): Promise<void> {
   const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios`, {
-    data: { matchText, steps },
+    data: { matchText, matchHeaders: options.matchHeaders, steps },
   })
   expect(response.status(), await response.text()).toBe(200)
 }
@@ -436,6 +441,38 @@ export async function getScenarioModelBodies(
   expect(response.status(), await response.text()).toBe(200)
   const body = (await response.json()) as { capturedRequests: Record<string, unknown>[] }
   return body.capturedRequests.filter(item => JSON.stringify(item).includes(prompt))
+}
+
+export async function getScenarioRequestHeaders(
+  request: APIRequestContext,
+  prompt: string
+): Promise<Array<Record<string, string | string[] | undefined>>> {
+  const response = await request.get(
+    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  const body = (await response.json()) as {
+    capturedHeaders?: Array<Record<string, string | string[] | undefined>>
+  }
+  return body.capturedHeaders ?? []
+}
+
+export async function getToolScenarioState(
+  request: APIRequestContext,
+  prompt: string
+): Promise<{ nextStep: number; capturedRequestCount: number }> {
+  const response = await request.get(
+    `${PROVIDER_NATIVE_MOCK_URL}/tool-scenarios?matchText=${encodeURIComponent(prompt)}`
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  const body = (await response.json()) as {
+    nextStep?: number
+    capturedRequests?: unknown[]
+  }
+  return {
+    nextStep: body.nextStep ?? 0,
+    capturedRequestCount: body.capturedRequests?.length ?? 0,
+  }
 }
 
 export function modelRequestText(bodies: unknown[]): string {

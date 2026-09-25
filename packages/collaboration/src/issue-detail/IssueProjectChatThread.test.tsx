@@ -110,6 +110,48 @@ describe("shared Issue threads", () => {
     ).toContain("已完成");
   });
 
+  it("renders a manager assignment as a compact dispatch event", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "",
+              metadata: {
+                dispatch_role: "manager",
+                dispatch_assignments: [
+                  {
+                    task_title: "采集运行证据",
+                    agent_name: "诊断智能体",
+                  },
+                  {
+                    task_title: "独立复核结论",
+                    agent_name: "复核智能体",
+                  },
+                ],
+                run_status: "running",
+              },
+              status: "streaming",
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const event = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(event?.textContent).toContain("Codex 负责人");
+    expect(event?.textContent).toContain("分配给 诊断智能体、复核智能体");
+    expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
+  });
+
   it("keeps a failed reply draft and submits with the real root id", async () => {
     const send = vi
       .fn()
@@ -166,7 +208,9 @@ describe("shared Issue threads", () => {
       ),
     );
     expect(
-      container.querySelector('[data-testid="collaboration-chat-reply-input-root"]'),
+      container.querySelector(
+        '[data-testid="collaboration-chat-reply-input-root"]',
+      ),
     ).toBeNull();
   });
 

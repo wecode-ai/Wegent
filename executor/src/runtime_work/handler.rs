@@ -575,6 +575,7 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -843,6 +844,7 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
@@ -921,6 +923,8 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.register_cloud_collaboration_dispatcher();
+        self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
     }
@@ -1037,6 +1041,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
             "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
@@ -1218,6 +1223,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod collaboration;
 mod composer_catalog;
 mod runtime_rpc;
 

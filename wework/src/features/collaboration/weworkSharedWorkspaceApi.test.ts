@@ -238,42 +238,6 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
-  it('maps dispatch candidates from the backend target fields', async () => {
-    const listIssueDispatchCandidates = vi.fn().mockResolvedValue([
-      {
-        target_type: 'human',
-        target_id: '7',
-        name: 'admin',
-        execution_location: 'human',
-      },
-      {
-        target_type: 'group',
-        target_id: 'group-1',
-        name: '性能协作小组',
-        execution_location: 'mixed',
-      },
-    ])
-    const api = createWeworkDeliverySharedWorkspaceApi({
-      listIssueDispatchCandidates,
-    } as unknown as DeliveryApi)
-
-    await expect(api.dispatches?.listCandidates('issue-1', 'human')).resolves.toEqual([
-      {
-        kind: 'human',
-        id: '7',
-        name: 'admin',
-        description: 'human',
-      },
-      {
-        kind: 'collaboration_group',
-        id: 'group-1',
-        name: '性能协作小组',
-        description: 'mixed',
-      },
-    ])
-    expect(listIssueDispatchCandidates).toHaveBeenCalledWith('issue-1', 'human')
-  })
-
   it('maps project and issue methods and converts transport casing', async () => {
     const deliveryApi = createMockDeliveryApi()
     const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
@@ -984,7 +948,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'members',
         'files',
         'deliveries',
-        'dispatches',
         'executions',
         'automations',
         'incomingHooks',

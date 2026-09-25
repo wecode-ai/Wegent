@@ -274,8 +274,6 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
     collaboration_kinds = (
         "mention",
         "execution",
-        "issue_dispatch_assignment",
-        "issue_dispatch_manager_turn",
     )
     rows = {
         kind: create_notification(

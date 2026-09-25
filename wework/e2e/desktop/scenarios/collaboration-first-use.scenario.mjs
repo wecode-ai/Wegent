@@ -85,7 +85,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         ISSUE_NAME,
         'The first Issue did not open after creation'
       )
-      await control.command('waitFor', scoped('[data-testid="issue-dispatch-open"]'), {
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'collaboration-first-use-06-issue-ready.png')

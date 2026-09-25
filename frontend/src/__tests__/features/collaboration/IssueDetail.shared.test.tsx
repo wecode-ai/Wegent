@@ -621,6 +621,27 @@ describe('shared IssueDetail', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
   })
 
+  it('keeps an empty Issue compact until content editing starts', () => {
+    renderDetail(createApi(), {
+      issue: { ...issue, description: '' },
+    })
+
+    const addDescription = screen.getByTestId('cloud-todo-add-description')
+    const stateSummary = screen.getByTestId('cloud-todo-state-summary')
+    const attachmentFooter = screen.getByTestId('cloud-todo-attachment-footer')
+
+    expect(addDescription).toHaveTextContent('添加描述')
+    expect(screen.queryByTestId('cloud-todo-detail-description')).not.toBeInTheDocument()
+    expect(attachmentFooter).toHaveTextContent('附件0＋ 上传')
+    expect(attachmentFooter).not.toHaveTextContent('暂无附件')
+    expect(
+      stateSummary.compareDocumentPosition(attachmentFooter) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    fireEvent.click(addDescription)
+    expect(screen.getByTestId('cloud-todo-detail-description')).toBeInTheDocument()
+  })
+
   it('allows assignment without granting permission to edit Issue content', async () => {
     const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
     const update = jest.fn()

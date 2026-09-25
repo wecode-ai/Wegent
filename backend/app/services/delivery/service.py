@@ -360,24 +360,7 @@ class DeliveryService:
             delivery.status = "delivered"
             delivery.delivered_at = now
             from app.services.human_issue_work import human_issue_work_service
-            from app.services.issue_dispatch import issue_dispatch_service
 
-            dispatch_task = issue_dispatch_service.task_for_linked_item(db, item.id)
-            if dispatch_task is not None:
-                item.current_delivery_id = delivery.id
-                item.metadata_json = advance_content_revision(
-                    item.metadata_json, actor_user_id=user_id
-                )
-                item.version += 1
-                db.commit()
-                db.refresh(delivery)
-                publish_loop_item_changed(
-                    db,
-                    item=item,
-                    reason="delivery_finalized",
-                    actor_user_id=user_id,
-                )
-                return delivery
             if human_issue_work_service.is_direct_human_assignment(db, item):
                 item.current_delivery_id = delivery.id
                 item.metadata_json = advance_content_revision(

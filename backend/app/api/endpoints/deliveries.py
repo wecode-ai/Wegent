@@ -57,6 +57,7 @@ from app.schemas.delivery import (
     LoopItemCreate,
     LoopItemListResponse,
     LoopItemPageResponse,
+    LoopItemRead,
     LoopItemReorder,
     LoopItemResponse,
     LoopItemTaskBind,
@@ -90,6 +91,9 @@ from app.services.cloud_projects.access import (
 )
 from app.services.delivery import delivery_service
 from app.services.human_issue_work import human_issue_work_service
+from app.services.human_submission_coordination import (
+    human_submission_coordination_service,
+)
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
@@ -185,6 +189,12 @@ async def submit_human_issue_work(
     item, message, created = human_issue_work_service.submit(
         db, item_id, current_user.id, values
     )
+    if created:
+        await human_submission_coordination_service.publish(
+            db,
+            item=item,
+            message=message,
+        )
     return await _human_work_response(db, item, current_user, message, created=created)
 
 
@@ -552,7 +562,9 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.assignee_agent_id:
+        if created.internal_item.assignee_agent_id or (
+            created.internal_item.metadata_json or {}
+        ).get("collaboration_group"):
             from app.services.board_team_execution import (
                 dispatch_board_team_assignment,
             )
@@ -618,6 +630,7 @@ def get_loop_item(
 @router.post("/loop-items/{item_id}/read", response_model=LoopItemResponse)
 def mark_loop_item_read(
     item_id: str,
+    values: LoopItemRead | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
@@ -626,7 +639,12 @@ def mark_loop_item_read(
             status.HTTP_409_CONFLICT,
             "External provider tasks do not support Wegent read state",
         )
-    item = loop_item_service.mark_read(db, item_id, current_user.id)
+    item = loop_item_service.mark_read(
+        db,
+        item_id,
+        current_user.id,
+        activity_sequence=values.activity_sequence if values else None,
+    )
     return _loop_item_response(db, item, current_user)
 
 
@@ -642,7 +660,7 @@ async def update_loop_item(
         response = external_loop_item_provider.update(
             db, item_id, current_user.id, values
         )
-        if values.assignee_agent_id:
+        if values.assignee_agent_id or values.assignee_group_id:
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             item = db.get(LoopItem, item_id)
@@ -732,7 +750,10 @@ async def update_loop_item(
 
     item = loop_item_service.update(db, item_id, current_user.id, values)
     queue_wakeup_scheduled = False
-    if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
+    if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
+        "assignee_group_id" in values.model_fields_set
+        and values.assignee_group_id is not None
+    ):
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
@@ -1408,13 +1429,6 @@ async def finalize_delivery(
         delivery_id,
         current_user.id,
         values or DeliveryFinalize(),
-    )
-    from app.services.issue_dispatch import issue_dispatch_service
-
-    issue_dispatch_service.on_delivery_finalized(
-        db,
-        delivery=delivery,
-        user_id=current_user.id,
     )
     return _delivery_response(db, delivery)
 

@@ -26,7 +26,6 @@ import {
   executionDisplayStatus,
   isExecutionActive,
   IssueStatusHistoryList,
-  useIssueDispatchController,
   type SharedIssueStatusHistoryEntry,
 } from '@wegent/collaboration'
 import type { CollaborationAgent, CollaborationMember } from '@wegent/collaboration'
@@ -82,7 +81,6 @@ import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 import { statusHistoryLabels } from './statusHistoryLabels'
 import { memberNameById } from './todoShared'
 import type { CloudProjectMember } from '@/api/deliveries'
-import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -218,24 +216,6 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
-  const dispatchApi = useMemo(
-    () =>
-      projectDeliveryApi && typeof projectDeliveryApi.listIssueDispatches === 'function'
-        ? createWeworkDeliverySharedWorkspaceApi(projectDeliveryApi).dispatches
-        : undefined,
-    [projectDeliveryApi]
-  )
-  const refreshIssueAfterDispatch = useCallback(async () => {
-    if (!projectDeliveryApi?.getLoopItem) return
-    onTaskUpdated?.(await projectDeliveryApi.getLoopItem(task.id))
-  }, [onTaskUpdated, projectDeliveryApi, task.id])
-  const dispatch = useIssueDispatchController({
-    api: dispatchApi,
-    issueId: task.id,
-    desktop: true,
-    translate: activityTranslate,
-    onIssueChanged: refreshIssueAfterDispatch,
-  })
   const [loadedStatusHistory, setLoadedStatusHistory] = useState<{
     taskId: string
     entries: SharedIssueStatusHistoryEntry[]
@@ -947,9 +927,7 @@ export function TaskActivityView({
         listTestId="cloud-task-activity-list"
         listRef={listRef}
         translate={activityTranslate}
-        count={
-          (issueTimeline ? activityEntries.length : threadMessages.length) + dispatch.activityCount
-        }
+        count={issueTimeline ? activityEntries.length : threadMessages.length}
         loading={loading}
         error={cancellation.error}
         emptyDescription={
@@ -973,7 +951,6 @@ export function TaskActivityView({
               onAccept={projectDeliveryApi ? () => void acceptTask() : undefined}
               onRun={client ? () => void rerunTaskAi() : undefined}
             />
-            {dispatch.tools}
           </div>
         }
         composer={
@@ -1054,7 +1031,6 @@ export function TaskActivityView({
       >
         {linear ? (
           <div className="flex flex-col">
-            {dispatch.activity}
             {activityEntries.map(activity => {
               if (activity.kind === 'created') {
                 return (
@@ -1206,7 +1182,6 @@ export function TaskActivityView({
                 : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
             }
           >
-            {dispatch.activity}
             {threadMessages.map(message => {
               const runtimeAddress = messageRuntimeAddress(message)
               return (

@@ -651,77 +651,19 @@ def test_delivery_response_reads_expired_orm_fields(
     assert response.status == "draft"
 
 
-def test_direct_human_dispatch_delivery_finalize_enters_issue_review(
-    test_client: TestClient,
-    test_token: str,
-    test_user: User,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    issue_response = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Review human delivery"},
-    )
-    assert issue_response.status_code == 201
-    issue_id = issue_response.json()["id"]
-
-    dispatch_response = test_client.post(
-        f"/api/v1/loop-items/{issue_id}/dispatches",
-        headers=_auth(test_token),
-        json={
-            "target_type": "human",
-            "target_id": str(test_user.id),
-            "idempotency_key": "human-delivery-http",
-            "task_title": "Prepare review evidence",
-            "instructions": "Submit the evidence through Delivery.",
-        },
-    )
-    assert dispatch_response.status_code == 201
-    dispatch = dispatch_response.json()
-    task = dispatch["rounds"][0]["tasks"][0]
-
-    draft_response = test_client.post(
-        f"/api/v1/loop-items/{task['linked_item_id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Evidence\nVerified through the Delivery API."},
-    )
-    assert draft_response.status_code == 201
-    delivery_id = draft_response.json()["id"]
-
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{delivery_id}/finalize",
-        headers=_auth(test_token),
-    )
-    assert finalized.status_code == 200
-    assert finalized.json()["status"] == "delivered"
-    assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
-
-    dispatch_after = test_client.get(
-        f"/api/v1/issue-dispatches/{dispatch['id']}",
-        headers=_auth(test_token),
-    )
-    assert dispatch_after.status_code == 200
-    dispatch_payload = dispatch_after.json()
-    assert dispatch_payload["status"] == "completed"
-    assert dispatch_payload["rounds"][0]["status"] == "closed"
-    assert dispatch_payload["rounds"][0]["tasks"][0]["status"] == "submitted"
-    assert dispatch_payload["rounds"][0]["tasks"][0]["delivery_id"] == delivery_id
-
-    issue_after = test_client.get(
-        f"/api/v1/loop-items/{issue_id}",
-        headers=_auth(test_token),
-    )
-    assert issue_after.status_code == 200
-    assert issue_after.json()["status"] == "in_review"
-
-
 def test_delivery_does_not_accept_human_assigned_issue(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    publish_submission = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.human_submission_coordination."
+        "human_submission_coordination_service.publish",
+        publish_submission,
+    )
     created = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
@@ -752,6 +694,7 @@ def test_delivery_does_not_accept_human_assigned_issue(
         headers=_auth(test_token),
     )
     assert finalized.status_code == 200, finalized.text
+    publish_submission.assert_not_awaited()
     latest = test_client.get(
         f"/api/v1/loop-items/{item['id']}", headers=_auth(test_token)
     ).json()
@@ -1593,6 +1536,35 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
     test_db.refresh(item)
     assert item.metadata_json["legacy"] is True
     assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
+
+
+def test_mark_loop_item_read_persists_activity_sequence(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Activity cursor"},
+    )
+    assert created.status_code == 201
+
+    marked = test_client.post(
+        f"/api/v1/loop-items/{created.json()['id']}/read",
+        headers=_auth(test_token),
+        json={"activity_sequence": 17},
+    )
+
+    assert marked.status_code == 200
+    assert marked.json()["activity_read_sequence"] == 17
+    item = test_db.get(LoopItem, created.json()["id"])
+    assert item is not None
+    assert (
+        item.metadata_json["activity_read_sequences"][str(item.created_by_user_id)]
+        == 17
+    )
 
 
 def _github_webhook_headers(

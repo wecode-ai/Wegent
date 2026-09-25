@@ -66,102 +66,6 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
-  test('dispatches a local Issue through the shared Issue Dispatch contract', async () => {
-    let executionPayload: Record<string, unknown> | null = null
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'projects.list') return [projectRecord]
-      if (method === 'todos.get') return taskRecord
-      if (method === 'chat_agents.list') {
-        return [
-          {
-            id: 'agent-1',
-            project_id: projectRecord.id,
-            name: 'local-agent',
-            display_name: 'Local Agent',
-            status: 'active',
-          },
-        ]
-      }
-      if (method === 'todos.update') {
-        const todo = params?.todo as Record<string, unknown>
-        executionPayload = todo.execution_payload as Record<string, unknown>
-        expect(todo).toMatchObject({
-          version: taskRecord.version,
-          status: 'in_progress',
-          assignee_agent_id: 'agent-1',
-        })
-        expect(executionPayload).toMatchObject({
-          message: 'Collect reproducible evidence',
-          workflow_task_title: 'Collect local evidence',
-          dispatch_role: 'executor',
-          dispatch_parent_transition: 'in_review',
-        })
-        return { ...taskRecord, status: 'in_progress', version: 2 }
-      }
-      if (method === 'executions.list') {
-        return executionPayload
-          ? [
-              {
-                id: 41,
-                loop_item_id: taskRecord.id,
-                cloud_project_id: projectRecord.id,
-                task_title: taskRecord.title,
-                agent_id: 'agent-1',
-                agent_name: 'Local Agent',
-                status: 'queued',
-                error_message: '',
-                execution_note: '',
-                created_at: '2026-09-24T00:00:00Z',
-                updated_at: '2026-09-24T00:00:00Z',
-                runtime_payload: executionPayload,
-              },
-            ]
-          : []
-      }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(api.listIssueDispatchCandidates(taskRecord.id, 'agent')).resolves.toEqual([
-      {
-        target_type: 'agent',
-        target_id: 'agent-1',
-        name: 'Local Agent',
-        execution_location: 'local',
-      },
-    ])
-    const dispatch = await api.createIssueDispatch(taskRecord.id, {
-      target_type: 'agent',
-      target_id: 'agent-1',
-      idempotency_key: 'dispatch-1',
-      task_title: 'Collect local evidence',
-      instructions: 'Collect reproducible evidence',
-    })
-
-    expect(dispatch).toMatchObject({
-      id: 'local-dispatch:dispatch-1',
-      project_id: projectRecord.id,
-      issue_id: taskRecord.id,
-      target_type: 'agent',
-      target_id: 'agent-1',
-      target_name: 'Local Agent',
-      status: 'active',
-      rounds: [
-        {
-          status: 'executing',
-          tasks: [
-            {
-              task_title: 'Collect local evidence',
-              instructions: 'Collect reproducible evidence',
-              status: 'queued',
-              execution_location: 'local',
-            },
-          ],
-        },
-      ],
-    })
-  })
-
   test('maps persisted local Issue status transitions into the detail model', async () => {
     const statusHistory = [
       {
@@ -303,7 +207,11 @@ describe('local delivery API', () => {
     }
     const readTask = {
       ...unreadTask,
-      metadata: { ...unreadTask.metadata, is_unread: false },
+      metadata: {
+        ...unreadTask.metadata,
+        is_unread: false,
+        activity_read_sequence: 17,
+      },
     }
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.list') return [unreadTask]
@@ -315,13 +223,15 @@ describe('local delivery API', () => {
     await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1', is_unread: true }],
     })
-    await expect(api.markLoopItemRead('LOCAL-1')).resolves.toMatchObject({
+    await expect(api.markLoopItemRead('LOCAL-1', 17)).resolves.toMatchObject({
       id: 'LOCAL-1',
       is_unread: false,
+      activity_read_sequence: 17,
     })
     expect(request).toHaveBeenLastCalledWith('todos.mark_read', {
       project_id: 'project-1',
       task_id: 'LOCAL-1',
+      activity_sequence: 17,
     })
   })
 

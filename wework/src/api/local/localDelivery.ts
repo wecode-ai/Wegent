@@ -34,7 +34,6 @@ import {
   visibleLoopItemTags,
 } from '@/api/localProjectAssociation'
 import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
-import { createLocalIssueDispatchApi } from './localIssueDispatch'
 
 type LocalRequest = <T>(
   method: string,
@@ -741,6 +740,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
     content_revision: 1,
+    activity_read_sequence:
+      typeof record.metadata.activity_read_sequence === 'number'
+        ? record.metadata.activity_read_sequence
+        : 0,
     has_additional_context:
       typeof record.metadata.has_additional_context === 'boolean'
         ? record.metadata.has_additional_context
@@ -1058,17 +1061,6 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
-    ...createLocalIssueDispatchApi({
-      request,
-      resolveProjectId,
-      async getIssue(itemId) {
-        const projectId = await resolveProjectId(itemId)
-        return request<LocalLoopItemRecord>('todos.get', {
-          project_id: projectId,
-          task_id: itemId,
-        })
-      },
-    }),
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
@@ -1168,11 +1160,12 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
-    async markLoopItemRead(itemId: string) {
+    async markLoopItemRead(itemId: string, activitySequence?: number) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.mark_read', {
         project_id: projectId,
         task_id: itemId,
+        ...(activitySequence == null ? {} : { activity_sequence: activitySequence }),
       })
       return localTask(record)
     },

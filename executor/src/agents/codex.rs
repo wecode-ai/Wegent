@@ -120,7 +120,7 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For manager-bound Issue dispatch, use `get_board_item` and `get_assignment_candidates` before creating a dispatch round. Each round must name the task, assignee, and configured workflow stage when one applies. Only the manager may update the parent Issue status.
+- For a manager-bound Issue, inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
 "#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
@@ -132,8 +132,6 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
-#[path = "codex/coordinate.rs"]
-mod coordinate;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 #[path = "codex/diagnostics.rs"]
@@ -681,8 +679,7 @@ impl CodexAppServerClient {
         last_turn_id: &str,
         request: &ExecutionRequest,
     ) -> Result<Value, String> {
-        let mut request = request.clone();
-        coordinate::prepare_catalog(&mut request).await?;
+        let request = request.clone();
         let launch_config = build_codex_launch_config_for_fork(&request, thread_id)?;
         let mut params = thread_fork_params(thread_id, thread_path, &request, &launch_config);
         params["lastTurnId"] = Value::String(last_turn_id.to_owned());
@@ -3594,8 +3591,6 @@ fn build_codex_launch_config_with_route_scope(
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    coordinate::configure(request, &mut launch_config)?;
-
     Ok(launch_config)
 }
 
@@ -4913,9 +4908,7 @@ async fn prepare_codex_execution_request(
         ensure_codex_mcp_endpoints().await?;
     }
     let prepare_request = async {
-        let mut request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
-        coordinate::prepare_catalog(&mut request).await?;
-        Ok::<_, String>(request)
+        Ok::<_, String>(super::runtime_capabilities::prepare_runtime_attachments(request).await)
     };
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {

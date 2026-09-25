@@ -1,5 +1,4 @@
 import type { RuntimeConversationClient } from "@wegent/chat-core";
-import type { SharedWorkspaceDispatchesApi } from "./IssueDispatch";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -498,7 +497,10 @@ export interface SharedWorkspaceIssuesApi {
     projectId: string,
     input: { parentId: string | null; status: string; issueIds: string[] },
   ): Promise<CollaborationIssue[]>;
-  markRead(issueId: string): Promise<CollaborationIssue>;
+  markRead(
+    issueId: string,
+    activitySequence?: number,
+  ): Promise<CollaborationIssue>;
 }
 
 export interface SharedWorkspaceCommentsApi {
@@ -885,7 +887,6 @@ export interface SharedWorkspaceApi {
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;
-  dispatches: SharedWorkspaceDispatchesApi;
   members: SharedWorkspaceMembersApi;
   files: SharedWorkspaceFilesApi;
   deliveries: SharedWorkspaceDeliveriesApi;

@@ -213,6 +213,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
             "x-wegent-model-type": "user",
             "x-wegent-model-namespace": "default",
             "x-wegent-model-user-id": str(test_user.id),
+            "thread-id": "manager-thread",
+            "x-openai-subagent": "collab_spawn",
         }
     )
 
@@ -245,6 +247,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
     assert sent_request.headers["Content-Type"] == "application/json"
     assert sent_request.headers["Accept"] == "text/event-stream"
     assert sent_request.headers["user"] == test_user.user_name
+    assert sent_request.headers["thread-id"] == "manager-thread"
+    assert sent_request.headers["x-openai-subagent"] == "collab_spawn"
     assert b'"model": "gpt-4-turbo"' in sent_request.content
     assert b'"input": "hello"' in sent_request.content
     assert "x-wegent-model-type" not in sent_request.headers
@@ -498,6 +502,7 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
     assert config["native_tool_search"] is (expected == "openai-responses")
     assert config["native_namespace_tools"] is (expected == "openai-responses")
+    assert config["tool_profile"] == "function"
 
 
 def test_cloud_runtime_can_bridge_standard_responses_tools(

@@ -22,10 +22,6 @@ from app.db.base import Base
 from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
     CloudProject,
-    IssueDispatch,
-    IssueDispatchOutcome,
-    IssueDispatchRound,
-    IssueDispatchTask,
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
@@ -50,7 +46,6 @@ from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services import execution_environment_initialization
 from app.services.board_team_execution import dispatch_board_robot_execution
 from app.services.device.runtime_route import runtime_device_route_id
-from app.services.issue_dispatch import issue_dispatch_service
 from app.services.issue_execution_configuration import (
     execution_context,
     project_robot_execution_config,
@@ -660,6 +655,42 @@ def test_stop_execution_rejects_an_execution_from_another_project(
     assert target.status == "queued"
 
 
+def test_stop_queued_collaboration_manager_cancels_without_changing_issue(
+    test_db: Session, test_user: User
+) -> None:
+    from app.api.endpoints.loop_item_executions import stop_execution
+
+    project = _make_project(test_db, test_user)
+    manager = _make_bot(test_db, project, test_user)
+    issue = _make_item(test_db, project, test_user)
+    issue.status = "in_progress"
+    execution = _make_execution(
+        test_db,
+        issue,
+        manager,
+        test_user,
+        automation_context={
+            "dispatch_role": "manager",
+            "collaborationMode": "coordinate",
+        },
+    )
+    background_tasks = MagicMock()
+
+    result = stop_execution(
+        project_id=int(project.id),
+        execution_id=execution.id,
+        background_tasks=background_tasks,
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert result is not None
+    assert result.status == "cancelled"
+    background_tasks.add_task.assert_not_called()
+    test_db.refresh(issue)
+    assert issue.status == "in_progress"
+
+
 def test_runtime_event_matches_execution_by_any_device_identity(
     test_db: Session, test_user: User
 ) -> None:
@@ -1225,197 +1256,6 @@ def test_cancel_wins_concurrent_fail_across_independent_sessions(
         verify_session.close()
 
 
-def test_cancel_ack_and_runtime_terminal_event_close_dispatch_once(
-    independent_session_database,
-) -> None:
-    """Cancellation ACK and Runtime terminal truth share one lock order.
-
-    The two callbacks use separate database sessions in production. They can
-    arrive together after the Executor interrupts a task, so the execution and
-    its dispatch task must converge without a deadlock or a stale running task.
-    """
-
-    factory, user = independent_session_database
-    setup_session = factory()
-    project = _make_project(setup_session, user)
-    issue = _make_item(
-        setup_session,
-        project,
-        user,
-        title="Parent issue",
-    )
-    issue.status = "in_progress"
-    worker = _make_bot(setup_session, project, user)
-    assigned_item = _make_item(
-        setup_session,
-        project,
-        user,
-        title="Inspect cancellation",
-    )
-    execution = _make_execution(
-        setup_session,
-        assigned_item,
-        worker,
-        user,
-    )
-    now = utcnow()
-    execution.status = "running"
-    execution.runtime_device_id = "runtime-device-cancel-race"
-    execution.runtime_task_id = runtime_task_id_for(execution.id)
-    execution.start_requested_at = now
-    execution.started_at = now
-    execution.observed_state = "running"
-    execution.observed_at = now
-
-    dispatch = IssueDispatch(
-        id=str(uuid.uuid4()),
-        cloud_project_id=str(project.id),
-        parent_id=issue.id,
-        title="Inspect cancellation",
-        description="",
-        status="active",
-        created_by_user_id=user.id,
-        metadata_json={
-            "target_type": "agent",
-            "target_id": worker.id,
-            "active_round_id": None,
-        },
-    )
-    round_record = IssueDispatchRound(
-        id=str(uuid.uuid4()),
-        cloud_project_id=str(project.id),
-        parent_id=dispatch.id,
-        title="Direct assignment",
-        description="",
-        status="executing",
-        sort_order=1,
-        created_by_user_id=user.id,
-        metadata_json={"direct": True},
-    )
-    task = IssueDispatchTask(
-        id=str(uuid.uuid4()),
-        cloud_project_id=str(project.id),
-        parent_id=round_record.id,
-        loop_item_id=assigned_item.id,
-        title="Inspect cancellation",
-        description="",
-        status="running",
-        created_by_user_id=user.id,
-        metadata_json={
-            "assignee_type": "agent",
-            "assignee_id": worker.id,
-            "assignee_name": worker.title,
-        },
-    )
-    dispatch.metadata_json = {
-        **dispatch.metadata_json,
-        "active_round_id": round_record.id,
-    }
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=assigned_item.id,
-        sender_type="agent",
-        sender_id=worker.id,
-        sender_name=worker.title,
-        message_type="agent_chunk",
-        content="",
-        metadata_json={
-            "execution_id": execution.id,
-            "run_status": "running",
-        },
-        agent_id=worker.id,
-        status="streaming",
-        runtime_device_id=execution.runtime_device_id,
-        runtime_task_id=execution.runtime_task_id,
-    )
-    setup_session.add_all([dispatch, round_record, task, activity])
-    setup_session.commit()
-    execution_id = execution.id
-    task_id = task.id
-    dispatch_id = dispatch.id
-    issue_id = issue.id
-    runtime_device_id = execution.runtime_device_id
-    runtime_task_id = execution.runtime_task_id
-
-    requested = loop_item_execution_service.cancel(
-        setup_session,
-        execution_id=execution_id,
-        note="User requested cancellation",
-    )
-    assert requested.status == "cancel_requested"
-    setup_session.close()
-
-    start = Barrier(2)
-
-    def confirm_ack() -> str | None:
-        session = factory()
-        try:
-            start.wait(timeout=5)
-            result = loop_item_execution_service.confirm_runtime_cancelled(
-                session,
-                execution_id=execution_id,
-                note="Runtime confirmed cancellation",
-            )
-            return result.status if result is not None else None
-        finally:
-            session.close()
-
-    def observe_runtime_terminal() -> str | None:
-        session = factory()
-        try:
-            start.wait(timeout=5)
-            result = loop_item_execution_service.handle_runtime_event(
-                session,
-                device_id=runtime_device_id,
-                runtime_task_id=runtime_task_id,
-                event_name="response.incomplete",
-                payload={
-                    "eventSeq": 2,
-                    "data": {"status": "CANCELLED"},
-                },
-            )
-            return result.status if result is not None else None
-        finally:
-            session.close()
-
-    with (
-        patch("app.services.project_chat.push.push_project_chat_message"),
-        patch("app.services.issue_dispatch.publish_loop_item_changed"),
-        patch("app.services.loop_item_executions.service.notify_execution_lifecycle"),
-        ThreadPoolExecutor(max_workers=2) as pool,
-    ):
-        results = [
-            pool.submit(confirm_ack),
-            pool.submit(observe_runtime_terminal),
-        ]
-        statuses = [future.result(timeout=10) for future in results]
-
-    assert set(statuses).issubset({None, "cancelled"})
-    assert "cancelled" in statuses
-
-    verify_session = factory()
-    try:
-        persisted_execution = verify_session.get(LoopItemExecution, execution_id)
-        persisted_task = verify_session.get(IssueDispatchTask, task_id)
-        persisted_dispatch = verify_session.get(IssueDispatch, dispatch_id)
-        persisted_issue = verify_session.get(LoopItem, issue_id)
-        outcomes = (
-            verify_session.query(IssueDispatchOutcome)
-            .filter(IssueDispatchOutcome.parent_id == task_id)
-            .all()
-        )
-        assert persisted_execution.status == "cancelled"
-        assert persisted_task.status == "cancelled"
-        assert persisted_dispatch.status == "active"
-        assert persisted_issue.status == "in_progress"
-        assert len(outcomes) == 1
-    finally:
-        verify_session.close()
-
-
 def test_runtime_cancelled_is_terminal_and_never_requeued(
     test_db: Session,
     test_user: User,
@@ -1526,6 +1366,78 @@ def test_delivered_cancel_waits_for_runtime_stop_confirmation(
     assert confirmed.status == "cancelled"
     assert confirmed.observed_state == "cancelled"
     assert confirmed.termination_reason == "runtime_cancel_acknowledged"
+
+
+def test_manager_cancel_ack_closes_active_native_subagent_activity(
+    test_db: Session, test_user: User
+) -> None:
+    from app.api.endpoints.loop_item_executions import stop_execution
+    from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+    execution, _, manager_activity = _make_running_automation_execution(
+        test_db, test_user
+    )
+    issue = test_db.get(LoopItem, execution.loop_item_id)
+    assert issue is not None
+    issue.status = "in_progress"
+    child_activity = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=manager_activity.project_id,
+        task_id=manager_activity.task_id,
+        sender_type="agent",
+        sender_id=f"{manager_activity.agent_id}:worker-1",
+        sender_name="Manager.Worker",
+        message_type="text",
+        content="正在执行子任务",
+        metadata_json={
+            "kind": "task_ai_subagent",
+            "parent_agent_id": manager_activity.agent_id,
+            "parent_message_id": manager_activity.message_id,
+            "subagent_id": "worker-1",
+            "subagent_name": "Worker",
+            "subagent_status": "running",
+        },
+        trigger_message_id=manager_activity.message_id,
+        reply_to_message_id=manager_activity.message_id,
+        thread_root_message_id=manager_activity.message_id,
+        agent_id=manager_activity.agent_id,
+        runtime_device_id=manager_activity.runtime_device_id,
+        runtime_task_id=manager_activity.runtime_task_id,
+        status="streaming",
+    )
+    test_db.add(child_activity)
+    test_db.commit()
+
+    background_tasks = MagicMock()
+    result = stop_execution(
+        project_id=int(execution.cloud_project_id),
+        execution_id=execution.id,
+        background_tasks=background_tasks,
+        db=test_db,
+        current_user=test_user,
+    )
+    assert result is not None
+    assert result.status == "cancel_requested"
+    background_tasks.add_task.assert_called_once()
+    task = background_tasks.add_task.call_args
+    assert task.args[0] is emit_runtime_cancels
+    assert [row.id for row in task.args[1]] == [execution.id]
+
+    confirmed = loop_item_execution_service.confirm_runtime_cancelled(
+        test_db,
+        execution_id=execution.id,
+        note="Runtime confirmed manager and child agents stopped",
+    )
+
+    assert confirmed is not None
+    assert confirmed.status == "cancelled"
+    test_db.refresh(manager_activity)
+    test_db.refresh(child_activity)
+    test_db.refresh(issue)
+    assert manager_activity.status == "cancelled"
+    assert child_activity.status == "cancelled"
+    assert child_activity.metadata_json["subagent_status"] == "cancelled"
+    assert issue.status == "in_progress"
 
 
 def test_runtime_retry_uses_a_new_execution_attempt(
@@ -4875,6 +4787,7 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert model_config["upstream_api_format"] == "anthropic-messages"
     assert model_config["codex_catalog_model_id"] == "wework-kimi-k2-7"
     assert model_config["codex_responses_compat_proxy"] is True
+    assert model_config["tool_profile"] == "function"
     assert payload["modelId"] == "public-cloud-model"
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 

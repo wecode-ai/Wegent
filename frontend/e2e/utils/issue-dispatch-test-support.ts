@@ -11,6 +11,7 @@ import {
   configureToolScenario,
   PROVIDER_NATIVE_API_URL,
   PROVIDER_NATIVE_MOCK_URL,
+  type ToolScenarioOptions,
   type ToolScenarioStep,
 } from './provider-native-test-support'
 
@@ -69,6 +70,7 @@ export async function createIssueDispatchMockModel(
             env: {
               model: 'openai',
               model_id: 'mock-issue-dispatch-model',
+              api_key: 'mock-api-key',
               base_url: `${PROVIDER_NATIVE_MOCK_URL}/v1`,
             },
           },
@@ -96,9 +98,10 @@ export async function deleteIssueDispatchMockModel(
 export async function configureIssueDispatchModelScenario(
   request: APIRequestContext,
   matchText: string,
-  steps: ToolScenarioStep[]
+  steps: ToolScenarioStep[],
+  options: ToolScenarioOptions = {}
 ): Promise<() => Promise<void>> {
-  await configureToolScenario(request, matchText, steps)
+  await configureToolScenario(request, matchText, steps, options)
   return () => clearToolScenario(request, matchText)
 }
 
@@ -168,28 +171,6 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   return userId
 }
 
-export async function dispatchToFirstTarget(
-  page: Page,
-  target: 'human' | 'agent' | 'group',
-  title: string,
-  targetName?: string
-): Promise<void> {
-  await page.getByTestId('issue-dispatch-open').click()
-  await expect(page.getByTestId('issue-dispatch-dialog')).toBeVisible()
-  await page.getByTestId(`issue-dispatch-target-${target}`).click()
-  const options = page.locator(`[data-testid^="issue-dispatch-target-option-${target}:"]`)
-  const option = targetName
-    ? await firstVisibleOption(options.filter({ hasText: targetName }))
-    : await firstVisibleOption(options)
-  await option.click()
-  await page.getByTestId('issue-dispatch-task-title').fill(title)
-  await page
-    .getByTestId('issue-dispatch-instructions')
-    .fill(`${title}. Return a concise result with independently verifiable evidence.`)
-  await page.getByTestId('issue-dispatch-confirm').click()
-  await expect(page.getByTestId('issue-dispatch-dialog')).toHaveCount(0)
-}
-
 export async function createProjectAgent(
   page: Page,
   name: string,
@@ -240,7 +221,7 @@ export async function createCollaborationGroup(
     humanId: string
     leader: { id: string; type: 'agent' | 'human' }
   }
-): Promise<void> {
+): Promise<string> {
   await page.getByTestId('collaboration-participants-tab-groups').click()
   await page.getByTestId('collaboration-group-open-create').click()
   await page.getByTestId('collaboration-group-name').fill(name)
@@ -257,7 +238,12 @@ export async function createCollaborationGroup(
     .getByTestId(`collaboration-group-leader-${members.leader.type}-${members.leader.id}`)
     .click()
   await page.getByTestId('collaboration-group-create').click()
-  await expect(
-    page.locator('[data-testid^="collaboration-group-detail-"]').filter({ hasText: name })
-  ).toBeVisible()
+  const detail = page.locator('div[data-testid^="collaboration-group-detail-"]').filter({
+    hasText: name,
+  })
+  await expect(detail).toBeVisible()
+  const testId = await detail.getAttribute('data-testid')
+  const groupId = testId?.replace('collaboration-group-detail-', '')
+  if (!groupId) throw new Error(`Created collaboration group ${name} did not expose its ID`)
+  return groupId
 }

@@ -12,7 +12,7 @@ import logging
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -77,6 +77,7 @@ from app.services.loop_item_status_history import (
     write_status_change,
 )
 from app.services.loop_item_unread import (
+    activity_read_sequence,
     advance_content_revision,
     content_revision,
     initialize_content_revision,
@@ -231,6 +232,7 @@ class LoopItemService:
             group.get("name") if isinstance(group, dict) else None
         )
         values["content_revision"] = content_revision(metadata)
+        values["activity_read_sequence"] = activity_read_sequence(metadata, user_id)
         values["is_unread"] = is_unread(metadata, user_id)
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
@@ -531,6 +533,7 @@ class LoopItemService:
         agent_id = payload.get("assignee_agent_id")
         team_id = payload.get("assignee_team_id")
         group_id = payload.pop("assignee_group_id", None)
+        collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
         task_metadata["security_level"] = default_issue_security(project)
@@ -634,7 +637,7 @@ class LoopItemService:
         elif group_id:
             from app.services.workspaces import workspace_service
 
-            group = next(
+            collaboration_group = next(
                 (
                     entry
                     for entry in workspace_service.list_project_collaboration_groups(
@@ -644,7 +647,7 @@ class LoopItemService:
                 ),
                 None,
             )
-            if group is None:
+            if collaboration_group is None:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Collaboration group is not in this project",
@@ -653,15 +656,18 @@ class LoopItemService:
             payload["assignee_agent_id"] = ""
             payload["assignee_team_id"] = None
             task_metadata["collaboration_group"] = {
-                "id": str(group["id"]),
-                "name": str(group["name"]),
+                "id": str(collaboration_group["id"]),
+                "name": str(collaboration_group["name"]),
             }
+            from app.services.collaboration_group_execution import new_assignment_key
+
+            task_metadata["collaboration_group_assignment_key"] = new_assignment_key()
             self._write_assignment_change(
                 task_metadata,
                 user_id,
                 "group",
-                str(group["id"]),
-                str(group["name"]),
+                str(collaboration_group["id"]),
+                str(collaboration_group["name"]),
             )
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
@@ -711,6 +717,18 @@ class LoopItemService:
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
+        db.flush()
+        if collaboration_group is not None:
+            from app.services.collaboration_group_execution import (
+                ensure_collaboration_group_execution,
+            )
+
+            ensure_collaboration_group_execution(
+                db,
+                item=item,
+                user_id=user_id,
+                group=collaboration_group,
+            )
         assignment_member: tuple[str, str] | None = None
         if agent_id:
             assignment_member = ("agent", str(agent_id))
@@ -723,7 +741,6 @@ class LoopItemService:
         if assignment_member is not None:
             from app.services.issue_assignments import issue_assignment_service
 
-            db.flush()
             if assignment_member[0] == "agent":
                 issue_assignment_service.require_canonical_member(
                     db,
@@ -1424,6 +1441,7 @@ class LoopItemService:
             },
             exclude_unset=True,
         )
+        collaboration_group: dict[str, Any] | None = None
         meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
@@ -1504,9 +1522,8 @@ class LoopItemService:
         if group_changed:
             from app.services.workspaces import workspace_service
 
-            group = None
             if values.assignee_group_id:
-                group = next(
+                collaboration_group = next(
                     (
                         entry
                         for entry in workspace_service.list_project_collaboration_groups(
@@ -1516,24 +1533,46 @@ class LoopItemService:
                     ),
                     None,
                 )
-                if group is None:
+                if collaboration_group is None:
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "Team is not in this project",
                     )
             metadata = dict(updates.get("metadata_json") or item.metadata_json or {})
             metadata["collaboration_group"] = (
-                {"id": str(group["id"]), "name": group["name"]} if group else None
+                {
+                    "id": str(collaboration_group["id"]),
+                    "name": collaboration_group["name"],
+                }
+                if collaboration_group
+                else None
             )
+            previous_group = (item.metadata_json or {}).get("collaboration_group")
+            previous_group_id = (
+                str(previous_group.get("id") or "")
+                if isinstance(previous_group, dict)
+                else ""
+            )
+            if collaboration_group:
+                from app.services.collaboration_group_execution import (
+                    new_assignment_key,
+                )
+
+                if previous_group_id != str(collaboration_group["id"]):
+                    metadata["collaboration_group_assignment_key"] = (
+                        new_assignment_key()
+                    )
+            else:
+                metadata.pop("collaboration_group_assignment_key", None)
             self._write_assignment_change(
                 metadata,
                 user_id,
-                "group" if group else None,
-                str(group["id"]) if group else None,
-                group["name"] if group else None,
+                "group" if collaboration_group else None,
+                str(collaboration_group["id"]) if collaboration_group else None,
+                collaboration_group["name"] if collaboration_group else None,
             )
             updates["metadata_json"] = metadata
-            if group:
+            if collaboration_group:
                 updates.update(
                     assignee_user_id=None, assignee_agent_id="", assignee_team_id=None
                 )
@@ -1705,6 +1744,19 @@ class LoopItemService:
                 next_version=values.version + 1,
                 completed_at=updates.get("completed_at"),
             )
+        if collaboration_group is not None:
+            db.flush()
+            db.refresh(item)
+            from app.services.collaboration_group_execution import (
+                ensure_collaboration_group_execution,
+            )
+
+            ensure_collaboration_group_execution(
+                db,
+                item=item,
+                user_id=user_id,
+                group=collaboration_group,
+            )
         if commit:
             db.commit()
         else:
@@ -1718,9 +1770,20 @@ class LoopItemService:
             request_execution_cancellations(cancelled_runs)
         return item
 
-    def mark_read(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+    def mark_read(
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        activity_sequence: int | None = None,
+    ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        mark_loop_item_read(db, item_id=item.id, user_id=user_id)
+        mark_loop_item_read(
+            db,
+            item_id=item.id,
+            user_id=user_id,
+            activity_sequence=activity_sequence,
+        )
         db.commit()
         db.expire(item)
         db.refresh(item)
@@ -1773,7 +1836,6 @@ class LoopItemService:
         instruction: str | None = None,
         assignment_comment_id: str | None = None,
         commit: bool = True,
-        authorization: Literal["manual", "issue_dispatch"] = "manual",
     ) -> LoopItem:
         """Assign a task to a project member, project robot, or Wegent Team.
 
@@ -1783,13 +1845,8 @@ class LoopItemService:
         queue.
         """
 
-        required_role = (
-            BaseRole.Developer
-            if authorization == "issue_dispatch"
-            else BaseRole.Maintainer
-        )
         access = self._require_internal_task_project(
-            db, project_id, user_id, required_role
+            db, project_id, user_id, BaseRole.Maintainer
         )
         project = access.project
         item = self.get(db, item_id, user_id)
@@ -1809,9 +1866,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
                 )
-            if authorization == "manual" and not self._agent_visible_to_user(
-                agent, user_id, access.role
-            ):
+            if not self._agent_visible_to_user(agent, user_id, access.role):
                 raise HTTPException(
                     status.HTTP_403_FORBIDDEN,
                     "Robot is not visible to you",

@@ -3,6 +3,7 @@
 
 """The assignee and assigner share a versioned human Issue review contract."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -18,6 +19,7 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     WorkspaceCleanupIntent,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -70,12 +72,20 @@ def project(test_db: Session, test_user: User) -> CloudProject:
 
 
 def _assigned_issue(
-    client: TestClient, project: CloudProject, owner_token: str, assignee: User
+    client: TestClient,
+    project: CloudProject,
+    owner_token: str,
+    assignee: User,
+    *,
+    parent_id: str | None = None,
 ) -> dict:
+    create_values = {"title": "Human assigned Issue", "status": "pending"}
+    if parent_id is not None:
+        create_values["parent_id"] = parent_id
     created = client.post(
         f"/api/v1/cloud-projects/{project.id}/loop-items",
         headers=_auth(owner_token),
-        json={"title": "Human assigned Issue", "status": "pending"},
+        json=create_values,
     )
     assert created.status_code == 201
     assigned = client.post(
@@ -85,6 +95,104 @@ def _assigned_issue(
     )
     assert assigned.status_code == 201, assigned.text
     return assigned.json()["issue"]
+
+
+def test_group_human_submission_emits_one_fact_to_manager_executor(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sio = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr("app.core.socketio.get_sio", lambda: sio)
+    resolve = AsyncMock(return_value=SimpleNamespace(socket_id="manager-socket"))
+    monkeypatch.setattr(
+        "app.services.human_submission_coordination.runtime_route_resolver.resolve",
+        resolve,
+    )
+    assignee, assignee_token = _member(test_db, project)
+    parent_response = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Group root Issue"},
+    )
+    assert parent_response.status_code == 201, parent_response.text
+    parent_id = parent_response.json()["id"]
+    issue = _assigned_issue(
+        test_client,
+        project,
+        test_token,
+        assignee,
+        parent_id=parent_id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=parent_id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        agent_id="manager-agent",
+        execution_environment="cloud",
+        execution_device_id="manager-logical-device",
+        runtime_device_id="manager-runtime-device",
+        runtime_task_id="loop-item-execution:manager",
+        status="completed",
+        execution_payload=json.dumps(
+            {
+                "origin_context": {
+                    "dispatch_role": "manager",
+                    "collaboration_group_id": "group-1",
+                }
+            }
+        ),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    started = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/start",
+        headers=_auth(assignee_token),
+        json={"version": issue["version"]},
+    )
+    assert started.status_code == 200, started.text
+    submission = {
+        "version": started.json()["issue"]["version"],
+        "request_id": str(uuid4()),
+        "summary": "Human evidence for the manager.",
+    }
+    submitted = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/submit",
+        headers=_auth(assignee_token),
+        json=submission,
+    )
+    assert submitted.status_code == 200, submitted.text
+    duplicate = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/submit",
+        headers=_auth(assignee_token),
+        json=submission,
+    )
+    assert duplicate.status_code == 200, duplicate.text
+
+    resolve.assert_awaited_once_with(
+        user_id=test_user.id,
+        submitted_device_id="manager-runtime-device",
+    )
+    fact_calls = [
+        call
+        for call in sio.emit.await_args_list
+        if call.args and call.args[0] == "device:coordination_fact"
+    ]
+    assert len(fact_calls) == 1
+    assert fact_calls[0].args[1] == {
+        "factType": "human_submitted",
+        "itemId": issue["id"],
+        "submissionId": submitted.json()["message"]["messageId"],
+        "summary": submission["summary"],
+    }
+    assert fact_calls[0].kwargs == {
+        "to": "manager-socket",
+        "namespace": "/local-executor",
+    }
 
 
 def test_implicit_creator_assignment_keeps_board_status_editable(
@@ -134,6 +242,32 @@ def test_explicit_self_assignment_activates_human_work_after_default(
     assert assigned.status_code == 201, assigned.text
     issue = assigned.json()["issue"]
     assert issue["human_work"]["can_start"] is True
+
+
+def test_board_assign_self_activates_human_work_after_default(
+    test_client: TestClient,
+    test_token: str,
+    project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Assign myself through the board tool", "status": "pending"},
+    ).json()
+    assert created["human_work"] is None
+
+    assigned = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items/{created['id']}/assign",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "assignee_type": "user",
+            "assignee_id": str(project.created_by_user_id),
+            "notify_self": True,
+        },
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["human_work"]["can_start"] is True
 
 
 def test_assignee_submits_and_assigner_accepts(

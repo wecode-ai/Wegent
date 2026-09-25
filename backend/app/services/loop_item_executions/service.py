@@ -886,6 +886,44 @@ class LoopItemExecutionService:
             requires_approval=False,
         )
 
+    def enqueue_collaboration_group_dispatch(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        owner_user_id: int,
+        assigner_user_id: int,
+        environment: str,
+        execution_device_id: str,
+        priority: str | None,
+        dispatch_context: dict[str, Any],
+    ) -> LoopItemExecution:
+        """Persist one transport envelope for Executor-owned coordination.
+
+        This row does not represent a manager or member run. It only selects
+        the Runtime installation that will own the collaboration state machine.
+        """
+
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="collaboration_group_dispatch",
+            owner_user_id=owner_user_id,
+            agent_id="",
+            team_id=None,
+            assigner_user_id=assigner_user_id,
+            environment=environment,
+            execution_device_id=execution_device_id,
+            priority=priority,
+            automation_context=dispatch_context,
+            requires_approval=False,
+            runtime_selection={
+                "executor_kind": "collaboration_group_dispatch",
+            },
+        )
+
     def enqueue_generic_robot(
         self,
         db: Session,
@@ -1072,7 +1110,7 @@ class LoopItemExecutionService:
         row.runtime_task_id = runtime_task_id_for(row.id)
         if (
             not waiting_runtime
-            and executor_type != "wegent_team"
+            and executor_type not in {"wegent_team", "collaboration_group_dispatch"}
             and execution_device_id
         ):
             self._persist_runtime_request_intent(db, execution=row)
@@ -1290,9 +1328,6 @@ class LoopItemExecutionService:
         running = db.get(LoopItemExecution, execution_id)
         if running is None:
             raise RuntimeError("Board Team execution disappeared")
-        from app.services.issue_dispatch import issue_dispatch_service
-
-        issue_dispatch_service.on_execution_running(db, execution=running)
         activity = self._linked_activity(db, running)
         if activity is not None:
             activity.status = "streaming"
@@ -1371,13 +1406,6 @@ class LoopItemExecutionService:
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
         if row.status in TERMINAL_STATUSES:
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_terminal(
-                db,
-                execution=row,
-                summary=note or row.execution_note or row.error_message or "",
-            )
             return row
         if expected_status is not None and row.status != expected_status:
             return row
@@ -1405,13 +1433,6 @@ class LoopItemExecutionService:
             )
             if terminal is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_terminal(
-                db,
-                execution=terminal,
-                summary=note or terminal.execution_note or "",
-            )
             return terminal
 
         now = utcnow()
@@ -1492,14 +1513,6 @@ class LoopItemExecutionService:
             termination_reason="runtime_cancel_acknowledged",
             commit=commit,
         )
-        if result is not None and result.status == STATUS_CANCELLED:
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_terminal(
-                db,
-                execution=result,
-                summary=note or result.execution_note or "",
-            )
         return result
 
     # ------------------------------------------------------------------
@@ -2487,14 +2500,6 @@ class LoopItemExecutionService:
             event_seq=event_seq,
             termination_reason="runtime_succeeded",
         )
-        if result is not None and result.status == STATUS_COMPLETED:
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_terminal(
-                db,
-                execution=result,
-                summary=content or note or result.execution_note or "",
-            )
         return result
 
     def fail(
@@ -2526,13 +2531,6 @@ class LoopItemExecutionService:
         if row is None:
             return row
         if row.status in TERMINAL_STATUSES:
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_terminal(
-                db,
-                execution=row,
-                summary=error or note or row.error_message or "",
-            )
             return row
         now = utcnow()
         should_requeue = requeue_infra or (
@@ -2553,14 +2551,6 @@ class LoopItemExecutionService:
                 event_seq=event_seq,
                 termination_reason=termination_reason,
             )
-            if result is not None and result.status == STATUS_FAILED:
-                from app.services.issue_dispatch import issue_dispatch_service
-
-                issue_dispatch_service.on_execution_terminal(
-                    db,
-                    execution=result,
-                    summary=error or note or result.error_message or "",
-                )
             return result
 
         if requeue and not requeue_infra:
@@ -3016,6 +3006,22 @@ class LoopItemExecutionService:
                 **metadata,
                 "run_status": terminal_status,
             }
+            for child in self._linked_subagent_activities(db, activity):
+                if child.status in {
+                    STATUS_COMPLETED,
+                    STATUS_FAILED,
+                    STATUS_CANCELLED,
+                    "canceled",
+                }:
+                    continue
+                child.status = terminal_status
+                child.message_type = "text"
+                child_metadata = dict(child.metadata_json or {})
+                child.metadata_json = {
+                    **child_metadata,
+                    "run_status": terminal_status,
+                    "subagent_status": terminal_status,
+                }
 
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
@@ -3101,14 +3107,20 @@ class LoopItemExecutionService:
             return
         message_id = activity.message_id
         try:
-            db.refresh(activity)
+            activities = [activity, *self._linked_subagent_activities(db, activity)]
             from app.services.project_chat.service import project_chat_service
 
-            payload = project_chat_service.to_view(activity).model_dump(by_alias=True)
+            payloads = []
+            for projected in activities:
+                db.refresh(projected)
+                payloads.append(
+                    project_chat_service.to_view(projected).model_dump(by_alias=True)
+                )
             # ``refresh`` starts a read transaction. End it before publishing to
             # Redis so a slow transport cannot retain a SQL connection or locks.
             db.commit()
-            self._push_activity(payload)
+            for payload in payloads:
+                self._push_activity(payload)
         except Exception:
             if db.in_transaction():
                 db.rollback()
@@ -3193,7 +3205,7 @@ class LoopItemExecutionService:
         if not execution.runtime_device_id or not execution.runtime_task_id:
             runtime_row = None
         else:
-            runtime_row = (
+            runtime_rows = (
                 db.query(ProjectChatMessage)
                 .filter(
                     ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
@@ -3202,7 +3214,15 @@ class LoopItemExecutionService:
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
                 .order_by(ProjectChatMessage.id.desc())
-                .first()
+                .all()
+            )
+            runtime_row = next(
+                (
+                    row
+                    for row in runtime_rows
+                    if not LoopItemExecutionService._is_subagent_activity(row)
+                ),
+                None,
             )
         if runtime_row is not None:
             return runtime_row
@@ -3225,6 +3245,35 @@ class LoopItemExecutionService:
             ):
                 return candidate
         return None
+
+    @staticmethod
+    def _is_subagent_activity(activity: ProjectChatMessage) -> bool:
+        metadata = (
+            activity.metadata_json if isinstance(activity.metadata_json, dict) else {}
+        )
+        return metadata.get("kind") == "task_ai_subagent"
+
+    @staticmethod
+    def _linked_subagent_activities(
+        db: Session, parent: ProjectChatMessage
+    ) -> list[ProjectChatMessage]:
+        candidates = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.project_id == parent.project_id,
+                ProjectChatMessage.task_id == parent.task_id,
+                ProjectChatMessage.trigger_message_id == parent.message_id,
+                ProjectChatMessage.sender_type == "agent",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .order_by(ProjectChatMessage.id.asc())
+            .all()
+        )
+        return [
+            candidate
+            for candidate in candidates
+            if LoopItemExecutionService._is_subagent_activity(candidate)
+        ]
 
     @staticmethod
     def _push_activity(payload: dict[str, Any]) -> None:
@@ -3413,14 +3462,6 @@ class LoopItemExecutionService:
                     event_seq=event_seq,
                     termination_reason="runtime_cancelled",
                 )
-                if result is not None and result.status == STATUS_CANCELLED:
-                    from app.services.issue_dispatch import issue_dispatch_service
-
-                    issue_dispatch_service.on_execution_terminal(
-                        db,
-                        execution=result,
-                        summary=error_text or result.execution_note or "",
-                    )
                 return result
             if terminal == STATUS_CANCELLED:
                 error_text = (
@@ -3440,14 +3481,6 @@ class LoopItemExecutionService:
                     event_seq=event_seq,
                     termination_reason="runtime_cancelled",
                 )
-                if result is not None and result.status == STATUS_CANCELLED:
-                    from app.services.issue_dispatch import issue_dispatch_service
-
-                    issue_dispatch_service.on_execution_terminal(
-                        db,
-                        execution=result,
-                        summary=error_text or result.execution_note or "",
-                    )
                 return result
             error_value = error_value or "Runtime task ended with failed"
             return self.fail(
@@ -3504,9 +3537,6 @@ class LoopItemExecutionService:
             db.rollback()
             return None
         self._set_automation_run_status(db, row, "running")
-        from app.services.issue_dispatch import issue_dispatch_service
-
-        issue_dispatch_service.on_execution_running(db, execution=row)
         task = db.get(LoopItem, row.loop_item_id)
         task_projection_is_stale = task is not None and task.status not in {
             "in_progress",
@@ -3600,6 +3630,40 @@ class LoopItemExecutionService:
         executor_device_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Build either an App intent or a materialized Executor payload."""
+
+        if execution.executor_type == "collaboration_group_dispatch":
+            dispatch_request = execution.execution_intent.get("dispatch_request")
+            if not isinstance(dispatch_request, dict):
+                raise WeworkRuntimeConfigurationError(
+                    "Collaboration group dispatch request is unavailable"
+                )
+            manager_request = dispatch_request.get("manager_runtime_request")
+            if not isinstance(manager_request, dict):
+                raise WeworkRuntimeConfigurationError(
+                    "Collaboration group manager request is unavailable"
+                )
+            if execution_target_id:
+                requested_device_id = str(manager_request.get("deviceId") or "")
+                if not _same_runtime_device(
+                    db,
+                    owner_user_id=execution.executor_owner_user_id,
+                    left_device_id=requested_device_id,
+                    right_device_id=execution_target_id,
+                ):
+                    raise WeworkExecutionProfileError(
+                        "Collaboration dispatch target does not match the claimed queue"
+                    )
+                if not executor_device_id:
+                    raise WeworkExecutionProfileError(
+                        "Executor device identity is required"
+                    )
+                manager_request = dict(manager_request)
+                manager_request["deviceId"] = executor_device_id
+            return {
+                "dispatchKind": "collaboration_group",
+                "dispatchTaskId": execution.runtime_task_id,
+                "managerRuntimeRequest": manager_request,
+            }
 
         try:
             request = (
@@ -4242,9 +4306,6 @@ class LoopItemExecutionService:
                 row.started_at = now
             row.version += 1
             self._set_automation_run_status(db, row, "running")
-            from app.services.issue_dispatch import issue_dispatch_service
-
-            issue_dispatch_service.on_execution_running(db, execution=row)
             db.flush()
             self.open_execution_activity(
                 db,

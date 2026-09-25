@@ -110,58 +110,6 @@ export interface DeliveryFinalizeInput {
   fulfillments: DeliveryFulfillment[]
 }
 
-export interface IssueDispatchTaskDto {
-  id: string
-  task_title: string
-  instructions: string
-  assignee_type: 'human' | 'agent'
-  assignee_id: string
-  assignee_name: string
-  workflow_stage_id: string | null
-  execution_location: 'local' | 'cloud' | null
-  status: 'assigned' | 'queued' | 'running' | 'submitted' | 'failed' | 'needs_rework' | 'cancelled'
-  linked_item_id: string | null
-  execution_id: number | null
-  delivery_id: string | null
-  summary: string
-  created_at: string
-  updated_at: string
-}
-
-export interface IssueDispatchRoundDto {
-  id: string
-  sequence: number
-  status: 'planning' | 'executing' | 'evaluating' | 'closed' | 'cancelled'
-  tasks: IssueDispatchTaskDto[]
-  created_at: string
-  updated_at: string
-}
-
-export interface IssueDispatchDto {
-  id: string
-  project_id: string
-  issue_id: string
-  target_type: 'human' | 'agent' | 'group'
-  target_id: string
-  target_name: string
-  status: 'active' | 'completed' | 'cancelled'
-  leader_type: 'human' | 'agent' | null
-  leader_id: string | null
-  leader_name: string | null
-  manager_turn_count: number
-  active_round_id: string | null
-  rounds: IssueDispatchRoundDto[]
-  created_at: string
-  updated_at: string
-}
-
-export interface IssueDispatchCandidateDto {
-  target_type: 'human' | 'agent' | 'group'
-  target_id: string
-  name: string
-  execution_location: string
-}
-
 export interface CloudLoopItem {
   human_work?: CollaborationHumanWork | null
   assignee_group_id?: string | null
@@ -177,6 +125,7 @@ export interface CloudLoopItem {
   security_level?: 'open' | 'related'
   detail_loaded?: boolean
   content_revision?: number
+  activity_read_sequence?: number
   has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
@@ -908,79 +857,6 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
-    async listIssueDispatches(itemId: string): Promise<IssueDispatchDto[]> {
-      const response = await client.get<{ items: IssueDispatchDto[] }>(
-        `/v1/loop-items/${encodeURIComponent(itemId)}/dispatches`
-      )
-      return response.items
-    },
-    getIssueDispatch(dispatchId: string): Promise<IssueDispatchDto> {
-      return client.get(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}`)
-    },
-    async listIssueDispatchCandidates(
-      itemId: string,
-      targetType: 'human' | 'agent' | 'group'
-    ): Promise<IssueDispatchCandidateDto[]> {
-      const response = await client.get<{ items: IssueDispatchCandidateDto[] }>(
-        `/v1/loop-items/${encodeURIComponent(
-          itemId
-        )}/dispatch-candidates?target_type=${encodeURIComponent(targetType)}`
-      )
-      return response.items
-    },
-    createIssueDispatch(
-      itemId: string,
-      input: {
-        target_type: 'human' | 'agent' | 'group'
-        target_id: string
-        idempotency_key: string
-        task_title?: string
-        instructions?: string
-      }
-    ): Promise<IssueDispatchDto> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/dispatches`, input)
-    },
-    cancelIssueDispatch(dispatchId: string): Promise<IssueDispatchDto> {
-      return client.post(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}/cancel`, {})
-    },
-    async createIssueDispatchRound(
-      dispatchId: string,
-      input: {
-        idempotency_key: string
-        tasks: Array<{
-          task_title: string
-          instructions: string
-          assignee_type: 'human' | 'agent'
-          assignee_id: string
-          workflow_stage_id?: string | null
-        }>
-      }
-    ): Promise<IssueDispatchDto> {
-      await client.post(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}/rounds`, input)
-      return client.get(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}`)
-    },
-    cancelIssueDispatchTask(taskId: string): Promise<IssueDispatchDto> {
-      return client.post(`/v1/issue-dispatch-tasks/${encodeURIComponent(taskId)}/cancel`, {})
-    },
-    retryIssueDispatch(dispatchId: string): Promise<IssueDispatchDto> {
-      return client.post(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}/retry`, {})
-    },
-    decideIssueDispatch(
-      dispatchId: string,
-      input: {
-        idempotency_key: string
-        target_status: 'in_review' | 'completed'
-        reason: string
-      }
-    ): Promise<IssueDispatchDto> {
-      return client.post(`/v1/issue-dispatches/${encodeURIComponent(dispatchId)}/decisions`, input)
-    },
-    returnIssueDispatchForRework(dispatchId: string): Promise<IssueDispatchDto> {
-      return client.post(
-        `/v1/issue-dispatches/${encodeURIComponent(dispatchId)}/return-for-rework`,
-        {}
-      )
-    },
     startHumanIssueWork(itemId: string, version: number): Promise<{ issue: CloudLoopItem }> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/work/start`, { version })
     },
@@ -1010,8 +886,10 @@ export function createDeliveryApi(client: HttpClient) {
         reason: reason ?? null,
       })
     },
-    markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)
+    markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {
+        activity_sequence: activitySequence ?? null,
+      })
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })

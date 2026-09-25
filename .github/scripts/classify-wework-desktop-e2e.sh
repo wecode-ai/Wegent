@@ -8,12 +8,9 @@ core_segments=(
   collaboration-shared-core
   collaboration-first-use
   collaboration-group-onboarding
-  collaboration-local-executor-issue-tools
-  issue-dispatch-unified-board
-  issue-dispatch-human
-  issue-dispatch-agent
-  issue-dispatch-group-round
-  issue-dispatch-cancellation
+  collaboration-local-group-coordinate
+  collaboration-human-round-resume
+  collaboration-local-group-cancellation
   collaboration-issue-comment-mention
   collaboration-issue-comment-notification
   cloud-space-mention
@@ -146,7 +143,7 @@ cloud_shards=(
 # prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-apps,browser-annotation-design,issue-dispatch-unified-board
+  harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
@@ -154,10 +151,10 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-executor-issue-tools,issue-dispatch-agent,issue-dispatch-group-round
-  resilience,environment-panel-scroll,collaboration-shared-core,issue-dispatch-cancellation
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-group-coordinate,collaboration-human-round-resume
+  resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention,issue-dispatch-human
+  project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
@@ -297,12 +294,10 @@ select_cloud_worktree_checkpoints() {
   done
 }
 
-select_issue_dispatch_checkpoints() {
-  select_target "core:issue-dispatch-unified-board"
-  select_target "core:issue-dispatch-human"
-  select_target "core:issue-dispatch-agent"
-  select_target "core:issue-dispatch-group-round"
-  select_target "core:issue-dispatch-cancellation"
+select_collaboration_dispatch_checkpoints() {
+  select_target "core:collaboration-local-group-coordinate"
+  select_target "core:collaboration-human-round-resume"
+  select_target "core:collaboration-local-group-cancellation"
 }
 
 select_all_desktop_suites() {
@@ -550,12 +545,16 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-local-executor-issue-tools.scenario.mjs)
-      select_target "core:collaboration-local-executor-issue-tools"
+    wework/e2e/desktop/scenarios/collaboration-local-group-coordinate.scenario.mjs)
+      select_target "core:collaboration-local-group-coordinate"
       return
       ;;
-    wework/e2e/desktop/scenarios/issue-dispatch.scenario.mjs)
-      select_issue_dispatch_checkpoints
+    wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)
+      select_target "core:collaboration-human-round-resume"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-local-group-cancellation.scenario.mjs)
+      select_target "core:collaboration-local-group-cancellation"
       return
       ;;
     wework/src/components/layout/DesktopWorkbenchLayout.tsx)
@@ -600,8 +599,8 @@ classify_wework_path() {
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
-        select_target "core:issue-dispatch-human"
-        select_target "core:issue-dispatch-group-round"
+        select_target "core:collaboration-human-round-resume"
+        select_target "core:collaboration-local-group-coordinate"
         select_target "core:task-board-bulk-actions"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
@@ -929,7 +928,7 @@ classify_path() {
       executor/src/services/skill_deployer.rs | \
       executor/src/task_runtime/model.rs | \
       executor/src/task_runtime/store.rs)
-      select_issue_dispatch_checkpoints
+      select_collaboration_dispatch_checkpoints
       ;;
   esac
 
@@ -995,16 +994,14 @@ classify_path() {
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
-      select_target "core:collaboration-local-executor-issue-tools"
-      select_issue_dispatch_checkpoints
+      select_collaboration_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
-      select_target "core:collaboration-local-executor-issue-tools"
-      select_issue_dispatch_checkpoints
+      select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-comment-notification"
       ;;

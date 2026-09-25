@@ -1258,7 +1258,7 @@ export function createCollaborationWorkspaceControllerCommands({
             assignmentsRevision !==
             collectionRevision(selectedIssueAssignmentsRevisions, issueId),
         });
-        return (await markIssueRead(resolvedIssue)) ?? resolvedIssue;
+        return resolvedIssue;
       } catch {
         if (revision !== selectedIssueLoadRevision) return null;
         reportError(messages.loadFailed, "load");

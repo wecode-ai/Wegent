@@ -10,7 +10,7 @@ export function issueTaskSummaryForMessage<
 >(
   message: ProjectChatMessage,
   bindings: Binding[],
-  issueTitle: string,
+  _issueTitle: string,
   onOpen?: (binding: Binding) => void,
 ): ExecutionTaskSummary | undefined {
   const address = message.runtimeAddress;
@@ -31,9 +31,10 @@ export function issueTaskSummaryForMessage<
             candidate.task_id === address.taskId,
         )
       : undefined;
-  if (!binding && !dispatchTaskTitle) return;
+  const taskTitle = dispatchTaskTitle || binding?.task_title?.trim();
+  if (!taskTitle) return;
   return {
-    title: binding?.task_title || dispatchTaskTitle || issueTitle,
+    title: taskTitle,
     stageName: null,
     onOpen: binding && onOpen ? () => onOpen(binding) : undefined,
   };

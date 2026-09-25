@@ -20,6 +20,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from app.services.notification_copy import NotificationTarget
 from tests.utils.agent_resources import create_runnable_wegent_team
@@ -57,6 +58,7 @@ def _make_bot(
     visibility: str = "public",
     runtime: str = "codex",
     wegent_team_id: int | None = None,
+    execution_environment: str = "local",
 ) -> ProjectChatAgent:
     device_id = f"local-{uuid.uuid4().hex[:10]}"
     db.add(
@@ -66,7 +68,13 @@ def _make_bot(
             namespace="default",
             user_id=user.id,
             is_active=True,
-            json={"spec": {"deviceType": "local"}},
+            json={
+                "spec": {
+                    "deviceType": (
+                        "cloud" if execution_environment == "cloud" else "local"
+                    )
+                }
+            },
         )
     )
     bot = ProjectChatAgent(
@@ -76,13 +84,13 @@ def _make_bot(
         name="Queue Bot",
         status="active",
         created_by_user_id=user.id,
-        device_id=device_id if runtime == "codex" else None,
+        device_id=device_id if runtime in {"codex", "claude_code"} else None,
         metadata_json={
             "runtime": runtime,
             "wegent_team_id": wegent_team_id,
             "model": "test-model",
             "execution_mode": mode,
-            "execution_environment": "local",
+            "execution_environment": execution_environment,
             "visibility": visibility,
         },
     )
@@ -108,6 +116,74 @@ def _make_item(db: Session, project: CloudProject, user: User) -> LoopItem:
     return item
 
 
+def _collaboration_group(
+    db: Session,
+    project: CloudProject,
+    user: User,
+    *,
+    group_id: str = "group-1",
+    execution_environment: str = "local",
+    runtime: str = "codex",
+) -> tuple[dict, ProjectChatAgent, ProjectChatAgent]:
+    leader = _make_bot(
+        db,
+        project,
+        user,
+        runtime=runtime,
+        execution_environment=execution_environment,
+    )
+    leader.title = "Manager"
+    member = _make_bot(
+        db,
+        project,
+        user,
+        runtime=runtime,
+        execution_environment=execution_environment,
+    )
+    member.title = "Executor"
+    db.commit()
+    return (
+        {
+            "id": group_id,
+            "name": "Delivery team",
+            "description": "Coordinate delivery.",
+            "instructions": "Assign verifiable tasks and review their evidence.",
+            "leader": {"kind": "agent", "id": leader.id},
+            "members": [
+                {
+                    "kind": "agent",
+                    "id": leader.id,
+                    "responsibility": "Plan and review.",
+                },
+                {
+                    "kind": "agent",
+                    "id": member.id,
+                    "name": "Executor",
+                    "responsibility": "Execute assigned work.",
+                },
+                {
+                    "kind": "human",
+                    "id": str(user.id),
+                    "name": user.user_name,
+                    "responsibility": "Provide the final business evidence.",
+                },
+            ],
+            "coordination_mode": "manager",
+            "stages": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "description": "Produce the implementation evidence.",
+                }
+            ],
+            "created_at": datetime.now(),
+            "version": 1,
+        },
+        leader,
+        member,
+    )
+
+
 def _active_execution(db: Session, item: LoopItem) -> LoopItemExecution | None:
     return (
         db.query(LoopItemExecution)
@@ -126,13 +202,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
     db = test_db
     project = _make_project(db, test_user)
     item = _make_item(db, project, test_user)
-    group = {
-        "id": "group-1",
-        "name": "Delivery team",
-        "members": [],
-        "stages": [],
-        "created_at": datetime.now(),
-    }
+    group, _leader, _member = _collaboration_group(db, project, test_user)
     with patch(
         "app.services.workspaces.workspace_service.list_project_collaboration_groups",
         return_value=[group],
@@ -187,13 +257,7 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
-    group = {
-        "id": "group-1",
-        "name": "Delivery team",
-        "members": [],
-        "stages": [],
-        "created_at": datetime.now(),
-    }
+    group, _leader, _member = _collaboration_group(test_db, project, test_user)
 
     with patch(
         "app.services.workspaces.workspace_service.list_project_collaboration_groups",
@@ -219,6 +283,211 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     values = loop_item_service.response_values(test_db, item, test_user.id)
     assert values["assignee_group_id"] == "group-1"
     assert values["assignee_group_name"] == "Delivery team"
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude_code"])
+@pytest.mark.parametrize("execution_environment", ["local", "cloud"])
+def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
+    test_db: Session,
+    test_user: User,
+    execution_environment: str,
+    runtime: str,
+) -> None:
+    project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "workflow_definition": {
+            "nodes": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "description": "Produce evidence.",
+                }
+            ]
+        }
+    }
+    item = _make_item(test_db, project, test_user)
+    group, leader, _member = _collaboration_group(
+        test_db,
+        project,
+        test_user,
+        execution_environment=execution_environment,
+        runtime=runtime,
+    )
+    test_db.commit()
+
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        assigned = loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+            ),
+        )
+        repeated = loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=assigned.version,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+            ),
+        )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .all()
+    )
+    assert repeated.id == item.id
+    assert len(executions) == 1
+    dispatch = executions[0]
+    assert dispatch.status == "queued"
+    assert dispatch.agent_id == ""
+    assert dispatch.executor_type == "collaboration_group_dispatch"
+    assert dispatch.execution_environment == execution_environment
+    assert dispatch.runtime_request == {}
+    dispatch_request = dispatch.execution_intent["dispatch_request"]
+    assert dispatch_request["kind"] == "collaboration_group"
+    manager_request = dispatch_request["manager_runtime_request"]
+    assert manager_request["origin"]["dispatchRole"] == "manager"
+    assert [value["id"] for value in manager_request["bot"]] == [leader.id]
+    assert dispatch.runtime_origin_context["dispatch_kind"] == "collaboration_group"
+    assert dispatch.runtime_origin_context["dispatch_role"] == "manager"
+    assert dispatch.runtime_origin_context["dispatch_task_id"] == item.id
+    assert dispatch.runtime_origin_context["collaboration_group_id"] == group["id"]
+    assert dispatch.runtime_origin_context["collaboration_group"]["id"] == group["id"]
+    assert dispatch.runtime_origin_context["collaboration_group"]["leader"]["id"] == (
+        leader.id
+    )
+    assert "collaborationMode" not in dispatch.runtime_origin_context
+    assert "coordinate_bots" not in dispatch.runtime_origin_context
+    assert group["instructions"] in dispatch.runtime_origin_context["execution_prompt"]
+    assert '"kind": "human"' in dispatch.runtime_origin_context["execution_prompt"]
+    assert test_user.user_name in dispatch.runtime_origin_context["execution_prompt"]
+    assert "Provide the final business evidence." in (
+        dispatch.runtime_origin_context["execution_prompt"]
+    )
+    assert f'"id": "{leader.id}"' in (
+        dispatch.runtime_origin_context["execution_prompt"]
+    )
+    assert "workflow_definition" not in dispatch.runtime_origin_context["system_prompt"]
+    assert "Implementation" in dispatch.runtime_origin_context["execution_prompt"]
+
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id=str(dispatch.execution_device_id),
+        environment=execution_environment,
+        runtime_instance_id=f"{execution_environment}-executor",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=frozenset(),
+        owner_user_id=dispatch.executor_owner_user_id,
+    )
+    assert claimed is not None
+    assert claimed.id == dispatch.id
+    assert claimed.status == "claimed"
+    runtime_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id=str(claimed.execution_device_id),
+        executor_device_id=str(claimed.execution_device_id),
+    )
+    assert runtime_payload["dispatchKind"] == "collaboration_group"
+    assert (
+        runtime_payload["managerRuntimeRequest"]["bot"][0]["shell_type"]
+        == {
+            "codex": "Codex",
+            "claude_code": "ClaudeCode",
+        }[runtime]
+    )
+
+
+def test_collaboration_group_execution_terminal_does_not_change_issue_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    original_status = item.status
+    group, _leader, _member = _collaboration_group(test_db, project, test_user)
+
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        loop_item_service.assign(
+            test_db,
+            project_id=project.id,
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="group",
+                assignee_id=str(group["id"]),
+            ),
+        )
+
+    execution = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .one()
+    )
+    loop_item_execution_service.complete(
+        test_db,
+        execution_id=execution.id,
+        content="Manager finished its turn.",
+    )
+
+    test_db.refresh(item)
+    assert item.status == original_status
+
+
+def test_collaboration_group_rejects_non_executor_runtime(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    group, leader, member = _collaboration_group(test_db, project, test_user)
+    leader_team = create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        name_prefix="group-leader",
+    )
+    leader.device_id = None
+    leader.metadata_json = {
+        **dict(leader.metadata_json or {}),
+        "runtime": "wegent",
+        "wegent_team_id": leader_team.id,
+    }
+    test_db.commit()
+
+    with patch(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        return_value=[group],
+    ):
+        with pytest.raises(
+            HTTPException,
+            match="Collaboration group AI must use an Executor runtime",
+        ):
+            loop_item_service.assign(
+                test_db,
+                project_id=project.id,
+                item_id=item.id,
+                user_id=test_user.id,
+                values=LoopItemAssign(
+                    version=item.version,
+                    assignee_type="group",
+                    assignee_id=str(group["id"]),
+                ),
+            )
 
 
 def _make_member(db: Session, project: CloudProject, name: str, role: BaseRole) -> User:
@@ -446,6 +715,30 @@ def test_assign_to_self_does_not_send_notification(
         )
 
     notify.assert_not_called()
+
+
+def test_explicit_self_assignment_creates_human_work(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+
+    assigned = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(test_user.id),
+            notify_self=True,
+        ),
+    )
+
+    values = loop_item_service.response_values(test_db, assigned, test_user.id)
+    assert values["human_work"] is not None
+    assert values["human_work"]["can_start"] is True
 
 
 def test_manual_approval_flow_only_creator_can_approve(

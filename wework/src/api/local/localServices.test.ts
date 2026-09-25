@@ -1814,6 +1814,55 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('preserves coordinate collaboration mode from the assigned Issue origin', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'local-device',
+      taskId: 'manager-task',
+      workspacePath: '/Users/me/project',
+      runtime: 'codex',
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'manager-task',
+      runtime: 'codex',
+      message: 'coordinate this Issue',
+      title: 'Coordinate Issue',
+      cloudProjectId: 'cloud-project-42',
+      origin: {
+        type: 'board_task',
+        cloudProjectId: 'cloud-project-42',
+        loopItemId: 'ISSUE-42',
+        collaborationMode: 'coordinate',
+      },
+      bot: [
+        { id: 'leader', shell_type: 'Codex' },
+        { id: 'member', shell_type: 'Codex' },
+      ],
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        collaborationMode: 'coordinate',
+        executionRequest: expect.objectContaining({
+          collaborationMode: 'coordinate',
+          bot: [
+            { id: 'leader', shell_type: 'Codex' },
+            { id: 'member', shell_type: 'Codex' },
+          ],
+        }),
+      })
+    )
+  })
+
   test('keeps backend attachment metadata in direct runtime execution requests', async () => {
     const request = vi.fn().mockResolvedValue({
       accepted: true,
@@ -4074,7 +4123,7 @@ describe('createLocalAppServices', () => {
         model: 'openai',
         model_id: 'shared-model',
         api_format: 'responses',
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -4320,7 +4369,7 @@ describe('createLocalAppServices', () => {
         upstream_api_format: 'openai-chat-completions',
         native_tool_search: false,
         native_namespace_tools: false,
-        tool_profile: 'custom',
+        tool_profile: 'function',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',

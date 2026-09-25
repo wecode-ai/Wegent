@@ -205,7 +205,6 @@ import { shouldPrepareWorkItemTask, workItemTaskInput } from './workItemTaskInpu
 import {
   isRuntimeMyWorkItem,
   mergeRuntimeMyWorkItems,
-  projectBoundRuntimeTaskStatuses,
   runtimeMyWorkItems,
   runtimeWorkItemReference,
 } from './runtimeMyWork'
@@ -1699,12 +1698,8 @@ export function CloudTodoWorkspace({
     const boundItemIds = new Set(
       bindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
     )
-    return projectBoundRuntimeTaskStatuses(
-      selectedCloudProjectItems.filter(item => boundItemIds.has(item.id)),
-      bindings,
-      runtimeTaskLifecycle
-    )
-  }, [activeItemTaskBindings, isMyTasksBoard, runtimeTaskLifecycle, selectedCloudProjectItems])
+    return selectedCloudProjectItems.filter(item => boundItemIds.has(item.id))
+  }, [activeItemTaskBindings, isMyTasksBoard, selectedCloudProjectItems])
   const persistedBoardItems = selectedProject?.location === 'cloud' ? cloudBoardItems : items
   const activeBoardSourceItems = useMemo(() => {
     if (!isMyTasksBoard || !selectedProject) return persistedBoardItems
@@ -2672,7 +2667,7 @@ export function CloudTodoWorkspace({
         const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
         return {
           ...boardResponse,
-          items: projectBoundRuntimeTaskStatuses(activeItems, activeBindings, runtimeTaskLifecycle),
+          items: activeItems,
           task_bindings: activeBindings,
         }
       }

@@ -83,7 +83,6 @@ import {
 import { AiChatModal } from './AiChatModal'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
-import { projectBoundRuntimeTaskStatuses } from './runtimeMyWork'
 import {
   runtimeTaskConversationStatusesByAddress,
   type RuntimeTaskConversationStatus,
@@ -322,19 +321,7 @@ export function WeworkSharedProject({
             }))
           )
           if (bindingsChanged) setTaskBindingRevision(value => value + 1)
-          if (project.project_store !== 'local') return snapshot
-          return {
-            ...snapshot,
-            items: projectBoundRuntimeTaskStatuses(
-              snapshot.items as unknown as CloudLoopItem[],
-              snapshot.taskBindings.map(binding => ({
-                loop_item_id: binding.issueId,
-                device_id: binding.deviceId,
-                task_id: binding.taskId,
-              })),
-              runtimeTaskLifecycleRef.current
-            ) as unknown as CollaborationIssue[],
-          }
+          return snapshot
         },
       },
     }),

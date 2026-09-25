@@ -1181,6 +1181,66 @@ def test_subagent_runtime_event_becomes_compact_task_activity(
     assert child[0].content == "测试通过"
 
 
+def test_running_subagent_runtime_event_stays_streaming(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Run this task",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    trigger = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=task.id,
+            content="Please execute the task",
+            mentions=[{"type": "agent", "id": "12", "label": "Manager"}],
+        ),
+    ).message
+    parent = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            triggerMessageId=trigger.message_id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-1",
+        ),
+    )
+
+    child = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="device-1",
+        runtime_task_id="runtime-task-1",
+        event_name="response.subagent.activity",
+        payload={
+            "data": {
+                "agent_id": "worker-1",
+                "agent_name": "执行成员",
+                "status": "running",
+                "message": "正在检查项目",
+            }
+        },
+    )
+
+    assert child is not None
+    assert child[0].trigger_message_id == parent.message_id
+    assert child[0].status == "streaming"
+    assert child[0].metadata["subagent_status"] == "running"
+
+
 def test_task_agent_response_updates_task_ai_state(
     test_db: Session, test_user: User
 ) -> None:

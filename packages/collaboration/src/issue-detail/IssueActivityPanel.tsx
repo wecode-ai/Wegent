@@ -46,7 +46,6 @@ import type {
 
 import { issueActivityEntries } from "./issueActivityEntries";
 import { activityDisplayBody } from "./activityDisplayBody";
-import { useIssueDispatchController } from "./IssueDispatchPanel";
 
 export function IssueActivityPanel({
   api,
@@ -72,7 +71,7 @@ export function IssueActivityPanel({
     Partial<
       Pick<
         SharedWorkspaceApi,
-        "attachments" | "runtime" | "taskBindings" | "issues" | "dispatches"
+        "attachments" | "runtime" | "taskBindings" | "issues"
       >
     >;
   issue: CollaborationIssue;
@@ -115,9 +114,32 @@ export function IssueActivityPanel({
     cancel,
     translate("activity.task_activity_stop_failed"),
   );
+  const markActivityRead = useCallback(
+    async (sequence: number) => {
+      if (!api.issues) return;
+      try {
+        const updated = await api.issues.markRead(issue.id, sequence);
+        onTaskUpdated?.(updated);
+      } catch {
+        onError();
+      }
+    },
+    [api.issues, issue.id, onError, onTaskUpdated],
+  );
+  const latestActivitySequence = chat.messages.reduce(
+    (latest, message) => Math.max(latest, message.sequenceNumber),
+    0,
+  );
+  const entryReadSequence =
+    (issue.activity_read_sequence ?? 0) > 0 || issue.is_unread
+      ? (issue.activity_read_sequence ?? 0)
+      : latestActivitySequence;
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
     loading: chat.loading,
+    issueId: issue.id,
+    readSequence: entryReadSequence,
+    onReadSequence: api.issues ? markActivityRead : undefined,
     cardTestIdPrefix: "collaboration-chat-card-",
   });
   const threads = useMemo(
@@ -146,16 +168,6 @@ export function IssueActivityPanel({
         : issueActivityEntries(assignments, comments, executions),
     [api.activity, assignments, comments, executions],
   );
-  const dispatch = useIssueDispatchController({
-    api: api.dispatches,
-    issueId: issue.id,
-    desktop: false,
-    translate,
-    onIssueChanged: api.issues && onTaskUpdated
-      ? async () => onTaskUpdated(await api.issues!.get(issue.id))
-      : undefined,
-  });
-
   const content = (
     <IssueMarkdownProvider attachments={api.attachments}>
       <IssueActivityFeed
@@ -163,7 +175,7 @@ export function IssueActivityPanel({
         listTestId="collaboration-comments"
         listRef={scroll.listRef}
         translate={translate}
-        count={entries.length + chat.messages.length + dispatch.activityCount}
+        count={entries.length + chat.messages.length}
         loading={chat.loading}
         error={chat.error ?? cancellation.error}
         emptyDescription={
@@ -177,20 +189,19 @@ export function IssueActivityPanel({
         tools={
           <div className="flex items-center gap-2">
             {api.issues ? (
-            <BrowserIssueActivityTools
-              key={issue.id}
-              api={{ ...api, issues: api.issues }}
-              issue={issue}
-              project={project}
-              agents={agents}
-              currentUserId={chat.currentUserId}
-              messages={chat.messages}
-              onMessages={chat.merge}
-              onTaskUpdated={onTaskUpdated}
-              translate={translate}
-            />
+              <BrowserIssueActivityTools
+                key={issue.id}
+                api={{ ...api, issues: api.issues }}
+                issue={issue}
+                project={project}
+                agents={agents}
+                currentUserId={chat.currentUserId}
+                messages={chat.messages}
+                onMessages={chat.merge}
+                onTaskUpdated={onTaskUpdated}
+                translate={translate}
+              />
             ) : null}
-            {dispatch.tools}
           </div>
         }
         composer={
@@ -250,7 +261,6 @@ export function IssueActivityPanel({
         }
       >
         <div className="flex flex-col">
-          {dispatch.activity}
           {[
             ...threads.map((thread) => ({
               kind: "thread" as const,

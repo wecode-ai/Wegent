@@ -32,6 +32,7 @@ import {
 } from "./activityMessageUtils";
 import { IssueActivityContent } from "./IssueActivityContent";
 import { formatIssueTimestamp } from "./issueTimestamp";
+import { managerActivityPresentation } from "./managerActivity";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -300,6 +301,77 @@ export function IssueChatMessage({
   const openExecution =
     onOpenExecution ??
     (allowBackendExecutionFallback ? openBackendExecution : undefined);
+  if (compact && plain && isManager) {
+    const failed = displayStatus === "failed";
+    const completed = displayStatus === "succeeded";
+    const presentation = managerActivityPresentation(
+      t,
+      message.metadata,
+      failed ? "failed" : completed ? "completed" : "running",
+    );
+    return (
+      <div
+        {...focusAttributes}
+        data-testid={testId ?? `cloud-task-manager-event-${message.messageId}`}
+        data-activity-sequence={message.sequenceNumber}
+        className="flex gap-3 px-3 py-3"
+      >
+        {presentation.planning ? (
+          <LoaderCircle
+            aria-hidden="true"
+            className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-text-muted"
+          />
+        ) : (
+          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <span className="font-medium">{message.sender.name}</span>{" "}
+              <span className="text-xs text-text-muted">
+                {t("activity.task_activity_manager_role")}
+              </span>
+              {" · "}
+              {presentation.label}
+            </div>
+            {openExecution || onStopExecution ? (
+              <div className="flex shrink-0 items-center gap-3">
+                {openExecution ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-manager-execution-${message.messageId}`}
+                    className="text-xs text-text-muted hover:text-text-primary"
+                    onClick={openExecution}
+                  >
+                    {t("activity.task_activity_view_execution")}
+                  </button>
+                ) : null}
+                {onStopExecution ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-manager-cancel-${message.messageId}`}
+                    disabled={stopping}
+                    className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={onStopExecution}
+                  >
+                    {stopping
+                      ? t("activity.task_activity_stopping_workflow")
+                      : t("activity.task_activity_stop_workflow")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <time
+            dateTime={message.createdAt}
+            className="text-xs text-text-muted"
+          >
+            {formatIssueTimestamp(message.createdAt)}
+          </time>
+        </div>
+      </div>
+    );
+  }
   if (eventOnly) {
     return (
       <div
@@ -593,6 +665,7 @@ export function IssueChatMessage({
         data-testid={
           testId ?? `cloud-task-activity-message-${message.messageId}`
         }
+        data-activity-sequence={message.sequenceNumber}
         data-side={mine ? "right" : "left"}
         className="task-detail-thread-message"
       >
@@ -633,6 +706,7 @@ export function IssueChatMessage({
     <article
       {...focusAttributes}
       data-testid={testId ?? `cloud-task-activity-message-${message.messageId}`}
+      data-activity-sequence={message.sequenceNumber}
       data-side={mine ? "right" : "left"}
       className="overflow-hidden rounded-xl border border-border bg-background shadow-sm"
     >
