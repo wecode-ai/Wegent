@@ -12,6 +12,26 @@ from tests.services.chat.storage.test_session_blocks import FakeCache, FakeRedis
 
 
 @pytest.mark.asyncio
+async def test_start_records_task_streaming_status_before_forwarding() -> None:
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    session_manager = AsyncMock()
+
+    with patch("app.services.chat.storage.session_manager", session_manager):
+        await emitter.emit_start(task_id=101, subtask_id=202, message_id=303)
+
+    session_manager.set_task_streaming_status.assert_awaited_once_with(
+        task_id=101,
+        subtask_id=202,
+        user_id=0,
+        username="",
+    )
+    wrapped.emit_start.assert_awaited_once_with(101, 202, 303)
+
+
+@pytest.mark.asyncio
 async def test_done_defers_terminal_status_to_async_card_poll() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 

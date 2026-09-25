@@ -8,6 +8,7 @@ This module provides the SandboxCommandTool class that executes
 commands in an isolated sandbox environment.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -222,12 +223,37 @@ Example:
                 f"[SandboxCommandTool] Running command in sandbox {sandbox.sandbox_id}"
             )
 
-            # Execute command using sandbox.commands API with async
-            result = await sandbox.commands.run(
-                cmd=command,
-                cwd=working_dir,
-                timeout=effective_timeout,
-            )
+            # E2B's timeout is forwarded to the remote command, but it does not
+            # bound a stalled SDK request. Keep the task stream terminal when the
+            # sandbox connection stops responding.
+            try:
+                result = await asyncio.wait_for(
+                    sandbox.commands.run(
+                        cmd=command,
+                        cwd=working_dir,
+                        timeout=effective_timeout,
+                    ),
+                    timeout=effective_timeout,
+                )
+            except asyncio.TimeoutError:
+                error_msg = (
+                    f"Command timed out after {effective_timeout} seconds "
+                    "while waiting for the sandbox."
+                )
+                logger.warning("[SandboxCommandTool] %s", error_msg)
+                result = self._format_error(
+                    error_message=error_msg,
+                    stdout="",
+                    stderr=error_msg,
+                    exit_code=-1,
+                    execution_time=time.time() - start_time,
+                    suggestion=(
+                        "The sandbox did not respond before the command timeout. "
+                        "Retry the command or check sandbox availability."
+                    ),
+                )
+                await self._emit_tool_status("failed", error_msg)
+                return result
 
             execution_time = time.time() - start_time
 
