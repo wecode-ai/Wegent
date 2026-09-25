@@ -16,37 +16,6 @@ from app.services.project_automation_execution import (
 )
 
 
-def test_human_assigned_issue_does_not_match_event_automation():
-    db = MagicMock()
-    legacy_rule = SimpleNamespace(
-        id="legacy-rule",
-        metadata_json={"trigger_type": "event", "event_type": "task.tag_added"},
-    )
-    db.query.return_value.filter.return_value.all.return_value = [legacy_rule]
-    processor = ProjectAutomationProcessor()
-
-    matches = processor.matching_rules(
-        db,
-        ProjectAutomationEvent(
-            event_type="task.tag_added",
-            project_id="project-1",
-            subject_id="task-1",
-            source="board",
-            actor_user_id=7,
-            payload={
-                "title": "Human-owned Issue",
-                "human_work": {
-                    "assignment_id": "assignment-1",
-                    "assignee_user_id": 7,
-                    "state": "none",
-                },
-            },
-        ),
-    )
-
-    assert matches == []
-
-
 @pytest.mark.asyncio
 async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch):
     rule = SimpleNamespace(

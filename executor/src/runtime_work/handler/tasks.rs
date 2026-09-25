@@ -33,9 +33,8 @@ impl RuntimeWorkRpcHandler {
                     "collaboration manager Runtime request is required",
                 )
             })?;
-        let manager_task_id = manager_request
-            .get("localTaskId")
-            .and_then(Value::as_str)
+        let manager_task_id = id_field(&manager_request, "taskId")
+            .or_else(|| id_field(&manager_request, "localTaskId"))
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
                 AppIpcError::new(
@@ -49,13 +48,34 @@ impl RuntimeWorkRpcHandler {
                 "collaboration manager must run inside the claimed dispatch",
             ));
         }
-        manager_request
-            .as_object_mut()
-            .expect("validated collaboration manager request")
-            .insert(
+        let manager_context = string_field(&manager_request, "message")
+            .or_else(|| string_field(&manager_request, "content"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", "collaboration manager context is required")
+            })?;
+        {
+            let manager_request_object = manager_request
+                .as_object_mut()
+                .expect("validated collaboration manager request");
+            manager_request_object.insert(
                 "collaborationDispatch".to_owned(),
                 json!({"taskId": dispatch_task_id}),
             );
+            let runtime_handle = manager_request_object
+                .entry("runtimeHandle")
+                .or_insert_with(|| json!({}));
+            if !runtime_handle.is_object() {
+                *runtime_handle = json!({});
+            }
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    COLLABORATION_MANAGER_CONTEXT_KEY.to_owned(),
+                    Value::String(manager_context),
+                );
+        }
         self.create_task(manager_request).await
     }
 
@@ -445,6 +465,7 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -676,7 +697,7 @@ impl RuntimeWorkRpcHandler {
                 .or_else(|| payload.get("runtime_handle"))
                 .and_then(Value::as_object),
         ) {
-            for key in ["wegentTeam"] {
+            for key in ["wegentTeam", COLLABORATION_MANAGER_CONTEXT_KEY] {
                 if let Some(value) = payload_handle.get(key) {
                     runtime_handle.insert(key.to_owned(), value.clone());
                 }
@@ -779,6 +800,7 @@ impl RuntimeWorkRpcHandler {
             };
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
+                self.forget_runtime_model_config(&local_task_id);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")

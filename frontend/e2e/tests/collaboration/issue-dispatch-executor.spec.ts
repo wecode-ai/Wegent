@@ -15,6 +15,7 @@ import {
 import {
   authHeaders,
   getScenarioModelBodies,
+  getScenarioRequestHeaders,
   getToolScenarioState,
   modelRequestText,
   modelToolNames,
@@ -38,6 +39,10 @@ interface CollaborationExecution {
   teamId: number | null
   executorType: string
   runtimeTaskId: string | null
+  automationRunId: string | null
+  executionEnvironment: string | null
+  startedAt: string | null
+  completedAt: string | null
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -53,19 +58,82 @@ test.describe('Collaboration group Executor coordination', () => {
     if (model) await deleteIssueDispatchMockModel(request, model)
   })
 
-  test('dispatches independent member executions and lets a fresh manager round update status', async ({
+  test('dispatches a directly assigned agent and moves only to review', async ({
     page,
     request,
   }, testInfo) => {
-    test.setTimeout(240_000)
+    test.setTimeout(180_000)
+    if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+
+    const suffix = `${Date.now()}`
+    const issueTitle = `Direct agent dispatch ${suffix}`
+    const result = `DIRECT_AGENT_RESULT_${suffix}`
+    const fixture = await createProjectFixture(page, suffix, issueTitle)
+    const agent = await createProjectAgent(page, `Direct Agent ${suffix}`, model.modelName)
+    const clearScenario = await configureIssueDispatchModelScenario(request, issueTitle, [
+      { responseContent: result },
+    ])
+
+    try {
+      await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
+      await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
+      await page.getByTestId('cloud-todo-save').click()
+      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `agent:${agent.id}`
+      )
+      await captureEvidence(page, testInfo, '01-direct-agent-assigned')
+
+      const executions = await waitForCollaborationExecutions(
+        request,
+        model.token,
+        fixture.projectId,
+        fixture.issueId,
+        1
+      )
+      expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
+      expect(executions[0].executionEnvironment).toBe('cloud')
+
+      const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
+      expect(completed.execution_state).not.toBe('failed')
+
+      const modelBodies = await getScenarioModelBodies(request, issueTitle)
+      expect(modelRequestText(modelBodies)).toContain(issueTitle)
+      expect(modelToolNames(modelBodies).some(isSubmitWorkflowPlan)).toBe(false)
+      expect(modelToolNames(modelBodies).some(isUpdateIssueStatus)).toBe(false)
+      expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)
+
+      await page.reload()
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
+      await expect(page.getByText(result, { exact: false }).first()).toBeVisible()
+      await captureEvidence(page, testInfo, '02-direct-agent-in-review')
+    } finally {
+      await clearScenario()
+    }
+  })
+
+  test('runs two collaboration rounds with parallel members and fresh manager tasks', async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.setTimeout(300_000)
     if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
 
     const suffix = `${Date.now()}`
     const issueTitle = `Coordinate CPU investigation ${suffix}`
+    const firstRoundId = `collect-${suffix}`
+    const secondRoundId = `synthesize-${suffix}`
     const collectorTask = `Collect CPU evidence ${suffix}`
     const reviewerTask = `Review CPU evidence ${suffix}`
+    const synthesisTask = `Synthesize CPU findings ${suffix}`
     const collectorEvidence = `COLLECTOR_EVIDENCE_${suffix}`
     const reviewerEvidence = `REVIEWER_EVIDENCE_${suffix}`
+    const synthesisEvidence = `SYNTHESIS_EVIDENCE_${suffix}`
+    const finalComment =
+      'The manager reviewed both collaboration rounds and submitted the Issue for confirmation.'
     const fixture = await createProjectFixture(page, suffix, issueTitle)
     const leader = await createProjectAgent(page, `Coordinate Leader ${suffix}`, model.modelName)
     const collector = await createProjectAgent(
@@ -92,7 +160,7 @@ test.describe('Collaboration group Executor coordination', () => {
             toolName: 'wework_space__submit_workflow_plan',
             arguments: {
               plan: {
-                round_id: `round-${suffix}`,
+                round_id: firstRoundId,
                 summary: 'Collect and independently review CPU evidence in parallel.',
                 items: [
                   {
@@ -117,7 +185,33 @@ test.describe('Collaboration group Executor coordination', () => {
       },
       {
         responseContent:
-          'The current collaboration round was dispatched. Waiting for Executor results.',
+          'The first collaboration round was dispatched. Waiting for Executor results.',
+      },
+      {
+        toolCalls: [
+          {
+            toolName: 'wework_space__submit_workflow_plan',
+            arguments: {
+              plan: {
+                round_id: secondRoundId,
+                summary: 'Synthesize the independently collected and reviewed CPU evidence.',
+                items: [
+                  {
+                    assignment_id: `synthesis-${suffix}`,
+                    title: synthesisTask,
+                    instructions: `${synthesisTask}. Use ${collectorEvidence} and ${reviewerEvidence}. Return ${synthesisEvidence}.`,
+                    assignee_type: 'agent',
+                    assignee_id: collector.id,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      {
+        responseContent:
+          'The second collaboration round was dispatched. Waiting for Executor results.',
       },
       {
         toolCalls: [
@@ -125,25 +219,29 @@ test.describe('Collaboration group Executor coordination', () => {
             toolName: 'wework_space__update_issue_status',
             arguments: {
               status: 'in_review',
-              reason: `Both independent member results were evaluated: ${collectorEvidence}, ${reviewerEvidence}.`,
-              comment:
-                'The manager reviewed both parallel assignments and submitted the Issue for confirmation.',
+              reason: `Both rounds were evaluated: ${collectorEvidence}, ${reviewerEvidence}, ${synthesisEvidence}.`,
+              comment: finalComment,
             },
           },
         ],
       },
       {
-        responseContent: `Manager evaluated ${collectorEvidence} and ${reviewerEvidence}.`,
+        responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence }]
+      [{ responseContent: collectorEvidence, doneDelayMs: 15_000 }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence },
+      { responseContent: reviewerEvidence, doneDelayMs: 15_000 },
     ])
+    const clearSynthesisScenario = await configureIssueDispatchModelScenario(
+      request,
+      synthesisTask,
+      [{ responseContent: synthesisEvidence }]
+    )
 
     try {
       await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
@@ -170,7 +268,7 @@ test.describe('Collaboration group Executor coordination', () => {
         model.token,
         fixture.projectId,
         fixture.issueId,
-        3
+        4
       )
       const dispatches = executions.filter(
         item => item.executorType === 'collaboration_group_dispatch'
@@ -178,47 +276,97 @@ test.describe('Collaboration group Executor coordination', () => {
       const members = executions.filter(
         item => item.executorType !== 'collaboration_group_dispatch'
       )
+      const firstRoundMembers = members.filter(item =>
+        item.automationRunId?.includes(`:${firstRoundId}:`)
+      )
+      const secondRoundMembers = members.filter(item =>
+        item.automationRunId?.includes(`:${secondRoundId}:`)
+      )
       expect(dispatches).toHaveLength(1)
-      expect(members).toHaveLength(2)
-      expect(new Set(members.map(item => item.runtimeTaskId)).size).toBe(2)
+      expect(firstRoundMembers).toHaveLength(2)
+      expect(secondRoundMembers).toHaveLength(1)
+      expect(new Set(members.map(item => item.runtimeTaskId)).size).toBe(3)
       expect(members.every(item => item.status === 'completed')).toBe(true)
+      expectExecutionsToOverlap(firstRoundMembers)
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
 
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
+      const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
       const managerScenario = await getToolScenarioState(request, issueTitle)
-      expect(managerBodies.length).toBeGreaterThanOrEqual(4)
-      expect(managerScenario.nextStep).toBe(4)
-      expect(modelToolNames(managerBodies).some(isSubmitWorkflowPlan)).toBe(true)
-      expect(modelToolNames(managerBodies).some(isUpdateIssueStatus)).toBe(true)
-      expect(modelToolNames(managerBodies).some(isNativeSubagentTool)).toBe(false)
+      const managerSessionIds = distinctSessionIds(managerHeaders)
+      const managerToolNames = modelToolNames(managerBodies)
+      expect(managerBodies.length).toBeGreaterThanOrEqual(6)
+      expect(managerScenario.nextStep).toBe(6)
+      expect(managerSessionIds).toHaveLength(3)
+      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${firstRoundId}`))).toBe(true)
+      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${secondRoundId}`))).toBe(true)
+      expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
+      expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
+      expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
       expect(modelRequestText(managerBodies.slice(0, 1))).toContain(
         'Project collaboration rules and workflow'
       )
-      expect(modelRequestText(managerBodies.slice(2))).toContain(collectorEvidence)
-      expect(modelRequestText(managerBodies.slice(2))).toContain(reviewerEvidence)
+      expect(modelRequestText(managerBodies.slice(2, 4))).toContain(collectorEvidence)
+      expect(modelRequestText(managerBodies.slice(2, 4))).toContain(reviewerEvidence)
+      expect(modelRequestText(managerBodies.slice(4))).toContain(synthesisEvidence)
 
       const collectorScenario = await getToolScenarioState(request, collectorTask)
       const reviewerScenario = await getToolScenarioState(request, reviewerTask)
+      const synthesisScenario = await getToolScenarioState(request, synthesisTask)
       expect(collectorScenario.nextStep).toBe(1)
       expect(reviewerScenario.nextStep).toBe(1)
+      expect(synthesisScenario.nextStep).toBe(1)
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
       await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
-      await expect(
-        page.getByText('The manager reviewed both parallel assignments', { exact: false }).first()
-      ).toBeVisible()
-      await captureEvidence(page, testInfo, '02-manager-reviewed-executor-members')
+      await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
+      await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
+      await captureEvidence(page, testInfo, '02-manager-reviewed-two-rounds')
     } finally {
+      await clearSynthesisScenario()
       await clearReviewerScenario()
       await clearCollectorScenario()
       await clearManagerScenario()
     }
   })
 })
+
+function expectExecutionsToOverlap(executions: CollaborationExecution[]): void {
+  const starts = executions.map(item =>
+    parseExecutionTime(item.startedAt, executionLabel(item), 'start')
+  )
+  const completions = executions.map(item =>
+    parseExecutionTime(item.completedAt, executionLabel(item), 'completion')
+  )
+  expect(Math.max(...starts)).toBeLessThan(Math.min(...completions))
+}
+
+function executionLabel(execution: CollaborationExecution): string {
+  return execution.automationRunId ?? execution.runtimeTaskId ?? 'collaboration execution'
+}
+
+function parseExecutionTime(value: string | null, execution: string, label: string): number {
+  expect(value, `${execution} should expose a ${label} timestamp`).toBeTruthy()
+  const timestamp = Date.parse(value ?? '')
+  expect(Number.isNaN(timestamp), `${execution} should expose a valid ${label} timestamp`).toBe(
+    false
+  )
+  return timestamp
+}
+
+function distinctSessionIds(
+  headers: Array<Record<string, string | string[] | undefined>>
+): string[] {
+  const values = headers.flatMap(header => {
+    const value = header['wecode-session-id']
+    return Array.isArray(value) ? value : value ? [value] : []
+  })
+  return [...new Set(values)]
+}
 
 function isSubmitWorkflowPlan(name: string): boolean {
   return name.endsWith('submit_workflow_plan')

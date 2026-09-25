@@ -3045,6 +3045,20 @@ export function createRuntimeWorkApiFromIpc(
         requireLocalCodexCatalog,
         options.materializeRuntimeTask
       )
+      const collaborationDispatchTaskId = stringValue(
+        recordValue((data as unknown as Record<string, unknown>).collaborationDispatch).taskId
+      )
+      delete payload.collaborationDispatch
+      const rpcMethod = collaborationDispatchTaskId
+        ? 'runtime.collaboration.dispatch'
+        : 'runtime.tasks.create'
+      const rpcPayload = collaborationDispatchTaskId
+        ? {
+            dispatchKind: 'collaboration_group',
+            dispatchTaskId: collaborationDispatchTaskId,
+            managerRuntimeRequest: payload,
+          }
+        : payload
       logRuntimeTaskCreateStage('local-payload-built', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
@@ -3069,12 +3083,12 @@ export function createRuntimeWorkApiFromIpc(
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
-        method: 'runtime.tasks.create',
+        method: rpcMethod,
         elapsedMs: Date.now() - startedAt,
       })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
-        'runtime.tasks.create',
-        payload,
+        rpcMethod,
+        rpcPayload,
         localDeviceId
       )
       logRuntimeTaskCreateStage('local-rpc-resolved', {

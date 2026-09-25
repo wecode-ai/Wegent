@@ -326,21 +326,42 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 int(identity["user_id"]),
                 request,
             )
+            messages = list(messages)
         except (ValidationError, HTTPException) as exc:
             return project_chat_exception_ack(exc)
 
         room = project_chat_room(request.project_id, request.task_id)
         await self.enter_room(sid, room)
+        latest_sequence = (
+            messages[-1]["sequenceNumber"] if messages else request.after_sequence
+        )
+        try:
+            while True:
+                catch_up_request = request.model_copy(
+                    update={"after_sequence": latest_sequence}
+                )
+                catch_up = await run_sync_in_executor(
+                    _subscribe_project_chat_sync,
+                    int(identity["user_id"]),
+                    catch_up_request,
+                )
+                if not catch_up:
+                    break
+                messages.extend(catch_up)
+                next_sequence = catch_up[-1]["sequenceNumber"]
+                if next_sequence <= latest_sequence or len(catch_up) < request.limit:
+                    latest_sequence = max(latest_sequence, next_sequence)
+                    break
+                latest_sequence = next_sequence
+        except (ValidationError, HTTPException) as exc:
+            await self.leave_room(sid, room)
+            return project_chat_exception_ack(exc)
         return {
             "ok": True,
             "result": {
                 "messages": messages,
                 "currentUserId": str(identity["user_id"]),
-                "latestSequence": (
-                    messages[-1]["sequenceNumber"]
-                    if messages
-                    else request.after_sequence
-                ),
+                "latestSequence": latest_sequence,
             },
         }
 

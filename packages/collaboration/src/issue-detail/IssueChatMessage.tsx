@@ -269,6 +269,8 @@ export function IssueChatMessage({
   const text = activityDisplayBody(message.content, "");
   const isAgent = message.sender.type === "agent";
   const isManager = agentRole === "manager";
+  const isManagerStatusComment =
+    isManager && message.metadata.activity_type === "manager_status_comment";
   const activityAuthor =
     isAgent && !isManager && taskSummary?.title
       ? taskSummary.title
@@ -301,7 +303,7 @@ export function IssueChatMessage({
   const openExecution =
     onOpenExecution ??
     (allowBackendExecutionFallback ? openBackendExecution : undefined);
-  if (compact && plain && isManager) {
+  if (compact && plain && isManager && !isManagerStatusComment) {
     const failed = displayStatus === "failed";
     const completed = displayStatus === "succeeded";
     const presentation = managerActivityPresentation(

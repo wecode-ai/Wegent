@@ -48,7 +48,10 @@ import { createWeworkProjectAgentConfigurationHost } from '@/features/collaborat
 import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
 import { ensureDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
-import type { IssueDispatchPersonalTaskAction } from '@/features/notifications/NotificationTaskSourceContext'
+import {
+  issueDispatchPersonalTaskInput,
+  type IssueDispatchPersonalTaskAction,
+} from '@/features/notifications/NotificationTaskSourceContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type {
   ArchiveRuntimeConversationsResult,
@@ -602,7 +605,7 @@ export function WeworkSharedProject({
           }),
           ...(dispatch
             ? {
-                message: dispatch.instructions,
+                message: issueDispatchPersonalTaskInput(dispatch),
                 title: dispatch.taskTitle,
                 cloudProjectId: String(project.id),
                 origin: {
@@ -677,10 +680,11 @@ export function WeworkSharedProject({
           loopItemLocalProject(taskComposer.issue as unknown as CloudLoopItem)?.id ?? null
         }
         initialTaskRequest={taskComposer.taskRequest}
+        taskTitle={taskComposer.dispatch?.taskTitle}
         open
         embedded
         initialTaskInput={
-          taskComposer.dispatch?.instructions ||
+          (taskComposer.dispatch ? issueDispatchPersonalTaskInput(taskComposer.dispatch) : null) ||
           taskComposer.issue.description ||
           taskComposer.issue.title
         }

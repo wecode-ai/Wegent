@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
@@ -20,8 +21,10 @@ from app.models.delivery import (
     LoopItem,
     ProjectChatAgent,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.services import collaboration_manager_decisions
 
 
 class _SessionContext:
@@ -84,16 +87,55 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
         status="in_progress",
         priority="medium",
         created_by_user_id=test_user.id,
+        metadata_json={
+            "collaboration_group": {
+                "id": "group-1",
+                "name": "Managed group",
+            }
+        },
     )
-    test_db.add_all([manager, item])
+    dispatch = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        execution_payload=json.dumps(
+            {
+                "runtime_selection": {
+                    "executor_kind": "collaboration_group_dispatch",
+                },
+                "origin_context": {
+                    "dispatch_id": "dispatch-1",
+                    "manager_agent_id": manager.id,
+                },
+            }
+        ),
+        status="completed",
+    )
+    test_db.add_all([manager, item, dispatch])
     test_db.commit()
     labels = {
         "source": "board_team_assignment",
         "weworkSpaceProjectId": str(project.id),
         "weworkSpaceTaskId": item.id,
+        "dispatchId": "dispatch-1",
         "dispatchRole": "manager",
         "managerAgentId": manager.id,
     }
+    monkeypatch.setattr(
+        collaboration_manager_decisions,
+        "collaboration_group_for_item",
+        lambda *_args, **_kwargs: {
+            "id": "group-1",
+            "leader": {"kind": "agent", "id": manager.id},
+            "members": [],
+        },
+    )
+    monkeypatch.setattr(
+        collaboration_manager_decisions,
+        "push_project_chat_message",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(wework_space, "_task_labels", lambda *_args: labels)
 
@@ -118,7 +160,9 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
     assert comment.metadata_json == {
         "dispatch_role": "manager",
         "activity_type": "manager_status_comment",
+        "dispatch_id": "dispatch-1",
         "target_status": "in_review",
+        "reason": "Executor evidence is ready for confirmation.",
     }
     labels["dispatchRole"] = "executor"
     with pytest.raises(ValueError, match="not a dispatch manager"):
@@ -272,7 +316,7 @@ def test_project_details_expose_assignable_members(
     assert details["groups"] == []
 
 
-async def test_manager_mcp_assignment_to_human_exposes_human_work(
+async def test_manager_mcp_assignment_to_human_returns_plain_issue(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -300,8 +344,8 @@ async def test_manager_mcp_assignment_to_human_exposes_human_work(
         str(created["id"]),
     )
 
-    assert assigned["human_work"] is not None
-    assert assigned["human_work"]["can_start"] is True
+    assert assigned["assignee_user_id"] == test_user.id
+    assert "human_work" not in assigned
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

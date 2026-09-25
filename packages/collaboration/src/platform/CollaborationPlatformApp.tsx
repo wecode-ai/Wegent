@@ -2,12 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -2910,30 +2905,13 @@ function WorkItemsPage({
   messages: PlatformMessages;
   onOpenItem(item: WorkspaceMyWorkItem): void;
 }) {
-  const toHandle = items.filter(
-    (item) => item.human_work?.can_start || item.human_work?.can_submit,
-  );
-  const toReview = items.filter((item) => item.human_work?.can_review);
-  const remaining = items.filter(
-    (item) => !toHandle.includes(item) && !toReview.includes(item),
-  );
   const sections = [
     {
       id: "assigned",
       title: locale === "zh-CN" ? "待我处理" : "Assigned to me",
-      items: toHandle,
+      items,
     },
-    {
-      id: "review",
-      title: locale === "zh-CN" ? "待我验收" : "To review",
-      items: toReview,
-    },
-    {
-      id: "other",
-      title: locale === "zh-CN" ? "其他工作" : "Other work",
-      items: remaining,
-    },
-  ].filter((section) => section.items.length);
+  ];
   return (
     <div className="collaboration-platform-page">
       <PageHeader title={title} subtitle={subtitle} />
@@ -3912,14 +3890,7 @@ export function CollaborationPlatformApp({
     const rootView = host.location.rootView ?? "home";
     const inboxItems = state.myWork.filter((item) => {
       const operation = workspaceIssueOperationState(item);
-      return (
-        item.human_work?.can_start ||
-        item.human_work?.can_submit ||
-        item.human_work?.can_review ||
-        item.is_unread ||
-        operation === "failed" ||
-        operation === "review"
-      );
+      return item.is_unread || operation === "failed" || operation === "review";
     });
     content =
       rootView === "agents" ||

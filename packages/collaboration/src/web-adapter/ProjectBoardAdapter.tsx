@@ -262,8 +262,7 @@ export function ProjectBoardAdapter({
               issues.some(
                 (issue) =>
                   issue.id === String(event.active.id) &&
-                  canEditCollaborationIssue(issue) &&
-                  !issue.human_work,
+                  canEditCollaborationIssue(issue),
               )
             )
               controller.moveDroppedItem(projectBoardDrop(event));
@@ -383,7 +382,7 @@ export function ProjectBoardAdapter({
                 : undefined,
             archiveLabel: translate("todo.delete_issue", "删除任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
-            dragEnabled: canEditCollaborationIssue(issue) && !issue.human_work,
+            dragEnabled: canEditCollaborationIssue(issue),
             onOpen: () => onOpen(issue),
           };
           const childrenAction = issues.some(

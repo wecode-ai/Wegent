@@ -18,6 +18,7 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.user import User
 from app.services.device.capacity import RuntimeCapacity
+from app.services.loop_item_executions.profile import WeworkExecutionProfileError
 from app.services.loop_item_executions.service import loop_item_execution_service
 
 
@@ -225,6 +226,59 @@ def test_device_pull_records_delivery_only_after_runtime_acceptance(
     test_db.refresh(execution)
     assert not loop_datetime_value_is_unset(execution.start_requested_at)
     assert execution.observed_state == "accepted"
+
+
+def test_device_pull_marks_profile_preflight_failure_terminal(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.services.loop_item_executions.device_pull import _claim_execution
+
+    execution = _make_execution(test_db, test_user)
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    with (
+        patch(
+            "app.services.loop_item_executions.device_pull.get_db_session",
+            _test_session,
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "validate_runtime_capacity_observation_sync",
+            return_value=RuntimeCapacity(
+                runtime_instance_id="runtime-1",
+                limit=1,
+                active=0,
+                active_task_ids=frozenset(),
+                queued=0,
+            ),
+        ),
+        patch(
+            "app.services.loop_item_executions.device_pull."
+            "loop_item_execution_service.build_executor_runtime_payload",
+            side_effect=WeworkExecutionProfileError("invalid runtime profile"),
+        ),
+    ):
+        result = _claim_execution(
+            owner_user_id=test_user.id,
+            execution_target_id="cloud-device",
+            runtime_device_id="cloud-device",
+            runtime_instance_id="runtime-1",
+            environment="cloud",
+            runtime_capacity=None,
+        )
+
+    assert result == {
+        "success": False,
+        "error": "invalid runtime profile",
+        "task": None,
+    }
+    test_db.refresh(execution)
+    assert execution.status == "failed"
+    assert execution.error_message == "invalid runtime profile"
 
 
 def test_device_pull_redelivers_same_unconfirmed_claim_before_new_work(

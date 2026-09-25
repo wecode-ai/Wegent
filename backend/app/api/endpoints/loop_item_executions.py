@@ -24,6 +24,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
     LoopItemExecutionBatchCreate,
     LoopItemExecutionBatchItem,
@@ -35,17 +36,24 @@ from app.schemas.project_chat import (
     LoopItemExecutionDispatchUnknown,
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
+    LoopItemExecutionManagerDecision,
     LoopItemExecutionRuntimeStart,
     LoopItemExecutionStatusQuery,
     LoopItemExecutionView,
 )
 from app.schemas.runtime_profile import ExecutionRuntimeSelect
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.collaboration_group_execution import collaboration_group_for_item
+from app.services.collaboration_group_execution import (
+    collaboration_group_agent_matches,
+    collaboration_group_for_item,
+)
 from app.services.collaboration_human_assignments import (
     collaboration_human_assignment_id,
     collaboration_human_assignment_status,
     notify_collaboration_human_assignment,
+)
+from app.services.collaboration_manager_decisions import (
+    apply_collaboration_manager_decision,
 )
 from app.services.device.capacity import get_runtime_capacity_sync
 from app.services.issue_assignments import issue_assignment_service
@@ -58,6 +66,9 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.loop_items.access import visible_item_filter
+from app.services.loop_items.service import loop_item_service
+from app.services.project_chat.push import push_project_chat_message
+from app.services.project_chat.service import project_chat_service
 from app.services.runtime_profiles import runtime_profile_service
 from app.services.workspaces.storage import workspace_id_for_project
 
@@ -126,6 +137,26 @@ def _collaboration_group_members(group: dict[str, object]) -> set[tuple[str, str
         for kind, member_id in values
         if kind in {"agent", "human"} and member_id
     }
+
+
+def _collaboration_group_agent_members(group: dict[str, object]) -> list[object]:
+    """Return every configured agent reference, including the leader."""
+
+    values: list[object] = [group.get("leader")]
+    members = group.get("members")
+    if isinstance(members, list):
+        values.extend(members)
+    return values
+
+
+def _collaboration_group_contains_agent(
+    group: dict[str, object],
+    agent: ProjectChatAgent,
+) -> bool:
+    return any(
+        collaboration_group_agent_matches(member, agent)
+        for member in _collaboration_group_agent_members(group)
+    )
 
 
 def _execution_view(
@@ -354,12 +385,7 @@ def enqueue_execution_batch(
         project_id=project_id,
         agent_id=values.manager_agent_id,
     )
-    leader = group.get("leader")
-    if not (
-        isinstance(leader, dict)
-        and leader.get("kind") == "agent"
-        and str(leader.get("id") or "") == manager.id
-    ):
+    if not collaboration_group_agent_matches(group.get("leader"), manager):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Manager is not the collaboration group leader",
@@ -372,7 +398,7 @@ def enqueue_execution_batch(
     assignment_activity: list[dict[str, object]] = []
     for command in values.items:
         member_key = (command.assignee_type, command.assignee_id)
-        if member_key not in allowed_members:
+        if command.assignee_type == "human" and member_key not in allowed_members:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Assignment target is not part of the collaboration group",
@@ -387,6 +413,11 @@ def enqueue_execution_batch(
                 project_id=project_id,
                 agent_id=command.assignee_id,
             )
+            if not _collaboration_group_contains_agent(group, agent):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Assignment target is not part of the collaboration group",
+                )
             existing = (
                 db.query(LoopItemExecution)
                 .filter(LoopItemExecution.automation_run_id == run_id)
@@ -492,6 +523,7 @@ def enqueue_execution_batch(
         .order_by(ProjectChatMessage.created_at.desc())
         .all()
     )
+    assignment_message: ProjectChatMessage | None = None
     if not any(
         isinstance(message.metadata_json, dict)
         and message.metadata_json.get("activity_type") == "manager_assignment"
@@ -499,28 +531,32 @@ def enqueue_execution_batch(
         for message in existing_activity
     ):
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-        db.add(
-            ProjectChatMessage(
-                message_id=message_id,
-                client_message_id=message_id,
-                project_id=str(project_id),
-                task_id=item.id,
-                sender_type="agent",
-                sender_id=manager.id,
-                sender_name=manager.title or manager.name or "AI manager",
-                message_type="text",
-                content="",
-                metadata_json={
-                    "dispatch_role": "manager",
-                    "activity_type": "manager_assignment",
-                    "coordination_round_id": values.round_id,
-                    "dispatch_assignments": assignment_activity,
-                },
-                agent_id=manager.id,
-                status="completed",
-            )
+        assignment_message = ProjectChatMessage(
+            message_id=message_id,
+            client_message_id=message_id,
+            project_id=str(project_id),
+            task_id=item.id,
+            sender_type="agent",
+            sender_id=manager.id,
+            sender_name=manager.title or manager.name or "AI manager",
+            message_type="text",
+            content="",
+            metadata_json={
+                "dispatch_role": "manager",
+                "activity_type": "manager_assignment",
+                "coordination_round_id": values.round_id,
+                "dispatch_assignments": assignment_activity,
+            },
+            agent_id=manager.id,
+            status="completed",
         )
+        db.add(assignment_message)
     db.commit()
+    if assignment_message is not None:
+        db.refresh(assignment_message)
+        push_project_chat_message(
+            project_chat_service.to_view(assignment_message).model_dump(by_alias=True)
+        )
     return {
         "dispatch_id": values.dispatch_id,
         "round_id": values.round_id,
@@ -530,6 +566,52 @@ def enqueue_execution_batch(
 
 def _collaboration_assignment_prompt(command: LoopItemExecutionBatchItem) -> str:
     return f"任务标题：{command.title}\n\n执行要求：{command.instructions}"
+
+
+@router.post("/{project_id}/executions/manager-decision")
+def decide_collaboration_issue_status(
+    project_id: int,
+    values: LoopItemExecutionManagerDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Persist one manager-owned Issue decision without owning the loop."""
+
+    require_cloud_project_role(
+        db,
+        project_id,
+        current_user.id,
+        BaseRole.Developer,
+    )
+    decision = apply_collaboration_manager_decision(
+        db,
+        project_id=project_id,
+        item_id=values.loop_item_id,
+        user_id=current_user.id,
+        dispatch_id=values.dispatch_id,
+        manager_agent_id=values.manager_agent_id,
+        idempotency_key=values.idempotency_key,
+        target_status=values.target_status,
+        reason=values.reason,
+        comment=values.comment,
+    )
+    return {
+        "item": LoopItemResponse.model_validate(
+            loop_item_service.response_values(
+                db,
+                decision.item,
+                current_user.id,
+            )
+        ).model_dump(mode="json"),
+        "comment": (
+            project_chat_service.to_view(decision.comment).model_dump(
+                mode="json",
+                by_alias=True,
+            )
+            if decision.comment is not None
+            else None
+        ),
+    }
 
 
 @router.post("/{project_id}/executions/statuses")

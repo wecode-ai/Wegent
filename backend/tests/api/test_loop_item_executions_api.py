@@ -181,11 +181,13 @@ def test_agent_claim_uses_run_owner_not_agent_creator(
     )
 
 
-def test_collaboration_batch_persists_agent_and_human_work_facts(
+def test_collaboration_batch_persists_agent_and_human_assignment_facts(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
 ) -> None:
+    push = Mock()
+    monkeypatch.setattr(loop_item_executions, "push_project_chat_message", push)
     public_id = str(uuid4())
     project = CloudProject(
         public_id=public_id,
@@ -206,7 +208,7 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
         name="Manager",
         status="active",
         created_by_user_id=test_user.id,
-        metadata_json={},
+        metadata_json={"wegent_team_id": 1001},
     )
     worker = ProjectChatAgent(
         id=f"worker-{uuid4().hex}",
@@ -215,7 +217,7 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
         name="Worker",
         status="active",
         created_by_user_id=test_user.id,
-        metadata_json={},
+        metadata_json={"wegent_team_id": 1002},
     )
     parent = LoopItem(
         id=f"{project.project_key}-1",
@@ -233,10 +235,10 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
 
     group = {
         "id": "group-1",
-        "leader": {"kind": "agent", "id": manager.id},
+        "leader": {"kind": "agent", "id": "1001"},
         "members": [
-            {"kind": "agent", "id": manager.id},
-            {"kind": "agent", "id": worker.id},
+            {"kind": "agent", "id": "1001"},
+            {"kind": "agent", "id": "1002"},
             {"kind": "human", "id": str(test_user.id)},
         ],
     }
@@ -330,6 +332,8 @@ def test_collaboration_batch_persists_agent_and_human_work_facts(
     assignments = activities[0].metadata_json["dispatch_assignments"]
     assert assignments[0]["agent_name"] == "Worker"
     assert assignments[1]["human_user_name"] == test_user.user_name
+    push.assert_called_once()
+    assert push.call_args.args[0]["metadata"]["dispatch_assignments"] == assignments
 
     binding = LoopItemTaskBinding(
         cloud_project_id=str(project.id),

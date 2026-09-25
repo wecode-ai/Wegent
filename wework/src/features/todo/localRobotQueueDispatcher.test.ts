@@ -40,6 +40,17 @@ function localModelIntent(overrides: Record<string, unknown> = {}): Record<strin
   return runtimePayload({ modelId: 'local-model', ...overrides })
 }
 
+function collaborationDispatchPayload(): Record<string, unknown> {
+  return {
+    dispatchKind: 'collaboration_group',
+    dispatchTaskId: 'codex-queue-1',
+    managerRuntimeRequest: runtimePayload({
+      taskId: 'codex-queue-1',
+      title: 'Coordinate the assigned Issue',
+    }),
+  }
+}
+
 function execution(overrides: Partial<LocalLoopItemExecution> = {}): LocalLoopItemExecution {
   return {
     id: 1,
@@ -299,6 +310,50 @@ describe('startLocalRobotQueueDispatcher', () => {
     expect(fixture.mocks.runtimeStart).toHaveBeenCalledOnce()
     stop()
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('hands collaboration group claims to the Executor collaboration entrypoint', async () => {
+    const createRuntimeTask = vi.fn(
+      async (_request: unknown, beforeDispatch?: () => Promise<void>) => {
+        await beforeDispatch?.()
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'codex-queue-1',
+          workspacePath: '/tmp/workspace',
+        }
+      }
+    )
+    const { services: svc, mocks } = services({
+      claimNext: vi
+        .fn()
+        .mockResolvedValueOnce(
+          execution({
+            agent_id: '',
+            runtime_payload: collaborationDispatchPayload(),
+          })
+        )
+        .mockResolvedValue(null),
+      createRuntimeTask,
+    })
+
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    expect(createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'codex-queue-1',
+        title: 'Coordinate the assigned Issue',
+        deviceId: 'local-device',
+        collaborationDispatch: { taskId: 'codex-queue-1' },
+      }),
+      expect.any(Function)
+    )
+    expect(mocks.startRequested).toHaveBeenCalledOnce()
+    expect(mocks.runtimeStart).toHaveBeenCalledOnce()
+    expect(mocks.fail).not.toHaveBeenCalled()
+    stop()
   })
 
   it('claims from every local-capable device', async () => {

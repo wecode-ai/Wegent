@@ -51,3 +51,54 @@ it('does not merge a late comment or runtime response into another Issue', async
     act(() => root.unmount())
   }
 })
+
+it('reloads the canonical activity snapshot when the Issue revision changes', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const first = {
+    messageId: 'first',
+    taskId: 'issue-1',
+    content: 'First activity',
+    sequenceNumber: 1,
+    updatedAt: '2026-09-25T00:00:00Z',
+  } as ProjectChatMessage
+  const managerComment = {
+    ...first,
+    messageId: 'manager-comment',
+    content: '负责人已综合证据，将 Issue 提交待确认。',
+    sequenceNumber: 2,
+    updatedAt: '2026-09-25T00:00:01Z',
+  }
+  const unsubscribe = vi.fn()
+  const client = {
+    subscribe: vi
+      .fn()
+      .mockResolvedValueOnce({
+        snapshot: { messages: [first] },
+        unsubscribe,
+      })
+      .mockResolvedValueOnce({
+        snapshot: { messages: [first, managerComment] },
+        unsubscribe,
+      }),
+  } as unknown as ProjectChatClient
+  function Harness({ revision }: { revision: number }) {
+    const chat = useIssueProjectChat(client, 'project-1', 'issue-1', revision)
+    return <div>{chat.messages.map(message => message.content).join(',')}</div>
+  }
+  try {
+    await act(async () => root.render(<Harness revision={1} />))
+    expect(container.textContent).toBe('First activity')
+
+    await act(async () => root.render(<Harness revision={2} />))
+
+    expect(client.subscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain(
+      '负责人已综合证据，将 Issue 提交待确认。'
+    )
+  } finally {
+    act(() => root.unmount())
+  }
+})

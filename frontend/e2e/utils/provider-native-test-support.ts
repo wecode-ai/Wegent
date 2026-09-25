@@ -50,6 +50,7 @@ export interface RecordedTaskToolCall {
 export interface ToolScenarioStep {
   toolCalls?: Array<{ toolName: string; arguments: Record<string, unknown> }>
   responseContent?: string
+  doneDelayMs?: number
 }
 
 export interface ToolScenarioOptions {

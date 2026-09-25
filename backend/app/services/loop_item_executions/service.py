@@ -895,7 +895,7 @@ class LoopItemExecutionService:
         owner_user_id: int,
         assigner_user_id: int,
         environment: str,
-        execution_device_id: str,
+        execution_device_id: str | None,
         priority: str | None,
         dispatch_context: dict[str, Any],
     ) -> LoopItemExecution:
@@ -3644,7 +3644,7 @@ class LoopItemExecutionService:
                 )
             if execution_target_id:
                 requested_device_id = str(manager_request.get("deviceId") or "")
-                if not _same_runtime_device(
+                if requested_device_id and not _same_runtime_device(
                     db,
                     owner_user_id=execution.executor_owner_user_id,
                     left_device_id=requested_device_id,
@@ -3788,6 +3788,35 @@ class LoopItemExecutionService:
         """Resolve live executor configuration from its canonical record."""
 
         run, rule = self._automation_run_and_rule(db, execution)
+        if execution.executor_type == "collaboration_group_dispatch":
+            origin_context = self._selection_context(
+                execution,
+                dict(execution.runtime_origin_context),
+            )
+            manager_agent_id = str(origin_context.get("manager_agent_id") or "")
+            manager = db.get(ProjectChatAgent, manager_agent_id)
+            if (
+                manager is None
+                or manager.status != "active"
+                or str(manager.cloud_project_id) != str(execution.cloud_project_id)
+            ):
+                raise WeworkRuntimeConfigurationError(
+                    "Collaboration group manager is unavailable"
+                )
+            profile = WeworkExecutionProfile.for_project_robot(
+                manager,
+                db=db,
+                cloud_project_id=execution.cloud_project_id,
+                model_override=str(origin_context.get("model") or ""),
+                model_type_override=origin_context.get("model_type"),
+                model_options_override=origin_context.get("model_options"),
+                workspace_binding_override=origin_context.get("workspace_binding"),
+            )
+            assigned_prompt = origin_context.get("execution_prompt")
+            if isinstance(assigned_prompt, str) and assigned_prompt.strip():
+                profile = replace(profile, execution_prompt=assigned_prompt)
+            return profile, origin_context
+
         if execution.executor_type == "project_robot":
             if not execution.agent_id:
                 raise WeworkRuntimeConfigurationError(

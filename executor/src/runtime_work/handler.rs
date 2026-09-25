@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
     Waiting {
@@ -575,6 +576,7 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -844,6 +846,7 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
@@ -998,6 +1001,36 @@ impl RuntimeWorkRpcHandler {
         {
             request.runtime_auth_token = Some(connection.runtime_auth_token);
         }
+    }
+
+    fn retain_runtime_model_config(&self, local_task_id: &str, model_config: &Value) {
+        let mut configs = self
+            .runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned");
+        if model_config
+            .as_object()
+            .is_some_and(|value| !value.is_empty())
+        {
+            configs.insert(local_task_id.to_owned(), model_config.clone());
+        } else {
+            configs.remove(local_task_id);
+        }
+    }
+
+    fn runtime_model_config(&self, local_task_id: &str) -> Option<Value> {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .remove(local_task_id);
     }
 
     /// Rewrite a loopback cloud-model gateway to the backend this device reaches.

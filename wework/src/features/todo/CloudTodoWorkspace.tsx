@@ -100,6 +100,10 @@ import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/wor
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
+import {
+  issueDispatchPersonalTaskInput,
+  type IssueDispatchPersonalTaskAction,
+} from '@/features/notifications/NotificationTaskSourceContext'
 import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -414,7 +418,7 @@ type TaskComposerRequest = {
   backgroundAfterSend: boolean
   taskRequest?: RuntimeTaskCreateRequest
   inheritFromTask?: RuntimeTaskAddress | null
-  dispatch?: import('@/features/notifications/NotificationTaskSourceContext').IssueDispatchPersonalTaskAction
+  dispatch?: IssueDispatchPersonalTaskAction
 }
 
 type AssigneeQuickAddRequest = {
@@ -2418,7 +2422,7 @@ export function CloudTodoWorkspace({
           ...toCloudLoopItem(issue),
           project_store: project.project_store,
         }
-        const initialInput = action.instructions
+        const initialInput = issueDispatchPersonalTaskInput(action)
         const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
           project as CollaborationProject
         )
@@ -5454,7 +5458,9 @@ export function CloudTodoWorkspace({
                   taskTitle={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_title
-                      : null
+                      : taskComposerRequest?.workItemId === selectedItem.id
+                        ? taskComposerRequest.dispatch?.taskTitle
+                        : null
                   }
                   open={
                     selectedTaskBinding?.work_item_id !== selectedItem.id ||

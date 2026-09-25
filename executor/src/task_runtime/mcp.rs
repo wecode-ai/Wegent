@@ -1923,33 +1923,41 @@ async fn call_backend_tool(
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
     if name == "update_issue_status" {
-        manager_dispatch_id(grant)?;
+        let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
+        let dispatch_id = manager_dispatch_id(Some(grant))?;
         let item_id = arguments
             .get("item_id")
             .and_then(Value::as_str)
-            .or_else(|| grant.and_then(|value| value.item_id.as_deref()))
+            .or(grant.item_id.as_deref())
             .ok_or_else(|| "item_id is required".to_owned())?;
-        let decision = normalize_issue_status_decision(arguments, grant)?;
-        let current = backend_json(
-            client
-                .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
-                .bearer_auth(auth_token)
-                .send()
-                .await
-                .map_err(|error| error.to_string())?,
-        )
-        .await?;
+        let manager_agent_id = grant
+            .manager_agent_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Collaboration manager agent identity is missing".to_owned())?;
+        let decision = normalize_issue_status_decision(arguments, Some(grant))?;
         let response = client
-            .patch(format!("{base}/loop-items/{}", encode_segment(item_id)))
+            .post(format!(
+                "{base}/cloud-projects/{project_id}/executions/manager-decision"
+            ))
             .bearer_auth(auth_token)
             .json(&json!({
-                "version": current.get("version"),
-                "status": decision.get("target_status"),
+                "loop_item_id": item_id,
+                "dispatch_id": dispatch_id,
+                "manager_agent_id": manager_agent_id,
+                "idempotency_key": decision.get("idempotency_key"),
+                "target_status": decision.get("target_status"),
+                "reason": decision.get("reason"),
+                "comment": decision.get("comment"),
             }))
             .send()
             .await
             .map_err(|error| error.to_string())?;
-        return backend_json(response).await;
+        let result = backend_json(response).await?;
+        return result
+            .get("item")
+            .cloned()
+            .ok_or_else(|| "Backend manager decision response is missing the Issue".to_owned());
     }
     if name == "submit_workflow_plan" {
         let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
@@ -4257,20 +4265,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn backend_manager_status_update_uses_the_generic_board_item_api() {
-        use axum::{extract::Json, http::HeaderMap, routing::get, Router};
+    async fn backend_manager_status_update_persists_one_manager_decision() {
+        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let app = Router::new().route(
-            "/api/v1/loop-items/ISSUE-1",
-            get(|headers: HeaderMap| async move {
+            "/api/v1/cloud-projects/12/executions/manager-decision",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
                 assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
-                Json(json!({"id": "ISSUE-1", "version": 7, "status": "in_progress"}))
-            })
-            .patch(|headers: HeaderMap, Json(body): Json<Value>| async move {
-                assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
-                assert_eq!(body, json!({"version": 7, "status": "in_review"}));
-                Json(json!({"id": "ISSUE-1", "version": 8, "status": "in_review"}))
+                assert_eq!(
+                    body,
+                    json!({
+                        "loop_item_id": "ISSUE-1",
+                        "dispatch_id": "dispatch-1",
+                        "manager_agent_id": "manager-agent",
+                        "idempotency_key": "decision-1",
+                        "target_status": "in_review",
+                        "reason": "Evidence is ready",
+                        "comment": "Please confirm the completed work",
+                    })
+                );
+                Json(json!({
+                    "item": {
+                        "id": "ISSUE-1",
+                        "version": 8,
+                        "status": "in_review"
+                    },
+                    "comment": {
+                        "content": "Please confirm the completed work"
+                    }
+                }))
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -4279,6 +4303,7 @@ mod tests {
             space_id: Some("12".to_owned()),
             item_id: Some("ISSUE-1".to_owned()),
             dispatch_id: Some("dispatch-1".to_owned()),
+            manager_agent_id: Some("manager-agent".to_owned()),
             ..role_grant(SpaceContextRole::Manager)
         };
 
@@ -4287,7 +4312,12 @@ mod tests {
             "task-token",
             "12",
             "update_issue_status",
-            &json!({"status": "in_review", "reason": "Evidence is ready"}),
+            &json!({
+                "status": "in_review",
+                "reason": "Evidence is ready",
+                "comment": "Please confirm the completed work",
+                "idempotency_key": "decision-1",
+            }),
             Some(&grant),
             None,
         )

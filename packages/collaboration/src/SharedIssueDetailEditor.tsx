@@ -669,7 +669,6 @@ export function TodoEditor(props: TodoEditorProps) {
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
   const [securityBusy, setSecurityBusy] = useState(false);
-  const canAddEvidence = item?.human_work?.can_submit === true;
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
@@ -1597,13 +1596,7 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function addAttachments(files: FileList | null) {
-    if (
-      (!editable && !canAddEvidence) ||
-      !editItemId ||
-      !files?.length ||
-      attachmentBusy
-    )
-      return;
+    if (!editable || !editItemId || !files?.length || attachmentBusy) return;
     const itemId = editItemId;
     const itemLoadGeneration = itemLoadGenerationRef.current;
     attachmentsRequestIdRef.current += 1;
@@ -1768,8 +1761,7 @@ export function TodoEditor(props: TodoEditorProps) {
   function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     if (isCreate) void stageFiles(event.dataTransfer.files);
-    else if (editable || canAddEvidence)
-      void addAttachments(event.dataTransfer.files);
+    else if (editable) void addAttachments(event.dataTransfer.files);
   }
 
   function commitTagDraft() {
@@ -1867,7 +1859,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable || Boolean(item?.human_work)}
+      disabled={!editable}
       className={overlayControlClass}
       statuses={statusOptions}
       includeUnset={status === ""}
@@ -1942,10 +1934,7 @@ export function TodoEditor(props: TodoEditorProps) {
         onChange={(target) => {
           setAssigneeTarget(target);
           setNotifyAssignee(true);
-          if (
-            target.startsWith("user:") &&
-            target !== `user:${project?.current_user_id}`
-          ) {
+          if (target.startsWith("user:")) {
             setNotificationChoiceOpen(true);
           }
         }}
@@ -2899,9 +2888,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
-                  {visibleAttachments.length > 0 ||
-                  editingContent ||
-                  canAddEvidence ? (
+                  {visibleAttachments.length > 0 || editingContent ? (
                     <section
                       className="task-detail-context-attachments"
                       data-testid="cloud-todo-attachment-footer"
@@ -2910,9 +2897,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         attachments={visibleAttachments}
                         busy={attachmentBusy}
                         error={attachmentError}
-                        editable={
-                          (editable && editingContent) || canAddEvidence
-                        }
+                        editable={editable && editingContent}
                         compactRail
                         downloadingId={downloadingAttachmentId}
                         onAdd={addAttachments}
@@ -3346,7 +3331,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     }
                     busy={attachmentBusy}
                     error={attachmentError}
-                    editable={editable || canAddEvidence}
+                    editable={editable}
                     downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onOpen={isCreate ? undefined : openAttachment}
@@ -3726,7 +3711,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     attachments={visibleAttachments}
                     busy={attachmentBusy}
                     error={attachmentError}
-                    editable={editable || canAddEvidence}
+                    editable={editable}
                     compactRail
                     downloadingId={downloadingAttachmentId}
                     onAdd={addAttachments}

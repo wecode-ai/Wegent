@@ -873,8 +873,6 @@ class ProjectAutomationProcessor:
         )
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
-            if isinstance(event.payload.get("human_work"), dict):
-                continue
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
                 continue
             rule_metadata = metadata(rule)

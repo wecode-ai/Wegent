@@ -489,7 +489,7 @@ export function TaskActivityView({
       active = false
       unsubscribe?.()
     }
-  }, [client, project.id, t, task.id])
+  }, [client, project.id, t, task.id, task.version])
 
   useTaskActivityRefresh({
     task,
@@ -1076,7 +1076,11 @@ export function TaskActivityView({
               const card = activity.card
               const rootId = card.root.messageId
               const role = issueActivityRole(card.root)
-              if (issueTimeline && role === 'manager') {
+              if (
+                issueTimeline &&
+                role === 'manager' &&
+                card.root.metadata.activity_type !== 'manager_status_comment'
+              ) {
                 const address = messageRuntimeAddress(card.root)
                 const binding = address
                   ? taskBindings.find(

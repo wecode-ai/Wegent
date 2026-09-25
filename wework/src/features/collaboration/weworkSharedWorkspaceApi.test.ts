@@ -1207,7 +1207,13 @@ describe('createWeworkWorkspaceRuntimePort', () => {
     })
     await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
 
-    expect(deliveryApi.bindTask).toHaveBeenCalledWith(issue.id, deliveryTask, 'Task')
+    expect(deliveryApi.bindTask).toHaveBeenCalledWith(
+      issue.id,
+      deliveryTask,
+      'Task',
+      null,
+      undefined
+    )
     expect(deliveryApi.unbindTask).toHaveBeenCalledWith(issue.id, deliveryTask)
     expect(deliveryApi.unbindCloudContext).toHaveBeenCalledWith(deliveryTask)
     expect(deliveryApi.trackProjectTask).toHaveBeenCalledWith(

@@ -1666,12 +1666,9 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            from app.services.human_issue_work import human_issue_work_service
-
             if (
                 not external_index
                 and task_metadata.get("dispatch_child") is not True
-                and not human_issue_work_service.is_direct_human_assignment(db, task)
                 and task.status
                 not in {
                     "in_progress",

@@ -70,6 +70,7 @@ interface ToolCallRule {
 interface ToolScenarioStep {
   toolCalls?: ToolCallRule[]
   responseContent?: string
+  doneDelayMs?: number
 }
 
 type HeaderMatcher = Record<string, string | null>
@@ -986,7 +987,12 @@ const server = http.createServer((req, res) => {
         buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-codex'
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
-      writeResponsesStreamingResponse(res, responseContent, model, streamRule?.doneDelayMs ?? 0)
+      writeResponsesStreamingResponse(
+        res,
+        responseContent,
+        model,
+        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+      )
     } else if (req.url?.includes('/chat/completions')) {
       const toolScenario = findToolScenario(parsedBody, req.headers)
       if (toolScenario && parsedBody) {

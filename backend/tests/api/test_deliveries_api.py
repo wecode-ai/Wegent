@@ -687,6 +687,63 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     assert item.current_delivery_id == delivery_id
 
 
+def test_direct_human_delivery_moves_issue_to_review(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    item_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Prepare release notes", "status": "in_progress"},
+    )
+    assert item_response.status_code == 201
+    item_id = item_response.json()["id"]
+    source_task = {
+        "deviceId": "human-device",
+        "taskId": "direct-human-runtime-task",
+        "taskTitle": "Prepare release notes",
+        "humanAssignmentId": "direct-human-assignment-1",
+        "dispatchId": "direct-human:assignment-1",
+        "dispatchRoundId": "direct",
+        "assignmentId": "assignment-1",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/deliveries",
+        headers=_auth(test_token),
+        json={
+            "markdown": "# Release notes\nReady for review.",
+            "source_task": source_task,
+        },
+    )
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=_auth(test_token),
+    )
+
+    assert finalized.status_code == 200
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "in_review"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+    assert item.metadata_json["status_history"][-1]["trigger"] == "human_delivery"
+    assert item.metadata_json["status_history"][-1]["to_status"] == "in_review"
+
+
 def test_delivery_response_reads_expired_orm_fields(
     test_client: TestClient,
     test_token: str,
@@ -715,106 +772,6 @@ def test_delivery_response_reads_expired_orm_fields(
     assert response.id == delivery.id
     assert response.loop_item_id == item_id
     assert response.status == "draft"
-
-
-def test_delivery_does_not_accept_human_assigned_issue(
-    test_client: TestClient,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={
-            "title": "Human review is required",
-            "status": "pending",
-            "assignee_user_id": delivery_project.created_by_user_id,
-        },
-    )
-    assert created.status_code == 201
-    item = created.json()
-    assert item["human_work"] is not None
-    started = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/work/start",
-        headers=_auth(test_token),
-        json={"version": item["version"]},
-    )
-    assert started.status_code == 200, started.text
-
-    draft = test_client.post(
-        f"/api/v1/loop-items/{item['id']}/deliveries",
-        headers=_auth(test_token),
-        json={"markdown": "# Work evidence"},
-    )
-    assert draft.status_code == 201, draft.text
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
-        headers=_auth(test_token),
-    )
-    assert finalized.status_code == 200, finalized.text
-    latest = test_client.get(
-        f"/api/v1/loop-items/{item['id']}", headers=_auth(test_token)
-    ).json()
-    assert latest["status"] == "in_progress"
-    assert latest["current_delivery_id"] == draft.json()["id"]
-
-
-def test_developer_assignee_can_attach_evidence_while_working(
-    test_client: TestClient,
-    test_db: Session,
-    test_token: str,
-    delivery_project: CloudProject,
-    delivery_storage: FakeDeliveryStorage,
-) -> None:
-    member_name = f"human-evidence-{uuid.uuid4().hex[:8]}"
-    member = User(
-        user_name=member_name,
-        password_hash=get_password_hash("member-password"),
-        email=f"{member_name}@example.com",
-        is_active=True,
-    )
-    test_db.add(member)
-    test_db.flush()
-    test_db.add(
-        ResourceMember.create(
-            resource_type=ResourceType.CLOUD_PROJECT.value,
-            resource_id=delivery_project.id,
-            entity_id=str(member.id),
-            role="Developer",
-            status=MemberStatus.APPROVED.value,
-        )
-    )
-    test_db.commit()
-    member_token = create_access_token(data={"sub": member_name})
-    created = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Evidence", "status": "pending"},
-    ).json()
-    assigned = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/assignments",
-        headers=_auth(test_token),
-        json={"target_type": "human", "target_id": str(member.id)},
-    ).json()["issue"]
-    started = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/work/start",
-        headers=_auth(member_token),
-        json={"version": assigned["version"]},
-    )
-    assert started.status_code == 200, started.text
-
-    uploaded = test_client.post(
-        f"/api/v1/loop-items/{created['id']}/attachments",
-        headers=_auth(member_token),
-        files={"file": ("evidence.txt", b"verified", "text/plain")},
-    )
-    assert uploaded.status_code == 201, uploaded.text
-    removed = test_client.delete(
-        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}",
-        headers=_auth(member_token),
-    )
-    assert removed.status_code == 204, removed.text
 
 
 def test_pull_request_delivery_creates_change_request_binding(

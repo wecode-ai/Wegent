@@ -8,7 +8,8 @@ export function managerAssignmentNames(
     ...new Set(
       metadata.dispatch_assignments.flatMap((assignment) => {
         if (typeof assignment !== "object" || assignment === null) return [];
-        const name = (assignment as Record<string, unknown>).agent_name;
+        const values = assignment as Record<string, unknown>;
+        const name = values.agent_name ?? values.human_user_name;
         return typeof name === "string" && name.trim() ? [name.trim()] : [];
       }),
     ),

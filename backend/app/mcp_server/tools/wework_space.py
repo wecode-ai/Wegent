@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import uuid
 from io import BytesIO
 from typing import Any
 
@@ -26,10 +25,8 @@ from app.models.delivery import (
     CloudProject,
     Delivery,
     LoopItem,
-    ProjectChatAgent,
     loop_datetime_is_unset,
 )
-from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_file import CloudFileResponse
@@ -50,6 +47,9 @@ from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.collaboration_manager_decisions import (
+    apply_collaboration_manager_decision,
+)
 from app.services.delivery import delivery_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
@@ -320,47 +320,19 @@ def update_issue_status(
     with SessionLocal() as db:
         context = _manager_board_context(db, token_info)
         project = _project(db, context["space_id"], token_info.user_id)
-        item_id = context["item_id"]
-        current = _read_item(db, project, item_id, token_info.user_id)
-        values = LoopItemUpdate.model_validate(
-            {
-                "version": current["version"],
-                "status": target_status,
-            }
+        decision = apply_collaboration_manager_decision(
+            db,
+            project_id=project.id,
+            item_id=context["item_id"],
+            user_id=token_info.user_id,
+            dispatch_id=context["dispatch_id"],
+            manager_agent_id=context["manager_agent_id"],
+            idempotency_key=idempotency_key,
+            target_status=target_status,
+            reason=reason,
+            comment=comment,
         )
-        _update_item(db, project, item_id, token_info.user_id, values)
-        normalized_comment = comment.strip()
-        if normalized_comment:
-            manager_agent_id = context.get("manager_agent_id", "")
-            manager = db.get(ProjectChatAgent, manager_agent_id)
-            if manager is None:
-                raise ValueError("Dispatch manager agent is unavailable")
-            message_id = (
-                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-            )
-            db.add(
-                ProjectChatMessage(
-                    message_id=message_id,
-                    client_message_id=message_id,
-                    project_id=context["space_id"],
-                    task_id=item_id,
-                    sender_type="agent",
-                    sender_id=manager.id,
-                    sender_name=manager.title or manager.name or "AI manager",
-                    message_type="text",
-                    content=normalized_comment,
-                    metadata_json={
-                        "dispatch_role": "manager",
-                        "activity_type": "manager_status_comment",
-                        "target_status": target_status,
-                    },
-                    agent_id=manager.id,
-                    status="completed",
-                )
-            )
-            db.commit()
-        del idempotency_key, reason
-        return _read_item(db, project, item_id, token_info.user_id)
+        return _item_view(db, decision.item, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")

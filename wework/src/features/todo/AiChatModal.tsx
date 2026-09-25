@@ -507,7 +507,7 @@ export function AiChatModal({
     return (
       <IssueTaskConversationPanel
         issueId={task?.id}
-        taskTitle={task?.title}
+        taskTitle={taskTitle || task?.title}
         open={open}
         existingTask={false}
         onClose={onClose}

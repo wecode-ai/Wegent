@@ -25,7 +25,6 @@ import { StatusHistoryPopover } from './StatusHistoryPopover'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
-import { HumanIssueWorkActions } from './HumanIssueWorkActions'
 import { TaskActivityView } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
@@ -220,18 +219,7 @@ export function TodoEditor(props: TodoEditorProps) {
     headerActions: (
       <>
         {props.headerActions}
-        {props.mode === 'edit' && props.api && props.item.human_work ? (
-          <HumanIssueWorkActions
-            item={props.item}
-            api={props.api}
-            onUpdated={props.onUpdated}
-            onCreateTask={props.onCreateTask}
-          />
-        ) : null}
-        {props.mode === 'edit' &&
-        !props.item.human_work &&
-        props.showAdditionalTaskAction &&
-        props.onCreateTask ? (
+        {props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
           <button
             type="button"
             data-testid="cloud-todo-create-task"

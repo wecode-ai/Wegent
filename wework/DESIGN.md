@@ -1824,7 +1824,8 @@ flowchart LR
   stays vertically centered as text and row height change.
   Sort entries within each category by event time, newest first. Cloud category
   counts and pagination must be computed by the server, not inferred from the
-  first page. Cloud `assignment`, `mention`, `execution` and `human_work` events
+  first page. Cloud `assignment`, `mention`, `execution` and
+  `issue_dispatch_assignment` events
   belong to Collaboration; every other cloud kind belongs to Other notifications
   until given an explicit category in the product contract.
 - Keep source-specific navigation and

@@ -366,34 +366,61 @@ class DeliveryService:
                 else {}
             )
             if binding_metadata.get("human_assignment_id"):
-                item.current_delivery_id = delivery.id
-                item.metadata_json = advance_content_revision(
-                    item.metadata_json, actor_user_id=user_id
+                from app.services.collaboration_human_assignments import (
+                    DIRECT_HUMAN_ROUND_ID,
                 )
-                item.version += 1
-                db.commit()
-                db.refresh(delivery)
-                publish_loop_item_changed(
-                    db,
-                    item=item,
-                    reason="collaboration_human_delivery_finalized",
-                    actor_user_id=user_id,
-                )
-                return delivery
-            from app.services.human_issue_work import human_issue_work_service
 
-            if human_issue_work_service.is_direct_human_assignment(db, item):
+                direct_human_delivery = (
+                    binding_metadata.get("dispatch_round_id") == DIRECT_HUMAN_ROUND_ID
+                )
+                previous_status = item.status
                 item.current_delivery_id = delivery.id
+                if direct_human_delivery and previous_status != "in_review":
+                    project = db.get(CloudProject, item.cloud_project_id)
+                    if project is None:
+                        raise HTTPException(
+                            status.HTTP_404_NOT_FOUND,
+                            "Delivery project not found",
+                        )
+                    metadata = dict(item.metadata_json or {})
+                    write_status_change(
+                        metadata,
+                        project=project,
+                        from_status=previous_status,
+                        to_status="in_review",
+                        trigger="human_delivery",
+                        by_user_id=user_id,
+                    )
+                    item.metadata_json = metadata
+                    item.status = "in_review"
+                    item.completed_at = None
                 item.metadata_json = advance_content_revision(
                     item.metadata_json, actor_user_id=user_id
                 )
                 item.version += 1
+                if direct_human_delivery and previous_status != "in_review":
+                    from app.services.workspace_cleanup_intents import (
+                        sync_issue_status,
+                    )
+
+                    sync_issue_status(
+                        db,
+                        item=item,
+                        previous_status=previous_status,
+                        next_status="in_review",
+                        next_version=item.version,
+                        completed_at=None,
+                    )
                 db.commit()
                 db.refresh(delivery)
                 publish_loop_item_changed(
                     db,
                     item=item,
-                    reason="delivery_finalized",
+                    reason=(
+                        "human_delivery_finalized"
+                        if direct_human_delivery
+                        else "collaboration_human_delivery_finalized"
+                    ),
                     actor_user_id=user_id,
                 )
                 return delivery

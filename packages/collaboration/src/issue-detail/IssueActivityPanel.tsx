@@ -100,6 +100,7 @@ export function IssueActivityPanel({
     api.activity,
     issue.cloud_project_id,
     issue.id,
+    issue.version,
   );
   const cancel = useCallback(
     (address: RuntimeTaskAddress) => {

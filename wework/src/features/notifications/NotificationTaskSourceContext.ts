@@ -21,6 +21,12 @@ export interface IssueDispatchPersonalTaskAction {
   workflowStageId?: string
 }
 
+export function issueDispatchPersonalTaskInput(
+  action: Pick<IssueDispatchPersonalTaskAction, 'taskTitle' | 'instructions'>
+): string {
+  return `${action.taskTitle}\n\n${action.instructions}`
+}
+
 export type IssueDispatchNotificationAction = (
   action: IssueDispatchPersonalTaskAction
 ) => Promise<void>

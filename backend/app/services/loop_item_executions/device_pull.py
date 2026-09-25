@@ -17,6 +17,7 @@ from app.db.session import get_db_session
 from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.device.capacity import validate_runtime_capacity_observation_sync
+from app.services.loop_item_executions.profile import WeworkExecutionProfileError
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     loop_item_execution_service,
@@ -125,7 +126,7 @@ def _claim_execution(
                 execution_target_id=execution_target_id,
                 executor_device_id=runtime_device_id,
             )
-        except WeworkRuntimeConfigurationError as exc:
+        except (WeworkRuntimeConfigurationError, WeworkExecutionProfileError) as exc:
             loop_item_execution_service.fail_runtime_preflight(
                 db,
                 execution_id=row.id,

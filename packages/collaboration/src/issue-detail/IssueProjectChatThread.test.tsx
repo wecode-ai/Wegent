@@ -127,7 +127,7 @@ describe("shared Issue threads", () => {
                   },
                   {
                     task_title: "独立复核结论",
-                    agent_name: "复核智能体",
+                    human_user_name: "复核成员",
                   },
                 ],
                 run_status: "running",
@@ -148,8 +148,42 @@ describe("shared Issue threads", () => {
       '[data-testid="collaboration-chat-message-root"]',
     );
     expect(event?.textContent).toContain("Codex 负责人");
-    expect(event?.textContent).toContain("分配给 诊断智能体、复核智能体");
+    expect(event?.textContent).toContain("分配给 诊断智能体、复核成员");
     expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
+  });
+
+  it("renders an optional manager status comment as comment content", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "负责人已综合证据，将 Issue 提交待确认。",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_status_comment",
+                target_status: "in_review",
+                run_status: "succeeded",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "负责人已综合证据，将 Issue 提交待确认。",
+    );
+    expect(comment?.textContent).not.toContain("已完成任务规划");
   });
 
   it("keeps a failed reply draft and submits with the real root id", async () => {

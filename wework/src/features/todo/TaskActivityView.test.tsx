@@ -277,6 +277,74 @@ describe('TaskActivityView', () => {
     vi.restoreAllMocks()
   })
 
+  it('reloads project activity after the Issue version changes', async () => {
+    const managerComment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'manager-status-comment',
+      sender: { type: 'agent', id: 'manager-1', name: '当前设备智能体' },
+      content: '负责人已综合智能体证据和人工交付，将 Issue 提交待确认。',
+      metadata: {
+        activity_type: 'manager_status_comment',
+        dispatch_role: 'manager',
+      },
+    }
+    const unsubscribeFirst = vi.fn()
+    const unsubscribeSecond = vi.fn()
+    const client = {
+      subscribe: vi
+        .fn()
+        .mockResolvedValueOnce({
+          snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+          unsubscribe: unsubscribeFirst,
+        })
+        .mockResolvedValueOnce({
+          snapshot: {
+            messages: [managerComment],
+            latestSequence: 3,
+            currentUserId: '1',
+          },
+          unsubscribe: unsubscribeSecond,
+        }),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const project = { id: '11', name: 'Wework' } as never
+    const task = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'in_progress',
+      version: 1,
+    } as never
+    const { rerender } = render(
+      <TaskActivityView client={client} currentUserId={1} project={project} task={task} linear />
+    )
+
+    await waitFor(() => expect(client.subscribe).toHaveBeenCalledOnce())
+
+    rerender(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={{ ...task, status: 'in_review', version: 2 }}
+        linear
+      />
+    )
+
+    expect(
+      await screen.findByText('负责人已综合智能体证据和人工交付，将 Issue 提交待确认。')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-task-manager-event-manager-status-comment')
+    ).not.toBeInTheDocument()
+    expect(client.subscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribeFirst).toHaveBeenCalledOnce()
+  })
+
   it('starts the assigned AI when a task comment is added without an @ mention', async () => {
     const user = userEvent.setup()
     const client = {

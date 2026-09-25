@@ -956,6 +956,7 @@ async def test_project_chat_subscribe_joins_project_room_and_returns_history(
 ):
     namespace = WeworkRuntimeNamespace()
     history = [{"sequenceNumber": 4, "messageId": "message-4"}]
+    catch_up = [{"sequenceNumber": 5, "messageId": "message-5"}]
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -965,7 +966,7 @@ async def test_project_chat_subscribe_joins_project_room_and_returns_history(
     monkeypatch.setattr(
         wework_runtime_namespace,
         "run_sync_in_executor",
-        AsyncMock(return_value=history),
+        AsyncMock(side_effect=[history, catch_up]),
     )
 
     response = await namespace.on_project_chat_subscribe(
@@ -975,14 +976,17 @@ async def test_project_chat_subscribe_joins_project_room_and_returns_history(
     assert response == {
         "ok": True,
         "result": {
-            "messages": history,
+            "messages": [*history, *catch_up],
             "currentUserId": "7",
-            "latestSequence": 4,
+            "latestSequence": 5,
         },
     }
     namespace.enter_room.assert_awaited_once_with(
         "browser-sid", "wework-project-chat:project:project-1"
     )
+    calls = wework_runtime_namespace.run_sync_in_executor.await_args_list
+    assert calls[0].args[2].after_sequence == 2
+    assert calls[1].args[2].after_sequence == 4
 
 
 @pytest.mark.asyncio

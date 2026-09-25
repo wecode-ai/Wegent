@@ -206,6 +206,60 @@ function startQueueDispatcher(services: WorkbenchServices, source: 'local' | 'cl
       if (!runtimePayload) {
         throw new Error('Execution claim is missing its transient runtime payload')
       }
+      if (runtimePayload.dispatchKind === 'collaboration_group') {
+        const dispatchTaskId = nonEmptyString(runtimePayload.dispatchTaskId)
+        const managerRuntimeRequest = recordValue(runtimePayload.managerRuntimeRequest)
+        if (!dispatchTaskId || dispatchTaskId !== taskId || !managerRuntimeRequest) {
+          throw new Error('Collaboration dispatch is missing its task identity or manager request')
+        }
+        const response = await runtimeWorkApi.createRuntimeTask(
+          {
+            ...(managerRuntimeRequest as unknown as RuntimeTaskCreateRequest),
+            deviceId,
+            collaborationDispatch: { taskId: dispatchTaskId },
+          } as RuntimeTaskCreateRequest,
+          async () => {
+            const fenced = isCloudExecution
+              ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
+              : await executionApi.startRequested(
+                  execution.id,
+                  deviceId,
+                  taskId,
+                  LOCAL_QUEUE_LEASE_SECONDS
+                )
+            if (!fenced) throw new Error('Execution is no longer dispatchable')
+            startRequested = true
+          }
+        )
+        if (response.taskId !== taskId) {
+          throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
+        }
+        runtimeAccepted = true
+        if (isCloudExecution) {
+          await cloudExecutionApi!.runtimeStart(
+            execution,
+            deviceId,
+            response.taskId,
+            null,
+            managerRuntimeRequest.modelId as string | null | undefined
+          )
+        } else {
+          await executionApi.runtimeStart(
+            execution.id,
+            deviceId,
+            response.taskId,
+            LOCAL_QUEUE_LEASE_SECONDS
+          )
+        }
+        keepRunAlive(execution, deviceId, response.taskId, isCloudExecution)
+        console.log('[local-robot-queue] dispatched collaboration group', {
+          executionId: execution.id,
+          loopItemId: execution.loop_item_id,
+          taskId: response.taskId,
+          runtimeRequestSource: 'executor',
+        })
+        return
+      }
       const prompt = nonEmptyString(runtimePayload.message)
       const payloadTaskId = nonEmptyString(runtimePayload.taskId)
       if (!taskId || !payloadTaskId || !prompt) {

@@ -313,6 +313,18 @@ class LoopItemExecutionBatchCreate(ProjectChatSchema):
     items: list[LoopItemExecutionBatchItem] = Field(min_length=1, max_length=20)
 
 
+class LoopItemExecutionManagerDecision(ProjectChatSchema):
+    """One explicit status decision made by the collaboration-group manager."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    manager_agent_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    target_status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
+    reason: str = Field(min_length=1, max_length=2_000)
+    comment: str = Field(default="", max_length=100_000)
+
+
 class LoopItemExecutionStatusQuery(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
     execution_ids: list[int] = Field(default_factory=list, max_length=20)

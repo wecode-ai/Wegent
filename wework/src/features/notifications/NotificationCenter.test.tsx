@@ -300,13 +300,18 @@ describe('notification center', () => {
       title: 'Assigned',
       payload: { actorName: 'Alice', projectName: 'Project', itemTitle: 'Issue' },
     }
-    const review = { ...entry, id: 'review-1', kind: 'human_work', title: 'Review' }
+    const dispatch = {
+      ...entry,
+      id: 'dispatch-1',
+      kind: 'issue_dispatch_assignment',
+      title: 'Dispatch',
+    }
     api.list.mockImplementation((offset, category) =>
       Promise.resolve(
         category === 'collaboration'
           ? offset === 0
             ? { items: [assignment], unread_count: 2, next_offset: 1 }
-            : { items: [review], unread_count: 2, next_offset: null }
+            : { items: [dispatch], unread_count: 2, next_offset: null }
           : { items: [entry], unread_count: 1, next_offset: null }
       )
     )
@@ -318,7 +323,7 @@ describe('notification center', () => {
     expect(screen.getByTestId('wework-notification-assignment-1')).toBeVisible()
     expect(screen.queryByTestId('wework-notification-n1')).toBeNull()
     fireEvent.click(screen.getByTestId('wework-notifications-more'))
-    expect(await screen.findByTestId('wework-notification-review-1')).toBeVisible()
+    expect(await screen.findByTestId('wework-notification-dispatch-1')).toBeVisible()
     expect(api.list).toHaveBeenCalledWith(1, 'collaboration')
     fireEvent.click(screen.getByTestId('wework-notifications-back'))
     fireEvent.click(screen.getByTestId('wework-notifications-category-general'))

@@ -89,18 +89,6 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
-export interface CollaborationHumanWork {
-  assignment_id: string;
-  assignee_user_id: number;
-  reviewer_user_id: number | null;
-  submission_message_id: string | null;
-  submitted_by_user_id: number | null;
-  state: "none" | "submitted" | "accepted" | "changes_requested";
-  can_start: boolean;
-  can_submit: boolean;
-  can_review: boolean;
-}
-
 export interface CollaborationIssue {
   id: string;
   cloud_project_id: CollaborationProjectId;
@@ -120,7 +108,6 @@ export interface CollaborationIssue {
   execution_state?: string | null;
   execution_note?: string | null;
   can_approve?: boolean;
-  human_work?: CollaborationHumanWork | null;
   ai_state?: { status?: string | null; last_error?: string | null } | null;
   title: string;
   description: string;

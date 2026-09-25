@@ -1459,6 +1459,14 @@ export function createHybridWorkbenchServices(
     },
   }
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const localProjectSpaceDetailServices = localProjectServices.projectSpaceDetailServices?.local
+  const sharedProjectSpaceDetailServices = localProjectSpaceDetailServices
+    ? {
+        ...localProjectSpaceDetailServices,
+        projectChatClient:
+          cloudServices.projectChatClient ?? localProjectSpaceDetailServices.projectChatClient,
+      }
+    : undefined
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins(deviceId: string) {
       const cloudPlugins = (
@@ -1500,7 +1508,7 @@ export function createHybridWorkbenchServices(
       defaultLocation: 'cloud',
     },
     projectSpaceDetailServices: {
-      local: localProjectServices.projectSpaceDetailServices?.local,
+      local: sharedProjectSpaceDetailServices,
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,

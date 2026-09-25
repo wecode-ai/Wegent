@@ -101,12 +101,7 @@ def ensure_collaboration_group_execution(
         "execution_prompt": manager_user_message,
         "system_prompt": MANAGER_SYSTEM_INSTRUCTIONS,
     }
-    device_id = str(config.get("execution_device_id") or "")
-    if not device_id:
-        raise HTTPException(
-            422,
-            "Collaboration group manager has no Executor device",
-        )
+    device_id = str(config.get("execution_device_id") or "") or None
     dispatch = loop_item_execution_service.enqueue_collaboration_group_dispatch(
         db,
         loop_item_id=item.id,
@@ -133,7 +128,7 @@ def ensure_collaboration_group_execution(
         task=item,
         cloud_project_id=str(project.id),
         origin_context=context,
-        execution_device_id=device_id,
+        execution_device_id=device_id or "",
     )
     dispatch.execution_payload = json.dumps(
         {
@@ -174,6 +169,24 @@ def collaboration_group_for_item(
             if str(group.get("id") or "") == group_id
         ),
         None,
+    )
+
+
+def collaboration_group_agent_matches(
+    member: object,
+    agent: ProjectChatAgent,
+) -> bool:
+    """Match a group agent reference to its project agent record."""
+
+    if not isinstance(member, dict) or member.get("kind") != "agent":
+        return False
+    member_id = str(member.get("id") or "")
+    if not member_id:
+        return False
+    metadata = agent.metadata_json if isinstance(agent.metadata_json, dict) else {}
+    team_id = metadata.get("wegent_team_id")
+    return member_id == str(agent.id) or (
+        team_id is not None and member_id == str(team_id)
     )
 
 

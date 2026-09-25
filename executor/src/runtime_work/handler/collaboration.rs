@@ -237,7 +237,12 @@ impl RuntimeWorkRpcHandler {
                 return Err("Collaboration manager Runtime task was not found".to_owned());
             };
             let (mut request, payload) =
-                fresh_cloud_manager_payload(&source_link, command, &outcomes);
+                fresh_cloud_manager_payload(&source_link, command, &outcomes)?;
+            request.model_config = self
+                .runtime_model_config(&command.manager_runtime_task_id)
+                .ok_or_else(|| {
+                    "Collaboration manager model configuration is unavailable".to_owned()
+                })?;
             self.apply_backend_connection(&mut request);
             let mut payload = payload;
             payload["executionRequest"] =
@@ -296,10 +301,17 @@ fn fresh_cloud_manager_payload(
     source_link: &RuntimeTaskLink,
     command: &CloudCollaborationRoundCommand,
     outcomes: &[Value],
-) -> (ExecutionRequest, Value) {
+) -> Result<(ExecutionRequest, Value), String> {
     let task_id = fresh_cloud_manager_task_id(command);
+    let manager_context = source_link
+        .runtime_handle
+        .get(COLLABORATION_MANAGER_CONTEXT_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Collaboration manager context is unavailable".to_owned())?;
     let prompt = format!(
-        "上一轮任务已经全部结束。请读取以下执行结果，综合判断是否需要分配下一轮任务；如 Issue 已达到待确认或完成条件，请显式调用 update_issue_status。不要直接执行成员工作。\n\n{}",
+        "{manager_context}\n\n<collaboration_round_results>\n上一轮任务已经全部结束。请读取以下执行结果，综合判断是否需要分配下一轮任务；如 Issue 已达到待确认或完成条件，请显式调用 update_issue_status。不要直接执行成员工作。\n\n{}\n</collaboration_round_results>",
         serde_json::to_string_pretty(outcomes).unwrap_or_else(|_| "[]".to_owned()),
     );
     let mut request = runtime_event_request_from_link(source_link);
@@ -329,7 +341,7 @@ fn fresh_cloud_manager_payload(
     if let Some(origin) = request.extra.get("origin") {
         payload["origin"] = origin.clone();
     }
-    (request, payload)
+    Ok((request, payload))
 }
 
 #[cfg(test)]
@@ -356,6 +368,7 @@ mod tests {
             "codex",
         );
         link.runtime_handle = json!({
+            "collaborationManagerContext": "Issue: 根 Issue 标题\n\n项目协作规则：每轮独立验收。",
             "modelSelection": {
                 "modelName": "gpt-6-sol",
                 "modelType": "runtime",
@@ -394,7 +407,7 @@ mod tests {
             "result": "done",
         })];
 
-        let (request, payload) = fresh_cloud_manager_payload(&source, &command, &outcomes);
+        let (request, payload) = fresh_cloud_manager_payload(&source, &command, &outcomes).unwrap();
 
         assert_eq!(request.task_id, "manager-task-1-manager-after-round-1");
         assert_eq!(
@@ -413,7 +426,9 @@ mod tests {
         assert!(request
             .prompt
             .as_str()
-            .is_some_and(|prompt| prompt.contains("\"result\": \"done\"")));
+            .is_some_and(|prompt| prompt.contains("Issue: 根 Issue 标题")
+                && prompt.contains("项目协作规则：每轮独立验收。")
+                && prompt.contains("\"result\": \"done\"")));
         assert_eq!(payload["runtime"], "codex");
         assert_eq!(payload["workspacePath"], "/tmp/project");
         assert_eq!(
@@ -424,6 +439,27 @@ mod tests {
             payload["origin"]["managerAgentId"],
             Value::String("agent-1".to_owned())
         );
+    }
+
+    #[test]
+    fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let source = source_link();
+        let command = command();
+        let model_config = json!({
+            "model_id": "cloud-model",
+            "base_url": "https://models.example.com/v1",
+            "api_key": "runtime-secret",
+        });
+        handler.retain_runtime_model_config(&source.local_task_id, &model_config);
+
+        let (mut request, _) = fresh_cloud_manager_payload(&source, &command, &[]).unwrap();
+        request.model_config = handler
+            .runtime_model_config(&source.local_task_id)
+            .expect("source Runtime model config should stay available in memory");
+
+        assert_eq!(request.model_config, model_config);
+        assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
     }
 
     #[test]

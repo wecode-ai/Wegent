@@ -1162,7 +1162,7 @@ class ExternalLoopItemProvider:
             if agent is not None
             else str(team.id) if team is not None else str(target_user_id)
         )
-        _, assignment_created = issue_assignment_service.record(
+        assignment, assignment_created = issue_assignment_service.record(
             db,
             project_id=project.id,
             issue_id=index_row.id,
@@ -1208,13 +1208,25 @@ class ExternalLoopItemProvider:
                 or previous_assignee["id"] != str(target_user_id)
             )
         ):
-            assigner = db.get(User, user_id)
-            notify_project_task_assignee(
+            from app.services.collaboration_human_assignments import (
+                notify_direct_human_assignment,
+            )
+
+            human = db.get(User, target_user_id)
+            if human is None:
+                raise HTTPException(422, "Assignee does not exist")
+            notify_direct_human_assignment(
                 db,
+                project=project,
+                issue=index_row,
+                human=human,
                 actor_user_id=user_id,
-                user_id=target_user_id,
-                target=self._notification_target(project, issue, item_id),
-                assigner_name=assigner.user_name if assigner else str(user_id),
+                assignment_id=assignment.id,
+                task_title=str(issue.get("title") or item_id),
+                instructions=(
+                    str(issue.get(self._body_key(project)) or "").strip()
+                    or str(issue.get("title") or item_id)
+                ),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)
