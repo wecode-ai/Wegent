@@ -6,14 +6,11 @@ import {
   codexRequestKind,
   createSse,
   mcpToolRequestEvents,
-  namespacedFunctionCall,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
-  selectMcpTool,
 } from '../modules/response-protocol.mjs'
-import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -29,13 +26,7 @@ const AI_TASK = `智能体采集证据-${process.pid}`
 const MARKER = `HUMAN_ROUND_RESUME_${process.pid}`
 const ROUND_ID = `${MARKER}-round-1`
 const CALLS = {
-  context: `${MARKER}-context`,
-  candidates: `${MARKER}-candidates`,
-  createHuman: `${MARKER}-create-human`,
-  assignHuman: `${MARKER}-assign-human`,
-  registerRound: `${MARKER}-register-round`,
-  spawnAgent: `${MARKER}-spawn-agent`,
-  waitAgent: `${MARKER}-wait-agent`,
+  plan: `${MARKER}-plan`,
   updateStatus: `${MARKER}-update-status`,
 }
 
@@ -67,78 +58,13 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
   return body
 }
 
-function findToolOutput(value, callId) {
-  if (Array.isArray(value)) {
-    for (const candidate of value) {
-      const found = findToolOutput(candidate, callId)
-      if (found !== undefined) return found
-    }
-    return undefined
-  }
-  if (!value || typeof value !== 'object') return undefined
-  if (
-    ['function_call_output', 'mcp_tool_call_output', 'custom_tool_call_output'].includes(
-      value.type
-    ) &&
-    value.call_id === callId
-  ) {
-    if (typeof value.output !== 'string') return value.output
-    try {
-      return JSON.parse(value.output)
-    } catch {
-      return value.output
-    }
-  }
-  for (const candidate of Object.values(value)) {
-    const found = findToolOutput(candidate, callId)
-    if (found !== undefined) return found
-  }
-  return undefined
-}
-
-function contextFromOutput(value) {
-  if (typeof value === 'string') {
-    try {
-      return contextFromOutput(JSON.parse(value))
-    } catch {
-      return null
-    }
-  }
-  if (!value || typeof value !== 'object') return null
-  const spaceId = value.space_id ?? value.spaceId ?? value.space?.id ?? value.project?.id
-  const itemId = value.item_id ?? value.itemId ?? value.item?.id
-  if (spaceId && itemId) return { spaceId: String(spaceId), itemId: String(itemId) }
-  for (const candidate of Object.values(value)) {
-    const found = contextFromOutput(candidate)
-    if (found) return found
-  }
-  return null
-}
-
-function projectToolEvents(body, { callId, searchCallId, toolName, argumentsValue }) {
-  if (requestContainsToolOutput(body, searchCallId)) {
-    const tool = selectMcpTool(body, 'wework_space', toolName, argumentsValue)
-    return namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments)
-  }
+function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
   return mcpToolRequestEvents(body, {
     toolName,
     argumentsValue,
-    searchCallId,
-    toolCallId: callId,
-  }).events
-}
-
-function collaborationToolEvents(body, { callId, searchCallId, toolName, argumentsValue }) {
-  if (requestContainsToolOutput(body, searchCallId)) {
-    const tool = selectMcpTool(body, 'collaboration', toolName, argumentsValue)
-    return namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments)
-  }
-  return mcpToolRequestEvents(body, {
-    toolName,
-    argumentsValue,
-    searchCallId,
-    toolCallId: callId,
-  }).events
+    searchCallId: `${toolCallId}-search`,
+    toolCallId,
+  })
 }
 
 async function waitForValue(load, predicate, message, timeoutMs) {
@@ -353,27 +279,32 @@ export function createDesktopScenario({
 }) {
   let backendUrl = ''
   let authToken = ''
-  let queryDatabase = null
   let owner = null
   let project = null
+  let member = null
   let rootIssue = null
   let humanItemId = null
   let managerRuntimeTaskId = null
   let managerStage = 'initial'
   let managerContinuationCount = 0
+  let managerContinuationObserved = false
   let aiRequestCount = 0
   let releaseAi
+  let resolveAiStarted
+  let resolveAiCompleted
   let resolveHumanAssigned
-  let resolveManagerInitialFinished
   let resolveManagerResumed
   const aiRelease = new Promise(resolve => {
     releaseAi = resolve
   })
+  const aiStarted = new Promise(resolve => {
+    resolveAiStarted = resolve
+  })
+  const aiCompleted = new Promise(resolve => {
+    resolveAiCompleted = resolve
+  })
   const humanAssigned = new Promise(resolve => {
     resolveHumanAssigned = resolve
-  })
-  const managerInitialFinished = new Promise(resolve => {
-    resolveManagerInitialFinished = resolve
   })
   const managerResumed = new Promise(resolve => {
     resolveManagerResumed = resolve
@@ -386,7 +317,6 @@ export function createDesktopScenario({
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
-      queryDatabase = cloud.queryDatabase
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
     },
@@ -399,187 +329,71 @@ export function createDesktopScenario({
         return false
       }
       const body = await readRequestBody(requestMessage)
+      const serialized = JSON.stringify(body)
       const responseId = `human-round-${Date.now()}-${managerStage}-${aiRequestCount}`
       const kind = codexRequestKind(body)
       if (kind === 'prewarm' || kind === 'compaction') {
         writeEvents(response, responseId, [assistantMessage('Ready')])
         return true
       }
-      if (isCollaborationSubagentRequest(requestMessage.headers)) {
-        aiRequestCount += 1
-        await aiRelease
-        writeEvents(response, responseId, [
-          assistantMessage(`${AI_TASK} 已完成：AI 证据已提交给负责人。`),
-        ])
-        return true
-      }
-      const serialized = JSON.stringify(body)
-      if (!serialized.includes(MARKER) && !serialized.includes('全部人工任务已经提交')) {
+      if (!serialized.includes(MARKER)) {
         writeEvents(response, responseId, [])
         return true
       }
 
-      const updateStatusArgs = {
+      if (serialized.includes(`${MARKER}。你只完成负责人分配的 AI 子任务。`)) {
+        assert.equal(aiRequestCount, 0, '同一 AI 子任务产生了重复模型运行')
+        assert.ok(serialized.includes(AI_TASK), '执行成员请求没有使用负责人分配的任务标题')
+        aiRequestCount = 1
+        resolveAiStarted()
+        await aiRelease
+        writeEvents(response, responseId, [
+          assistantMessage(`${AI_TASK} 已完成：AI 证据已提交给负责人。`),
+        ])
+        resolveAiCompleted()
+        return true
+      }
+
+      assert.ok(
+        serialized.includes(`${MARKER}。你是负责人`),
+        '协作调度请求既不是负责人运行，也不是执行成员运行'
+      )
+      const planArguments = {
+        plan: {
+          round_id: ROUND_ID,
+          summary: '并发完成一项智能体证据采集和一项人工证据核对。',
+          items: [
+            {
+              assignment_id: `${MARKER}-agent-assignment`,
+              title: AI_TASK,
+              instructions: `${MARKER}。采集一份独立证据，不更新 Issue 状态。`,
+              assignee_type: 'agent',
+              assignee_id: String(member.id),
+            },
+            {
+              assignment_id: `${MARKER}-human-assignment`,
+              title: HUMAN_TASK,
+              instructions: `${MARKER}。人工核对 AI 证据并提交摘要。`,
+              assignee_type: 'human',
+              assignee_id: String(owner.id),
+            },
+          ],
+        },
+      }
+      const updateStatusArguments = {
         status: 'in_review',
         reason: 'AI 任务完成且人工成员已正式提交，本轮证据齐全。',
+        comment: '负责人已综合智能体证据和人工交付，将 Issue 提交待确认。',
       }
-      const roundArgs = {
-        round_id: ROUND_ID,
-        assignments: [
-          {
-            item_id: humanItemId,
-            title: HUMAN_TASK,
-            assignee_type: 'human',
-            assignee_id: String(owner.id),
-          },
-        ],
-      }
-      const searchCalls = [
-        [CALLS.context, 'get_current_context', {}, () => managerStage === 'reading-context'],
-        [
-          CALLS.candidates,
-          'get_assignment_candidates',
-          { space_id: String(project.id) },
-          () => managerStage === 'reading-candidates',
-        ],
-        [
-          CALLS.createHuman,
-          'create_board_item',
-          {
-            space_id: String(project.id),
-            item: {
-              title: HUMAN_TASK,
-              description: `${MARKER}。人工核对 AI 证据并提交摘要。`,
-              parent_id: rootIssue.id,
-              status: 'pending',
-            },
-          },
-          () => managerStage === 'creating-human',
-        ],
-        [
-          CALLS.assignHuman,
-          'assign_board_item',
-          {
-            space_id: String(project.id),
-            item_id: humanItemId,
-            assignee_type: 'user',
-            assignee_id: String(owner.id),
-          },
-          () => managerStage === 'assigning-human',
-        ],
-        [
-          CALLS.registerRound,
-          'register_coordination_round',
-          roundArgs,
-          () => managerStage === 'registering-round',
-        ],
-        [
-          CALLS.updateStatus,
-          'update_issue_status',
-          updateStatusArgs,
-          () => managerStage === 'resumed',
-        ],
-      ]
-      for (const [callId, toolName, argumentsValue, isExpectedStage] of searchCalls) {
-        if (
-          isExpectedStage() &&
-          !requestContainsToolOutput(body, callId) &&
-          requestContainsToolOutput(body, `${callId}-search`)
-        ) {
-          writeEvents(
-            response,
-            responseId,
-            projectToolEvents(body, {
-              callId,
-              searchCallId: `${callId}-search`,
-              toolName,
-              argumentsValue,
-            })
-          )
-          return true
-        }
-      }
+
       if (requestContainsToolOutput(body, CALLS.updateStatus)) {
         managerStage = 'complete'
         writeEvents(response, responseId, [
-          assistantMessage('负责人已在同一会话中评估本轮交付，并显式将 Issue 更新为待确认。'),
+          assistantMessage('负责人已评估本轮全部交付，并显式将 Issue 更新为待确认。'),
         ])
         return true
       }
-      if (serialized.includes('全部人工任务已经提交')) {
-        managerContinuationCount += 1
-        assert.equal(managerStage, 'waiting-human', '人工提交前负责人状态不正确')
-        managerStage = 'resumed'
-        resolveManagerResumed()
-        writeEvents(
-          response,
-          responseId,
-          projectToolEvents(body, {
-            callId: CALLS.updateStatus,
-            searchCallId: `${CALLS.updateStatus}-search`,
-            toolName: 'update_issue_status',
-            argumentsValue: updateStatusArgs,
-          })
-        )
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.waitAgent)) {
-        managerStage = 'waiting-human'
-        resolveManagerInitialFinished()
-        writeEvents(response, responseId, [
-          assistantMessage('AI 任务已完成；人工任务尚未正式提交，负责人继续等待。'),
-        ])
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.spawnAgent)) {
-        managerStage = 'waiting-ai'
-        writeEvents(
-          response,
-          responseId,
-          collaborationToolEvents(body, {
-            callId: CALLS.waitAgent,
-            searchCallId: `${CALLS.waitAgent}-search`,
-            toolName: 'wait_agent',
-            argumentsValue: { timeout_ms: 60_000 },
-          })
-        )
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.registerRound)) {
-        managerStage = 'spawning-ai'
-        writeEvents(
-          response,
-          responseId,
-          collaborationToolEvents(body, {
-            callId: CALLS.spawnAgent,
-            searchCallId: `${CALLS.spawnAgent}-search`,
-            toolName: 'spawn_agent',
-            argumentsValue: {
-              task_name: 'collect_ai_evidence',
-              message: `任务标题：${AI_TASK}\n${MARKER}。采集一份独立证据，不更新 Issue 状态。`,
-              agent_type: 'wegent_member_1',
-              fork_turns: 'none',
-            },
-          })
-        )
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.assignHuman)) {
-        managerStage = 'registering-round'
-        resolveHumanAssigned(humanItemId)
-        writeEvents(
-          response,
-          responseId,
-          projectToolEvents(body, {
-            callId: CALLS.registerRound,
-            searchCallId: `${CALLS.registerRound}-search`,
-            toolName: 'register_coordination_round',
-            argumentsValue: roundArgs,
-          })
-        )
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.createHuman)) {
+      if (requestContainsToolOutput(body, CALLS.plan)) {
         const created = await waitForValue(
           async () => (await request(`/api/v1/cloud-projects/${project.id}/loop-items`)).items,
           values =>
@@ -588,78 +402,55 @@ export function createDesktopScenario({
                 value.title === HUMAN_TASK &&
                 String(value.parent_id ?? value.parentId) === String(rootIssue.id)
             ),
-          'create_board_item 已返回，但人工子任务没有持久化',
+          'submit_workflow_plan 已返回，但人工子任务没有持久化',
           uiTimeoutMs
         )
         humanItemId = String(created.id)
-        managerStage = 'assigning-human'
-        writeEvents(
-          response,
-          responseId,
-          projectToolEvents(body, {
-            callId: CALLS.assignHuman,
-            searchCallId: `${CALLS.assignHuman}-search`,
-            toolName: 'assign_board_item',
-            argumentsValue: {
-              space_id: String(project.id),
-              item_id: humanItemId,
-              assignee_type: 'user',
-              assignee_id: String(owner.id),
-            },
-          })
-        )
+        managerStage = 'waiting-round'
+        resolveHumanAssigned(humanItemId)
+        writeEvents(response, responseId, [
+          assistantMessage('本轮智能体任务和人工任务已交给 Executor，等待全部交付。'),
+        ])
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.candidates)) {
-        managerStage = 'creating-human'
-        writeEvents(
-          response,
-          responseId,
-          projectToolEvents(body, {
-            callId: CALLS.createHuman,
-            searchCallId: `${CALLS.createHuman}-search`,
-            toolName: 'create_board_item',
-            argumentsValue: {
-              space_id: String(project.id),
-              item: {
-                title: HUMAN_TASK,
-                description: `${MARKER}。人工核对 AI 证据并提交摘要。`,
-                parent_id: rootIssue.id,
-                status: 'pending',
-              },
-            },
-          })
+
+      if (managerStage === 'initial') {
+        assert.ok(
+          serialized.includes('AI 与人工任务可并发；所有人工任务正式提交后，负责人继续评估。'),
+          '项目协作规则没有作为负责人本轮用户消息的一部分传入'
         )
+        const selection = managerToolEvents(body, 'submit_workflow_plan', CALLS.plan, planArguments)
+        if (selection.mode === 'direct') managerStage = 'plan-called'
+        writeEvents(response, responseId, selection.events)
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.context)) {
-        const context = contextFromOutput(findToolOutput(body, CALLS.context))
-        assert.equal(context?.itemId, rootIssue.id, '负责人上下文不是根 Issue')
-        managerStage = 'reading-candidates'
-        writeEvents(
-          response,
-          responseId,
-          projectToolEvents(body, {
-            callId: CALLS.candidates,
-            searchCallId: `${CALLS.candidates}-search`,
-            toolName: 'get_assignment_candidates',
-            argumentsValue: { space_id: String(project.id) },
-          })
+
+      if (managerStage === 'waiting-round') {
+        assert.ok(
+          serialized.includes(`${AI_TASK} 已完成：AI 证据已提交给负责人。`),
+          'barrier 后恢复的负责人没有收到 AI 执行结果'
         )
+        assert.ok(
+          serialized.includes(`${MARKER} 人工证据已核对，结果可供负责人继续评估。`),
+          'barrier 后恢复的负责人没有收到人工交付'
+        )
+        if (!managerContinuationObserved) {
+          managerContinuationObserved = true
+          managerContinuationCount = 1
+          resolveManagerResumed()
+        }
+        const selection = managerToolEvents(
+          body,
+          'update_issue_status',
+          CALLS.updateStatus,
+          updateStatusArguments
+        )
+        if (selection.mode === 'direct') managerStage = 'updating-status'
+        writeEvents(response, responseId, selection.events)
         return true
       }
-      assert.equal(managerStage, 'initial', `Unexpected manager stage: ${managerStage}`)
-      managerStage = 'reading-context'
-      writeEvents(
-        response,
-        responseId,
-        projectToolEvents(body, {
-          callId: CALLS.context,
-          searchCallId: `${CALLS.context}-search`,
-          toolName: 'get_current_context',
-          argumentsValue: {},
-        })
-      )
+
+      assert.fail(`Unexpected manager stage: ${managerStage}`)
       return true
     },
 
@@ -694,7 +485,7 @@ export function createDesktopScenario({
         `${MARKER}。你是负责人，按轮次分配 AI 与人工任务并验收。`,
         uiTimeoutMs
       )
-      await createAgent(
+      member = await createAgent(
         control,
         request,
         project.id,
@@ -706,55 +497,59 @@ export function createDesktopScenario({
       rootIssue = await createAndAssignIssue(control, request, project.id, uiTimeoutMs)
 
       await waitForPromise(humanAssigned, modelResponseTimeoutMs, '负责人没有创建并分配人工子任务')
+      await waitForPromise(aiStarted, modelResponseTimeoutMs, '负责人没有启动独立的 AI 执行任务')
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: AI_TASK,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+        text: HUMAN_TASK,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       const humanItem = await request(`/api/v1/loop-items/${humanItemId}`)
       if (humanItem?.assignee_user_id !== owner.id || !humanItem?.human_work?.can_start) {
         const assignments = await request(`/api/v1/loop-items/${humanItemId}/assignments`)
         const projectState = await request(`/api/v1/cloud-projects/${project.id}`)
-        const assignmentRows = await queryDatabase(
-          `SELECT id,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.action')) AS action,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_event_id')) AS assignment_event_id,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.target_type')) AS target_type,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.target_id')) AS target_id,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.workflow_step')) AS workflow_step,
-                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.trigger')) AS assignment_trigger
-           FROM loop_items
-           WHERE resource_type = 'comment' AND loop_item_id = %s
-           ORDER BY created_at ASC, id ASC`,
-          [humanItemId]
-        )
         assert.fail(
           `人工子任务没有成为可接手的真实人工工作: ${JSON.stringify({
             humanItem,
             assignments,
             projectState,
-            assignmentRows,
           })}`
         )
       }
-      const executionRows = await waitForValue(
-        () =>
-          queryDatabase(
-            `SELECT runtime_task_id, status FROM loop_item_executions
-             WHERE loop_item_id = %s ORDER BY id ASC`,
-            [rootIssue.id]
-          ),
-        rows => rows.length === 1 && rows[0].runtime_task_id && rows,
-        '负责人没有唯一 Runtime Task',
+      const initialExecutions = await waitForValue(
+        () => request(`/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`),
+        response => {
+          const rows = response.items.filter(
+            execution => String(execution.loopItemId) === String(rootIssue.id)
+          )
+          const manager = rows.find(
+            execution => execution.executorType === 'collaboration_group_dispatch'
+          )
+          const agent = rows.find(
+            execution =>
+              execution.executorType !== 'collaboration_group_dispatch' &&
+              execution.agentId === member.id
+          )
+          return manager?.runtimeTaskId && agent ? { agent, manager, rows } : false
+        },
+        'submit_workflow_plan 没有创建一个负责人调度和一个独立 AI execution',
         modelResponseTimeoutMs
       )
-      managerRuntimeTaskId = executionRows[0].runtime_task_id
+      managerRuntimeTaskId = initialExecutions.manager.runtimeTaskId
+      assert.equal(initialExecutions.rows.length, 2, '混合轮次创建了冗余 execution')
       await captureScreenshot(control, 'human-round-01-human-and-ai-assigned.png', CONTENT)
 
       releaseAi()
       await waitForPromise(
-        managerInitialFinished,
+        aiCompleted,
         modelResponseTimeoutMs,
-        'AI 子任务完成后负责人没有结束本轮等待'
+        'AI 子任务没有通过独立 Executor execution 完成'
       )
       await new Promise(resolve => setTimeout(resolve, 1_000))
       assert.equal(managerContinuationCount, 0, '只有 AI 完成时负责人被错误恢复')
-      assert.equal(managerStage, 'waiting-human')
+      assert.equal(managerStage, 'waiting-round')
       await captureScreenshot(control, 'human-round-02-ai-finished-human-pending.png', CONTENT)
 
       await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
@@ -778,7 +573,7 @@ export function createDesktopScenario({
       await waitForPromise(
         managerResumed,
         modelResponseTimeoutMs,
-        '人工正式提交后，Backend 没有向 Executor 投递 human_submitted 事实并恢复负责人'
+        '人工正式提交后，Executor 没有越过整轮 barrier 并恢复负责人'
       )
       await waitForValue(
         () => request(`/api/v1/loop-items/${rootIssue.id}`),
@@ -786,14 +581,18 @@ export function createDesktopScenario({
         '负责人恢复后没有显式更新根 Issue 状态',
         modelResponseTimeoutMs
       )
-      const afterRows = await queryDatabase(
-        `SELECT runtime_task_id, status FROM loop_item_executions
-         WHERE loop_item_id = %s ORDER BY id ASC`,
-        [rootIssue.id]
+      const afterExecutions = await request(
+        `/api/v1/cloud-projects/${project.id}/executions?include_terminal=true`
       )
-      assert.equal(afterRows.length, 1, '人工提交后系统创建了第二个负责人执行')
+      const afterRows = afterExecutions.items.filter(
+        execution => String(execution.loopItemId) === String(rootIssue.id)
+      )
+      const managerRows = afterRows.filter(
+        execution => execution.executorType === 'collaboration_group_dispatch'
+      )
+      assert.equal(managerRows.length, 1, '人工提交后系统创建了冗余负责人调度')
       assert.equal(
-        afterRows[0].runtime_task_id,
+        managerRows[0].runtimeTaskId,
         managerRuntimeTaskId,
         '人工提交后没有恢复同一负责人 Runtime Task'
       )

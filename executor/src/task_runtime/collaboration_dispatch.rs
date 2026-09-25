@@ -79,7 +79,7 @@ impl LocalTaskStore {
             let instructions = required_string(assignment, "instructions")?;
             let agent = collaboration_agent(&transaction, &manager.cloud_project_id, agent_id)?;
             let payload = json!({
-                "message": instructions,
+                "message": collaboration_assignment_prompt(title, instructions),
                 "workflow_task_title": title,
                 "workflow_node_id": assignment.get("workflow_stage_id"),
                 "dispatch_id": manager_payload.get("dispatch_id"),
@@ -203,6 +203,10 @@ impl LocalTaskStore {
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn collaboration_assignment_prompt(title: &str, instructions: &str) -> String {
+    format!("任务标题：{title}\n\n执行要求：{instructions}")
 }
 
 fn active_manager_execution_id(

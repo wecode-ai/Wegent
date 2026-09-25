@@ -656,14 +656,7 @@ def test_delivery_does_not_accept_human_assigned_issue(
     test_token: str,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    publish_submission = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.human_submission_coordination."
-        "human_submission_coordination_service.publish",
-        publish_submission,
-    )
     created = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
@@ -694,7 +687,6 @@ def test_delivery_does_not_accept_human_assigned_issue(
         headers=_auth(test_token),
     )
     assert finalized.status_code == 200, finalized.text
-    publish_submission.assert_not_awaited()
     latest = test_client.get(
         f"/api/v1/loop-items/{item['id']}", headers=_auth(test_token)
     ).json()

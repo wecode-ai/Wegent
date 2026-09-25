@@ -231,6 +231,11 @@ fn terminal_turn_status_is_not_persisted() {
         "completedTranscriptThreadId": "thread-1",
         "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
         "transcriptSnapshotThreadId": "thread-1",
+        "cloudCollaborationRound": {
+            "round_id": "round-1",
+            "execution_ids": [41, 42],
+            "loop_item_ids": ["ISSUE-HUMAN-1"]
+        },
         "modelSelection": {"modelName": "gpt-5.6-sol"},
         "wegentTeam": {
             "id": 7,
@@ -272,6 +277,10 @@ fn terminal_turn_status_is_not_persisted() {
         task["runtime_handle"]["modelSelection"]["modelName"],
         "gpt-5.6-sol"
     );
+    assert_eq!(
+        task["runtime_handle"]["cloudCollaborationRound"]["round_id"],
+        "round-1"
+    );
     assert_eq!(task["runtime_handle"]["wegentTeam"]["id"], 7);
     assert!(task["runtime_handle"]["wegentTeam"]
         .get("agent_config")
@@ -288,6 +297,10 @@ fn terminal_turn_status_is_not_persisted() {
     assert_eq!(restored.completed_at, None);
     assert!(restored.runtime_handle.get("queuePosition").is_none());
     assert!(restored.runtime_handle.get("lastError").is_none());
+    assert_eq!(
+        restored.runtime_handle["cloudCollaborationRound"]["loop_item_ids"][0],
+        "ISSUE-HUMAN-1"
+    );
 }
 
 #[test]

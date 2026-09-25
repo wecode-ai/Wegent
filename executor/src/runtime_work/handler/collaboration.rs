@@ -151,7 +151,10 @@ impl RuntimeWorkRpcHandler {
                     command.project_id
                 ))
                 .bearer_auth(&connection.auth_token)
-                .json(&json!({"execution_ids": command.execution_ids}))
+                .json(&json!({
+                    "execution_ids": command.execution_ids,
+                    "loop_item_ids": command.loop_item_ids,
+                }))
                 .send()
                 .await
             {

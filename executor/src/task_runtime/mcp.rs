@@ -46,6 +46,7 @@ pub(crate) struct CloudCollaborationRoundCommand {
     pub(crate) dispatch_id: String,
     pub(crate) round_id: String,
     pub(crate) execution_ids: Vec<i64>,
+    pub(crate) loop_item_ids: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -1996,15 +1997,34 @@ async fn call_backend_tool(
                 .map_err(|error| error.to_string())?,
         )
         .await?;
-        let execution_ids = response
+        let assignments = response
             .get("executions")
             .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|execution| execution.get("execution_id").and_then(Value::as_i64))
-            .collect::<Vec<_>>();
-        if execution_ids.len() != items.len() {
+            .ok_or_else(|| "Backend collaboration assignments are missing".to_owned())?;
+        if assignments.len() != items.len() {
             return Err("Backend did not persist every collaboration assignment".to_owned());
+        }
+        let execution_ids = assignments
+            .iter()
+            .filter(|assignment| {
+                assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+            })
+            .filter_map(|assignment| assignment.get("execution_id").and_then(Value::as_i64))
+            .collect::<Vec<_>>();
+        let loop_item_ids = assignments
+            .iter()
+            .filter(|assignment| {
+                assignment.get("assignee_type").and_then(Value::as_str) == Some("human")
+            })
+            .filter_map(|assignment| {
+                assignment
+                    .get("loop_item_id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect::<Vec<_>>();
+        if execution_ids.len() + loop_item_ids.len() != assignments.len() {
+            return Err("Backend returned an invalid collaboration assignment".to_owned());
         }
         collaboration_dispatcher
             .ok_or_else(|| "Executor collaboration coordinator is unavailable".to_owned())?
@@ -2015,6 +2035,7 @@ async fn call_backend_tool(
                 dispatch_id: dispatch_id.clone(),
                 round_id: round_id.to_owned(),
                 execution_ids,
+                loop_item_ids,
             })?;
         return Ok(json!({
             "dispatch_id": dispatch_id,
@@ -2844,13 +2865,14 @@ fn tools() -> Vec<Value> {
                                 "items": {
                                     "type": "object",
                                     "properties": {
+                                        "assignment_id": {"type": "string", "minLength": 1},
                                         "title": {"type": "string", "minLength": 1},
                                         "instructions": {"type": "string", "minLength": 1},
-                                        "assignee_type": {"const": "agent"},
+                                        "assignee_type": {"enum": ["agent", "human"]},
                                         "assignee_id": {"type": "string", "minLength": 1},
                                         "workflow_stage_id": {"type": "string", "minLength": 1}
                                     },
-                                    "required": ["title", "instructions", "assignee_type", "assignee_id"],
+                                    "required": ["assignment_id", "title", "instructions", "assignee_type", "assignee_id"],
                                     "additionalProperties": false
                                 }
                             }
@@ -4272,6 +4294,96 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(decision["status"], "in_review");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn backend_manager_plan_hands_the_round_to_the_executor_coordinator() {
+        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/cloud-projects/12/executions/batch",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                assert_eq!(body["loop_item_id"], "ISSUE-1");
+                assert_eq!(body["dispatch_id"], "dispatch-1");
+                assert_eq!(body["round_id"], "round-1");
+                assert_eq!(body["manager_runtime_task_id"], "manager-task");
+                assert_eq!(body["manager_agent_id"], "manager-agent");
+                Json(json!({
+                    "executions": [
+                        {
+                            "assignee_type": "agent",
+                            "execution_id": 41,
+                            "task_title": "Collect evidence"
+                        },
+                        {
+                            "assignee_type": "human",
+                            "loop_item_id": "ISSUE-HUMAN-1",
+                            "task_title": "Review evidence"
+                        }
+                    ]
+                }))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dispatched = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = dispatched.clone();
+        let dispatcher = CloudCollaborationRoundDispatcher::new(move |command| {
+            observed.lock().unwrap().push(command);
+            Ok(())
+        });
+        let grant = SpaceContextGrant {
+            task_id: "manager-task".to_owned(),
+            space_id: Some("12".to_owned()),
+            item_id: Some("ISSUE-1".to_owned()),
+            dispatch_id: Some("dispatch-1".to_owned()),
+            manager_agent_id: Some("manager-agent".to_owned()),
+            ..role_grant(SpaceContextRole::Manager)
+        };
+        let plan = json!({
+            "plan": {
+                "round_id": "round-1",
+                "items": [
+                    {
+                        "assignment_id": "collect",
+                        "title": "Collect evidence",
+                        "assignee_type": "agent",
+                        "assignee_id": "collector",
+                        "instructions": "Collect evidence"
+                    },
+                    {
+                        "assignment_id": "review",
+                        "title": "Review evidence",
+                        "assignee_type": "human",
+                        "assignee_id": "reviewer",
+                        "instructions": "Review evidence"
+                    }
+                ]
+            }
+        });
+
+        let result = call_backend_tool(
+            &format!("http://{address}"),
+            "task-token",
+            "12",
+            "submit_workflow_plan",
+            &plan,
+            Some(&grant),
+            Some(&dispatcher),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["state"], "dispatched");
+        let commands = dispatched.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].manager_runtime_task_id, "manager-task");
+        assert_eq!(commands[0].round_id, "round-1");
+        assert_eq!(commands[0].execution_ids, vec![41]);
+        assert_eq!(commands[0].loop_item_ids, vec!["ISSUE-HUMAN-1"]);
         server.abort();
     }
 

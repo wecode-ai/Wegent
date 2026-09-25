@@ -5549,7 +5549,7 @@ mod tests {
         );
         assert_eq!(
             first_member_execution.execution_payload.as_ref().unwrap()["message"],
-            "Collect verifiable evidence."
+            "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
         );
         assert_eq!(
             first_member_execution.execution_payload.as_ref().unwrap()["bot"][0]["id"],

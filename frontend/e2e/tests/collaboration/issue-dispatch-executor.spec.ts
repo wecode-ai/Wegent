@@ -15,7 +15,6 @@ import {
 import {
   authHeaders,
   getScenarioModelBodies,
-  getScenarioRequestHeaders,
   getToolScenarioState,
   modelRequestText,
   modelToolNames,
@@ -23,8 +22,6 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const parentHeaders = { 'x-openai-subagent': null }
-const childHeaders = { 'x-openai-subagent': 'collab_spawn' }
 
 interface CollaborationIssue {
   id: string
@@ -39,12 +36,13 @@ interface CollaborationExecution {
   observedState: string
   displayState: string
   teamId: number | null
+  executorType: string
   runtimeTaskId: string | null
 }
 
 test.describe.configure({ mode: 'serial' })
 
-test.describe('Collaboration group native coordinate execution', () => {
+test.describe('Collaboration group Executor coordination', () => {
   let model: IssueDispatchMockModel | undefined
 
   test.beforeAll(async ({ request }) => {
@@ -55,7 +53,7 @@ test.describe('Collaboration group native coordinate execution', () => {
     if (model) await deleteIssueDispatchMockModel(request, model)
   })
 
-  test('assigns one manager execution, runs two native subagents, and lets the manager update status', async ({
+  test('dispatches independent member executions and lets a fresh manager round update status', async ({
     page,
     request,
   }, testInfo) => {
@@ -87,75 +85,65 @@ test.describe('Collaboration group native coordinate execution', () => {
       leader: { id: leader.id, type: 'agent' },
     })
 
-    const clearManagerScenario = await configureIssueDispatchModelScenario(
-      request,
-      issueTitle,
-      [
-        {
-          toolCalls: [
-            {
-              toolName: 'spawn_agent',
-              arguments: {
-                agent_type: 'wegent_member_1',
-                message: `${collectorTask}. Return ${collectorEvidence}.`,
+    const clearManagerScenario = await configureIssueDispatchModelScenario(request, issueTitle, [
+      {
+        toolCalls: [
+          {
+            toolName: 'wework_space__submit_workflow_plan',
+            arguments: {
+              plan: {
+                round_id: `round-${suffix}`,
+                summary: 'Collect and independently review CPU evidence in parallel.',
+                items: [
+                  {
+                    assignment_id: `collector-${suffix}`,
+                    title: collectorTask,
+                    instructions: `${collectorTask}. Return ${collectorEvidence}.`,
+                    assignee_type: 'agent',
+                    assignee_id: collector.id,
+                  },
+                  {
+                    assignment_id: `reviewer-${suffix}`,
+                    title: reviewerTask,
+                    instructions: `${reviewerTask}. Return ${reviewerEvidence}.`,
+                    assignee_type: 'agent',
+                    assignee_id: reviewer.id,
+                  },
+                ],
               },
             },
-            {
-              toolName: 'spawn_agent',
-              arguments: {
-                agent_type: 'wegent_member_2',
-                message: `${reviewerTask}. Return ${reviewerEvidence}.`,
-              },
+          },
+        ],
+      },
+      {
+        responseContent:
+          'The current collaboration round was dispatched. Waiting for Executor results.',
+      },
+      {
+        toolCalls: [
+          {
+            toolName: 'wework_space__update_issue_status',
+            arguments: {
+              status: 'in_review',
+              reason: `Both independent member results were evaluated: ${collectorEvidence}, ${reviewerEvidence}.`,
+              comment:
+                'The manager reviewed both parallel assignments and submitted the Issue for confirmation.',
             },
-          ],
-        },
-        {
-          toolCalls: [
-            {
-              toolName: 'wait_agent',
-              arguments: {
-                targets: ['$scenario.agent_id:0'],
-                timeout_ms: 120_000,
-              },
-            },
-            {
-              toolName: 'wait_agent',
-              arguments: {
-                targets: ['$scenario.agent_id:1'],
-                timeout_ms: 120_000,
-              },
-            },
-          ],
-        },
-        {
-          toolCalls: [
-            {
-              toolName: 'wework_space__update_issue_status',
-              arguments: {
-                target_status: 'in_review',
-                reason: `Both native member results were evaluated: ${collectorEvidence}, ${reviewerEvidence}.`,
-              },
-            },
-          ],
-        },
-        {
-          responseContent: `Manager evaluated ${collectorEvidence} and ${reviewerEvidence}.`,
-        },
-      ],
-      { matchHeaders: parentHeaders }
-    )
+          },
+        ],
+      },
+      {
+        responseContent: `Manager evaluated ${collectorEvidence} and ${reviewerEvidence}.`,
+      },
+    ])
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence }],
-      { matchHeaders: childHeaders }
+      [{ responseContent: collectorEvidence }]
     )
-    const clearReviewerScenario = await configureIssueDispatchModelScenario(
-      request,
-      reviewerTask,
-      [{ responseContent: reviewerEvidence }],
-      { matchHeaders: childHeaders }
-    )
+    const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
+      { responseContent: reviewerEvidence },
+    ])
 
     try {
       await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
@@ -177,62 +165,53 @@ test.describe('Collaboration group native coordinate execution', () => {
       )
       expect(assigned.assignee_group_id).toBe(groupId)
 
-      const execution = await waitForManagerExecution(
+      const executions = await waitForCollaborationExecutions(
         request,
         model.token,
         fixture.projectId,
-        fixture.issueId
+        fixture.issueId,
+        3
       )
-      expect(execution.observedState).toBe('succeeded')
-      expect(execution.displayState).toBe('succeeded')
-      expect(execution.teamId).toBeTruthy()
-      expect(execution.runtimeTaskId).toMatch(/^codex-queue-\d+$/)
-      const executions = await apiRequest<{ items: CollaborationExecution[] }>(
-        request,
-        model.token,
-        `/api/v1/cloud-projects/${fixture.projectId}/executions`
+      const dispatches = executions.filter(
+        item => item.executorType === 'collaboration_group_dispatch'
       )
-      expect(executions.items.filter(item => item.loopItemId === fixture.issueId)).toHaveLength(1)
+      const members = executions.filter(
+        item => item.executorType !== 'collaboration_group_dispatch'
+      )
+      expect(dispatches).toHaveLength(1)
+      expect(members).toHaveLength(2)
+      expect(new Set(members.map(item => item.runtimeTaskId)).size).toBe(2)
+      expect(members.every(item => item.status === 'completed')).toBe(true)
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
-      expect(completed.execution_state).toBe('succeeded')
+      expect(completed.execution_state).not.toBe('failed')
 
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
-      const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
       const managerScenario = await getToolScenarioState(request, issueTitle)
       expect(managerBodies.length).toBeGreaterThanOrEqual(4)
       expect(managerScenario.nextStep).toBe(4)
-      expect(managerHeaders).toHaveLength(managerBodies.length)
-      expect(managerHeaders.every(headers => headers['x-openai-subagent'] === undefined)).toBe(true)
-      expect(modelToolNames(managerBodies).some(isSpawnAgent)).toBe(true)
-      expect(modelToolNames(managerBodies).some(isWaitAgent)).toBe(true)
+      expect(modelToolNames(managerBodies).some(isSubmitWorkflowPlan)).toBe(true)
       expect(modelToolNames(managerBodies).some(isUpdateIssueStatus)).toBe(true)
+      expect(modelToolNames(managerBodies).some(isNativeSubagentTool)).toBe(false)
       expect(modelRequestText(managerBodies.slice(0, 1))).toContain(
         'Project collaboration rules and workflow'
       )
       expect(modelRequestText(managerBodies.slice(2))).toContain(collectorEvidence)
       expect(modelRequestText(managerBodies.slice(2))).toContain(reviewerEvidence)
 
-      const collectorHeaders = await getScenarioRequestHeaders(request, collectorTask)
-      const reviewerHeaders = await getScenarioRequestHeaders(request, reviewerTask)
       const collectorScenario = await getToolScenarioState(request, collectorTask)
       const reviewerScenario = await getToolScenarioState(request, reviewerTask)
       expect(collectorScenario.nextStep).toBe(1)
       expect(reviewerScenario.nextStep).toBe(1)
-      expect(collectorHeaders).not.toHaveLength(0)
-      expect(reviewerHeaders).not.toHaveLength(0)
-      expect(
-        collectorHeaders.every(headers => headers['x-openai-subagent'] === 'collab_spawn')
-      ).toBe(true)
-      expect(
-        reviewerHeaders.every(headers => headers['x-openai-subagent'] === 'collab_spawn')
-      ).toBe(true)
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
-      await expect(page.getByText(collectorEvidence, { exact: false }).first()).toBeVisible()
-      await expect(page.getByText(reviewerEvidence, { exact: false }).first()).toBeVisible()
-      await captureEvidence(page, testInfo, '02-manager-reviewed-native-members')
+      await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
+      await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
+      await expect(
+        page.getByText('The manager reviewed both parallel assignments', { exact: false }).first()
+      ).toBeVisible()
+      await captureEvidence(page, testInfo, '02-manager-reviewed-executor-members')
     } finally {
       await clearReviewerScenario()
       await clearCollectorScenario()
@@ -241,43 +220,49 @@ test.describe('Collaboration group native coordinate execution', () => {
   })
 })
 
-function isSpawnAgent(name: string): boolean {
-  return name.endsWith('spawn_agent')
+function isSubmitWorkflowPlan(name: string): boolean {
+  return name.endsWith('submit_workflow_plan')
 }
 
-function isWaitAgent(name: string): boolean {
-  return name.endsWith('wait_agent')
+function isNativeSubagentTool(name: string): boolean {
+  return name.endsWith('spawn_agent') || name.endsWith('wait_agent')
 }
 
 function isUpdateIssueStatus(name: string): boolean {
   return name.endsWith('update_issue_status')
 }
 
-async function waitForManagerExecution(
+async function waitForCollaborationExecutions(
   request: APIRequestContext,
   token: string,
   projectId: string,
-  issueId: string
-): Promise<CollaborationExecution> {
-  let completed: CollaborationExecution | undefined
+  issueId: string,
+  expectedCount: number
+): Promise<CollaborationExecution[]> {
+  let matching: CollaborationExecution[] = []
   await expect
     .poll(
       async () => {
         const response = await apiRequest<{ items: CollaborationExecution[] }>(
           request,
           token,
-          `/api/v1/cloud-projects/${projectId}/executions?status=completed`
+          `/api/v1/cloud-projects/${projectId}/executions`
         )
-        completed = response.items.find(item => item.loopItemId === issueId)
-        return completed?.status ?? 'missing'
+        matching = response.items.filter(item => item.loopItemId === issueId)
+        return {
+          count: matching.length,
+          terminal: matching.filter(item =>
+            ['completed', 'failed', 'cancelled'].includes(item.status)
+          ).length,
+        }
       },
       {
         timeout: 180_000,
-        message: `Manager execution for Issue ${issueId} should complete`,
+        message: `Collaboration executions for Issue ${issueId} should finish`,
       }
     )
-    .toBe('completed')
-  return completed!
+    .toEqual({ count: expectedCount, terminal: expectedCount })
+  return matching
 }
 
 async function waitForIssueStatus(

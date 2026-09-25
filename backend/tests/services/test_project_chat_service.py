@@ -1642,6 +1642,37 @@ def test_advance_to_review_clears_completed_at_using_schema_contract(
     assert contract_calls[0][1] == "completed_at"
 
 
+@pytest.mark.parametrize("dispatch_role", ["manager", "member"])
+def test_collaboration_execution_cannot_advance_parent_issue_to_review(
+    test_db: Session,
+    test_user: User,
+    dispatch_role: str,
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        cloud_project_id=project.id,
+        title="Collaboration parent",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id="12",
+        metadata_json={"dispatch_role": dispatch_role},
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_progress"
+
+
 def _expire_ai_lease(
     test_db: Session, task: LoopItem, *, minutes_ago: int = 10
 ) -> None:

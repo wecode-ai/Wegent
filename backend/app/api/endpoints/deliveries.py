@@ -91,9 +91,6 @@ from app.services.cloud_projects.access import (
 )
 from app.services.delivery import delivery_service
 from app.services.human_issue_work import human_issue_work_service
-from app.services.human_submission_coordination import (
-    human_submission_coordination_service,
-)
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
@@ -189,12 +186,6 @@ async def submit_human_issue_work(
     item, message, created = human_issue_work_service.submit(
         db, item_id, current_user.id, values
     )
-    if created:
-        await human_submission_coordination_service.publish(
-            db,
-            item=item,
-            message=message,
-        )
     return await _human_work_response(db, item, current_user, message, created=created)
 
 

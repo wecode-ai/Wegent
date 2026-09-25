@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict'
 
-import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import {
   assistantMessage,
   codexRequestKind,
   createSse,
   mcpToolRequestEvents,
-  namespacedFunctionCall,
   readRequestBody,
-  requestContainsToolOutput,
-  requestToolSearchResults,
   responseCompleted,
   responseCreated,
-  selectMcpTool,
+  requestContainsToolOutput,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -25,7 +21,8 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'wework-custom-desktop-e2e-responses'
 const PROJECT = `本地协作调度-${process.pid}`
 const LEADER = `负责人智能体-${process.pid}`
-const MEMBER = `执行智能体-${process.pid}`
+const COLLECTOR = `采集智能体-${process.pid}`
+const REVIEWER = `复核智能体-${process.pid}`
 const GROUP = `并发执行小组-${process.pid}`
 const ISSUE = `核验本地协作调度-${process.pid}`
 const FIRST_TASK = '采集运行证据'
@@ -34,12 +31,8 @@ const THIRD_TASK = '补充最终验收证据'
 const MARKER = `LOCAL_COORDINATE_${process.pid}`
 const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人继续决策。`
 const CALLS = {
-  firstSpawn: `${MARKER}-spawn-1`,
-  secondSpawn: `${MARKER}-spawn-2`,
-  firstWait: `${MARKER}-wait-1`,
-  secondWait: `${MARKER}-wait-2`,
-  thirdSpawn: `${MARKER}-spawn-3`,
-  thirdWait: `${MARKER}-wait-3`,
+  firstPlan: `${MARKER}-plan-1`,
+  secondPlan: `${MARKER}-plan-2`,
   updateStatus: `${MARKER}-update-status`,
 }
 
@@ -52,36 +45,65 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
-function collaborationTool(body, name, argumentsValue) {
-  return selectMcpTool(body, 'collaboration', name, argumentsValue)
+function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
+  return mcpToolRequestEvents(body, {
+    toolName,
+    argumentsValue,
+    searchCallId: `${toolCallId}-search`,
+    toolCallId,
+  })
 }
 
-function updateStatusEvents(body) {
-  const searchCallId = `${CALLS.updateStatus}-search`
-  const args = {
+function firstRoundPlan(collectorAgentId, reviewerAgentId) {
+  return {
+    plan: {
+      round_id: `${MARKER}-round-1`,
+      summary: '并发采集运行证据并独立复核结论。',
+      items: [
+        {
+          assignment_id: `${MARKER}-assignment-1`,
+          title: FIRST_TASK,
+          instructions: `${MARKER}。采集可复核运行证据，不修改 Issue 状态。`,
+          assignee_type: 'agent',
+          assignee_id: collectorAgentId,
+        },
+        {
+          assignment_id: `${MARKER}-assignment-2`,
+          title: SECOND_TASK,
+          instructions: `${MARKER}。独立复核第一项工作的目标和证据，不修改 Issue 状态。`,
+          assignee_type: 'agent',
+          assignee_id: reviewerAgentId,
+        },
+      ],
+    },
+  }
+}
+
+function secondRoundPlan(reviewerAgentId) {
+  return {
+    plan: {
+      round_id: `${MARKER}-round-2`,
+      summary: '根据第一轮两项结果补充最终验收证据。',
+      items: [
+        {
+          assignment_id: `${MARKER}-assignment-3`,
+          title: THIRD_TASK,
+          instructions: `${MARKER}。根据第一轮两项结果补充最终验收证据，不修改 Issue 状态。`,
+          assignee_type: 'agent',
+          assignee_id: reviewerAgentId,
+        },
+      ],
+    },
+  }
+}
+
+function updateStatusArguments() {
+  return {
     idempotency_key: `${MARKER}-final-status`,
     status: 'in_review',
     reason: '第一轮两个并发子任务和第二轮补充任务均已完成，负责人已综合核验。',
+    comment: '负责人已核验两轮三个任务的执行证据，提交 Issue 待确认。',
   }
-  if (requestContainsToolOutput(body, searchCallId)) {
-    const namespace = requestToolSearchResults(body).find(
-      candidate =>
-        candidate?.type === 'namespace' &&
-        candidate.name === 'wework_space' &&
-        candidate.tools?.some(
-          tool => tool?.type === 'function' && tool.name === 'update_issue_status'
-        )
-    )
-    assert.ok(namespace, '负责人未发现 wework_space.update_issue_status')
-    const tool = selectMcpTool(body, 'wework_space', 'update_issue_status', args)
-    return namespacedFunctionCall(CALLS.updateStatus, tool.namespace, tool.name, tool.arguments)
-  }
-  return mcpToolRequestEvents(body, {
-    toolName: 'update_issue_status',
-    argumentsValue: args,
-    searchCallId,
-    toolCallId: CALLS.updateStatus,
-  }).events
 }
 
 async function addAgent(control, name, prompt, timeoutMs) {
@@ -133,15 +155,23 @@ async function createCoordinateGroup(control, timeoutMs) {
     LEADER,
     timeoutMs
   )
-  const memberTestId = await waitForTestIdByText(
+  const collectorTestId = await waitForTestIdByText(
     control,
     'body',
     'collaboration-group-create-member-agent-',
-    MEMBER,
+    COLLECTOR,
+    timeoutMs
+  )
+  const reviewerTestId = await waitForTestIdByText(
+    control,
+    'body',
+    'collaboration-group-create-member-agent-',
+    REVIEWER,
     timeoutMs
   )
   await control.command('click', `[data-testid="${leaderMemberTestId}"]`)
-  await control.command('click', `[data-testid="${memberTestId}"]`)
+  await control.command('click', `[data-testid="${collectorTestId}"]`)
+  await control.command('click', `[data-testid="${reviewerTestId}"]`)
   await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
   const leaderId = leaderMemberTestId.slice('collaboration-group-create-member-agent-'.length)
@@ -170,6 +200,11 @@ async function createCoordinateGroup(control, timeoutMs) {
       timeoutMs,
     }
   )
+  return {
+    leaderId,
+    collectorId: collectorTestId.slice('collaboration-group-create-member-agent-'.length),
+    reviewerId: reviewerTestId.slice('collaboration-group-create-member-agent-'.length),
+  }
 }
 
 async function createIssueAndAssignGroup(control, timeoutMs) {
@@ -188,10 +223,6 @@ async function createIssueAndAssignGroup(control, timeoutMs) {
     text: ISSUE,
     timeoutMs,
   })
-  const initialStatus = await control.command(
-    'getValue',
-    scoped('[data-testid="cloud-todo-detail-status"]')
-  )
   await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
   const groupOption = await waitForTestIdByText(
     control,
@@ -208,7 +239,6 @@ async function createIssueAndAssignGroup(control, timeoutMs) {
     text: GROUP,
     timeoutMs,
   })
-  return initialStatus
 }
 
 async function waitForActivityText(control, text, timeoutMs) {
@@ -281,6 +311,9 @@ export async function createDesktopScenario({
 }) {
   let active = false
   let parentStage = 'initial'
+  let collectorAgentId = ''
+  let reviewerAgentId = ''
+  let managerRuns = 0
   let childRequests = 0
   let childCompletions = 0
   let releaseFirstChild
@@ -314,24 +347,33 @@ export async function createDesktopScenario({
         return false
       }
       const body = await readRequestBody(request)
+      const requestText = JSON.stringify(body)
       const responseId = `local-coordinate-${Date.now()}-${childRequests}`
       const kind = codexRequestKind(body)
       if (kind === 'prewarm' || kind === 'compaction') {
         writeEvents(response, responseId, [assistantMessage('Ready')])
         return true
       }
-      if (
-        !JSON.stringify(body).includes(MARKER) &&
-        !isCollaborationSubagentRequest(request.headers)
-      ) {
+      if (!requestText.includes(MARKER)) {
         writeEvents(response, responseId, [])
         return true
       }
-      if (isCollaborationSubagentRequest(request.headers)) {
+
+      const isMemberRequest = [FIRST_TASK, SECOND_TASK, THIRD_TASK].some(title =>
+        requestText.includes(title)
+      )
+      if (isMemberRequest) {
         childRequests += 1
-        const childOrdinal = childRequests
+        const childOrdinal = requestText.includes(FIRST_TASK)
+          ? 1
+          : requestText.includes(SECOND_TASK)
+            ? 2
+            : requestText.includes(THIRD_TASK)
+              ? 3
+              : 0
+        assert.notEqual(childOrdinal, 0, '执行成员请求没有包含负责人分配的任务标题')
         if (childRequests === 2) resolveBothChildrenStarted()
-        if (childRequests === 3) resolveThirdChildStarted()
+        if (childOrdinal === 3) resolveThirdChildStarted()
         await (childOrdinal === 1
           ? firstChildRelease
           : childOrdinal === 2
@@ -349,6 +391,11 @@ export async function createDesktopScenario({
         ])
         return true
       }
+
+      assert.ok(
+        requestText.includes(`${MARKER}。你是负责人`),
+        '协作调度请求既不是负责人运行，也不是执行成员运行'
+      )
       if (requestContainsToolOutput(body, CALLS.updateStatus)) {
         parentStage = 'complete'
         writeEvents(response, responseId, [
@@ -356,82 +403,80 @@ export async function createDesktopScenario({
         ])
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.thirdWait)) {
-        parentStage = 'updating-status'
-        writeEvents(response, responseId, updateStatusEvents(body))
-        return true
-      }
-      if (requestContainsToolOutput(body, CALLS.thirdSpawn)) {
-        const tool = collaborationTool(body, 'wait_agent', {
-          timeout_ms: 60_000,
-        })
-        parentStage = 'waiting-third'
+      if (requestContainsToolOutput(body, CALLS.secondPlan)) {
+        parentStage = 'second-round-dispatched'
         writeEvents(response, responseId, [
-          ...namespacedFunctionCall(CALLS.thirdWait, tool.namespace, tool.name, tool.arguments),
+          assistantMessage('第二轮任务已交给 Executor，等待独立执行结果。'),
         ])
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.secondWait)) {
-        const tool = collaborationTool(body, 'spawn_agent', {
-          task_name: 'collect_acceptance_evidence',
-          message: `任务标题：${THIRD_TASK}\n${MARKER}。根据第一轮两项结果补充最终验收证据，不修改 Issue 状态。`,
-          agent_type: 'wegent_member_1',
-          fork_turns: 'none',
-        })
-        parentStage = 'spawning-third'
+      if (requestContainsToolOutput(body, CALLS.firstPlan)) {
+        parentStage = 'first-round-dispatched'
         writeEvents(response, responseId, [
-          ...namespacedFunctionCall(CALLS.thirdSpawn, tool.namespace, tool.name, tool.arguments),
+          assistantMessage('第一轮两个任务已交给 Executor 并发执行，等待全部结果。'),
         ])
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.firstWait)) {
-        const tool = collaborationTool(body, 'wait_agent', {
-          timeout_ms: 60_000,
-        })
-        parentStage = 'waiting-second'
-        writeEvents(response, responseId, [
-          ...namespacedFunctionCall(CALLS.secondWait, tool.namespace, tool.name, tool.arguments),
-        ])
+
+      if (parentStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body.input ?? body.messages ?? '').includes(GROUP_RULES),
+          '项目协作规则没有作为负责人本轮用户消息的一部分传入'
+        )
+        const selection = managerToolEvents(
+          body,
+          'submit_workflow_plan',
+          CALLS.firstPlan,
+          firstRoundPlan(collectorAgentId, reviewerAgentId)
+        )
+        if (selection.mode === 'direct') {
+          managerRuns += 1
+          parentStage = 'first-plan-called'
+        }
+        writeEvents(response, responseId, selection.events)
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.secondSpawn)) {
-        const tool = collaborationTool(body, 'wait_agent', {
-          timeout_ms: 60_000,
-        })
-        parentStage = 'waiting-first'
-        writeEvents(response, responseId, [
-          ...namespacedFunctionCall(CALLS.firstWait, tool.namespace, tool.name, tool.arguments),
-        ])
+
+      if (parentStage === 'first-round-dispatched') {
+        assert.ok(
+          requestText.includes(`${FIRST_TASK} 已完成：证据完整。`) &&
+            requestText.includes(`${SECOND_TASK} 已完成：复核通过。`),
+          '第一轮 barrier 后的新负责人运行没有收到两项执行结果'
+        )
+        const selection = managerToolEvents(
+          body,
+          'submit_workflow_plan',
+          CALLS.secondPlan,
+          secondRoundPlan(reviewerAgentId)
+        )
+        if (selection.mode === 'direct') {
+          managerRuns += 1
+          parentStage = 'second-plan-called'
+        }
+        writeEvents(response, responseId, selection.events)
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.firstSpawn)) {
-        const tool = collaborationTool(body, 'spawn_agent', {
-          task_name: 'independent_review',
-          message: `任务标题：${SECOND_TASK}\n${MARKER}。独立复核第一项工作的目标和证据，不修改 Issue 状态。`,
-          agent_type: 'wegent_member_1',
-          fork_turns: 'none',
-        })
-        parentStage = 'spawning-second'
-        writeEvents(response, responseId, [
-          ...namespacedFunctionCall(CALLS.secondSpawn, tool.namespace, tool.name, tool.arguments),
-        ])
+
+      if (parentStage === 'second-round-dispatched') {
+        assert.ok(
+          requestText.includes(`${THIRD_TASK} 已完成：验收证据齐全。`),
+          '第二轮 barrier 后的新负责人运行没有收到执行结果'
+        )
+        const selection = managerToolEvents(
+          body,
+          'update_issue_status',
+          CALLS.updateStatus,
+          updateStatusArguments()
+        )
+        if (selection.mode === 'direct') {
+          managerRuns += 1
+          parentStage = 'updating-status'
+        }
+        writeEvents(response, responseId, selection.events)
         return true
       }
-      assert.equal(parentStage, 'initial', `Unexpected manager stage: ${parentStage}`)
-      assert.ok(
-        JSON.stringify(body.input ?? body.messages ?? '').includes(GROUP_RULES),
-        '项目协作规则没有作为负责人本轮用户消息的一部分传入'
-      )
-      const tool = collaborationTool(body, 'spawn_agent', {
-        task_name: 'collect_runtime_evidence',
-        message: `任务标题：${FIRST_TASK}\n${MARKER}。采集可复核运行证据，不修改 Issue 状态。`,
-        agent_type: 'wegent_member_1',
-        fork_turns: 'none',
-      })
-      parentStage = 'spawning-first'
-      writeEvents(response, responseId, [
-        ...namespacedFunctionCall(CALLS.firstSpawn, tool.namespace, tool.name, tool.arguments),
-      ])
+
+      assert.fail(`Unexpected manager stage: ${parentStage}`)
       return true
     },
 
@@ -456,34 +501,48 @@ export async function createDesktopScenario({
       await addAgent(
         control,
         LEADER,
-        `${MARKER}。你是负责人，必须用 native spawn_agent 并发分配任务，wait 后显式调用 update_issue_status。`,
+        `${MARKER}。你是负责人，每轮必须通过 wework_space.submit_workflow_plan 分配独立任务；Executor 在整轮 barrier 后启动新的负责人运行，最终由你显式调用 update_issue_status。`,
         uiTimeoutMs
       )
       await addAgent(
         control,
-        MEMBER,
-        `${MARKER}。你是执行成员，只完成负责人分配的任务并返回证据。`,
+        COLLECTOR,
+        `${MARKER}。你是执行成员，只完成负责人分配的采集任务并返回证据。`,
         uiTimeoutMs
       )
-      await createCoordinateGroup(control, uiTimeoutMs)
-      const initialStatus = await createIssueAndAssignGroup(control, uiTimeoutMs)
+      await addAgent(
+        control,
+        REVIEWER,
+        `${MARKER}。你是执行成员，只完成负责人分配的复核任务并返回证据。`,
+        uiTimeoutMs
+      )
+      const group = await createCoordinateGroup(control, uiTimeoutMs)
+      collectorAgentId = group.collectorId
+      reviewerAgentId = group.reviewerId
+      await createIssueAndAssignGroup(control, uiTimeoutMs)
 
       await waitForPromise(
         bothChildrenStarted,
         modelResponseTimeoutMs,
-        '分配协作小组后，负责人没有通过 native spawn_agent 启动两个并发子任务'
+        '分配协作小组后，负责人没有通过 submit_workflow_plan 启动两个并发独立任务'
       )
+      await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
       await waitForActivityText(
         control,
-        `${LEADER} 负责人 · 分配给 ${MEMBER}`,
+        `${LEADER} 负责人 · 分配给 ${COLLECTOR}`,
+        modelResponseTimeoutMs
+      )
+      await waitForActivityText(
+        control,
+        `${LEADER} 负责人 · 分配给 ${REVIEWER}`,
         modelResponseTimeoutMs
       )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        initialStatus,
-        '子任务完成前 Issue 状态被系统自动迁移'
+        'in_progress',
+        '第一轮执行期间 Issue 没有保持进行中'
       )
       await captureScreenshot(control, 'local-coordinate-01-two-member-tasks-running.png', CONTENT)
 
@@ -497,8 +556,8 @@ export async function createDesktopScenario({
       await waitForCompletedMemberTasks(control, 1, modelResponseTimeoutMs)
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        initialStatus,
-        '只完成一个子任务时 Issue 状态被系统自动迁移'
+        'in_progress',
+        '只完成一个子任务时 Issue 状态被错误迁移'
       )
       await captureScreenshot(control, 'local-coordinate-02-one-member-task-finished.png', CONTENT)
 
@@ -512,10 +571,10 @@ export async function createDesktopScenario({
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        initialStatus,
-        '第二轮执行完成前 Issue 状态被系统自动迁移'
+        'in_progress',
+        '第二轮执行完成前 Issue 状态被错误迁移'
       )
-      assert.equal(parentStage, 'waiting-third', '负责人没有进入第二轮任务等待状态')
+      assert.equal(parentStage, 'second-round-dispatched', '负责人没有进入第二轮 barrier')
       await captureScreenshot(control, 'local-coordinate-03-manager-second-round.png', CONTENT)
 
       releaseThirdChild()
@@ -523,6 +582,7 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
       assert.equal(parentStage, 'complete', '负责人未在成员完成后继续运行并完成显式决策')
+      assert.equal(managerRuns, 3, 'Executor 没有为两次 barrier 各启动一次新的负责人运行')
       assert.equal(childRequests, 3, '负责人没有按两轮启动三个子任务')
       assert.equal(childCompletions, 3, '两轮三个子任务没有全部完成')
       await captureScreenshot(control, 'local-coordinate-04-manager-status-decision.png', CONTENT)
@@ -534,6 +594,7 @@ export async function createDesktopScenario({
         childRequests,
         group: GROUP,
         issue: ISSUE,
+        managerRuns,
         parentStage,
       }
     },

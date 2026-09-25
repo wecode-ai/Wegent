@@ -297,7 +297,7 @@ class LoopItemExecutionBatchItem(ProjectChatSchema):
     assignment_id: str = Field(min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=500)
     instructions: str = Field(min_length=1, max_length=100_000)
-    assignee_type: Literal["agent"]
+    assignee_type: Literal["agent", "human"]
     assignee_id: str = Field(min_length=1, max_length=128)
     workflow_stage_id: str | None = Field(default=None, max_length=128)
 
@@ -314,7 +314,15 @@ class LoopItemExecutionBatchCreate(ProjectChatSchema):
 
 
 class LoopItemExecutionStatusQuery(ProjectChatSchema):
-    execution_ids: list[int] = Field(min_length=1, max_length=20)
+    execution_ids: list[int] = Field(default_factory=list, max_length=20)
+    loop_item_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_targets(self) -> "LoopItemExecutionStatusQuery":
+        target_count = len(self.execution_ids) + len(self.loop_item_ids)
+        if target_count < 1 or target_count > 20:
+            raise ValueError("Provide between 1 and 20 execution or Issue ids")
+        return self
 
 
 class LoopItemExecutionView(ProjectChatSchema):

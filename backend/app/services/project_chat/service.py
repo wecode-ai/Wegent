@@ -1808,6 +1808,11 @@ class ProjectChatService:
 
         if not row.task_id:
             return
+        message_metadata = (
+            row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        )
+        if message_metadata.get("dispatch_role") in {"manager", "member"}:
+            return
         task = db.get(LoopItem, row.task_id)
         if (
             task is None
