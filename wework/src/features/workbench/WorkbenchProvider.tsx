@@ -172,7 +172,6 @@ import {
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
-import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
 
@@ -1807,18 +1806,9 @@ export function WorkbenchProvider({
     },
     [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
-  const knownModelIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const model of modelSelection.models) {
-      const id = normalizeAiModelId(model.modelId)
-      if (id) ids.add(id)
-    }
-    return ids
-  }, [modelSelection.models])
   const aiGenerationTelemetry = useAiGenerationTelemetry({
     resolveModel: resolveModelForAddress,
     contextUsageByRuntimeTask,
-    knownModelIds,
   })
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
