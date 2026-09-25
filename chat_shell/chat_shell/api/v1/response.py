@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
+from shared.metrics import ApiRouteMetrics, track_api
 from shared.models import (
     ExecutionRequest,
     OpenAIRequestConverter,
@@ -35,6 +36,13 @@ from shared.models.responses_api_emitter import EventTransport
 
 router = APIRouter(prefix="/v1", tags=["responses"])
 logger = logging.getLogger(__name__)
+
+# Request metrics for the OpenAI-compatible entry points of this service. The
+# names keep the chat_shell prefix distinct from the backend gateway routes.
+_RESPONSES_CREATE_METRICS = ApiRouteMetrics("/v1/responses", slow_threshold_ms=500)
+_RESPONSES_CANCEL_METRICS = ApiRouteMetrics(
+    "/v1/responses/cancel", slow_threshold_ms=500
+)
 
 _start_time = time.time()
 TOOL_ARGUMENT_DELTA_FLUSH_INTERVAL_SECONDS = 0.5
@@ -235,6 +243,7 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
             "input_type": "string",
             "message_count": 1 if text else 0,
             "roles": {},
+            "block_types": {},
             "last_user": text[:500],
         }
 
@@ -243,19 +252,35 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
             "input_type": type(input_data).__name__,
             "message_count": 0,
             "roles": {},
+            "block_types": {},
             "last_user": "",
         }
 
     role_counts: dict[str, int] = {}
+    block_type_counts: dict[str, int] = {}
     last_user = ""
+
+    def count_block(block: object) -> None:
+        if not isinstance(block, dict):
+            return
+        block_type = block.get("type")
+        if not block_type:
+            return
+        block_type_key = str(block_type)
+        block_type_counts[block_type_key] = block_type_counts.get(block_type_key, 0) + 1
+
     for item in input_data:
         if not isinstance(item, dict):
             continue
+        count_block(item)
         role = str(item.get("role") or "unknown")
         role_counts[role] = role_counts.get(role, 0) + 1
+        content = item.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                count_block(block)
         if role != "user":
             continue
-        content = item.get("content", "")
         if isinstance(content, str) and content.strip():
             last_user = content.strip()[:500]
 
@@ -263,6 +288,7 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
         "input_type": "messages",
         "message_count": len(input_data),
         "roles": role_counts,
+        "block_types": block_type_counts,
         "last_user": last_user,
     }
 
@@ -418,11 +444,12 @@ async def _stream_response(
     request_summary = _summarize_openai_input(request.input)
     logger.info(
         "[RESPONSE] OpenAI request summary: model=%s input_type=%s message_count=%s roles=%s "
-        "last_user=%s metadata=%s",
+        "block_types=%s last_user=%s metadata=%s",
         request.model,
         request_summary["input_type"],
         request_summary["message_count"],
         json.dumps(request_summary["roles"], ensure_ascii=False),
+        json.dumps(request_summary["block_types"], ensure_ascii=False),
         request_summary["last_user"],
         json.dumps(_summarize_metadata_for_log(request.metadata), ensure_ascii=False),
     )
@@ -572,6 +599,7 @@ async def _stream_response(
 
 
 @router.post("/responses")
+@track_api(_RESPONSES_CREATE_METRICS)
 async def create_response(request: OpenAIResponsesRequest, req: Request):
     """
     Create a streaming response.
@@ -612,6 +640,7 @@ async def get_active_stream_count():
 
 
 @router.post("/responses/cancel")
+@track_api(_RESPONSES_CANCEL_METRICS)
 async def cancel_response(request: CancelRequest):
     """Cancel an ongoing response by subtask_id."""
     from chat_shell.services.chat_service import chat_service

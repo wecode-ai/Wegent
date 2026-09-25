@@ -29,10 +29,10 @@ from pydantic import BaseModel, Field
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
+from shared.metrics import ApiRouteMetrics, track_api
 from shared.models.attachment_sync import AttachmentSyncRequest, AttachmentSyncResponse
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
@@ -65,6 +65,11 @@ from executor_manager.routers.wegent_e2b_proxy import router as wegent_e2b_proxy
 
 # Create main API router with unified prefix
 api_router = APIRouter(prefix=ROUTE_PREFIX)
+
+# Request metrics for the executor management entry points.
+_CALLBACK_METRICS = ApiRouteMetrics("/executor-manager/callback")
+_EXECUTOR_DELETE_METRICS = ApiRouteMetrics("/executor-manager/executor/delete")
+_EXECUTOR_LOAD_METRICS = ApiRouteMetrics("/executor-manager/executor/load")
 
 # Mount sub-routers to api_router
 api_router.include_router(sandbox_router)
@@ -235,6 +240,7 @@ async def log_requests(request: Request, call_next):
 
 
 @api_router.post("/callback")
+@track_api(_CALLBACK_METRICS)
 async def callback_handler(event_data: dict = Body(...), http_request: Request = None):
     """
     Receive callback interface for executor task progress and completion.
@@ -355,6 +361,7 @@ class DeleteExecutorRequest(BaseModel):
 
 
 @api_router.post("/executor/delete")
+@track_api(_EXECUTOR_DELETE_METRICS)
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -414,6 +421,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
 
 
 @api_router.get("/executor/load")
+@track_api(_EXECUTOR_LOAD_METRICS)
 async def get_executor_load(http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -1147,25 +1155,26 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
         if request.executor_name:
-            # Direct cancel to specified container
-            port, error = await asyncio.to_thread(
-                executor._get_container_port,
+            # Direct cancel to specified executor
+            address_result = await asyncio.to_thread(
+                executor.get_container_address,
                 request.executor_name,
             )
-            if not port:
+            if address_result.get("status") != "success":
+                error = address_result.get(
+                    "error_msg",
+                    f"Executor {request.executor_name} not found",
+                )
                 logger.warning(
-                    f"[v1/cancel] Container {request.executor_name} not found: {error}"
+                    f"[v1/cancel] Executor {request.executor_name} not found: {error}"
                 )
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Container {request.executor_name} not found: {error}",
+                    detail=f"Executor {request.executor_name} not found: {error}",
                 )
 
-            # Send cancel request to container
-            cancel_url = (
-                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
-                f"?task_id={request.task_id}"
-            )
+            base_url = address_result["base_url"].rstrip("/")
+            cancel_url = f"{base_url}/api/tasks/cancel?task_id={request.task_id}"
             if request.subtask_id is not None:
                 cancel_url += f"&subtask_id={request.subtask_id}"
 
@@ -1722,6 +1731,14 @@ async def restore_executor_workspace(
         logger.error(f"[Restore] Error restoring task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# Load wecode-specific routes if available
+try:
+    from executor_manager.wecode.routers import register as _register_wecode_routes
+
+    _register_wecode_routes(api_router)
+except ImportError:
+    pass
 
 # Mount api_router to app
 app.include_router(api_router)

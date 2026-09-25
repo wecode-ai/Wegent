@@ -25,16 +25,22 @@ from app.services.im.task_continuation_service import (
     load_user_private_sessions_by_keys,
     validate_personal_wework_task,
 )
+from shared.metrics import ApiRouteMetrics, track_api
 from shared.telemetry.decorators import trace_async
 
 im_router = APIRouter()
 tasks_router = APIRouter()
+
+_IM_PRIVATE_SESSIONS_METRICS = ApiRouteMetrics(
+    "/im/private-sessions", slow_threshold_ms=500
+)
 
 
 @im_router.get(
     "/private-sessions",
     response_model=IMPrivateSessionListResponse,
 )
+@track_api(_IM_PRIVATE_SESSIONS_METRICS)
 @trace_async("list_private_im_sessions", "im.api")
 async def list_private_sessions(
     db: Session = Depends(get_db),
