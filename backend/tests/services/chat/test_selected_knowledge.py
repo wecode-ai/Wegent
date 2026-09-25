@@ -1053,7 +1053,7 @@ def test_apply_selected_knowledge_context_keeps_legacy_path_for_unsupported_shel
     ("skill_name", "expected_mcp_name"),
     [
         ("wegent-knowledge", "wegent-knowledge"),
-        ("dingtalk-docs", "9762192_dingtalk_docs"),
+        ("dingtalk-docs", "dingtalk-docs_dingtalk_docs"),
     ],
 )
 def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
@@ -1219,7 +1219,7 @@ def test_activate_provider_native_knowledge_enables_coding_agent_after_mount(
                 "shell_type": shell_type,
                 "mcp_servers": [
                     {
-                        "name": "9762192_docs",
+                        "name": "dingtalk-docs_docs",
                         "url": "https://example.com/dingtalk/mcp",
                     }
                 ],
