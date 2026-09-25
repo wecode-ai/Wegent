@@ -966,6 +966,14 @@ async function showPopoutWindow(): Promise<void> {
   presentWindow(target)
 }
 
+async function togglePopoutWindow(): Promise<void> {
+  if (popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()) {
+    popoutWindow.hide()
+    return
+  }
+  await showPopoutWindow()
+}
+
 function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
   if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
     return DEFAULT_POPOUT_WINDOW_SHORTCUT
@@ -1811,7 +1819,7 @@ if (hasSingleInstanceLock) {
     rendererStorage = new RendererStorageStore(app.getPath('userData'))
     logStartupStep('desktop-stores-create', 'completed')
     if (!pluginDevelopmentInstance) {
-      popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
+      popoutShortcut = new GlobalShortcutController(globalShortcut, togglePopoutWindow, error =>
         console.error('[popout-window] global shortcut failed', error)
       )
     }
