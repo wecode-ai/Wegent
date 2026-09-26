@@ -79,7 +79,7 @@ describe("shared Issue threads", () => {
     ]);
   });
 
-  it("renders Markdown, bot avatar, reply row and one execution status in the thread", () => {
+  it("renders Markdown, bot avatar, reply row and distinct execution event status", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -110,6 +110,11 @@ describe("shared Issue threads", () => {
     expect(
       container.querySelector(
         '[data-testid="cloud-task-activity-execution-badge-root"]',
+      )?.textContent,
+    ).toContain("已完成");
+    expect(
+      container.querySelector(
+        '[data-testid="task-activity-run-execution-badge-root"]',
       )?.textContent,
     ).toContain("已完成");
   });
