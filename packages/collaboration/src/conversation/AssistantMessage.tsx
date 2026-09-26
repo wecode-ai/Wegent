@@ -25,6 +25,7 @@ import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
 import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
 import { ProcessingDurationLabel } from "./ProcessingDurationLabel";
 import {
+  collapsePersistentProcessingExpansions,
   useAnyPersistentProcessingExpansion,
   usePersistentProcessingExpansion,
 } from "./blocks/processingExpansionState";
@@ -223,6 +224,14 @@ export function AssistantMessage({
         !message.runtimeGuidanceContinuation));
   const isFinalProcessingExpanded =
     finalProcessingExpanded || hasExpandedToolDetail;
+  const toggleFinalProcessing = () => {
+    if (isFinalProcessingExpanded) {
+      setFinalProcessingExpanded(false);
+      collapsePersistentProcessingExpansions(expandedToolDetailStateKeys);
+      return;
+    }
+    setFinalProcessingExpanded(true);
+  };
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
@@ -428,7 +437,7 @@ export function AssistantMessage({
                 data-testid="final-processing-toggle"
                 aria-expanded={isFinalProcessingExpanded}
                 className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
-                onClick={() => setFinalProcessingExpanded((value) => !value)}
+                onClick={toggleFinalProcessing}
               >
                 {processingDurationLabel}
                 <ChevronDown

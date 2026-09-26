@@ -5999,6 +5999,47 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
+  test('collapses expanded tool details when the completed processing shell is toggled', () => {
+    const completedBlock: ProcessingBlock = {
+      id: 'call-final-toggle',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'rg -n "foo" src' },
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+    const message = {
+      id: 'assistant-final-toggle',
+      role: 'assistant' as const,
+      content: 'Done.',
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+      blocks: [completedBlock],
+    }
+    const { rerender } = render(
+      <MessageList messages={[{ ...message, content: '', status: 'streaming' }]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+
+    rerender(<MessageList messages={[{ ...message, status: 'done' }]} />)
+
+    const finalToggle = screen.getByTestId('final-processing-toggle')
+    expect(finalToggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(finalToggle)
+
+    expect(finalToggle).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(finalToggle)
+
+    expect(finalToggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+    expect(screen.getByRole('button', { name: '展开工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+  })
+
   test('renders process text inside the processing timeline before the following tool', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
