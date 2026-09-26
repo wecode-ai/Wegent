@@ -1288,7 +1288,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
   })
 
-  test('only persists the top-level processing expansion state', () => {
+  test('persists the expanded file detail with the processing state', () => {
     const { unmount } = render(
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
@@ -1314,7 +1314,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
-    expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
   })
 
   test('uses the same tool list for completed and streaming processing', () => {

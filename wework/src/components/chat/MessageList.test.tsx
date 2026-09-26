@@ -6040,6 +6040,90 @@ describe('MessageList', () => {
     )
   })
 
+  test('keeps an expanded file change open while final text streams and after completion', () => {
+    const fileChangesBlock: ProcessingBlock = {
+      id: 'file-changes-persistence',
+      subtaskId: 1,
+      type: 'file_changes',
+      status: 'done',
+      createdAt: 1770000000000,
+      fileChanges: {
+        version: 1,
+        status: 'active',
+        artifact_id: 'artifact-file-changes-persistence',
+        device_id: 'device-1',
+        workspace_path: '/workspace/project',
+        file_count: 1,
+        additions: 1,
+        deletions: 1,
+        files: [
+          {
+            path: 'scripts/env',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 1,
+            binary: false,
+          },
+        ],
+        reverted_at: null,
+        revertible: false,
+        diff: [
+          'diff --git a/scripts/env b/scripts/env',
+          '--- a/scripts/env',
+          '+++ b/scripts/env',
+          '@@ -1 +1 @@',
+          '-OLD_ENV=remote',
+          '+OLD_ENV=local',
+        ].join('\n'),
+      },
+    }
+    const message = {
+      id: 'assistant-file-changes-persistence',
+      role: 'assistant' as const,
+      content: '',
+      status: 'streaming' as const,
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+      blocks: [fileChangesBlock],
+    }
+    const { rerender } = render(<MessageList messages={[message]} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...message,
+            content: 'Updated the environment configuration.',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...message,
+            content: 'Updated the environment configuration.',
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+  })
+
   test('renders process text inside the processing timeline before the following tool', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',

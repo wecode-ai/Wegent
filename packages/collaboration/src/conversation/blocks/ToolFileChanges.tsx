@@ -7,20 +7,24 @@ import type { ProcessingBlock } from "./types";
 import { ActivityShimmerText } from "../../issue-card/ActivityShimmerText";
 import { InlineDiffPreview, fileDiffPreviewLines } from "./ToolInlineDiff";
 import { basename } from "./toolBlockText";
+import { usePersistentProcessingSelection } from "./processingExpansionState";
 
 export function ProcessFileChangesBlockItem({
   block,
   fileEditDurations,
   onExpandedChange,
+  stateKey,
 }: {
   block: Extract<ProcessingBlock, { type: "file_changes" }>;
   fileEditDurations?: FileEditDurationsByBlock;
   onExpandedChange?: (expanded: boolean) => void;
+  stateKey?: string;
 }) {
   const { t } = useConversationTranslation();
   const summary = block.fileChanges;
   const isRunning = block.status !== "done" && block.status !== "error";
-  const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null);
+  const [expandedFilePath, setExpandedFilePath] =
+    usePersistentProcessingSelection(stateKey);
 
   useLayoutEffect(() => {
     onExpandedChange?.(expandedFilePath !== null);
