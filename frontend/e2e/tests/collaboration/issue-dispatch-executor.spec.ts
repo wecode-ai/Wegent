@@ -98,7 +98,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].executorType).not.toBe('collaboration_group_dispatch')
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
-      expect(executions[0].executionEnvironment).toBe('cloud')
+      expect(executions[0].executionEnvironment).toBe('local')
       expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
       expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
 
@@ -294,7 +294,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].executorType).toBe('collaboration_group_dispatch')
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
-      expect(executions[0].executionEnvironment).toBe('cloud')
+      expect(executions[0].executionEnvironment).toBe('local')
       expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
       expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
       expect(executions[0].status).toBe('completed')
