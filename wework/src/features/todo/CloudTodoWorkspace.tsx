@@ -3018,6 +3018,7 @@ export function CloudTodoWorkspace({
             workspacePath: task?.workspacePath,
             runtimeHandle: task?.runtimeHandle,
             limit: 20,
+            includeFullContent: item.status === 'in_review' || task?.running === false,
           })
           .then(transcript => {
             if (

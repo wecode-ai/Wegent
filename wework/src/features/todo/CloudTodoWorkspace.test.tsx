@@ -1697,6 +1697,7 @@ describe('CloudTodoWorkspace', () => {
         deviceId: 'local-device',
         taskId: 'runtime-in-progress',
         limit: 20,
+        includeFullContent: true,
       })
     )
 
@@ -1985,6 +1986,14 @@ describe('CloudTodoWorkspace', () => {
       <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_001, 'completed')} />
     )
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(getRuntimeTranscript).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        includeFullContent: true,
+      })
+    )
     resolveCompletedTranscript({
       taskId: address.taskId,
       workspacePath: '/tmp/wegent',

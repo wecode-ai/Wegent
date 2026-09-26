@@ -14,7 +14,6 @@ import {
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { runtimeTaskLifecycleTransitionChanged } from './RuntimeTaskLifecycleStore'
 import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 
@@ -211,10 +210,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         if (disposed) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
         const currentSnapshot = store.getTask(address)
-        const lifecycleChanged =
-          runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot) &&
-          !canSettleRecoveredTerminalTurn(currentSnapshot, transcript, outcome, terminalTurnId)
-        if (lifecycleChanged) {
+        if (didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId)) {
           reconcileRuntimeConversationSnapshot(address, transcript.turns)
           return
         }
@@ -284,24 +280,14 @@ export function RuntimeTaskLifecycleStreamCoordinator({
   return null
 }
 
-function canSettleRecoveredTerminalTurn(
+function didStartNewerTurn(
+  expected: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
   current: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
-  transcript: ReturnType<typeof projectRuntimePaneTranscript>,
-  outcome: 'succeeded' | 'failed' | 'cancelled' | undefined,
   terminalTurnId: string | null | undefined
 ): boolean {
-  if (
-    !current ||
-    !outcome ||
-    !terminalTurnId ||
-    !isRuntimePaneTranscriptConfirmedIdle(transcript)
-  ) {
-    return false
-  }
-  if (current.turn.phase !== 'streaming' || current.turn.id !== terminalTurnId) return false
-  return transcript.turns.some(
-    turn => turn.id === terminalTurnId && turn.status !== 'pending' && turn.status !== 'streaming'
-  )
+  if (!current || current.turn.phase !== 'streaming') return false
+  if (terminalTurnId && current.turn.id === terminalTurnId) return false
+  return expected?.turn.phase !== 'streaming' || expected.turn.id !== current.turn.id
 }
 
 function runtimeRecoveryAddresses(
