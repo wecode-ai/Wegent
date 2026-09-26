@@ -67,8 +67,6 @@ WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
 BOARD_WEGENT_TASK_SOURCES = {
     "project_automation",
-    "board_team_assignment",
-    "board_team_continuation",
 }
 BOARD_MCP_GUIDANCE = """
 <wegent_board_runtime>

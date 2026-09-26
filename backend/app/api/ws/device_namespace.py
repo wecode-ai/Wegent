@@ -2243,6 +2243,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_device_id = session.get("device_id")
         execution_target_id = session.get("execution_target_id")
         runtime_instance_id = session.get("runtime_instance_id")
+        device_type = str(session.get("device_type") or "")
         if (
             not user_id
             or not runtime_device_id
@@ -2250,11 +2251,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
-        runtime_capacity = (
-            data.get("runtime_capacity")
-            if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)
-            else None
-        )
         return await run_sync_in_executor(
             partial(
                 pull_execution,
@@ -2262,11 +2258,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
-                # The Executor pull channel only carries cloud work; local rows
-                # are claimed by the desktop App which resolves local model
-                # credentials at claim time and never writes them to the queue.
-                environment="cloud",
-                runtime_capacity=runtime_capacity,
+                environment=(
+                    "cloud" if device_type in {"cloud", "remote"} else "local"
+                ),
             )
         )
 

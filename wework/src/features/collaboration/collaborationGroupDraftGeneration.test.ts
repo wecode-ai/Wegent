@@ -95,12 +95,12 @@ function generationResponse(events = generatedEvents) {
 const generated = generationResponse()
 
 describe('collaborationGroupDraftGeneration', () => {
-  it('keeps the working lead in the group and covers every collaborator', () => {
+  it('keeps the coordinating lead out of execution responsibilities and covers every collaborator', () => {
     expect(parseCollaborationGroupDraft(generated, input)).toMatchObject({
       leader: {
         kind: 'agent',
         id: 'device-agent',
-        responsibility: '协调任务并完成核心开发',
+        responsibility: '',
       },
       members: [
         { kind: 'human', id: '7' },
@@ -150,7 +150,7 @@ describe('collaborationGroupDraftGeneration', () => {
       })
     )
     expect(generateText.mock.calls[0]?.[0].outputSchema.properties).not.toHaveProperty('result')
-    expect(generateText.mock.calls[0]?.[0].prompt).toContain('负责人也可以直接执行工作')
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain('不得执行任何成员任务')
     expect(generateText.mock.calls[0]?.[0].prompt).toContain('2 到 3 个 principle')
     expect(generateText.mock.calls[0]?.[0].prompt).toContain('Use the language of the user request')
     expect(generateText.mock.calls[0]?.[0].prompt).not.toContain('总计不超过')

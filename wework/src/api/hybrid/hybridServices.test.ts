@@ -1050,11 +1050,13 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
   })
 
-  it('uses the shared Backend project activity stream for locally executed projects', () => {
+  it('keeps local project activity on the Executor-owned project stream', () => {
     const services = createServices()
     const localDetailServices = services.projectSpaceDetailServices?.local
 
-    expect(localDetailServices?.projectChatClient).toBe(mocks.cloudServices.projectChatClient)
+    expect(localDetailServices?.projectChatClient).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatClient
+    )
     expect(localDetailServices?.deliveryApi).toBe(mocks.localProjectSpaceDetailServices.deliveryApi)
     expect(localDetailServices?.projectChatAgentApi).toBe(
       mocks.localProjectSpaceDetailServices.projectChatAgentApi

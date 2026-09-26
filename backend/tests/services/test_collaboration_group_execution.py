@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from app.models.delivery import ProjectChatAgent
-from app.services.collaboration_group_execution import _resolve_agent
+from app.services.collaboration_group_execution import resolve_collaboration_group_agent
 
 
 def test_resolve_agent_accepts_the_bound_wegent_team_id() -> None:
@@ -21,4 +21,4 @@ def test_resolve_agent_accepts_the_bound_wegent_team_id() -> None:
         ),
     )
 
-    assert _resolve_agent([agent], "42") is agent
+    assert resolve_collaboration_group_agent([agent], "42") is agent

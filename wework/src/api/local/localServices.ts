@@ -5,7 +5,10 @@ import {
 } from '@wegent/chat-core/runtime-composer-api'
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 import { codexRuntimeModels } from '@wegent/chat-core/runtime-model-catalog'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type {
+  LocalProjectSpaceApi,
+  WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import {
   harnessLaunchThroughMessagesProxy,
   type HarnessProxyRegistration,
@@ -112,6 +115,11 @@ import type {
   User,
 } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  type CloudLoopItem,
+  type CloudProject,
+} from '@/api/deliveries'
 import type {
   Automation,
   AutomationListResponse,
@@ -180,6 +188,7 @@ import {
   createLocalDeliveryApi,
   createLocalLoopItemExecutionApi,
   createLocalProjectChatAgentApi,
+  type LocalProjectChatAgent,
 } from './localDelivery'
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
@@ -3644,12 +3653,190 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
   )
-  const deliveryApi = createLocalDeliveryApi(request)
-  const externalIssueApi = createExternalIssueApi(request)
   // Local project-space identity is the local session user, not the connected
   // cloud account. The approval/creator checks compare against LOCAL_USER, so
   // robots created with the cloud user id would never be approvable locally.
   const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data) =>
+    request(method, data as Record<string, unknown>)
+  const assignmentRuntimePayload = async (
+    projectId: string,
+    itemId: string,
+    agent: LocalProjectChatAgent,
+    role: 'direct' | 'manager' | 'member',
+    project: CloudProject,
+    task: CloudLoopItem,
+    group?: NonNullable<CloudProject['collaboration_groups']>[number]
+  ) => {
+    const preparedEnvironments = Object.entries(project.execution_environment?.devices ?? {})
+      .flatMap(([deviceId, state]) => {
+        const workspacePath = state.workspace_path?.trim()
+        return state.status === 'ready' && workspacePath
+          ? [
+              {
+                deviceId,
+                workspacePath,
+                preparedAt: state.prepared_at ?? '',
+              },
+            ]
+          : []
+      })
+      .sort(
+        (left, right) =>
+          Number(right.deviceId === agent.executionDeviceId) -
+            Number(left.deviceId === agent.executionDeviceId) ||
+          right.preparedAt.localeCompare(left.preparedAt) ||
+          left.deviceId.localeCompare(right.deviceId)
+      )
+    const preparedEnvironment = preparedEnvironments[0]
+    if (!preparedEnvironment) {
+      throw new Error('项目执行环境尚未初始化，请先在项目设置中初始化环境')
+    }
+    const { deviceId, workspacePath } = preparedEnvironment
+    const groupContext = group
+      ? [
+          `协作小组：${group.name}`,
+          group.description ? `小组说明：${group.description}` : '',
+          group.instructions ? `协作规则：${group.instructions}` : '',
+          project.workflow_definition
+            ? `项目流程：${JSON.stringify(project.workflow_definition)}`
+            : '',
+          `小组成员：${JSON.stringify({ leader: group.leader, members: group.members })}`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : ''
+    const message = [
+      `Issue：${task.title}`,
+      task.description ? `Issue 描述：\n${task.description}` : '',
+      groupContext,
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    return createLocalRuntimeTaskPayload(
+      {
+        runtime: agent.runtime,
+        taskId: `${itemId}-${role}-${agent.id}`,
+        title: task.title,
+        message,
+        deviceId,
+        workspacePath,
+        runtimeProjectName: project.name,
+        runtimeWorkspaceRoots: [workspacePath],
+        modelId: agent.model ?? undefined,
+        modelType: agent.modelType,
+        additionalSkills: agent.additionalSkills.map(skill => ({
+          name: skill.name,
+          namespace: skill.namespace,
+          is_public: skill.isPublic,
+        })),
+        projectInstructions: agent.systemPrompt,
+        projectPlugins: agent.plugins,
+        cloudProjectId: String(projectId),
+        origin: {
+          type: 'issue_dispatch',
+          cloudProjectId: String(projectId),
+          loopItemId: itemId,
+          projectStore: 'local',
+          dispatchRole: role,
+          ...(group ? { collaborationGroupId: group.id } : {}),
+        },
+        bot: [
+          {
+            id: agent.id,
+            name: agent.displayName || agent.name,
+            shell_type: agent.runtime === 'claude_code' ? 'ClaudeCode' : 'Codex',
+            mcp_servers: agent.mcpServers,
+          },
+        ],
+      },
+      deviceId,
+      assignmentRequestWithLocalDevice,
+      deps.cloudModelGateway,
+      resolveProxy,
+      deps.user ?? getLocalUser(),
+      true,
+      deps.materializeRuntimeTask
+    )
+  }
+  const deliveryApi: LocalProjectSpaceApi = createLocalDeliveryApi(request, {
+    async prepareAssignmentExecutionPayload({ projectId, itemId, assigneeType, assigneeId }) {
+      const [projects, task] = await Promise.all([
+        deliveryApi.listCloudProjects(),
+        deliveryApi.getLoopItem(itemId),
+      ])
+      const projectAgents = await localProjectChatAgentApi.list(String(projectId))
+      const workspaceAgents =
+        String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+          ? []
+          : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID)
+      const agents = [
+        ...projectAgents,
+        ...workspaceAgents.filter(
+          workspaceAgent =>
+            !projectAgents.some(projectAgent => projectAgent.id === workspaceAgent.id)
+        ),
+      ]
+      const project = projects.items.find(candidate => String(candidate.id) === String(projectId))
+      if (!project) throw new Error(`Local project '${projectId}' is unavailable`)
+      if (assigneeType === 'agent') {
+        const agent = agents.find(candidate => candidate.id === assigneeId)
+        if (!agent || agent.status !== 'active') {
+          throw new Error(`Local agent '${assigneeId}' is unavailable`)
+        }
+        return assignmentRuntimePayload(projectId, itemId, agent, 'direct', project, task)
+      }
+      const group = (project.collaboration_groups ?? []).find(
+        candidate => candidate.id === assigneeId
+      )
+      if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
+      if (group.leader.kind !== 'agent') {
+        throw new Error('Local collaboration group leader must be an agent')
+      }
+      const manager = agents.find(candidate => candidate.id === group.leader.id)
+      if (!manager || manager.status !== 'active') {
+        throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
+      }
+      const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
+      const memberRuntimeProfiles = await Promise.all(
+        Array.from(new Set(references.map(member => member.id))).map(async memberId => {
+          const agent = agents.find(candidate => candidate.id === memberId)
+          if (!agent || agent.status !== 'active') {
+            throw new Error(`Collaboration member '${memberId}' is unavailable`)
+          }
+          return {
+            memberIds: [memberId],
+            agentId: agent.id,
+            agentName: agent.displayName || agent.name,
+            runtimePayload: await assignmentRuntimePayload(
+              projectId,
+              itemId,
+              agent,
+              'member',
+              project,
+              task,
+              group
+            ),
+          }
+        })
+      )
+      return {
+        dispatchKind: 'collaboration_group',
+        dispatchTaskId: itemId,
+        managerRuntimeRequest: await assignmentRuntimePayload(
+          projectId,
+          itemId,
+          manager,
+          'manager',
+          project,
+          task,
+          group
+        ),
+        memberRuntimeProfiles,
+      }
+    },
+  })
+  const externalIssueApi = createExternalIssueApi(request)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: LOCAL_USER,

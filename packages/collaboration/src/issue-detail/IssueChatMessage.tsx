@@ -271,10 +271,7 @@ export function IssueChatMessage({
   const isManager = agentRole === "manager";
   const isManagerStatusComment =
     isManager && message.metadata.activity_type === "manager_status_comment";
-  const activityAuthor =
-    isAgent && !isManager && taskSummary?.title
-      ? taskSummary.title
-      : message.sender.name;
+  const activityAuthor = message.sender.name;
   const isSubagent = message.metadata.kind === "task_ai_subagent";
   const runId =
     typeof message.metadata.run_id === "string"
@@ -638,16 +635,21 @@ export function IssueChatMessage({
         metadata={
           isAgent && showInlineExecutionStatus ? (
             <>
-              <span
-                className="text-xs text-text-muted"
-                data-testid={`cloud-task-activity-role-${message.messageId}`}
-              >
-                {t(
-                  isManager
-                    ? "activity.task_activity_manager_role"
-                    : "activity.task_activity_member_role",
-                )}
-              </span>
+              {isManager ? (
+                <span
+                  className="text-xs text-text-muted"
+                  data-testid={`cloud-task-activity-role-${message.messageId}`}
+                >
+                  {t("activity.task_activity_manager_role")}
+                </span>
+              ) : taskSummary?.title ? (
+                <span
+                  className="text-xs text-text-muted"
+                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+                >
+                  {taskSummary.title}
+                </span>
+              ) : null}
               <ExecutionStatusBadge
                 translate={t}
                 testId={executionTestId}

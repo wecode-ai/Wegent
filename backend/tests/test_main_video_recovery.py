@@ -33,7 +33,6 @@ def isolated_lifespan(monkeypatch: pytest.MonkeyPatch):
         "app.core.events.init_event_bus",
         "app.services.pet.event_handlers.register_pet_event_handlers",
         "app.services.project_automation_completion.register_project_automation_task_completion_handler",
-        "app.services.board_team_completion.register_board_team_completion_handler",
         "app.services.device_monitor.start_device_monitor",
         "app.services.loop_items.external_provider.external_loop_item_provider.close",
         "shared.telemetry.core.shutdown_telemetry",

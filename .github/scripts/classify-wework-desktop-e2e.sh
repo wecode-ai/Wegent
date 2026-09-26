@@ -8,7 +8,10 @@ core_segments=(
   collaboration-shared-core
   collaboration-first-use
   collaboration-group-onboarding
+  collaboration-local-agent-dispatch
+  collaboration-remote-agent-dispatch
   collaboration-local-group-coordinate
+  collaboration-remote-group-coordinate
   collaboration-human-round-resume
   collaboration-local-group-cancellation
   collaboration-issue-comment-mention
@@ -151,7 +154,7 @@ core_shards=(
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,task-board-bulk-actions,change-request-status,context-compaction
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
-  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-group-coordinate,collaboration-human-round-resume
+  project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
@@ -160,6 +163,7 @@ core_shards=(
   local-harness,running-conversation-history,running-plan-history,native-window-chrome,collaboration-issue-comment-notification
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
+  collaboration-remote-agent-dispatch,collaboration-remote-group-coordinate
 )
 
 validate_core_shards() {
@@ -295,7 +299,11 @@ select_cloud_worktree_checkpoints() {
 }
 
 select_collaboration_dispatch_checkpoints() {
+  select_target "core:project-assignment-notification"
+  select_target "core:collaboration-local-agent-dispatch"
+  select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
+  select_target "core:collaboration-remote-group-coordinate"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }
@@ -545,8 +553,20 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-local-agent-dispatch.scenario.mjs)
+      select_target "core:collaboration-local-agent-dispatch"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-agent-dispatch.scenario.mjs)
+      select_target "core:collaboration-remote-agent-dispatch"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-local-group-coordinate.scenario.mjs)
       select_target "core:collaboration-local-group-coordinate"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
+      select_target "core:collaboration-remote-group-coordinate"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)

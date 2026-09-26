@@ -23,7 +23,10 @@ const CHECKPOINT_RESOURCES = new Map([
   ['workspace-attachments', ['desktop-runtime-intensive']],
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
   ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
   [
     'collaboration-local-group-cancellation',
@@ -75,8 +78,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
+  'collaboration-local-agent-dispatch':
+    './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'collaboration-remote-agent-dispatch':
+    './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
   'collaboration-local-group-coordinate':
     './scenarios/collaboration-local-group-coordinate.scenario.mjs',
+  'collaboration-remote-group-coordinate':
+    './scenarios/collaboration-remote-group-coordinate.scenario.mjs',
   'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
   'collaboration-local-group-cancellation':
     './scenarios/collaboration-local-group-cancellation.scenario.mjs',
@@ -109,7 +118,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-shared-core',
   'collaboration-first-use',
   'collaboration-group-onboarding',
+  'collaboration-local-agent-dispatch',
+  'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
+  'collaboration-remote-group-coordinate',
   'collaboration-human-round-resume',
   'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',

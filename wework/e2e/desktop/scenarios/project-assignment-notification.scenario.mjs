@@ -13,7 +13,7 @@ import {
   responseCreated,
   selectMcpTool,
 } from '../modules/response-protocol.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -177,7 +177,6 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs) {
     'click',
     `[data-testid="cloud-todo-create-assignee-option-user:${owner.id}"]`
   )
-  await control.command('click', '[data-testid="wework-assignment-notify-confirm"]')
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-confirm"]'), {
     timeoutMs: uiTimeoutMs,
   })
@@ -189,6 +188,37 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs) {
   )
 }
 
+async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
+  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-settings-environments"]')
+  )
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-execution-environment-add"]')
+  )
+  await control.command(
+    'clickWhenEnabled',
+    scoped(
+      `[data-testid="collaboration-project-execution-environment-candidate-${remoteDevice.id}"]`
+    ),
+    { timeoutMs }
+  )
+  await control.command(
+    'clickWhenEnabled',
+    scoped(
+      `[data-testid="collaboration-project-execution-environment-initialize-${remoteDevice.id}"]`
+    ),
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-project-execution-environment-completion-status"]'),
+    { text: '环境已初始化', timeoutMs }
+  )
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -196,6 +226,7 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   let backendUrl = ''
+  let cloudEnvironment = null
   let ownerToken = ''
   let owner = null
   let project = null
@@ -214,6 +245,10 @@ export function createDesktopScenario({
       backendUrl = cloud.backendUrl
       ownerToken = cloud.authToken
       owner = await ownerRequest('/api/users/me')
+    },
+
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
     },
 
     async handleHttp(requestMessage, response, url) {
@@ -298,6 +333,12 @@ export function createDesktopScenario({
       await selectCollaborationDomain(control, CONTENT, 'cloud')
 
       project = await createWorkspaceAndProject(control, ownerRequest, uiTimeoutMs)
+      const remoteDevice = await cloudEnvironment.waitForDeviceType(
+        REMOTE_DOCKER_DEVICE_ID,
+        'remote'
+      )
+      assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
+      await initializeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
       issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
       assert.equal(String(issue.assignee_user_id), String(owner.id))
       notification = await waitForValue(

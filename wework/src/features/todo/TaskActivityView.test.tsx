@@ -1343,10 +1343,15 @@ describe('TaskActivityView', () => {
     }
     const execution = {
       ...agentMessage,
+      sender: { type: 'agent' as const, id: 'agent-1', name: 'CPU 验证智能体' },
       content: '正在处理接入',
       rootMessageId: root.messageId,
       status: 'completed' as const,
-      metadata: { run_status: 'succeeded' },
+      metadata: {
+        dispatch_role: 'member',
+        workflow_task_title: '验证 CPU 检查项',
+        run_status: 'succeeded',
+      },
       runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
       createdAt: '2026-08-03T10:01:00Z',
     }
@@ -1429,6 +1434,12 @@ describe('TaskActivityView', () => {
     ])
     const card = screen.getByTestId('cloud-task-activity-card-message-1')
     expect(card).toHaveTextContent('请完成接入')
+    expect(card).toHaveTextContent('CPU 验证智能体')
+    expect(within(card).getByTestId('cloud-task-activity-task-title-message-2')).toHaveTextContent(
+      '验证 CPU 检查项'
+    )
+    expect(within(card).queryByTestId('cloud-task-activity-role-message-2')).not.toBeInTheDocument()
+    expect(card).not.toHaveTextContent('执行成员')
     expect(card).toHaveTextContent('请补充验证')
     expect(card).toHaveTextContent('验证已补充')
     expect(
@@ -1455,7 +1466,11 @@ describe('TaskActivityView', () => {
     await user.click(replyToggle)
     expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
-    expect(screen.getByTestId('cloud-task-activity-card-composer-message-1')).toHaveFocus()
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('回复 Ada')
+    expect(
+      screen.queryByTestId('cloud-task-activity-card-composer-message-1')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-task-activity-composer')).toHaveFocus()
     await user.click(screen.getByTestId('issue-reply-cancel'))
     expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()

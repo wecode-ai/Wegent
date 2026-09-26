@@ -580,6 +580,7 @@ pub struct RuntimeWorkRpcHandler {
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    local_issue_scheduler_started: Arc<AtomicBool>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
     task_store_path: Arc<PathBuf>,
@@ -850,6 +851,7 @@ impl RuntimeWorkRpcHandler {
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
+            local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
@@ -918,6 +920,7 @@ impl RuntimeWorkRpcHandler {
             .startup_recovery_deferred
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
+        handler.start_local_issue_scheduler();
         handler
     }
 

@@ -41,6 +41,19 @@ type LocalRequest = <T>(
   deviceId?: string
 ) => Promise<T>
 
+export interface LocalAssignmentExecutionPayloadInput {
+  projectId: CloudProjectId
+  itemId: string
+  assigneeType: 'agent' | 'group'
+  assigneeId: string
+}
+
+interface LocalDeliveryApiOptions {
+  prepareAssignmentExecutionPayload?(
+    input: LocalAssignmentExecutionPayloadInput
+  ): Promise<Record<string, unknown>>
+}
+
 interface LocalLoopItemRecord {
   id: string
   resource_type: 'project' | 'task' | string
@@ -640,12 +653,6 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         note: note ?? null,
       })
     },
-    async claimNext(claim: {
-      execution_device_id?: string | null
-      lease_seconds?: number
-    }): Promise<LocalLoopItemExecution | null> {
-      return request<LocalLoopItemExecution | null>('executions.claim_next', { claim })
-    },
     async heartbeat(
       executionId: number,
       runtimeDeviceId: string | null,
@@ -828,7 +835,10 @@ function unsupported(name: string): never {
   throw new Error(`${name} is not available for local projects yet`)
 }
 
-export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpaceApi {
+export function createLocalDeliveryApi(
+  request: LocalRequest,
+  options: LocalDeliveryApiOptions = {}
+): LocalProjectSpaceApi {
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   let cachedProjectRecords: LocalLoopItemRecord[] | null = null
@@ -1123,6 +1133,19 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
             : data.tags,
         }
       }
+      const assignedGroupId =
+        typeof data.assignee_group_id === 'string' ? data.assignee_group_id : null
+      const assignedAgentId =
+        typeof data.assignee_agent_id === 'string' ? data.assignee_agent_id : null
+      if (assignedGroupId || assignedAgentId) {
+        const executionPayload = await options.prepareAssignmentExecutionPayload?.({
+          projectId,
+          itemId,
+          assigneeType: assignedGroupId ? 'group' : 'agent',
+          assigneeId: assignedGroupId ?? assignedAgentId!,
+        })
+        if (executionPayload) todo = { ...todo, execution_payload: executionPayload }
+      }
       const record = await request<LocalLoopItemRecord>('todos.update', {
         project_id: projectId,
         task_id: itemId,
@@ -1149,12 +1172,22 @@ export function createLocalDeliveryApi(request: LocalRequest): LocalProjectSpace
             : data.assigneeType === 'team'
               ? { assignee_team_id: Number(data.assigneeId) }
               : { assignee_group_id: data.assigneeId }
+      const executionPayload =
+        data.assigneeType === 'agent' || data.assigneeType === 'group'
+          ? await options.prepareAssignmentExecutionPayload?.({
+              projectId,
+              itemId,
+              assigneeType: data.assigneeType,
+              assigneeId: data.assigneeId,
+            })
+          : null
       const record = await request<LocalLoopItemRecord>('todos.update', {
         project_id: projectId,
         task_id: itemId,
         todo: {
           version: data.version,
           ...assignment,
+          ...(executionPayload ? { execution_payload: executionPayload } : {}),
         },
       })
       taskProjects.set(record.id, projectId)

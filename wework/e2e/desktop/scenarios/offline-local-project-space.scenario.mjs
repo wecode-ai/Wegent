@@ -5,6 +5,7 @@ import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  openProjectAgentCreator,
   selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
 
@@ -284,12 +285,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-project-settings-participants"]')
       )
-      await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await openProjectAgentCreator(
+        control,
+        scoped('[data-testid="project-agent-add"]'),
+        uiTimeoutMs
+      )
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })

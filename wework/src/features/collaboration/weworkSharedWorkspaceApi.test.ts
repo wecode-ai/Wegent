@@ -1171,7 +1171,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       updated_at: '2026-09-10T00:00:00Z',
     }
     const projectAutomationApi = {
-      claimNext: vi.fn().mockResolvedValue(execution),
       heartbeat: vi.fn().mockResolvedValue(execution),
       startRequested: vi.fn().mockResolvedValue(execution),
       dispatchUnknown: vi.fn().mockResolvedValue(execution),
@@ -1222,14 +1221,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
       'Task',
       'Description'
     )
-
-    await expect(
-      port.claimNextExecution({ executionDeviceId: 'device-1', leaseSeconds: 300 })
-    ).resolves.toMatchObject({ id: 12, cloud_project_id: project.id })
-    expect(projectAutomationApi.claimNext).toHaveBeenCalledWith({
-      execution_device_id: 'device-1',
-      lease_seconds: 300,
-    })
 
     await port.reportExecutionLifecycle(project.id, 12, {
       type: 'heartbeat',

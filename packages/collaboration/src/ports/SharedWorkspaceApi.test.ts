@@ -60,7 +60,7 @@ describe("SharedWorkspaceApi boundaries", () => {
     expectTypeOf<WeworkWorkspaceRuntimePort>().toHaveProperty(
       "trackProjectTask",
     );
-    expectTypeOf<WeworkWorkspaceRuntimePort>().toHaveProperty(
+    expectTypeOf<WeworkWorkspaceRuntimePort>().not.toHaveProperty(
       "claimNextExecution",
     );
   });

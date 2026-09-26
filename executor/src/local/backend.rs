@@ -754,25 +754,33 @@ async fn drain_available_runtime_work<T>(
 ) where
     T: LocalBackendTransport,
 {
-    let capacity = handler
+    let capacity = match handler
         .handle_runtime_rpc(json!({
             "method": "runtime.capacity.get",
             "payload": {},
         }))
         .await
-        .ok();
-    client.set_runtime_capacity(capacity);
-    // Publish the freshly read snapshot for App-originated HTTP claims too.
-    // The registration heartbeat runs before this asynchronous capacity read.
-    if let Err(error) = client.emit_liveness_heartbeat().await {
-        write_executor_error_line(&format_executor_log(
-            "runtime capacity heartbeat failed",
-            &[("error", error)],
-        ));
-        return;
-    }
-
-    loop {
+    {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runtime capacity read failed",
+                &[("error", error.message)],
+            ));
+            return;
+        }
+    };
+    let limit = capacity.get("limit").and_then(Value::as_u64).unwrap_or(0);
+    let active = capacity
+        .get("active")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let queued = capacity
+        .get("queued")
+        .and_then(Value::as_u64)
+        .unwrap_or(limit);
+    let available = limit.saturating_sub(active.saturating_add(queued));
+    for _ in 0..available {
         let work = match client
             .pull_runtime_work(client.config.heartbeat_timeout)
             .await

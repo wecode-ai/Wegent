@@ -451,6 +451,8 @@ const sharedMessages: Record<
     "todo.remove_name": "删除 {{name}}",
     "todo.not_set": "未设置",
     "todo.create_issue_failed": "创建任务失败",
+    "todo.create_execution_environment_required":
+      "项目执行环境尚未初始化。请先在项目设置中初始化环境，再把任务分配给智能体或协作小组。",
     "todo.save_issue_failed": "保存任务失败",
     "todo.add_collaborator_failed": "添加参与者失败",
     "todo.remove_collaborator_failed": "移除参与者失败",
@@ -848,6 +850,8 @@ const sharedMessages: Record<
     "todo.remove_name": "Remove {{name}}",
     "todo.not_set": "Not set",
     "todo.create_issue_failed": "Failed to create issue",
+    "todo.create_execution_environment_required":
+      "The project execution environment is not initialized. Initialize it in project settings before assigning work to an agent or collaboration group.",
     "todo.save_issue_failed": "Failed to save issue",
     "todo.add_collaborator_failed": "Failed to add participant",
     "todo.remove_collaborator_failed": "Failed to remove participant",

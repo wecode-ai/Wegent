@@ -283,6 +283,82 @@ describe('local delivery API', () => {
     }
   )
 
+  test('persists the immutable runtime snapshot with an agent assignment', async () => {
+    const executionPayload = {
+      title: 'First task',
+      executionRequest: { task_id: 'LOCAL-1-direct-LA-1' },
+    }
+    const prepareAssignmentExecutionPayload = vi.fn().mockResolvedValue(executionPayload)
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.update') return { ...taskRecord, assignee_agent_id: 'LA-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request, { prepareAssignmentExecutionPayload })
+
+    await api.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'agent',
+      assigneeId: 'LA-1',
+    })
+
+    expect(prepareAssignmentExecutionPayload).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      itemId: 'LOCAL-1',
+      assigneeType: 'agent',
+      assigneeId: 'LA-1',
+    })
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: {
+        version: 1,
+        assignee_agent_id: 'LA-1',
+        execution_payload: executionPayload,
+      },
+    })
+  })
+
+  test('persists the collaboration runtime snapshot through the editor update path', async () => {
+    const executionPayload = {
+      dispatchKind: 'collaboration_group',
+      managerRuntimeRequest: { executionRequest: { task_id: 'manager' } },
+      memberRuntimeProfiles: [],
+    }
+    const prepareAssignmentExecutionPayload = vi.fn().mockResolvedValue(executionPayload)
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.update') {
+        return {
+          ...taskRecord,
+          metadata: { collaboration_group: { id: 'squad-1', name: 'Squad' } },
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request, { prepareAssignmentExecutionPayload })
+
+    await api.updateLoopItem('LOCAL-1', {
+      version: 1,
+      assignee_group_id: 'squad-1',
+    })
+
+    expect(prepareAssignmentExecutionPayload).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      itemId: 'LOCAL-1',
+      assigneeType: 'group',
+      assigneeId: 'squad-1',
+    })
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: {
+        version: 1,
+        assignee_group_id: 'squad-1',
+        execution_payload: executionPayload,
+      },
+    })
+  })
+
   test('maps the executor-owned Issue context marker', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.list') {

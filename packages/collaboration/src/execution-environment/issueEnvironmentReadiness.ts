@@ -41,9 +41,6 @@ export function resolveProjectExecutionEnvironmentReadiness(
   >,
   environments: CollaborationExecutionEnvironment[],
 ): ProjectExecutionEnvironmentReadiness {
-  if (project.project_store === "local") {
-    return { kind: "not_applicable", environments };
-  }
   if (environments.length === 0) {
     return { kind: "unassigned", environments };
   }
@@ -109,13 +106,13 @@ export function useProjectExecutionEnvironmentReadiness({
   const requestRevision = useRef(0);
   const [readiness, setReadiness] =
     useState<ProjectExecutionEnvironmentReadiness>(() =>
-      !project || project.project_store === "local"
+      !project
         ? { kind: "not_applicable", environments: EMPTY_ENVIRONMENTS }
         : { kind: "loading", environments: EMPTY_ENVIRONMENTS },
     );
 
   const refresh = useCallback(() => {
-    if (!project || project.project_store === "local") {
+    if (!project) {
       requestRevision.current += 1;
       setReadiness({
         kind: "not_applicable",
@@ -139,7 +136,7 @@ export function useProjectExecutionEnvironmentReadiness({
   }, [api, project]);
 
   useEffect(() => {
-    if (!project || project.project_store === "local") {
+    if (!project) {
       refresh();
       return;
     }

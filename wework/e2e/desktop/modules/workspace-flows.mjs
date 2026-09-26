@@ -99,6 +99,62 @@ export async function selectWhenOptionAvailable(control, selector, value, timeou
   await control.command('select', selector, { value })
 }
 
+export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
+  await control.command('clickWhenEnabled', addSelector, { timeoutMs })
+  const editorSelector = '[data-testid="cloud-project-chat-agent-editor"]'
+  const modeSelectors = [
+    '[data-testid="project-agent-mode-create-card"]',
+    '[data-testid="project-agent-mode-create"]',
+  ]
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', editorSelector)) > 0) {
+      return
+    }
+    for (const modeSelector of modeSelectors) {
+      if (Number(await control.command('getElementCount', modeSelector)) > 0) {
+        await control.command('click', modeSelector)
+        await control.command('waitFor', editorSelector, { timeoutMs })
+        return
+      }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The project Agent creator did not open')
+}
+
+export async function initializeFirstProjectExecutionEnvironment(
+  control,
+  contentSelector,
+  timeoutMs
+) {
+  await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
+  await control.command(
+    'click',
+    `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
+  )
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid^="collaboration-project-execution-environment-initialize-"]`,
+    { visible: true, timeoutMs }
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', contentSelector))
+  const initializeTestId = snapshot.testIds.find(testId =>
+    testId.startsWith('collaboration-project-execution-environment-initialize-')
+  )
+  assert.ok(initializeTestId, 'The project has no execution environment available to initialize')
+  await control.command(
+    'clickWhenEnabled',
+    `${contentSelector} [data-testid="${initializeTestId}"]`,
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    `${contentSelector} [data-testid="collaboration-project-execution-environment-completion-status"]`,
+    { text: '环境已初始化', timeoutMs }
+  )
+}
+
 async function waitForNativeCollaborationPlatform(
   control,
   contentSelector,
@@ -193,6 +249,10 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
     projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
   )
   await mkdir(workspacePath, { recursive: true })
+  // The evidence directory lives under the Wegent checkout. Give the imported
+  // folder its own repository boundary so product discovery does not mistake
+  // the parent checkout for the project's configured source repository.
+  await runChecked('git', ['init', workspacePath])
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1069,6 +1129,8 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
   assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
   const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
   const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
+  const openTaskTestId = `cloud-todo-card-open-task-${boardItemId}`
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   await control.command(
     'click',
     `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`,
@@ -1076,6 +1138,13 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
       visible: true,
     }
   )
+  if (!snapshot.testIds.includes(openTaskTestId)) {
+    await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    return
+  }
   await control.command(
     'waitFor',
     `[data-testid="cloud-todo-card-progress-popup-${boardItemId}"]`,
@@ -1084,7 +1153,7 @@ async function openBoardTaskPageByText(control, activeBoardContentSelector, text
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('click', `[data-testid="cloud-todo-card-open-task-${boardItemId}"]`, {
+  await control.command('click', `[data-testid="${openTaskTestId}"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1259,6 +1328,23 @@ async function verifyExistingTaskBoardAssociation(
   )
   const targetProjectName = 'Existing Task Target Board'
   await createLocalCollaborationProject(control, activeBoardContentSelector, targetProjectName)
+  await initializeFirstProjectExecutionEnvironment(
+    control,
+    activeBoardContentSelector,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-testid="collaboration-tab-board"]`
+  )
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   const existingTargetTitle = 'WEWORK_EXISTING_BOARD_CARD'
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
@@ -1354,9 +1440,8 @@ async function verifyExistingTaskBoardAssociation(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const movedReviewColumnSelector = `${movedBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
-  await control.command('scrollIntoView', movedReviewColumnSelector)
-  await control.command('waitFor', movedReviewColumnSelector, {
+  const movedBoardSelector = `${movedBoardContentSelector} [data-testid="collaboration-board"]`
+  await control.command('waitFor', movedBoardSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

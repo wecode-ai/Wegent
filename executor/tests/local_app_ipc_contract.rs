@@ -16,6 +16,7 @@ use wegent_executor::local::{
     app_ipc::{app_ipc_stdio_ready_log_line, AppIpcError, AppIpcServer, RuntimeWorkHandler},
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
+use wegent_executor::task_runtime::LocalTaskStore;
 
 const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -1154,21 +1155,14 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .await
         .unwrap();
 
-    let claimed = server
-        .dispatch(
-            "executions.claim_next",
-            json!({
-                "claim": {
-                    "execution_device_id": "local-device",
-                    "lease_seconds": 300
-                }
-            }),
-        )
-        .await
+    let claimed = LocalTaskStore::open(executor_home.path().join("data/tasks.sqlite"))
+        .unwrap()
+        .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
+        .unwrap()
         .unwrap();
-    let execution_id = claimed["id"].as_i64().unwrap();
-    assert_eq!(claimed["status"], "claimed");
-    assert_eq!(claimed["display_state"], "starting");
+    let execution_id = claimed.id;
+    assert_eq!(claimed.status, "claimed");
+    assert_eq!(claimed.display_state, "starting");
 
     // Crash the run out-of-band: expire the lease without a terminal event.
     let connection =

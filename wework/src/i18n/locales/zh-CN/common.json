@@ -404,6 +404,8 @@
     "task_activity_execution_count": "{{count}} 条运行动态",
     "task_activity_execution_settings": "执行设置",
     "task_activity_inline_placeholder": "回复…",
+    "task_activity_replying_to": "回复 {{name}}",
+    "task_activity_cancel_reply": "取消回复",
     "task_activity_ready_for_review": "已提交结果，等待验收",
     "task_activity_view_execution": "查看执行细节",
     "task_activity_open_task": "查看任务详情",

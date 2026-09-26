@@ -105,7 +105,6 @@ function cloudRuntimePort(
       return { issue: result.item }
     },
     updateTrackedTaskTitle: vi.fn().mockResolvedValue(null),
-    claimNextExecution: vi.fn().mockResolvedValue(null),
     reportExecutionLifecycle: vi.fn().mockResolvedValue(null),
   }
 }

@@ -22,7 +22,6 @@ from app.schemas.project_chat import (
     ProjectChatCommentExecution,
     ProjectChatSend,
     ProjectChatSubscribe,
-    ProjectChatWegentContinuation,
 )
 from app.schemas.runtime_execution_snapshot import RuntimeExecutionSnapshot
 from app.services.chat.access import get_token_expiry, verify_jwt_token
@@ -66,9 +65,7 @@ PROJECT_CHAT_CREATED_EVENT = "wework:project_chat:message:created"
 PROJECT_CHAT_AGENT_CHUNK_EVENT = "wework:project_chat:agent:chunk"
 PROJECT_CHAT_AGENT_START_EVENT = "wework:project_chat:agent:start"
 PROJECT_CHAT_EXECUTION_SNAPSHOT_EVENT = "wework:project_chat:execution:snapshot"
-PROJECT_CHAT_MANAGER_CONTINUE_EVENT = "wework:project_chat:manager:continue"
 PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
-PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
 PROJECT_CHAT_COMMENT_EXECUTE_EVENT = "wework:project_chat:comment:execute"
 PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
 PROJECT_CHAT_TASK_ROOM_PREFIX = "wework-project-chat:task:"
@@ -145,9 +142,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             PROJECT_CHAT_SEND_EVENT: "on_project_chat_message_send",
             PROJECT_CHAT_AGENT_START_EVENT: "on_project_chat_agent_start",
             PROJECT_CHAT_EXECUTION_SNAPSHOT_EVENT: "on_project_chat_execution_snapshot",
-            PROJECT_CHAT_MANAGER_CONTINUE_EVENT: "on_project_chat_manager_continue",
             PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
-            PROJECT_CHAT_WEGENT_CONTINUE_EVENT: "on_project_chat_wegent_continue",
             PROJECT_CHAT_COMMENT_EXECUTE_EVENT: "on_project_chat_comment_execute",
         }
 
@@ -484,33 +479,6 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         for message in result:
             await emit_project_chat_message(self, message)
         return {"ok": True, "result": result}
-
-    async def on_project_chat_wegent_continue(self, sid: str, data: dict) -> dict:
-        """Persist and dispatch one reply into its bound native Wegent Task."""
-
-        identity = await self._project_chat_identity(sid)
-        if identity is None:
-            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
-        try:
-            request = ProjectChatWegentContinuation.model_validate(
-                project_chat_payload(data)
-            )
-            from app.services.board_team_continuation import (
-                board_team_continuation_service,
-            )
-
-            with get_db_session() as db:
-                result = await board_team_continuation_service.start(
-                    db,
-                    user_id=int(identity["user_id"]),
-                    request=request,
-                )
-                message = result.message.model_dump(mode="json", by_alias=True)
-        except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
-        if result.created:
-            await emit_project_chat_message(self, message)
-        return {"ok": True, "result": message}
 
 
 async def relay_ipc_request(

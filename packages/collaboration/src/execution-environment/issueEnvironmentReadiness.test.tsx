@@ -108,13 +108,13 @@ describe("resolveProjectExecutionEnvironmentReadiness", () => {
     ).toBe("uninitialized");
   });
 
-  it("does not apply cloud readiness to a local project", () => {
+  it("requires a prepared execution environment for a local project", () => {
     expect(
       resolveProjectExecutionEnvironmentReadiness(
         { ...baseProject, project_store: "local" },
         [],
       ).kind,
-    ).toBe("not_applicable");
+    ).toBe("unassigned");
   });
 });
 
@@ -164,6 +164,24 @@ async function renderProbe(
 }
 
 describe("useProjectExecutionEnvironmentReadiness", () => {
+  it("loads execution environment readiness for a local project", async () => {
+    const api = {
+      projects: {
+        listExecutionEnvironments: vi.fn(async () => [environment("online")]),
+      },
+    } as unknown as SharedWorkspaceApi;
+
+    await renderProbe(api, {
+      ...projectWithDevice("ready", "/workspace"),
+      project_store: "local",
+    });
+
+    expect(container?.textContent).toBe("ready");
+    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith(
+      "project-1",
+    );
+  });
+
   it("reports a status check failure as unknown without treating it as unassigned", async () => {
     const api = {
       projects: {

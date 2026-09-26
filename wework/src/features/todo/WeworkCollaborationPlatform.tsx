@@ -1015,10 +1015,13 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
   const navigationApis = useMemo(
     () =>
-      [localProjectApi, api?.workspaces ? withoutDefaultWorkItemProject(api) : undefined].filter(
-        (candidate): candidate is SharedWorkspaceApi => Boolean(candidate)
-      ),
-    [api, localProjectApi]
+      [
+        localProjectApi,
+        cloudConnection.isConnected && api?.workspaces
+          ? withoutDefaultWorkItemProject(api)
+          : undefined,
+      ].filter((candidate): candidate is SharedWorkspaceApi => Boolean(candidate)),
+    [api, cloudConnection.isConnected, localProjectApi]
   )
   const activeProject =
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
@@ -1368,8 +1371,18 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                         )
                       })
                     }
+                    if (!localProjectApi) {
+                      throw new Error(
+                        locale === 'zh-CN'
+                          ? '本地协作服务当前不可用'
+                          : 'The local collaboration service is unavailable'
+                      )
+                    }
+                    const currentProject = await localProjectApi.projects.get(
+                      String(importedProject.id)
+                    )
                     await onImported({
-                      ...importedProject,
+                      ...currentProject,
                       workspace_id: LOCAL_WORKSPACE_ID,
                     })
                   },

@@ -30,6 +30,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "cloud_project_id",
     "cloudCollaborationRound",
     "collaborationManagerContext",
+    "collaborationDispatchTaskId",
     "cloudTranscript",
     "executionRequest",
     "execution_request",

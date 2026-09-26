@@ -567,7 +567,6 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     }
   })
   const projectAutomationApi = {
-    claimNext: vi.fn(),
     heartbeat: vi.fn(),
     startRequested: vi.fn(),
     dispatchUnknown: vi.fn(),

@@ -31,6 +31,7 @@ const MARKER = `HUMAN_ROUND_RESUME_${process.pid}`
 const ROUND_ID = `${MARKER}-round-1`
 const HUMAN_ASSIGNMENT_ID = `${MARKER}-human-assignment`
 const HUMAN_DELIVERY_COMPLETION = `${HUMAN_TASK} 已交付：人工证据已核对。`
+const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const CALLS = {
   plan: `${MARKER}-plan`,
   updateStatus: `${MARKER}-update-status`,
@@ -305,9 +306,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
       response.items?.find(
         value =>
           value.name === GROUP &&
-          value.instructions?.includes(
-            'AI 与人工任务可并发；整轮全部交付后必须启动新的负责人运行'
-          )
+          value.instructions?.includes('AI 与人工任务可并发；整轮全部交付后必须启动新的负责人运行')
       ),
     '协作小组规则保存后未持久化',
     uiTimeoutMs
@@ -345,6 +344,37 @@ async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   return issue
 }
 
+async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
+  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-settings-environments"]')
+  )
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-execution-environment-add"]')
+  )
+  await control.command(
+    'clickWhenEnabled',
+    scoped(
+      `[data-testid="collaboration-project-execution-environment-candidate-${remoteDevice.id}"]`
+    ),
+    { timeoutMs }
+  )
+  await control.command(
+    'clickWhenEnabled',
+    scoped(
+      `[data-testid="collaboration-project-execution-environment-initialize-${remoteDevice.id}"]`
+    ),
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-project-execution-environment-completion-status"]'),
+    { text: '环境已初始化', timeoutMs }
+  )
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -353,6 +383,7 @@ export function createDesktopScenario({
 }) {
   let backendUrl = ''
   let authToken = ''
+  let cloudEnvironment = null
   let owner = null
   let project = null
   let member = null
@@ -365,7 +396,6 @@ export function createDesktopScenario({
   let releaseAi
   let resolveAiStarted
   let resolveAiCompleted
-  let resolveHumanAssigned
   let resolveHumanCompleted
   let resolveManagerResumed
   const aiRelease = new Promise(resolve => {
@@ -376,9 +406,6 @@ export function createDesktopScenario({
   })
   const aiCompleted = new Promise(resolve => {
     resolveAiCompleted = resolve
-  })
-  const humanAssigned = new Promise(resolve => {
-    resolveHumanAssigned = resolve
   })
   const humanCompleted = new Promise(resolve => {
     resolveHumanCompleted = resolve
@@ -396,6 +423,10 @@ export function createDesktopScenario({
       authToken = cloud.authToken
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
+    },
+
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
     },
 
     async handleHttp(requestMessage, response, url) {
@@ -418,13 +449,8 @@ export function createDesktopScenario({
         return true
       }
 
-      const isManagerRequest = serialized.includes(
-        'You are the manager for one project Issue.'
-      )
-      if (
-        !isManagerRequest &&
-        serialized.includes(`${MARKER}。你只完成负责人分配的 AI 子任务。`)
-      ) {
+      const isManagerRequest = serialized.includes('You are the manager for one project Issue.')
+      if (!isManagerRequest && serialized.includes(`${MARKER}。你只完成负责人分配的 AI 子任务。`)) {
         assert.equal(aiRequestCount, 0, '同一 AI 子任务产生了重复模型运行')
         assert.ok(serialized.includes(AI_TASK), '执行成员请求没有使用负责人分配的任务标题')
         aiRequestCount = 1
@@ -530,20 +556,7 @@ export function createDesktopScenario({
         return true
       }
       if (requestContainsToolOutput(body, CALLS.plan)) {
-        const notification = await waitForValue(
-          () => request('/api/v1/wework-notifications?category=collaboration'),
-          value =>
-            value.items?.find(
-              item =>
-                item.kind === 'issue_dispatch_assignment' &&
-                item.payload?.assignmentId === HUMAN_ASSIGNMENT_ID
-            ),
-          'submit_workflow_plan 已返回，但人工任务通知没有持久化',
-          uiTimeoutMs
-        )
-        humanAssignment = notification
         managerStage = 'waiting-round'
-        resolveHumanAssigned(notification)
         writeEvents(response, responseId, [
           assistantMessage('本轮智能体任务和人工任务已交给 Executor，等待全部交付。'),
         ])
@@ -558,7 +571,7 @@ export function createDesktopScenario({
         const selection = managerToolEvents(body, 'submit_workflow_plan', CALLS.plan, planArguments)
         if (selection.mode === 'direct') {
           managerRuns += 1
-          managerStage = 'plan-called'
+          managerStage = 'waiting-round'
         }
         writeEvents(response, responseId, selection.events)
         return true
@@ -615,6 +628,12 @@ export function createDesktopScenario({
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       const created = await createWorkspaceAndProject(control, request, uiTimeoutMs)
       project = created.project
+      const remoteDevice = await cloudEnvironment.waitForDeviceType(
+        REMOTE_DOCKER_DEVICE_ID,
+        'remote'
+      )
+      assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
+      await initializeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
@@ -644,7 +663,17 @@ export function createDesktopScenario({
       await createGroup(control, request, project.id, owner.id, uiTimeoutMs)
       rootIssue = await createAndAssignIssue(control, request, project.id, uiTimeoutMs)
 
-      await waitForPromise(humanAssigned, modelResponseTimeoutMs, '负责人没有创建人工任务通知')
+      humanAssignment = await waitForValue(
+        () => request('/api/v1/wework-notifications?category=collaboration'),
+        value =>
+          value.items?.find(
+            item =>
+              item.kind === 'issue_dispatch_assignment' &&
+              item.payload?.assignmentId === HUMAN_ASSIGNMENT_ID
+          ),
+        '负责人没有创建人工任务通知',
+        modelResponseTimeoutMs
+      )
       await waitForPromise(aiStarted, modelResponseTimeoutMs, '负责人没有启动独立的 AI 执行任务')
       await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
         text: MEMBER,

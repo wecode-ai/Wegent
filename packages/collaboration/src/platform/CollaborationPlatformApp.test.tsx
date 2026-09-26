@@ -2084,7 +2084,7 @@ describe("CollaborationPlatformApp real component flow", () => {
           type: "participant_delta",
           kind: "agent",
           id: input.agents[0]!.id,
-          delta: "协调任务并完成核心开发",
+          delta: "拆解任务并综合验收",
         });
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         onEvent?.({
@@ -2101,7 +2101,7 @@ describe("CollaborationPlatformApp real component flow", () => {
         });
         onEvent?.({
           type: "principle",
-          text: "负责人拆解、执行并汇总",
+          text: "负责人拆解、分派、验收并汇总",
         });
         onEvent?.({
           type: "stage",
@@ -2112,11 +2112,11 @@ describe("CollaborationPlatformApp real component flow", () => {
         return {
           name: "产品交付小组",
           description: "协调产品交付",
-          instructions: "负责人拆解、执行并汇总",
+          instructions: "负责人拆解、分派、验收并汇总",
           leader: {
             kind: "agent" as const,
             id: input.agents[0]!.id,
-            responsibility: "协调任务并完成核心开发",
+            responsibility: "",
           },
           members: [
             {
@@ -2137,8 +2137,8 @@ describe("CollaborationPlatformApp real component flow", () => {
               description: "完成实现和验收",
               assignee: {
                 kind: "agent" as const,
-                id: input.agents[0]!.id,
-                responsibility: "协调任务并完成核心开发",
+                id: input.agents[1]!.id,
+                responsibility: "专项执行",
               },
             },
           ],
@@ -2251,15 +2251,18 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       portalByTestId("collaboration-project-create-generation-progress")
         .textContent,
-    ).toContain("负责人拆解、执行并汇总");
+    ).toContain("负责人拆解、分派、验收并汇总");
     expect(
       portalByTestId("collaboration-project-create-generation-workflow")
         .textContent,
     ).toContain("目标澄清与任务拆解");
     expect(document.body.querySelectorAll(".is-excited")).toHaveLength(1);
     expect(document.body.querySelector(".is-excited")?.textContent).toContain(
-      "协调任务并完成核心开发",
+      "负责人",
     );
+    expect(
+      document.body.querySelector(".is-excited")?.textContent,
+    ).not.toContain("拆解任务并综合验收");
     await waitForUi(300);
     expect(
       portalByTestId("collaboration-project-create-group-editor").textContent,
@@ -2285,7 +2288,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(document.body.querySelector(".is-result")).toBeNull();
     expect(
       document.body.querySelector('[aria-label="Codex 产品工程师 编辑分工"]'),
-    ).not.toBeNull();
+    ).toBeNull();
     const roster = portalByTestId("collaboration-project-create-group-roster");
     expect(
       roster.querySelector(".collaboration-group-roster-item:first-child")
@@ -2295,25 +2298,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       roster.querySelector(".collaboration-group-roster-item:first-child")
         ?.textContent,
     ).toContain("Codex 产品工程师");
-    await click(
-      document.body.querySelector<HTMLButtonElement>(
-        '[aria-label="Codex 产品工程师 编辑分工"]',
-      )!,
-    );
-    const responsibilityEditor =
-      document.body.querySelector<HTMLTextAreaElement>(
-        '[aria-label="Codex 产品工程师 编辑分工"]',
-      );
-    expect(
-      responsibilityEditor?.classList.contains(
-        "collaboration-project-create-inline-textarea",
-      ),
-    ).toBe(true);
-    expect(
-      responsibilityEditor?.closest(
-        ".collaboration-project-create-duty-bubble",
-      ),
-    ).not.toBeNull();
     await click(
       document.body.querySelector<HTMLButtonElement>(
         '[aria-label="编辑分工 分配原则"]',
@@ -2331,8 +2315,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toContain("负责人参与实现，成员及时反馈阻塞");
     expect(generateProjectCollaborationGroupDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        generationInstructions:
-          expect.stringContaining("负责人需要参与实际工作"),
+        generationInstructions: expect.stringContaining(
+          "负责人只负责拆解、分派、验收和状态决策",
+        ),
       }),
       expect.any(Function),
       expect.any(Function),
@@ -2344,7 +2329,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toContain("产品交付小组");
     expect(
       byTestId("collaboration-project-create-group-summary").textContent,
-    ).toContain("负责人 · 协调并执行");
+    ).toContain("负责人 · 仅协调");
   });
 
   it("selects only the default local Agent when project resources finish loading", async () => {
@@ -2550,7 +2535,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(
       byTestId("issue-execution-environment-notice").textContent,
-    ).toContain("Issue 仍可创建");
+    ).toContain("请先初始化环境，再创建 Issue");
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
@@ -2664,7 +2649,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.issues.update).not.toHaveBeenCalled();
   });
 
-  it("shows the same environment notice in the project Issue create dialog", async () => {
+  it("blocks the project Issue create dialog until the environment is ready", async () => {
     const { api } = createApi();
     await render(
       <PlatformHarness
@@ -2680,10 +2665,14 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     await click(byTestId("collaboration-issue-create"));
 
-    expect(byTestId("collaboration-issue-create-dialog")).toBeTruthy();
     expect(
-      byTestId("issue-execution-environment-notice").textContent,
-    ).toContain("Issue 仍可创建");
+      document.querySelector(
+        '[data-testid="collaboration-issue-create-dialog"]',
+      ),
+    ).toBeNull();
+    expect(byTestId("test-location").textContent).toContain(
+      '"projectSettingsSection":"environments"',
+    );
   });
 
   it("saves a selected project team as the Issue owner, not as a numeric agent team", async () => {
@@ -4541,7 +4530,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain(member.user_name);
     expect(container.textContent).toContain(agent.name);
     expect(container.textContent).toContain(collaborationGroup.name);
-    expect(container.textContent).toContain("负责人 · 协调并执行");
+    expect(container.textContent).toContain("负责人 · 仅协调");
     expect(container.textContent).not.toContain("undefined");
     await click(byTestId("collaboration-project-create-edit-group"));
     expect(

@@ -5,8 +5,9 @@
 """Project robot queue execution endpoints.
 
 The queue is a derived view over `loop_item_executions`; these endpoints power
-the queue page, the local App puller (claim/heartbeat/write-back), and the
-cloud Celery dispatcher (which also calls the service directly).
+the queue page and runtime write-back. Backend persists queue and runtime state
+for observation and recovery; Executors pull work through the device channel
+and own capacity and execution.
 """
 
 import logging
@@ -17,8 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.distributed_lock import distributed_lock
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -26,11 +26,10 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
+    LoopItemExecutionAssignmentStatus,
     LoopItemExecutionBatchCreate,
     LoopItemExecutionBatchItem,
     LoopItemExecutionCancel,
-    LoopItemExecutionClaim,
-    LoopItemExecutionDeviceClaim,
     LoopItemExecutionDispatchFailed,
     LoopItemExecutionDispatchIntent,
     LoopItemExecutionDispatchUnknown,
@@ -46,6 +45,7 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
     collaboration_group_for_item,
+    resolve_collaboration_group_agent,
 )
 from app.services.collaboration_human_assignments import (
     collaboration_human_assignment_id,
@@ -55,7 +55,9 @@ from app.services.collaboration_human_assignments import (
 from app.services.collaboration_manager_decisions import (
     apply_collaboration_manager_decision,
 )
-from app.services.device.capacity import get_runtime_capacity_sync
+from app.services.collaboration_member_activity import (
+    project_collaboration_member_activity,
+)
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
@@ -75,20 +77,23 @@ from app.services.workspaces.storage import workspace_id_for_project
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-claim_router = APIRouter()
 
 
 def _require_project_agent(
     db: Session, *, project_id: int, agent_id: str
 ) -> ProjectChatAgent:
-    """Resolve an active agent only inside the project named by the route."""
+    """Resolve a group member by project-agent id or its bound Wegent Team id."""
 
-    agent = db.get(ProjectChatAgent, agent_id)
-    if (
-        agent is None
-        or agent.cloud_project_id != str(project_id)
-        or agent.status != "active"
-    ):
+    agents = (
+        db.query(ProjectChatAgent)
+        .filter(
+            ProjectChatAgent.cloud_project_id == str(project_id),
+            ProjectChatAgent.status == "active",
+        )
+        .all()
+    )
+    agent = resolve_collaboration_group_agent(agents, agent_id)
+    if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Robot not found")
     return agent
 
@@ -167,6 +172,8 @@ def _execution_view(
     include_runtime_payload: bool = False,
 ) -> LoopItemExecutionView:
     item = db.get(LoopItem, row.loop_item_id)
+    origin_context = row.runtime_origin_context
+    workflow_task_title = str(origin_context.get("workflow_task_title") or "").strip()
     agent = db.get(ProjectChatAgent, row.agent_id) if row.agent_id else None
     if agent is not None:
         from app.services.project_chat.service import bot_max_concurrent_executions
@@ -188,7 +195,8 @@ def _execution_view(
             "loop_item_id": row.loop_item_id,
             "cloud_project_id": row.cloud_project_id,
             "workspace_id": workspace_id_for_project(db, row.cloud_project_id),
-            "task_title": (item.title or item.name or "") if item else "",
+            "task_title": workflow_task_title
+            or ((item.title or item.name or "") if item else ""),
             "task_status": item.status if item else None,
             "task_priority": item.priority if item else None,
             "executor_type": row.executor_type,
@@ -344,12 +352,14 @@ def enqueue_execution_batch(
     project_id: int,
     values: LoopItemExecutionBatchCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
-    """Persist an exact batch selected by an Executor-owned manager.
+    """Persist the activity generated by an Executor-owned collaboration round.
 
-    This endpoint does not decide when to create a batch, wait for it, resume a
-    manager, or move the Issue. Those responsibilities remain in Executor.
+    Executor owns the round: it chooses assignments, creates every AI member
+    task locally, waits for the barrier, and starts the next manager turn.
+    Backend only validates the project snapshot, records activity, and sends
+    human notifications. It does not create or schedule AI member work.
     """
 
     require_cloud_project_role(
@@ -393,8 +403,33 @@ def enqueue_execution_batch(
     project = db.get(CloudProject, project_id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-
-    executions: list[dict[str, object]] = []
+    manager_execution = next(
+        (
+            execution
+            for execution in (
+                db.query(LoopItemExecution)
+                .filter(
+                    LoopItemExecution.loop_item_id == item.id,
+                    LoopItemExecution.cloud_project_id == str(project_id),
+                )
+                .order_by(LoopItemExecution.id.desc())
+                .with_for_update()
+                .all()
+            )
+            if execution.executor_type == "collaboration_group_dispatch"
+            and str(execution.runtime_origin_context.get("dispatch_id") or "")
+            == values.dispatch_id
+            and str(execution.runtime_origin_context.get("manager_agent_id") or "")
+            == manager.id
+        ),
+        None,
+    )
+    if manager_execution is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Collaboration dispatch is unavailable",
+        )
+    human_assignments: list[dict[str, object]] = []
     assignment_activity: list[dict[str, object]] = []
     for command in values.items:
         member_key = (command.assignee_type, command.assignee_id)
@@ -403,10 +438,6 @@ def enqueue_execution_batch(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Assignment target is not part of the collaboration group",
             )
-        run_id = (
-            f"collaboration:{values.dispatch_id}:{values.round_id}:"
-            f"{command.assignment_id}"
-        )
         if command.assignee_type == "agent":
             agent = _require_project_agent(
                 db,
@@ -418,48 +449,16 @@ def enqueue_execution_batch(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignment target is not part of the collaboration group",
                 )
-            existing = (
-                db.query(LoopItemExecution)
-                .filter(LoopItemExecution.automation_run_id == run_id)
-                .order_by(LoopItemExecution.id.desc())
-                .first()
-            )
-            execution = existing or loop_item_execution_service.create_for_assignment(
-                db,
-                loop_item_id=item.id,
-                cloud_project_id=str(project_id),
-                agent=agent,
-                assigner_user_id=current_user.id,
-                environment="local",
-                execution_device_id=None,
-                priority=item.priority,
-                automation_context={
-                    "run_id": run_id,
-                    "dispatch_id": values.dispatch_id,
-                    "dispatch_task_id": item.id,
-                    "dispatch_role": "member",
-                    "manager_agent_id": manager.id,
-                    "manager_runtime_task_id": values.manager_runtime_task_id,
-                    "coordination_round_id": values.round_id,
-                    "assignment_id": command.assignment_id,
-                    "workflow_task_title": command.title,
-                    "workflow_stage_id": command.workflow_stage_id,
-                },
-                instruction=_collaboration_assignment_prompt(command),
-            )
-            response = {
+            activity = {
                 "assignee_type": "agent",
-                "work_id": f"execution:{execution.id}",
-                "execution_id": execution.id,
-                "runtime_task_id": execution.runtime_task_id,
-                "status": execution.status,
                 "assignment_id": command.assignment_id,
                 "task_title": command.title,
+                "instructions": command.instructions,
+                "assignee_id": command.assignee_id,
                 "agent_id": agent.id,
                 "agent_name": agent.title or agent.name or "AI",
                 "workflow_stage_id": command.workflow_stage_id,
             }
-            activity = dict(response)
         else:
             canonical_type, canonical_id = (
                 issue_assignment_service.require_canonical_member(
@@ -499,7 +498,7 @@ def enqueue_execution_batch(
                 instructions=command.instructions,
                 workflow_stage_id=command.workflow_stage_id,
             )
-            response = {
+            human_assignment = {
                 "assignee_type": "human",
                 "work_id": f"human_assignment:{human_assignment_id}",
                 "human_assignment_id": human_assignment_id,
@@ -510,10 +509,13 @@ def enqueue_execution_batch(
                 "human_user_name": human.user_name,
                 "workflow_stage_id": command.workflow_stage_id,
             }
-            activity = dict(response)
-        executions.append(response)
+            human_assignments.append(human_assignment)
+            activity = dict(human_assignment)
         assignment_activity.append(activity)
 
+    manager_activity = loop_item_execution_service._linked_activity(
+        db, manager_execution
+    )
     existing_activity = (
         db.query(ProjectChatMessage)
         .filter(
@@ -523,13 +525,37 @@ def enqueue_execution_batch(
         .order_by(ProjectChatMessage.created_at.desc())
         .all()
     )
-    assignment_message: ProjectChatMessage | None = None
-    if not any(
-        isinstance(message.metadata_json, dict)
-        and message.metadata_json.get("activity_type") == "manager_assignment"
-        and message.metadata_json.get("coordination_round_id") == values.round_id
-        for message in existing_activity
-    ):
+    assignment_message = next(
+        (
+            message
+            for message in existing_activity
+            if isinstance(message.metadata_json, dict)
+            and message.metadata_json.get("activity_type") == "manager_assignment"
+            and message.metadata_json.get("coordination_round_id") == values.round_id
+        ),
+        None,
+    )
+    should_push_assignment = False
+    if assignment_message is None and manager_activity is not None:
+        assignment_message = manager_activity
+        assignment_message.sender_type = "agent"
+        assignment_message.sender_id = manager.id
+        assignment_message.sender_name = manager.title or manager.name or "AI manager"
+        assignment_message.agent_id = manager.id
+        assignment_message.message_type = "text"
+        assignment_message.content = ""
+        assignment_message.status = "completed"
+        assignment_message.metadata_json = {
+            **dict(assignment_message.metadata_json or {}),
+            "dispatch_role": "manager",
+            "activity_type": "manager_assignment",
+            "dispatch_id": values.dispatch_id,
+            "coordination_round_id": values.round_id,
+            "dispatch_assignments": assignment_activity,
+            "run_status": "completed",
+        }
+        should_push_assignment = True
+    elif assignment_message is None:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
             message_id=message_id,
@@ -544,6 +570,7 @@ def enqueue_execution_batch(
             metadata_json={
                 "dispatch_role": "manager",
                 "activity_type": "manager_assignment",
+                "dispatch_id": values.dispatch_id,
                 "coordination_round_id": values.round_id,
                 "dispatch_assignments": assignment_activity,
             },
@@ -551,8 +578,9 @@ def enqueue_execution_batch(
             status="completed",
         )
         db.add(assignment_message)
+        should_push_assignment = True
     db.commit()
-    if assignment_message is not None:
+    if should_push_assignment and assignment_message is not None:
         db.refresh(assignment_message)
         push_project_chat_message(
             project_chat_service.to_view(assignment_message).model_dump(by_alias=True)
@@ -560,12 +588,29 @@ def enqueue_execution_batch(
     return {
         "dispatch_id": values.dispatch_id,
         "round_id": values.round_id,
-        "executions": executions,
+        "human_assignments": human_assignments,
     }
 
 
-def _collaboration_assignment_prompt(command: LoopItemExecutionBatchItem) -> str:
-    return f"任务标题：{command.title}\n\n执行要求：{command.instructions}"
+@router.post("/{project_id}/executions/assignment-status")
+def report_collaboration_assignment_status(
+    project_id: int,
+    values: LoopItemExecutionAssignmentStatus,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Persist member progress for display; the Executor still owns the round."""
+
+    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+    message, changed = project_collaboration_member_activity(
+        db,
+        project_id=project_id,
+        values=values,
+    )
+    view = project_chat_service.to_view(message).model_dump(by_alias=True)
+    if changed:
+        push_project_chat_message(view)
+    return {"message": view, "changed": changed}
 
 
 @router.post("/{project_id}/executions/manager-decision")
@@ -573,7 +618,7 @@ def decide_collaboration_issue_status(
     project_id: int,
     values: LoopItemExecutionManagerDecision,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
     """Persist one manager-owned Issue decision without owning the loop."""
 
@@ -621,55 +666,10 @@ def execution_statuses(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, object]:
-    """Read exact execution outcomes for an Executor-owned round barrier."""
+    """Read human delivery outcomes for an Executor-owned round barrier."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Viewer)
-    rows = (
-        db.query(LoopItemExecution)
-        .filter(
-            LoopItemExecution.id.in_(values.execution_ids),
-            LoopItemExecution.cloud_project_id == str(project_id),
-        )
-        .all()
-    )
-    by_id = {row.id: row for row in rows}
     items: list[dict[str, object]] = []
-    for execution_id in values.execution_ids:
-        row = by_id.get(execution_id)
-        if row is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
-        activities = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.project_id == str(project_id),
-                ProjectChatMessage.task_id == row.loop_item_id,
-            )
-            .order_by(ProjectChatMessage.created_at.desc())
-            .all()
-        )
-        activity = next(
-            (
-                message
-                for message in activities
-                if isinstance(message.metadata_json, dict)
-                and int(message.metadata_json.get("execution_id") or 0) == row.id
-            ),
-            None,
-        )
-        items.append(
-            {
-                "assignee_type": "agent",
-                "work_id": f"execution:{row.id}",
-                "execution_id": row.id,
-                "assignment_id": str(
-                    row.runtime_origin_context.get("assignment_id") or ""
-                ),
-                "status": row.status,
-                "agent_id": row.agent_id,
-                "result": activity.content if activity is not None else "",
-                "error": row.error_message or "",
-            }
-        )
     for human_assignment_id in values.human_assignment_ids:
         items.append(
             collaboration_human_assignment_status(
@@ -680,134 +680,6 @@ def execution_statuses(
             )
         )
     return {"items": items}
-
-
-@router.post(
-    "/{project_id}/executions/claim",
-    response_model=Optional[LoopItemExecutionView],
-)
-def claim_execution(
-    project_id: int,
-    values: LoopItemExecutionClaim,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Optional[LoopItemExecutionView]:
-    """Claim the next queued run for a robot on the caller's device.
-
-    Local App pullers are the only API callers; the atomic CAS plus the
-    Runtime heartbeat capacity prevents two transport routes for the same
-    installation from over-claiming. Cloud runs are claimed by the Celery
-    worker directly, never through this endpoint.
-    """
-
-    if values.execution_environment != "local":
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Only local runs can be claimed through this endpoint",
-        )
-    _require_project_agent(
-        db,
-        project_id=project_id,
-        agent_id=values.agent_id,
-    )
-    capacity = get_runtime_capacity_sync(
-        db,
-        owner_user_id=current_user.id,
-        device_id=values.execution_device_id,
-    )
-    if capacity is None:
-        return None
-    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
-    with distributed_lock.acquire_context(
-        f"robot_exec_owner:{current_user.id}", expire_seconds=30
-    ) as owner_acquired:
-        if not owner_acquired:
-            return None
-        with distributed_lock.acquire_context(
-            lock_key, expire_seconds=30
-        ) as device_acquired:
-            if not device_acquired:
-                return None
-            row = loop_item_execution_service.claim(
-                db,
-                agent_id=values.agent_id,
-                execution_device_id=values.execution_device_id,
-                environment=values.execution_environment,
-                owner_user_id=current_user.id,
-                runtime_instance_id=capacity.runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
-                lease_seconds=values.lease_seconds,
-                assigner_filter=values.assigner_user_id,
-            )
-    return _claimed_execution_view(db, row) if row else None
-
-
-@claim_router.post(
-    "/loop-item-executions/claim-my-next",
-    response_model=Optional[LoopItemExecutionView],
-)
-def claim_my_next_execution(
-    values: LoopItemExecutionDeviceClaim,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Optional[LoopItemExecutionView]:
-    """Device-scoped claim used by the Run owner's local App puller.
-
-    Finds the next queued local run for any robot bound to the caller's device
-    and returns it with a just-in-time runtime request. Runtime heartbeat
-    capacity and the atomic CAS keep multiple routes from over-claiming.
-    """
-
-    capacity = get_runtime_capacity_sync(
-        db,
-        owner_user_id=current_user.id,
-        device_id=values.execution_device_id,
-    )
-    if capacity is None:
-        return None
-    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
-    with distributed_lock.acquire_context(
-        f"robot_exec_owner:{current_user.id}", expire_seconds=30
-    ) as owner_acquired:
-        if not owner_acquired:
-            return None
-        with distributed_lock.acquire_context(
-            lock_key, expire_seconds=30
-        ) as device_acquired:
-            if not device_acquired:
-                return None
-            row = loop_item_execution_service.claim_next_for_device(
-                db,
-                execution_device_id=values.execution_device_id,
-                environment="local",
-                runtime_instance_id=capacity.runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
-                lease_seconds=values.lease_seconds,
-                owner_user_id=current_user.id,
-            )
-            if row is None:
-                row = loop_item_execution_service.claim_next_unbound_local(
-                    db,
-                    owner_user_id=current_user.id,
-                    execution_device_id=values.execution_device_id,
-                    runtime_instance_id=capacity.runtime_instance_id,
-                    device_capacity=capacity.limit,
-                    runtime_active=capacity.active,
-                    runtime_active_task_ids=capacity.active_task_ids,
-                    lease_seconds=values.lease_seconds,
-                )
-    if row is None:
-        return None
-    if row.executor_owner_user_id != current_user.id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Claimed Wework execution belongs to another user",
-        )
-    return _claimed_execution_view(db, row)
 
 
 def _claimed_execution_view(
@@ -994,17 +866,6 @@ def cancel_execution(
     row = loop_item_execution_service.cancel(
         db, execution_id=execution_id, note=values.note
     )
-    if row.team_id and row.backend_task_id:
-        from app.services.project_automation_managed_execution import (
-            project_automation_managed_execution_service,
-        )
-
-        background_tasks.add_task(
-            project_automation_managed_execution_service.cancel,
-            task_id=row.backend_task_id,
-            user_id=row.executor_owner_user_id,
-            source="board_team_assignment",
-        )
     if (
         row is not None
         and row.status == "cancel_requested"
@@ -1041,17 +902,6 @@ def stop_execution(
         execution_id=execution_id,
         note="Stopped from the automation queue",
     )
-    if row.team_id and row.backend_task_id:
-        from app.services.project_automation_managed_execution import (
-            project_automation_managed_execution_service,
-        )
-
-        background_tasks.add_task(
-            project_automation_managed_execution_service.cancel,
-            task_id=row.backend_task_id,
-            user_id=row.executor_owner_user_id,
-            source="board_team_assignment",
-        )
     if (
         row is not None
         and row.status == "cancel_requested"

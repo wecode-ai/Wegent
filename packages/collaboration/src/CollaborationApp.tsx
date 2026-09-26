@@ -4,12 +4,7 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-License-Identifier: Apache-2.0
 
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -191,6 +186,29 @@ export function CollaborationApp({
     api,
     project,
   });
+  const requestIssueCreate = () => {
+    if (!project) return;
+    if (environmentReadiness.kind !== "ready") {
+      if (environmentReadiness.kind === "unknown") {
+        environmentReadiness.refresh();
+      }
+      host.notify?.(
+        translate(
+          "todo.issue_environment_create_blocked",
+          "请先完成项目执行环境初始化，再创建 Issue。",
+        ),
+        "error",
+      );
+      host.navigate({
+        projectId: project.id,
+        issueId: null,
+        view: "manage",
+        projectSettingsSection: "environments",
+      });
+      return;
+    }
+    setCreateIssueOpen(true);
+  };
   useEffect(() => {
     host.onProjectsChange?.(projects);
   }, [host, projects]);
@@ -431,7 +449,7 @@ export function CollaborationApp({
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
                       data-testid={collaborationTestIds.createIssue}
-                      onClick={() => setCreateIssueOpen(true)}
+                      onClick={requestIssueCreate}
                     >
                       <span aria-hidden="true">＋</span>
                       {showLabels ? messages.createIssue : null}
@@ -484,7 +502,7 @@ export function CollaborationApp({
                               type="button"
                               className="collaboration-primary-button"
                               data-testid="collaboration-empty-project-create"
-                              onClick={() => setCreateIssueOpen(true)}
+                              onClick={requestIssueCreate}
                             >
                               {messages.createIssue}
                             </button>
@@ -597,7 +615,7 @@ export function CollaborationApp({
                             { throwOnError: true },
                           );
                         }}
-                        onCreateIssue={() => setCreateIssueOpen(true)}
+                        onCreateIssue={requestIssueCreate}
                         onOpenBoardSettings={() => setBoardSettingsOpen(true)}
                         onDeleteIssue={
                           issueDeleteAvailable ? requestIssueDelete : undefined
@@ -661,7 +679,7 @@ export function CollaborationApp({
                           (candidate) => candidate.id === status,
                         )?.name ?? status
                       }
-                      onCreate={() => setCreateIssueOpen(true)}
+                      onCreate={requestIssueCreate}
                       onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,

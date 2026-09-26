@@ -19,9 +19,9 @@ export function issueTaskSummaryForMessage<
     message.metadata.conversation_only === true
   )
     return;
-  const dispatchTaskTitle =
-    typeof message.metadata.dispatch_task_title === "string"
-      ? message.metadata.dispatch_task_title.trim()
+  const workflowTaskTitle =
+    typeof message.metadata.workflow_task_title === "string"
+      ? message.metadata.workflow_task_title.trim()
       : "";
   const binding =
     address?.deviceId && address.taskId
@@ -31,7 +31,7 @@ export function issueTaskSummaryForMessage<
             candidate.task_id === address.taskId,
         )
       : undefined;
-  const taskTitle = dispatchTaskTitle || binding?.task_title?.trim();
+  const taskTitle = workflowTaskTitle || binding?.task_title?.trim();
   if (!taskTitle) return;
   return {
     title: taskTitle,

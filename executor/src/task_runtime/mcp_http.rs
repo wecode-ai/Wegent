@@ -32,8 +32,9 @@ use crate::logging::log_executor_event;
 
 use super::{
     mcp::{
-        handle_request_with_context, CloudCollaborationRoundDispatcher, SpaceMcpRequestContext,
-        WeworkMcpSurface, SPACE_MCP_SERVER_NAME,
+        handle_request_with_context, CloudCollaborationRoundDispatcher,
+        CollaborationManagerTurnCompleter, SpaceMcpRequestContext, WeworkMcpSurface,
+        SPACE_MCP_SERVER_NAME,
     },
     TaskRuntime,
 };
@@ -66,6 +67,7 @@ struct SpaceMcpHttpState {
     sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
+    manager_turn_completer: std::sync::Arc<StdMutex<Option<CollaborationManagerTurnCompleter>>>,
 }
 
 static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
@@ -104,6 +106,14 @@ fn collaboration_dispatcher_registry(
         std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
     > = OnceLock::new();
     DISPATCHER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
+}
+
+fn manager_turn_completer_registry(
+) -> &'static std::sync::Arc<StdMutex<Option<CollaborationManagerTurnCompleter>>> {
+    static COMPLETER: OnceLock<
+        std::sync::Arc<StdMutex<Option<CollaborationManagerTurnCompleter>>>,
+    > = OnceLock::new();
+    COMPLETER.get_or_init(|| std::sync::Arc::new(StdMutex::new(None)))
 }
 
 fn local_mcp_token() -> &'static str {
@@ -146,6 +156,7 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         sessions: std::sync::Arc::new(Mutex::new(HashMap::new())),
         contexts: contexts.clone(),
         collaboration_dispatcher: collaboration_dispatcher_registry().clone(),
+        manager_turn_completer: manager_turn_completer_registry().clone(),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -315,6 +326,16 @@ pub(crate) fn register_cloud_collaboration_dispatcher(
     Ok(())
 }
 
+pub(crate) fn register_collaboration_manager_turn_completer(
+    completer: CollaborationManagerTurnCompleter,
+) -> Result<(), String> {
+    *manager_turn_completer_registry()
+        .lock()
+        .map_err(|_| "Executor collaboration manager lifecycle is unavailable".to_owned())? =
+        Some(completer);
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
     Some(SpaceMcpEndpoint {
@@ -415,6 +436,13 @@ async fn handle_mcp_for_surface(
             .lock()
             .ok()
             .and_then(|dispatcher| dispatcher.clone()),
+    );
+    context.set_collaboration_manager_turn_completer(
+        state
+            .manager_turn_completer
+            .lock()
+            .ok()
+            .and_then(|completer| completer.clone()),
     );
 
     match handle_request_with_context(&state.runtime, &request, &context).await {

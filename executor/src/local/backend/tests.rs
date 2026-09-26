@@ -327,7 +327,7 @@ async fn runtime_work_poll_coalesces_notification_received_while_locked() {
 
     assert_eq!(handler.capacity_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
-    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 3);
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
 }
 
@@ -348,26 +348,14 @@ fn normalizes_backend_context_for_local_task_mcp() {
 }
 
 #[test]
-fn heartbeat_reports_runtime_capacity_and_installation_identity() {
+fn heartbeat_reports_installation_identity_without_scheduler_capacity() {
     let client =
         LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
-    client.set_runtime_capacity(Some(json!({
-        "limit": 4,
-        "active": 2,
-        "active_task_ids": ["task-1", "task-2"],
-        "queued": 1,
-    })));
 
     let payload = client.heartbeat_payload();
 
     assert_eq!(payload["runtime_instance_id"], "runtime-1");
-    assert_eq!(payload["runtime_capacity"]["limit"], 4);
-    assert_eq!(payload["runtime_capacity"]["active"], 2);
-    assert_eq!(
-        payload["runtime_capacity"]["active_task_ids"],
-        json!(["task-1", "task-2"])
-    );
-    assert_eq!(payload["runtime_capacity"]["queued"], 1);
+    assert!(payload.get("runtime_capacity").is_none());
 }
 
 #[test]

@@ -1008,7 +1008,7 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         headers=_auth(visitor_token),
         json={"title": "Visitor task", "description": "visitor details"},
     )
-    assert visitor_item_response.status_code == 201
+    assert visitor_item_response.status_code == 201, visitor_item_response.text
     visitor_item = visitor_item_response.json()
     visitor_items = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
@@ -2505,12 +2505,11 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     assert task.json()["tags"] == ["automation"]
 
 
-def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_claim(
+def test_cloud_project_manual_automation_queues_for_local_executor_pull(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(
         Kind(
@@ -2587,62 +2586,14 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert queued_execution.execution_environment == "local"
     assert queued_execution.executor_owner_user_id == test_user.id
 
-    monkeypatch.setattr(
-        "app.services.device.capacity.cache_manager.get_sync_or_raise",
-        lambda _key: {
-            "runtime_instance_id": "runtime-automation-local",
-            "runtime_capacity": {
-                "limit": 1,
-                "active": 0,
-                "active_task_ids": [],
-                "queued": 0,
-            },
-        },
-    )
-    claimed = test_client.post(
-        "/api/v1/loop-item-executions/claim-my-next",
-        headers=_auth(test_token),
-        json={
-            "executionDeviceId": "automation-local-device",
-            "leaseSeconds": 300,
-        },
-    )
-    assert claimed.status_code == 200, claimed.text
-    execution = claimed.json()
-    assert execution["executionDeviceId"] == "automation-local-device"
-    assert execution["status"] == "claimed"
-    assert execution["displayState"] == "starting"
-    assert execution["observedState"] == "unconfirmed"
-    assert execution["automationRunId"] == run["id"]
-    assert "executionPayload" not in execution
-    assert execution["runtimePayload"]["message"]
-    assert "executionRequest" not in execution["runtimePayload"]
-    assert "executorProfile" not in execution
-    assert execution["runtimePayload"]["modelId"] == "test-model"
-
-    started_runtime = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
-        headers=_auth(test_token),
-        json={
-            "runtime_device_id": "automation-local-device",
-            "runtime_task_id": execution["runtimeTaskId"],
-            "prompt": "Scan bugs.",
-        },
-    )
-    assert started_runtime.status_code == 200, started_runtime.text
-    accepted = started_runtime.json()
-    assert accepted["status"] == "claimed"
-    assert accepted["displayState"] == "waiting_runtime"
-    assert accepted["observedState"] == "accepted"
-
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
         headers=_auth(test_token),
     )
     assert runs.status_code == 200, runs.text
-    activated = runs.json()[0]
-    assert activated["status"] == "queued"
-    assert activated["taskId"]
+    queued = runs.json()[0]
+    assert queued["status"] == "queued"
+    assert queued["taskId"]
 
 
 def test_cloud_project_owner_can_manage_members(

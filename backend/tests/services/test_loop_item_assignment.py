@@ -5,6 +5,7 @@
 
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -116,6 +117,12 @@ def _make_item(db: Session, project: CloudProject, user: User) -> LoopItem:
     db.commit()
     db.refresh(item)
     return item
+
+
+def _compiled_runtime_payload(*, request, **_kwargs):
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+    payload["executionRequest"] = {}
+    return SimpleNamespace(payload=payload)
 
 
 def _collaboration_group(
@@ -280,6 +287,7 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     assert item.assignee_user_id is None
     assert item.assignee_agent_id == ""
     assert item.assignee_team_id is None
+    assert item.status == "in_progress"
     assert item.metadata_json["collaboration_group"] == {
         "id": "group-1",
         "name": "Delivery team",
@@ -310,7 +318,7 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
         }
     }
     item = _make_item(test_db, project, test_user)
-    group, leader, _member = _collaboration_group(
+    group, leader, member = _collaboration_group(
         test_db,
         project,
         test_user,
@@ -352,6 +360,7 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
         .all()
     )
     assert repeated.id == item.id
+    assert repeated.status == "in_progress"
     assert len(executions) == 1
     dispatch = executions[0]
     assert dispatch.status == "queued"
@@ -360,10 +369,7 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
     assert dispatch.execution_environment == execution_environment
     assert dispatch.runtime_request == {}
     dispatch_request = dispatch.execution_intent["dispatch_request"]
-    assert dispatch_request["kind"] == "collaboration_group"
-    manager_request = dispatch_request["manager_runtime_request"]
-    assert manager_request["origin"]["dispatchRole"] == "manager"
-    assert [value["id"] for value in manager_request["bot"]] == [leader.id]
+    assert dispatch_request == {"kind": "collaboration_group"}
     assert dispatch.runtime_origin_context["dispatch_kind"] == "collaboration_group"
     assert dispatch.runtime_origin_context["dispatch_role"] == "manager"
     assert dispatch.runtime_origin_context["dispatch_task_id"] == item.id
@@ -399,23 +405,45 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
         execution_device_id=str(dispatch.execution_device_id),
         environment=execution_environment,
         runtime_instance_id=f"{execution_environment}-executor",
-        device_capacity=1,
-        runtime_active=0,
-        runtime_active_task_ids=frozenset(),
         owner_user_id=dispatch.executor_owner_user_id,
     )
     assert claimed is not None
     assert claimed.id == dispatch.id
     assert claimed.status == "claimed"
-    runtime_payload = loop_item_execution_service.build_executor_runtime_payload(
-        test_db,
-        execution=claimed,
-        execution_target_id=str(claimed.execution_device_id),
-        executor_device_id=str(claimed.execution_device_id),
-    )
+    with patch(
+        "app.services.runtime_work_service.compile_runtime_task_create",
+        side_effect=_compiled_runtime_payload,
+    ):
+        runtime_payload = loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=claimed,
+            execution_target_id=str(claimed.execution_device_id),
+            executor_device_id=str(claimed.execution_device_id),
+        )
     assert runtime_payload["dispatchKind"] == "collaboration_group"
+    manager_request = runtime_payload["managerRuntimeRequest"]
+    assert manager_request["origin"]["dispatchRole"] == "manager"
+    assert [value["id"] for value in manager_request["bot"]] == [leader.id]
+    member_profiles = runtime_payload["memberRuntimeProfiles"]
+    assert {profile["agentId"] for profile in member_profiles} == {
+        leader.id,
+        member.id,
+    }
+    member_profile = next(
+        profile for profile in member_profiles if profile["agentId"] == member.id
+    )
+    assert str(member.id) in member_profile["memberIds"]
+    assert member_profile["runtimePayload"]["origin"]["dispatchRole"] == "member"
     assert (
-        runtime_payload["managerRuntimeRequest"]["bot"][0]["shell_type"]
+        member_profile["runtimePayload"]["projectInstructions"]
+        != manager_request["projectInstructions"]
+    )
+    assert "You are the manager for one project Issue." not in (
+        member_profile["runtimePayload"]["projectInstructions"]
+    )
+    assert "executionId" not in member_profile["runtimePayload"]["origin"]
+    assert (
+        manager_request["bot"][0]["shell_type"]
         == {
             "codex": "Codex",
             "claude_code": "ClaudeCode",
@@ -428,14 +456,13 @@ def test_collaboration_group_execution_terminal_does_not_change_issue_status(
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    original_status = item.status
     group, _leader, _member = _collaboration_group(test_db, project, test_user)
 
     with patch(
         "app.services.workspaces.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
-        loop_item_service.assign(
+        assigned = loop_item_service.assign(
             test_db,
             project_id=project.id,
             item_id=item.id,
@@ -447,6 +474,7 @@ def test_collaboration_group_execution_terminal_does_not_change_issue_status(
             ),
         )
 
+    assert assigned.status == "in_progress"
     execution = (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == item.id)
@@ -459,7 +487,7 @@ def test_collaboration_group_execution_terminal_does_not_change_issue_status(
     )
 
     test_db.refresh(item)
-    assert item.status == original_status
+    assert item.status == "in_progress"
 
 
 def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
@@ -507,11 +535,10 @@ def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
         .filter(LoopItemExecution.loop_item_id == item.id)
         .one()
     )
-    manager_request = dispatch.execution_intent["dispatch_request"][
-        "manager_runtime_request"
-    ]
     assert dispatch.execution_device_id == ""
-    assert manager_request.get("deviceId", "") == ""
+    assert dispatch.execution_intent["dispatch_request"] == {
+        "kind": "collaboration_group"
+    }
 
     claimed = loop_item_execution_service.claim_next_for_device(
         test_db,
@@ -519,19 +546,20 @@ def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
         runtime_device_id=claim_device_id,
         environment="local",
         runtime_instance_id="claiming-executor",
-        device_capacity=1,
-        runtime_active=0,
-        runtime_active_task_ids=frozenset(),
         owner_user_id=dispatch.executor_owner_user_id,
     )
 
     assert claimed is not None
-    payload = loop_item_execution_service.build_executor_runtime_payload(
-        test_db,
-        execution=claimed,
-        execution_target_id=claim_device_id,
-        executor_device_id=claim_device_id,
-    )
+    with patch(
+        "app.services.runtime_work_service.compile_runtime_task_create",
+        side_effect=_compiled_runtime_payload,
+    ):
+        payload = loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=claimed,
+            execution_target_id=claim_device_id,
+            executor_device_id=claim_device_id,
+        )
     assert payload["managerRuntimeRequest"]["deviceId"] == claim_device_id
 
 

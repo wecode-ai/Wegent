@@ -1397,78 +1397,33 @@ impl LocalTaskStore {
         &self,
         claim: &LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        let runtime_active_task_ids = claim
-            .runtime_active_task_ids
-            .iter()
-            .map(|task_id| task_id.trim())
-            .collect::<HashSet<_>>();
-        if claim.runtime_instance_id.trim().is_empty()
-            || !(1..=20).contains(&claim.device_capacity)
-            || runtime_active_task_ids.len() != claim.runtime_active_task_ids.len()
-            || runtime_active_task_ids.len() != claim.runtime_active as usize
-            || runtime_active_task_ids.contains("")
-        {
+        self.claim_next_execution_for_runtime(
+            claim.execution_device_id.as_deref(),
+            &claim.runtime_instance_id,
+            claim.lease_seconds,
+        )
+    }
+
+    pub fn claim_next_execution_for_runtime(
+        &self,
+        execution_device_id: Option<&str>,
+        runtime_instance_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if runtime_instance_id.trim().is_empty() {
             return Err(TaskRuntimeError::Invalid(
-                "Runtime capacity identity or limit is invalid".to_owned(),
+                "Runtime instance identity is required".to_owned(),
             ));
         }
         let connection = self.connection()?;
-        let ambiguous: i64 = connection.query_row(
-            "SELECT COUNT(*) FROM loop_item_executions
-             WHERE status IN ('claimed', 'running', 'cancel_requested')
-               AND runtime_instance_id = ''",
-            [],
-            |row| row.get(0),
-        )?;
-        if ambiguous > 0 {
-            return Ok(None);
-        }
-        let durable_task_ids = {
-            let mut statement = connection.prepare(
-                "SELECT runtime_task_id FROM loop_item_executions
-             WHERE status IN ('claimed', 'running', 'cancel_requested')
-               AND runtime_instance_id = ?1",
-            )?;
-            let rows = statement.query_map(params![&claim.runtime_instance_id], |row| {
-                row.get::<_, Option<String>>(0)
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
-        let pending_reservations = durable_task_ids
-            .iter()
-            .filter(|task_id| {
-                task_id
-                    .as_deref()
-                    .map_or(true, |task_id| !runtime_active_task_ids.contains(task_id))
-            })
-            .count() as u64;
-        let occupied = claim.runtime_active + pending_reservations;
-        if occupied >= claim.device_capacity {
-            return Ok(None);
-        }
-        let running_agents: HashMap<String, i64> = {
-            let mut statement = connection.prepare(
-                "SELECT agent_id, COUNT(*) FROM loop_item_executions
-                 WHERE status IN ('claimed', 'running', 'cancel_requested')
-                   AND agent_id != ''
-                 GROUP BY agent_id",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?;
-            rows.collect::<Result<HashMap<_, _>, _>>()?
-        };
         let mut sql = String::from(
-            "SELECT e.id, e.agent_id, e.execution_scope, e.priority_weight,
-                    COALESCE(json_extract(a.metadata, '$.max_concurrent_executions'), 1)
+            "SELECT e.id, e.execution_scope
              FROM loop_item_executions e
-             LEFT JOIN loop_items a ON a.id = e.agent_id
              WHERE e.execution_environment = 'local' AND e.status = 'queued'",
         );
-        if claim.execution_device_id.is_some() {
+        if execution_device_id.is_some() {
             // Robots created before device binding have no bound device; the
-            // claiming device adopts those runs the same way the cloud
-            // dispatcher binds unbound local runs.
+            // claiming Executor adopts those runs atomically.
             sql.push_str(
                 " AND (e.execution_device_id = ?1
                      OR e.execution_device_id IS NULL
@@ -1477,28 +1432,16 @@ impl LocalTaskStore {
         }
         sql.push_str(" ORDER BY e.priority_weight DESC, e.queued_at ASC, e.id ASC");
         let mut statement = connection.prepare(&sql)?;
-        let candidates = if let Some(device_id) = claim.execution_device_id.as_ref() {
+        let candidates = if let Some(device_id) = execution_device_id {
             statement
                 .query_map(params![device_id], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             statement
                 .query_map([], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
@@ -1513,60 +1456,15 @@ impl LocalTaskStore {
                 .collect::<Result<HashSet<_>, _>>()?;
             scopes
         };
-        let mut candidate = None;
-        let mut priorities = candidates
-            .iter()
-            .map(|row| row.3)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        priorities.sort_unstable_by(|left, right| right.cmp(left));
-        for priority in priorities {
-            let mut seen_agents = HashSet::new();
-            let mut fair_candidates = Vec::new();
-            for (position, (id, agent_id, execution_scope, row_priority, configured_limit)) in
-                candidates.iter().enumerate()
-            {
-                if *row_priority != priority {
-                    continue;
-                }
-                let limit = if (1..=20).contains(configured_limit) {
-                    *configured_limit
-                } else {
-                    1
-                };
-                let agent_available = agent_id.is_empty()
-                    || running_agents.get(agent_id).copied().unwrap_or(0) < limit;
-                let scope_available =
-                    execution_scope.is_empty() || !occupied_scopes.contains(execution_scope);
-                let fairness_key = if agent_id.is_empty() {
-                    format!("automation:{id}")
-                } else {
-                    agent_id.clone()
-                };
-                if agent_available && scope_available && seen_agents.insert(fairness_key) {
-                    fair_candidates.push((
-                        running_agents.get(agent_id).copied().unwrap_or(0),
-                        position,
-                        *id,
-                    ));
-                }
-            }
-            if let Some((_, _, id)) = fair_candidates.into_iter().min() {
-                candidate = Some(id);
-                break;
-            }
-        }
-        let Some(candidate_id) = candidate else {
+        let Some((candidate_id, _)) = candidates.into_iter().find(|(_, execution_scope)| {
+            execution_scope.is_empty() || !occupied_scopes.contains(execution_scope)
+        }) else {
             return Ok(None);
         };
         let now = now();
-        let runtime_device_id = claim
-            .execution_device_id
-            .as_deref()
-            .unwrap_or("local-device");
+        let runtime_device_id = execution_device_id.unwrap_or("local-device");
         let runtime_task_id = format!("codex-queue-{candidate_id}");
-        let lease_seconds = claim.lease_seconds.max(60);
+        let lease_seconds = lease_seconds.max(60);
         let changed = connection.execute(
             "UPDATE loop_item_executions
              SET status = 'claimed', claimed_at = ?1, heartbeat_at = ?1,
@@ -1581,7 +1479,7 @@ impl LocalTaskStore {
                 candidate_id,
                 runtime_device_id,
                 runtime_task_id,
-                &claim.runtime_instance_id,
+                runtime_instance_id,
             ],
         )?;
         if changed != 1 {
@@ -1889,7 +1787,7 @@ impl LocalTaskStore {
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        execution_row(&transaction, execution_id)?;
+        let current = execution_row(&transaction, execution_id)?;
         let timestamp = now();
         let changed = transaction.execute(
             "UPDATE loop_item_executions
@@ -1911,6 +1809,21 @@ impl LocalTaskStore {
             content.unwrap_or(""),
             &timestamp,
         )?;
+        let dispatch_role = current
+            .execution_payload
+            .as_ref()
+            .and_then(|payload| payload.get("dispatch_role"))
+            .and_then(Value::as_str);
+        if !matches!(dispatch_role, Some("manager" | "member")) {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET status = 'in_review',
+                     metadata = json_set(metadata, '$.is_unread', json('true')),
+                     version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND status != 'completed'",
+                params![timestamp, current.loop_item_id],
+            )?;
+        }
         transaction.commit()?;
         drop(connection);
         self.resume_manager_for_finished_round(execution_id)?;
@@ -4214,8 +4127,7 @@ fn local_execution_display_state(status: &str, observed_state: &str, sync_state:
         "pending_approval" => "waiting_approval",
         "queued" => "queued",
         "cancel_requested" => "cancelling",
-        "claimed" if observed_state == "unconfirmed" => "starting",
-        "claimed" => "waiting_runtime",
+        "claimed" => "starting",
         "running" if observed_state == "running" => "running",
         _ => "waiting_runtime",
     }
@@ -4280,18 +4192,20 @@ fn create_collaboration_group_execution(
         })?;
     let leader_agent = collaboration_agent(connection, project_id, leader_id)?;
     let mut execution_payload = payload.as_object().cloned().unwrap_or_default();
+    let manager_context = collaboration_manager_message(
+        group,
+        project
+            .metadata
+            .get("workflow_definition")
+            .unwrap_or(&Value::Null),
+        issue_title,
+        issue_description,
+        issue_status,
+    );
+    execution_payload.insert("message".to_owned(), Value::String(manager_context.clone()));
     execution_payload.insert(
-        "message".to_owned(),
-        Value::String(collaboration_manager_message(
-            group,
-            project
-                .metadata
-                .get("workflow_definition")
-                .unwrap_or(&Value::Null),
-            issue_title,
-            issue_description,
-            issue_status,
-        )),
+        "collaboration_manager_context".to_owned(),
+        Value::String(manager_context),
     );
     execution_payload.insert("dispatch_id".to_owned(), json!(item_id));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
@@ -4325,8 +4239,11 @@ fn collaboration_agent(
     let agent = get_item_from(connection, agent_id, "chat_agent")?.ok_or_else(|| {
         TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
     })?;
-    if agent.cloud_project_id.as_deref() != Some(project_id)
-        || agent.status.as_deref() == Some("archived")
+    let agent_project_id = agent.cloud_project_id.as_deref();
+    if !matches!(
+        agent_project_id,
+        Some(candidate) if candidate == project_id || candidate == DEFAULT_WORK_ITEM_PROJECT_ID
+    ) || agent.status.as_deref() == Some("archived")
     {
         return Err(TaskRuntimeError::Invalid(
             "Collaboration team robot is not active in this project".to_owned(),
@@ -4462,138 +4379,171 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let mut payload = stored
+        .get("runtimePayload")
+        .or_else(|| stored.get("runtime_payload"))
+        .or_else(|| stored.get("managerRuntimeRequest"))
+        .or_else(|| stored.get("manager_runtime_request"))
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| Value::Object(stored.clone()));
+    let runtime_task_id = execution.runtime_task_id.clone().unwrap_or_default();
     let message = stored
         .get("message")
         .or_else(|| stored.get("text"))
+        .or_else(|| payload.get("message"))
+        .or_else(|| payload.get("content"))
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| execution.task_title.clone());
-    let task_instructions = stored
-        .get("system_prompt")
+        .unwrap_or(&execution.task_title)
+        .to_owned();
+    let title = stored
+        .get("workflow_task_title")
+        .or_else(|| payload.get("title"))
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    let system_prompt = [execution.agent_system_prompt.trim(), task_instructions]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let workflow_node_id = stored.get("workflow_node_id").cloned();
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&execution.task_title)
+        .to_owned();
     let dispatch_id = stored.get("dispatch_id").cloned();
     let dispatch_role = stored.get("dispatch_role").cloned();
-    let automation_run_id = stored.get("automation_run_id").cloned();
-    let model_selection = stored.get("modelSelection").and_then(Value::as_object);
-    let selected_model_name = model_selection
-        .and_then(|selection| selection.get("modelName"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty());
-    let selected_model_type = model_selection
-        .and_then(|selection| selection.get("modelType"))
-        .cloned();
-    let selected_model_options = model_selection
-        .and_then(|selection| selection.get("options"))
-        .cloned()
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}));
-    let project_instructions = stored
-        .get("developer_instruction")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned);
-    let project_workspace_roots = stored
-        .get("project_workspace_roots")
-        .and_then(Value::as_array)
-        .map(|roots| {
-            roots
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|root| !root.trim().is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .filter(|roots| !roots.is_empty())
-        .unwrap_or_default();
-    let runtime_title = stored
-        .get("workflow_task_title")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&execution.task_title);
-    let mut additional_context = json!({
-        "task": {
-            "kind": "application",
-            "value": json!({
-                "id": execution.loop_item_id,
-                "title": execution.task_title,
-                "status": execution.task_status,
-                "priority": execution.task_priority,
-            }).to_string(),
-        },
-    });
-    if let Some(workflow_node_id) = workflow_node_id.as_ref() {
-        additional_context["workflowStage"] = json!({
-            "kind": "application",
-            "value": json!({
-                "workflow_node_id": workflow_node_id,
-                "instruction": message,
-            }).to_string(),
-        });
-    }
-    let shell_type = if execution.agent_runtime == "claude_code" {
-        "ClaudeCode"
-    } else {
-        "Codex"
-    };
-    let origin_type = if dispatch_id.is_some() {
-        "issue_dispatch"
-    } else {
-        "project_automation"
-    };
-    let mut payload = json!({
-        "taskId": execution.runtime_task_id,
-        "teamId": 0,
-        "runtime": execution.agent_runtime,
-        "message": message,
-        "projectInstructions": system_prompt,
-        "title": runtime_title,
+    let origin = json!({
+        "type": if dispatch_id.is_some() { "issue_dispatch" } else { "project_automation" },
+        "projectStore": "local",
         "cloudProjectId": execution.cloud_project_id,
-        "modelId": selected_model_name.or(execution.agent_model.as_deref()),
-        "modelType": selected_model_type,
-        "modelOptions": selected_model_options,
-        "bot": [{
-            "id": execution.agent_id,
-            "name": execution.agent_name,
-            "shell_type": shell_type,
-            "system_prompt": execution.agent_system_prompt,
-            "mcp_servers": execution.agent_mcp_servers,
-        }],
-        "projectPlugins": execution.agent_plugins,
-        "additionalSkills": execution.agent_additional_skills,
-        "standaloneChatWorkspace": execution.agent_local_project_id.is_none(),
-        "origin": {
-            "type": origin_type,
-            "projectStore": "local",
-            "cloudProjectId": execution.cloud_project_id,
-            "loopItemId": execution.loop_item_id,
-            "workflowNodeId": workflow_node_id,
-            "dispatchId": dispatch_id,
-            "dispatchRole": dispatch_role,
-            "run_id": automation_run_id,
+        "loopItemId": execution.loop_item_id,
+        "workflowNodeId": stored.get("workflow_node_id"),
+        "dispatchId": dispatch_id,
+        "dispatchRole": dispatch_role,
+        "managerAgentId": if stored.get("dispatch_role").and_then(Value::as_str) == Some("manager") {
+            Some(execution.agent_id.as_str())
+        } else {
+            None
         },
-        "additionalContext": additional_context,
+        "run_id": stored.get("automation_run_id"),
     });
-    if let Some(local_project_id) = execution.agent_local_project_id {
-        payload["projectId"] = json!(local_project_id);
+
+    let payload_object = payload
+        .as_object_mut()
+        .expect("materialized Runtime payload must be an object");
+    apply_execution_agent_profile(payload_object, execution);
+    payload_object.insert("taskId".to_owned(), json!(runtime_task_id));
+    payload_object.insert("title".to_owned(), json!(title));
+    payload_object.insert("message".to_owned(), json!(message));
+    payload_object.insert(
+        "cloudProjectId".to_owned(),
+        json!(execution.cloud_project_id),
+    );
+    if let Some(project_id) = execution.agent_local_project_id {
+        payload_object.insert("projectId".to_owned(), json!(project_id));
+        payload_object.insert("standaloneChatWorkspace".to_owned(), json!(false));
+    } else {
+        payload_object.insert("standaloneChatWorkspace".to_owned(), json!(true));
     }
-    if let Some(workspace_path) = project_workspace_roots.first() {
-        payload["workspacePath"] = json!(workspace_path);
-        payload["runtimeWorkspaceRoots"] = json!(project_workspace_roots);
-        payload["standaloneChatWorkspace"] = json!(false);
+    payload_object.insert("origin".to_owned(), origin.clone());
+
+    if let Some(member_profiles) = stored
+        .get("memberRuntimeProfiles")
+        .or_else(|| stored.get("member_runtime_profiles"))
+        .filter(|value| value.is_array())
+        .cloned()
+    {
+        let runtime_handle = payload_object
+            .entry("runtimeHandle")
+            .or_insert_with(|| json!({}));
+        if !runtime_handle.is_object() {
+            *runtime_handle = json!({});
+        }
+        let runtime_handle = runtime_handle
+            .as_object_mut()
+            .expect("Runtime handle was normalized");
+        runtime_handle.insert(
+            "collaborationMemberRuntimeProfiles".to_owned(),
+            member_profiles,
+        );
+        if let Some(manager_context) = stored.get("collaboration_manager_context").cloned() {
+            runtime_handle.insert("collaborationManagerContext".to_owned(), manager_context);
+        }
+        if let Some(dispatch_id) = stored.get("dispatch_id").cloned() {
+            runtime_handle.insert("collaborationDispatchTaskId".to_owned(), dispatch_id);
+        }
     }
-    if let Some(project_instructions) = project_instructions {
-        payload["projectInstructions"] = json!(project_instructions);
+
+    let execution_request_key = if payload_object.contains_key("executionRequest") {
+        "executionRequest"
+    } else {
+        "execution_request"
+    };
+    if let Some(request) = payload_object
+        .get_mut(execution_request_key)
+        .and_then(Value::as_object_mut)
+    {
+        request.insert("task_id".to_owned(), json!(runtime_task_id));
+        request.insert(
+            "subtask_id".to_owned(),
+            json!(uuid::Uuid::new_v4().to_string()),
+        );
+        request.insert("task_title".to_owned(), json!(title));
+        request.insert(
+            "subtask_title".to_owned(),
+            json!(format!("{title} - Assistant")),
+        );
+        request.insert("prompt".to_owned(), json!(message));
+        request.insert("new_session".to_owned(), json!(true));
+        request.insert(
+            "device_id".to_owned(),
+            json!(execution
+                .runtime_device_id
+                .as_deref()
+                .unwrap_or("local-device")),
+        );
+        let extra = request.entry("extra").or_insert_with(|| json!({}));
+        if !extra.is_object() {
+            *extra = json!({});
+        }
+        let extra = extra
+            .as_object_mut()
+            .expect("Execution extra was normalized");
+        extra.insert("origin".to_owned(), origin);
+        extra.insert(
+            "cloudProjectId".to_owned(),
+            json!(execution.cloud_project_id),
+        );
+        extra.insert("execution_target_type".to_owned(), json!("local"));
     }
     payload
+}
+
+fn apply_execution_agent_profile(
+    payload: &mut serde_json::Map<String, Value>,
+    execution: &LocalExecution,
+) {
+    payload
+        .entry("runtime")
+        .or_insert_with(|| json!(execution.agent_runtime));
+    payload
+        .entry("projectInstructions")
+        .or_insert_with(|| json!(execution.agent_system_prompt));
+    if let Some(model) = execution.agent_model.as_deref() {
+        payload.entry("modelId").or_insert_with(|| json!(model));
+    }
+    payload
+        .entry("additionalSkills")
+        .or_insert_with(|| json!(execution.agent_additional_skills));
+    payload
+        .entry("projectPlugins")
+        .or_insert_with(|| json!(execution.agent_plugins));
+    payload.entry("bot").or_insert_with(|| {
+        json!([{
+            "id": execution.agent_id,
+            "name": execution.agent_name,
+            "shell_type": if execution.agent_runtime == "claude_code" {
+                "ClaudeCode"
+            } else {
+                "Codex"
+            },
+            "mcp_servers": execution.agent_mcp_servers,
+        }])
+    });
 }
 
 fn priority_weight(priority: &str) -> i64 {
@@ -5105,7 +5055,7 @@ mod tests {
                 .unwrap()
                 .status
                 .as_deref(),
-            Some("inbox")
+            Some("in_review")
         );
     }
 
@@ -5223,7 +5173,7 @@ mod tests {
     }
 
     #[test]
-    fn local_complete_execution_does_not_project_issue_status() {
+    fn local_direct_execution_completion_moves_issue_to_review() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent = make_local_agent(&store, &project.id, "auto");
@@ -5277,16 +5227,16 @@ mod tests {
         store.complete_execution(claimed.id, Some("done")).unwrap();
 
         let updated = store.get_task(&project.id, &task.id).unwrap();
-        assert_eq!(updated.status.as_deref(), Some("inbox"));
+        assert_eq!(updated.status.as_deref(), Some("in_review"));
         assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
-        assert_eq!(updated.metadata["is_unread"], Value::Null);
+        assert_eq!(updated.metadata["is_unread"], json!(true));
         store.mark_task_read(&project.id, &task.id, None).unwrap();
         store
             .complete_execution(claimed.id, Some("duplicate"))
             .unwrap();
         assert_eq!(
             store.get_task(&project.id, &task.id).unwrap().metadata["is_unread"],
-            Value::Null
+            json!(false)
         );
         // Completion also preserves an Issue that was already in review.
         let second = store
@@ -5332,17 +5282,17 @@ mod tests {
         store.complete_execution(claimed_second.id, None).unwrap();
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
-        assert_eq!(second_after.metadata["is_unread"], Value::Null);
+        assert_eq!(second_after.metadata["is_unread"], json!(true));
     }
 
     #[test]
     fn collaboration_group_round_runs_members_through_executor_then_restarts_manager() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
-        let leader = make_local_agent(&store, &project.id, "auto");
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
         let member = store
             .create_chat_agent(
-                &project.id,
+                DEFAULT_WORK_ITEM_PROJECT_ID,
                 ChatAgentCreate {
                     name: "Evidence Bot".to_owned(),
                     display_name: Some("Evidence Bot".to_owned()),
@@ -5438,6 +5388,69 @@ mod tests {
                 TaskUpdate {
                     version: issue.version,
                     assignee_group_id: Some(Some("squad-1".to_owned())),
+                    execution_payload: Some(json!({
+                        "managerRuntimeRequest": {
+                            "taskId": "manager-template",
+                            "runtime": "codex",
+                            "executionRequest": {
+                                "task_id": "manager-template",
+                                "subtask_id": "manager-template-initial",
+                                "bot": [{
+                                    "id": leader.id,
+                                    "name": "Manager",
+                                    "shell_type": "Codex"
+                                }],
+                                "model_config": {
+                                    "model": "openai",
+                                    "model_id": "gpt-6-sol"
+                                }
+                            }
+                        },
+                        "memberRuntimeProfiles": [{
+                            "memberIds": [leader.id],
+                            "runtimePayload": {
+                                "taskId": "leader-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "leader-template",
+                                    "subtask_id": "leader-template-initial",
+                                    "bot": [{
+                                        "id": leader.id,
+                                        "name": "Manager",
+                                        "shell_type": "Codex"
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }, {
+                            "memberIds": [member.id],
+                            "runtimePayload": {
+                                "taskId": "member-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "member-template",
+                                    "subtask_id": "member-template-initial",
+                                    "bot": [{
+                                        "id": member.id,
+                                        "name": "Collector",
+                                        "shell_type": "Codex",
+                                        "mcp_servers": {
+                                            "evidence": {
+                                                "command": "evidence-mcp"
+                                            }
+                                        }
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }]
+                    })),
                     ..TaskUpdate::default()
                 },
             )
@@ -5457,11 +5470,20 @@ mod tests {
             .expect("manager execution must be queued");
         let payload = claimed.execution_payload.as_ref().unwrap();
         assert_eq!(claimed.agent_id, leader.id);
-        assert_eq!(payload["modelOptions"]["collaborationMode"], Value::Null);
-        assert_eq!(payload["bot"].as_array().unwrap().len(), 1);
-        assert_eq!(payload["bot"][0]["id"], leader.id);
+        assert_eq!(
+            payload["executionRequest"]["bot"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(payload["executionRequest"]["bot"][0]["id"], leader.id);
         assert_eq!(payload["origin"]["dispatchRole"], "manager");
         assert_eq!(payload["origin"]["dispatchId"], issue.id);
+        assert_eq!(
+            payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         assert!(payload["message"]
             .as_str()
             .unwrap()
@@ -5488,16 +5510,25 @@ mod tests {
                 &json!({
                     "round_id": "round-1",
                     "items": [{
+                        "assignment_id": "collect",
                         "title": "采集运行证据",
                         "instructions": "Collect verifiable evidence.",
                         "assignee_type": "agent",
                         "assignee_id": member.id,
                         "workflow_stage_id": "diagnosis",
                     }, {
+                        "assignment_id": "review-agent",
                         "title": "独立复核证据",
                         "instructions": "Review the evidence independently.",
                         "assignee_type": "agent",
                         "assignee_id": leader.id,
+                        "workflow_stage_id": "diagnosis",
+                    }, {
+                        "assignment_id": "review-human",
+                        "title": "人工确认诊断",
+                        "instructions": "Deliver a human review of the evidence.",
+                        "assignee_type": "human",
+                        "assignee_id": "42",
                         "workflow_stage_id": "diagnosis",
                     }],
                 }),
@@ -5505,6 +5536,19 @@ mod tests {
             .unwrap();
         assert_eq!(round["state"], "dispatched");
         assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
+        assert_eq!(round["assignments"][2]["assignee_name"], "Human reviewer");
+        let human_task_id = round["assignments"][2]["human_assignment_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(human_task.parent_id.as_deref(), Some(issue.id.as_str()));
+        assert_eq!(human_task.assignee_user_id, Some(42));
+        assert_eq!(human_task.title.as_deref(), Some("人工确认诊断"));
+        assert_eq!(
+            human_task.metadata["collaboration_assignment"]["round_id"],
+            "round-1"
+        );
         let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
         let manager = comments
             .iter()
@@ -5527,9 +5571,14 @@ mod tests {
             member_activity.metadata["workflow_task_title"],
             "采集运行证据"
         );
-        store
-            .complete_execution(claimed.id, Some("manager dispatched round"))
-            .unwrap();
+        let connection = store.connection().unwrap();
+        let settled_manager = execution_row(&connection, claimed.id).unwrap();
+        assert_eq!(settled_manager.status, "completed");
+        assert_eq!(
+            settled_manager.termination_reason,
+            "collaboration_round_dispatched"
+        );
+        drop(connection);
 
         let first_member_execution = store
             .claim_next_local_execution(&LocalExecutionClaim {
@@ -5551,13 +5600,21 @@ mod tests {
             first_member_execution.execution_payload.as_ref().unwrap()["message"],
             "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
         );
+        let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
+            ["executionRequest"]["system_prompt"]
+            .as_str()
+            .expect("member system prompt");
+        assert!(member_system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
+        assert!(member_system_prompt.contains("不要调用 add_board_item_comment"));
+        assert!(member_system_prompt.contains("必须调用 upload_item_attachment"));
         assert_eq!(
-            first_member_execution.execution_payload.as_ref().unwrap()["bot"][0]["id"],
+            first_member_execution.execution_payload.as_ref().unwrap()["executionRequest"]["bot"]
+                [0]["id"],
             member.id
         );
         assert_eq!(
-            first_member_execution.execution_payload.as_ref().unwrap()["bot"][0]["mcp_servers"]
-                ["evidence"]["command"],
+            first_member_execution.execution_payload.as_ref().unwrap()["executionRequest"]["bot"]
+                [0]["mcp_servers"]["evidence"]["command"],
             "evidence-mcp"
         );
         assert_eq!(first_member_execution.execution_scope, "");
@@ -5606,6 +5663,43 @@ mod tests {
                 Some("Evidence independently reviewed."),
             )
             .unwrap();
+        assert!(store
+            .claim_next_local_execution(&LocalExecutionClaim {
+                execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
+                device_capacity: 1,
+                runtime_active: 0,
+                runtime_active_task_ids: Vec::new(),
+                lease_seconds: 300,
+            })
+            .unwrap()
+            .is_none());
+
+        let delivery = store
+            .create_delivery(
+                &project.id,
+                &human_task_id,
+                true,
+                DeliveryCreate {
+                    markdown: "Human review confirms the evidence.".to_owned(),
+                    chat: None,
+                    source_task: None,
+                },
+            )
+            .unwrap();
+        store
+            .finalize_delivery(
+                &human_task_id,
+                &delivery.id,
+                crate::task_runtime::DeliveryFinalize::default(),
+            )
+            .unwrap();
+        let delivered_human_task = store.get_task(&project.id, &human_task_id).unwrap();
+        assert_eq!(delivered_human_task.status.as_deref(), Some("completed"));
+        assert_eq!(
+            delivered_human_task.current_delivery_id.as_deref(),
+            Some(delivery.id.as_str())
+        );
 
         let comments = store.list_comments(&project.id, &issue.id, 0).unwrap();
         let member_activity = comments
@@ -5636,6 +5730,24 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("Evidence collected.")
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Human review confirms the evidence.")
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Use read-only diagnostics and cite evidence.")
+        );
+        assert!(
+            resumed_manager.execution_payload.as_ref().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("Reproducible observations")
         );
         assert_eq!(
             store
@@ -6045,7 +6157,7 @@ mod tests {
     }
 
     #[test]
-    fn local_claim_respects_device_capacity() {
+    fn local_claim_is_not_gated_by_reported_device_capacity() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent_a = store
@@ -6153,8 +6265,10 @@ mod tests {
             .claim_next_local_execution(&claim)
             .unwrap()
             .expect("first robot should claim");
-        // Capacity 1 -> the second robot's run stays queued.
-        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+        let second = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("Executor owns its free slots and may claim another run");
 
         let manual_process = LocalExecutionClaim {
             device_capacity: 2,
@@ -6165,22 +6279,25 @@ mod tests {
         assert!(store
             .claim_next_local_execution(&manual_process)
             .unwrap()
-            .is_none());
+            .is_some());
 
         let observed_first = LocalExecutionClaim {
             device_capacity: 2,
             runtime_active: 1,
-            runtime_active_task_ids: vec![first.runtime_task_id.unwrap()],
+            runtime_active_task_ids: vec![
+                first.runtime_task_id.unwrap(),
+                second.runtime_task_id.unwrap(),
+            ],
             ..claim
         };
         assert!(store
             .claim_next_local_execution(&observed_first)
             .unwrap()
-            .is_some_and(|execution| execution.agent_name == "Bot B"));
+            .is_none());
     }
 
     #[test]
-    fn local_claim_allows_configured_robot_parallelism() {
+    fn local_claim_does_not_apply_agent_parallelism_limits() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
         let agent = store
@@ -6257,6 +6374,7 @@ mod tests {
             lease_seconds: 300,
         };
 
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
@@ -6682,7 +6800,7 @@ mod tests {
         assert_eq!(accepted.status, "claimed");
         assert_eq!(accepted.observed_state, "accepted");
         assert_eq!(accepted.sync_state, "in_sync");
-        assert_eq!(accepted.display_state, "waiting_runtime");
+        assert_eq!(accepted.display_state, "starting");
         assert!(accepted.started_at.is_none());
         assert!(accepted.error_message.is_empty());
 

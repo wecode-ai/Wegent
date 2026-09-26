@@ -115,7 +115,7 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
     test_db.add_all([manager, item, dispatch])
     test_db.commit()
     labels = {
-        "source": "board_team_assignment",
+        "source": "project_automation",
         "weworkSpaceProjectId": str(project.id),
         "weworkSpaceTaskId": item.id,
         "dispatchId": "dispatch-1",
@@ -253,8 +253,7 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
             json={
                 "metadata": {
                     "labels": {
-                        "source": "board_team_assignment",
-                        "boardTeamExecutionId": "42",
+                        "source": "project_automation",
                         "weworkSpaceProjectId": str(project.id),
                         "weworkSpaceTaskId": item.id,
                     }
@@ -267,7 +266,6 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
 
     assert context["space_id"] == str(project.id)
     assert context["item_id"] == item.id
-    assert context["board_team_execution_id"] == "42"
     assert context["space"]["name"] == "Managed board"
     assert context["item"]["title"] == "Bound board task"
 
@@ -419,7 +417,7 @@ async def test_external_project_tools_route_list_read_and_assignment_to_provider
 
 
 async def test_board_robot_task_can_assign_item_to_another_project_robot(
-    test_db: Session, test_user: User, monkeypatch, mocker
+    test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
     robot = ProjectChatAgent(
@@ -447,14 +445,10 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
         wework_space,
         "_board_context",
         lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
+            "source": "project_automation",
             "space_id": str(project.id),
             "item_id": item.id,
         },
-    )
-    dispatch = mocker.patch(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
-        return_value=None,
     )
 
     assigned = await wework_space.assign_board_item(
@@ -462,7 +456,6 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
     )
 
     assert assigned["assignee_agent_id"] == robot.id
-    dispatch.assert_awaited_once()
 
 
 @pytest.mark.parametrize("url", [None, "wework://boards"])

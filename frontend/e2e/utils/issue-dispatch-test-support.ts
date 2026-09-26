@@ -181,6 +181,7 @@ export async function createProjectAgent(
     const closeButton = page.getByTestId('cloud-todo-detail-close')
     await expect(closeButton).toBeVisible()
     await closeButton.click()
+    await expect(page).not.toHaveURL(/\/issues\//)
     await expect(issueDetail).toHaveCount(0)
   }
   await page.getByTestId('collaboration-tab-manage').click()

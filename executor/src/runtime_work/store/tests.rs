@@ -233,7 +233,14 @@ fn terminal_turn_status_is_not_persisted() {
         "transcriptSnapshotThreadId": "thread-1",
         "cloudCollaborationRound": {
             "round_id": "round-1",
-            "execution_ids": [41, 42],
+            "assignments": [
+                {
+                    "assignment_id": "assignment-1",
+                    "assignee_type": "agent",
+                    "assignee_id": "agent-1",
+                    "task_title": "Collect evidence"
+                }
+            ],
             "human_assignment_ids": ["ISSUE-HUMAN-1"]
         },
         "modelSelection": {"modelName": "gpt-5.6-sol"},

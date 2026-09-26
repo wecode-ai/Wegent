@@ -941,10 +941,6 @@ export interface WeworkWorkspaceRuntimePort {
     task: WorkspaceRuntimeTaskAddress,
     title: string,
   ): Promise<CollaborationIssue | null>;
-  claimNextExecution(input: {
-    executionDeviceId: string;
-    leaseSeconds: number;
-  }): Promise<CollaborationExecution | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

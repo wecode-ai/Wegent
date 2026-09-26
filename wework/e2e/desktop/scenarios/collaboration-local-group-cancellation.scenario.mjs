@@ -11,6 +11,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import {
   createLocalCollaborationProject,
+  initializeFirstProjectExecutionEnvironment,
+  openProjectAgentCreator,
   selectWhenOptionAvailable,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
@@ -46,12 +48,7 @@ async function waitForCondition(read, predicate, timeoutMs, message) {
 }
 
 async function addAgent(control, name, prompt, timeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-    timeoutMs,
-  })
-  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
-    timeoutMs,
-  })
+  await openProjectAgentCreator(control, scoped('[data-testid="project-agent-add"]'), timeoutMs)
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: name,
   })
@@ -248,6 +245,7 @@ export async function createDesktopScenario({
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
+      await initializeFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
 
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
@@ -271,7 +269,7 @@ export async function createDesktopScenario({
         uiTimeoutMs
       )
       await createGroup(control, uiTimeoutMs)
-      const initialStatus = await createIssueAndAssignGroup(control, uiTimeoutMs)
+      await createIssueAndAssignGroup(control, uiTimeoutMs)
 
       const managerEventTestId = await findManagerTestId(
         control,
@@ -292,8 +290,8 @@ export async function createDesktopScenario({
       assert.equal(managerRequests, 1, '协作小组负责人没有启动唯一的一轮规划执行')
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        initialStatus,
-        '负责人运行期间 Issue 状态被系统自动迁移'
+        'in_progress',
+        '负责人开始运行后 Issue 没有进入进行中'
       )
       await captureScreenshot(control, 'local-group-cancellation-01-manager-running.png', CONTENT)
 
@@ -327,8 +325,8 @@ export async function createDesktopScenario({
       })
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        initialStatus,
-        '终止负责人执行后 Issue 状态被系统自动迁移'
+        'in_progress',
+        '终止负责人执行后 Issue 没有保持进行中'
       )
       await captureScreenshot(control, 'local-group-cancellation-02-manager-cancelled.png', CONTENT)
     },

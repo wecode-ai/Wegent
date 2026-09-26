@@ -671,6 +671,7 @@ class LoopItemService:
                 str(collaboration_group["id"]),
                 str(collaboration_group["name"]),
             )
+            payload["status"] = "in_progress"
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self._write_assignment_change(
@@ -1548,8 +1549,30 @@ class LoopItemService:
             updates["metadata_json"] = metadata
             if collaboration_group:
                 updates.update(
-                    assignee_user_id=None, assignee_agent_id="", assignee_team_id=None
+                    assignee_user_id=None,
+                    assignee_agent_id="",
+                    assignee_team_id=None,
+                    status="in_progress",
+                    completed_at=None,
+                    sort_order=0,
                 )
+                if (
+                    item.status != "in_progress"
+                    and "status" not in values.model_fields_set
+                ):
+                    project = db.get(CloudProject, item.cloud_project_id)
+                    if project is None:
+                        raise HTTPException(
+                            status.HTTP_404_NOT_FOUND, "Cloud project not found"
+                        )
+                    write_status_change(
+                        metadata,
+                        project=project,
+                        from_status=item.status,
+                        to_status="in_progress",
+                        trigger="collaboration_group_assignment",
+                        by_user_id=user_id,
+                    )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
             # state on the task itself so every queue view stays a projection
@@ -1739,7 +1762,7 @@ class LoopItemService:
             db.flush()
         db.refresh(item)
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
@@ -1777,17 +1800,6 @@ class LoopItemService:
     ) -> None:
         if not target_user_id or target_user_id == previous_user_id:
             return
-        project_id = int(item.cloud_project_id)
-        project = db.get(CloudProject, project_id)
-        if project is None or target_user_id not in explicit_project_member_ids(
-            db, project
-        ):
-            raise HTTPException(422, "Assignee is not a member of this project")
-        if not notify:
-            return
-        from app.services.collaboration_human_assignments import (
-            notify_direct_human_assignment,
-        )
         from app.services.issue_assignments import issue_assignment_service
 
         assignment = issue_assignment_service.active(
@@ -1797,12 +1809,27 @@ class LoopItemService:
             member_id=str(target_user_id),
             workflow_step=None,
         )
+        is_implicit_creator_assignment = (
+            target_user_id == actor_user_id
+            and assignment is not None
+            and assignment.metadata.get("trigger") == "default"
+        )
+        project_id = int(item.cloud_project_id)
+        project = db.get(CloudProject, project_id)
+        if project is None or (
+            not is_implicit_creator_assignment
+            and target_user_id not in explicit_project_member_ids(db, project)
+        ):
+            raise HTTPException(422, "Assignee is not a member of this project")
+        if not notify:
+            return
+        from app.services.collaboration_human_assignments import (
+            notify_direct_human_assignment,
+        )
+
         if assignment is None:
             raise RuntimeError("Direct human assignment notification has no assignment")
-        if (
-            target_user_id == actor_user_id
-            and assignment.metadata.get("trigger") == "default"
-        ):
+        if is_implicit_creator_assignment:
             return
         human = db.get(User, target_user_id)
         if human is None:
@@ -2121,7 +2148,7 @@ class LoopItemService:
             **assignee_updates,
         )
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
@@ -2259,7 +2286,7 @@ class LoopItemService:
         db.commit()
         db.refresh(item)
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 

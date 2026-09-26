@@ -25,7 +25,7 @@ describe("issueTaskSummaryForMessage", () => {
         message({
           dispatch_role: "executor",
           dispatch_task_id: "execute",
-          dispatch_task_title: "检查当前设备磁盘空间",
+          workflow_task_title: "检查当前设备磁盘空间",
         }),
         [],
         "看看磁盘",
@@ -44,7 +44,7 @@ describe("issueTaskSummaryForMessage", () => {
         {
           ...message({
             dispatch_role: "executor",
-            dispatch_task_title: "Initial title",
+            workflow_task_title: "Initial title",
           }),
           runtimeAddress: { deviceId: "device", taskId: "task" },
         },

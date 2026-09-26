@@ -1290,6 +1290,18 @@ export function TodoEditor(props: TodoEditorProps) {
   const assigneeGroup = projectGroups.find(
     (group) => assigneeTarget === `group:${group.id}`,
   );
+  const aiAssigneeSelected =
+    assigneeTarget.startsWith("agent:") ||
+    assigneeTarget.startsWith("team:") ||
+    assigneeTarget.startsWith("group:");
+  const executionEnvironmentReady = Object.values(
+    project?.execution_environment?.devices ?? {},
+  ).some(
+    (device) =>
+      device.status === "ready" && Boolean(device.workspace_path?.trim()),
+  );
+  const createBlockedByExecutionEnvironment =
+    isCreate && aiAssigneeSelected && !executionEnvironmentReady;
   const assigneeName =
     assigneeGroup?.name ||
     assigneeTeam?.displayName ||
@@ -1325,7 +1337,13 @@ export function TodoEditor(props: TodoEditorProps) {
         : null);
 
   async function submitCreate() {
-    if (props.mode !== "create" || !title.trim() || saving) return;
+    if (
+      props.mode !== "create" ||
+      !title.trim() ||
+      saving ||
+      createBlockedByExecutionEnvironment
+    )
+      return;
     setSaving(true);
     setSaveError(null);
     const createInput: SharedIssueDetailCreateInput = {
@@ -1934,7 +1952,10 @@ export function TodoEditor(props: TodoEditorProps) {
         onChange={(target) => {
           setAssigneeTarget(target);
           setNotifyAssignee(true);
-          if (target.startsWith("user:")) {
+          if (
+            target.startsWith("user:") &&
+            target !== `user:${project?.current_user_id}`
+          ) {
             setNotificationChoiceOpen(true);
           }
         }}
@@ -2885,6 +2906,18 @@ export function TodoEditor(props: TodoEditorProps) {
               {saveError && (
                 <p className="mt-2 text-xs text-destructive">{saveError}</p>
               )}
+              {createBlockedByExecutionEnvironment ? (
+                <div
+                  role="alert"
+                  data-testid="cloud-todo-create-execution-environment-required"
+                  className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                >
+                  {t(
+                    "todo.create_execution_environment_required",
+                    "项目执行环境尚未初始化。请先在项目设置中初始化环境，再把任务分配给智能体或协作小组。",
+                  )}
+                </div>
+              ) : null}
 
               {workspacePanel && item ? (
                 <>
@@ -3904,7 +3937,11 @@ export function TodoEditor(props: TodoEditorProps) {
                   <button
                     type="button"
                     data-testid="cloud-todo-create-confirm"
-                    disabled={!title.trim() || saving}
+                    disabled={
+                      !title.trim() ||
+                      saving ||
+                      createBlockedByExecutionEnvironment
+                    }
                     onClick={() => void submitCreate()}
                     className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                   >

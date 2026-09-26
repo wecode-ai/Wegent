@@ -777,13 +777,6 @@ export function createWeworkWorkspaceRuntimePort(
       const issue = await deliveryApi.updateTaskTrackingTitle(toRuntimeTaskAddress(task), title)
       return issue ? toIssue(issue) : null
     },
-    async claimNextExecution(input) {
-      const execution = await projectAutomationApi.claimNext({
-        execution_device_id: input.executionDeviceId,
-        lease_seconds: input.leaseSeconds,
-      })
-      return execution ? mapCollaborationExecutionDto(execution) : null
-    },
     async reportExecutionLifecycle(projectId, executionId, event) {
       const execution = { id: executionId, cloud_project_id: projectId }
       const updated =

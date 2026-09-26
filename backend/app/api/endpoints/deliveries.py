@@ -470,19 +470,6 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.assignee_agent_id or (
-            created.internal_item.metadata_json or {}
-        ).get("collaboration_group"):
-            from app.services.board_team_execution import (
-                dispatch_board_team_assignment,
-            )
-
-            await dispatch_board_team_assignment(
-                db,
-                item=created.internal_item,
-                user=current_user,
-            )
-            db.refresh(created.internal_item)
         if project.task_provider in {"github", "gitlab"}:
             return LoopItemResponse.model_validate(
                 external_loop_item_provider.get(
@@ -569,12 +556,6 @@ async def update_loop_item(
             db, item_id, current_user.id, values
         )
         if values.assignee_agent_id or values.assignee_group_id:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            item = db.get(LoopItem, item_id)
-            if item is None:
-                raise RuntimeError("External robot assignment index is unavailable")
-            await dispatch_board_team_assignment(db, item=item, user=current_user)
             from app.tasks.robot_queue_tasks import consume_queues_background
 
             background_tasks.add_task(consume_queues_background)
@@ -662,14 +643,10 @@ async def update_loop_item(
         "assignee_group_id" in values.model_fields_set
         and values.assignee_group_id is not None
     ):
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         queue_wakeup_scheduled = True
-        db.refresh(item)
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
     ):
@@ -678,14 +655,10 @@ async def update_loop_item(
             item=item,
             user_id=current_user.id,
         )
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         queue_wakeup_scheduled = True
-        db.refresh(item)
     if status_changed and not queue_wakeup_scheduled:
         from app.tasks.robot_queue_tasks import consume_queues_background
 
@@ -992,19 +965,15 @@ async def create_issue_assignment(
                 )
 
     if values.target_type == "agent":
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        indexed_item = db.get(LoopItem, item_id)
-        if indexed_item is None:
-            raise RuntimeError("Agent assignment index is unavailable")
-        await dispatch_board_team_assignment(db, item=indexed_item, user=current_user)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         if is_external:
             issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
         else:
-            db.refresh(indexed_item)
+            indexed_item = db.get(LoopItem, item_id)
+            if indexed_item is None:
+                raise RuntimeError("Agent assignment index is unavailable")
             issue_values = loop_item_service.response_values(
                 db, indexed_item, current_user.id
             )

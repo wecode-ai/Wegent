@@ -215,7 +215,7 @@ fn dispatch(
             connection.execute(
                 "UPDATE loop_items
                  SET assignee_agent_id=?1, assignee_user_id=NULL,
-                     version=version+1, updated_at=?2
+                     status='in_progress', version=version+1, updated_at=?2
                  WHERE id=?3",
                 params![target_id, now(), task_id],
             )?;

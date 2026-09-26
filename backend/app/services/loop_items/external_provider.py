@@ -968,7 +968,7 @@ class ExternalLoopItemProvider:
             self._soft_delete_index_row(db, item_id)
         db.commit()
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 

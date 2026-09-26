@@ -78,6 +78,31 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('uses collaboration translations for runtime configuration notices', async () => {
+    const item = {
+      ...baseItem,
+      execution_id: 627,
+      execution_state: 'waiting_runtime',
+      assignee_agent_name: '检查智能体',
+    } as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        presentation="workspace-panel"
+      />
+    )
+
+    expect(await screen.findByText(/缺少设备或模型配置/)).toBeInTheDocument()
+    expect(screen.queryByText('runtimeSettings.executionBlocked')).not.toBeInTheDocument()
+    expect(screen.queryByText('runtimeSettings.ownerRequired')).not.toBeInTheDocument()
+  })
+
   it('preserves shared detail translation interpolation options', async () => {
     const deliveryApi = {
       ...api,
@@ -1261,6 +1286,18 @@ describe('TodoEditor create parent resolution', () => {
                 name: '项目协作小组',
               },
             ],
+            execution_environment: {
+              repositories: [],
+              setup_steps: [],
+              devices: {
+                'local-device': {
+                  status: 'ready',
+                  workspace_path: '/workspace/project',
+                  prepared_at: '2026-09-26T00:00:00Z',
+                  error: '',
+                },
+              },
+            },
           } as CloudProject
         }
         initialParent={null}
@@ -1287,6 +1324,57 @@ describe('TodoEditor create parent resolution', () => {
       })
     })
     expect(assignLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('blocks AI assignment before creation when the execution environment is not initialized', async () => {
+    const user = userEvent.setup()
+    const createLoopItem = vi.fn()
+    const updateLoopItem = vi.fn()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={
+          {
+            ...project,
+            access_role: 'Owner',
+            collaboration_groups: [{ id: 'group-1', name: '项目协作小组' }],
+            execution_environment: {
+              repositories: [],
+              setup_steps: [],
+              devices: {},
+            },
+          } as CloudProject
+        }
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-create-assignee-option-group:group-1'))
+    await user.type(screen.getByTestId('cloud-todo-title'), '交给协作小组')
+
+    expect(
+      screen.getByTestId('cloud-todo-create-execution-environment-required')
+    ).toHaveTextContent('请先在项目设置中初始化环境')
+    expect(screen.getByTestId('cloud-todo-create-confirm')).toBeDisabled()
+    expect(createLoopItem).not.toHaveBeenCalled()
+    expect(updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('restores the assignee and notification choice before atomic creation', async () => {

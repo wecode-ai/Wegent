@@ -962,16 +962,11 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_db.refresh(item)
 
     refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
-    dispatch = AsyncMock()
     wake = AsyncMock()
     monkeypatch.setattr(
         deliveries_endpoint.loop_item_service,
         "refresh_agent_execution_configuration",
         refresh,
-    )
-    monkeypatch.setattr(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
-        dispatch,
     )
     monkeypatch.setattr(
         "app.tasks.robot_queue_tasks.consume_queues_background",
@@ -997,7 +992,6 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
 
     assert response.status_code == 200
     refresh.assert_called_once()
-    dispatch.assert_awaited_once()
     wake.assert_awaited_once_with()
 
 

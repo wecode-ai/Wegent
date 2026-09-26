@@ -861,6 +861,28 @@ export function TaskActivityView({
     return false
   }
 
+  async function submitTimelineComment(
+    text: string,
+    mentions: ProjectChatMention[]
+  ): Promise<void> {
+    if (!replyTarget) {
+      await sendNewComment(text, mentions)
+      return
+    }
+    if (!attachmentSelection.isAttachmentReadyToSend) {
+      setError(t('workbench.task_activity_attachment_uploading'))
+      return
+    }
+    const result = await sendCardReply(replyTarget, text, mentions, attachmentSelection.attachments)
+    if (!result.ok) {
+      setError(result.error ?? t('workbench.project_chat_send_failed'))
+      return
+    }
+    setReplyTarget(null)
+    setNewCommentDraft('')
+    attachmentSelection.resetAttachments()
+  }
+
   const renderActivityMessage = (
     message: ProjectChatMessage,
     eventOnly = false,
@@ -954,47 +976,41 @@ export function TaskActivityView({
           </div>
         }
         composer={
-          <>
-            {issueTimeline && replyTarget ? (
-              <div
-                ref={replyComposerRef}
-                id="issue-reply-composer"
-                className="px-3 py-2"
-                data-testid="issue-reply-composer"
-              >
-                <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-                  <span>
-                    {t('workbench.task_activity_inline_placeholder')} {replyTarget.root.sender.name}
+          issueTimeline &&
+          (linear || (projectLocation !== 'local' && client?.executeTaskComment)) ? (
+            <div
+              ref={replyComposerRef}
+              {...(replyTarget
+                ? {
+                    id: 'issue-reply-composer',
+                    'data-testid': 'issue-reply-composer',
+                  }
+                : {})}
+            >
+              {replyTarget ? (
+                <div className="mx-3 flex min-h-8 items-center gap-2 border-b border-border/60 px-1 text-xs text-text-muted">
+                  <span className="min-w-0 flex-1 truncate">
+                    {t('workbench.task_activity_replying_to', {
+                      name: replyTarget.root.sender.name,
+                    })}
+                    {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
                   </span>
                   <button
                     type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary"
                     data-testid="issue-reply-cancel"
+                    aria-label={t('workbench.task_activity_cancel_reply')}
                     onClick={() => setReplyTarget(null)}
                   >
-                    {t('common.cancel')}
+                    ×
                   </button>
                 </div>
-                <CardCommentComposer
-                  rootId={replyTarget.root.messageId}
-                  projectId={project.id}
-                  disabled={!client}
-                  placeholder={t('workbench.task_activity_inline_placeholder')}
-                  aiError={replyQueue.error(replyTarget.root.messageId)}
-                  mentionCandidates={mentionCandidates}
-                  translate={activityTranslate}
-                  onSend={async (text, mentions, attachments) => {
-                    const result = await sendCardReply(replyTarget, text, mentions, attachments)
-                    if (result.ok) setReplyTarget(null)
-                    return result
-                  }}
-                />
-              </div>
-            ) : linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
+              ) : null}
               <TaskCommentComposer
                 key={task.id}
                 value={newCommentDraft}
                 onChange={setNewCommentDraft}
-                onSubmit={(body, mentions) => void sendNewComment(body, mentions)}
+                onSubmit={(body, mentions) => void submitTimelineComment(body, mentions)}
                 disabled={!client}
                 sending={sending}
                 error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
@@ -1004,29 +1020,50 @@ export function TaskActivityView({
                 projectWork={commentProjectWork}
                 serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
               />
-            ) : (
-              <div className="task-detail-comment-chat-input">
-                <ChatInput
+            </div>
+          ) : (
+            <>
+              {linear || (projectLocation !== 'local' && client?.executeTaskComment) ? (
+                <TaskCommentComposer
+                  key={task.id}
                   value={newCommentDraft}
-                  disabled={!client}
                   onChange={setNewCommentDraft}
-                  onSubmit={() => void sendNewComment(newCommentDraft.trim(), [])}
-                  submitDisabled={!newCommentDraft.trim() || sending}
+                  onSubmit={(body, mentions) => void sendNewComment(body, mentions)}
+                  disabled={!client}
+                  sending={sending}
                   error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
-                  placeholder={
-                    assignedAgent
-                      ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
-                      : t('workbench.task_activity_placeholder')
-                  }
-                  variant="desktop"
-                  projectChat={commentProjectChat}
+                  mentionCandidates={mentionCandidates}
+                  translate={activityTranslate}
+                  controls={commentProjectChat}
                   projectWork={commentProjectWork}
-                  showProjectWorkBar={localProjects.length > 0}
-                  inputTestId="cloud-task-activity-composer"
+                  serverExecution={
+                    projectLocation !== 'local' && Boolean(client?.executeTaskComment)
+                  }
                 />
-              </div>
-            )}
-          </>
+              ) : (
+                <div className="task-detail-comment-chat-input">
+                  <ChatInput
+                    value={newCommentDraft}
+                    disabled={!client}
+                    onChange={setNewCommentDraft}
+                    onSubmit={() => void sendNewComment(newCommentDraft.trim(), [])}
+                    submitDisabled={!newCommentDraft.trim() || sending}
+                    error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
+                    placeholder={
+                      assignedAgent
+                        ? t('workbench.task_activity_ai_placeholder', { name: assignedAgent.name })
+                        : t('workbench.task_activity_placeholder')
+                    }
+                    variant="desktop"
+                    projectChat={commentProjectChat}
+                    projectWork={commentProjectWork}
+                    showProjectWorkBar={localProjects.length > 0}
+                    inputTestId="cloud-task-activity-composer"
+                  />
+                </div>
+              )}
+            </>
+          )
         }
       >
         {linear ? (

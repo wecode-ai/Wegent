@@ -16,7 +16,6 @@ from app.core.distributed_lock import distributed_lock
 from app.db.session import get_db_session
 from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
-from app.services.device.capacity import validate_runtime_capacity_observation_sync
 from app.services.loop_item_executions.profile import WeworkExecutionProfileError
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
@@ -70,19 +69,8 @@ def _claim_execution(
     runtime_device_id: str,
     runtime_instance_id: str,
     environment: str,
-    runtime_capacity: dict[str, Any] | None,
 ) -> dict[str, Any]:
     with get_db_session() as db:
-        capacity = validate_runtime_capacity_observation_sync(
-            db,
-            owner_user_id=owner_user_id,
-            device_id=runtime_device_id,
-            runtime_instance_id=runtime_instance_id,
-            runtime_capacity=runtime_capacity,
-        )
-        if capacity is None:
-            return {"success": True, "task": None}
-
         row = _unconfirmed_claim(
             db,
             owner_user_id=owner_user_id,
@@ -111,9 +99,6 @@ def _claim_execution(
                 runtime_device_id=runtime_device_id,
                 environment=environment,
                 runtime_instance_id=runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
                 owner_user_id=owner_user_id,
             )
         if row is None:
@@ -183,7 +168,6 @@ def pull_execution(
     runtime_device_id: str,
     runtime_instance_id: str,
     environment: str,
-    runtime_capacity: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Atomically claim and materialize one execution for this Runtime."""
 
@@ -199,7 +183,6 @@ def pull_execution(
                 runtime_device_id=runtime_device_id,
                 runtime_instance_id=runtime_instance_id,
                 environment=environment,
-                runtime_capacity=runtime_capacity,
             )
             if runtime_acquired
             else {"success": True, "task": None}

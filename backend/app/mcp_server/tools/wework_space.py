@@ -65,8 +65,6 @@ from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
     "project_automation",
-    "board_team_assignment",
-    "board_team_continuation",
 }
 MAX_INLINE_CONTENT_BYTES = 1024 * 1024
 logger = logging.getLogger(__name__)
@@ -101,7 +99,6 @@ def _board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, str]:
         "space_id": project_id,
         "item_id": item_id,
         "project_automation_run_id": str(labels.get("projectAutomationRunId") or ""),
-        "board_team_execution_id": str(labels.get("boardTeamExecutionId") or ""),
         "dispatch_id": str(labels.get("dispatchId") or ""),
         "dispatch_task_id": str(labels.get("taskId") or ""),
         "dispatch_role": str(labels.get("dispatchRole") or ""),
@@ -496,14 +493,6 @@ async def create_board_item(
                 project.id,
                 created.values.get("id"),
             )
-        internal = created.internal_item or db.get(LoopItem, str(created.values["id"]))
-        if internal is not None and (
-            internal.assignee_agent_id
-            or (internal.metadata_json or {}).get("collaboration_group")
-        ):
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(db, item=internal, user=user)
         result = _read_item(db, project, str(created.values["id"]), token_info.user_id)
         return result
 
@@ -638,20 +627,13 @@ async def assign_board_item(
             external_loop_item_provider.assign(
                 db, resolved_item_id, token_info.user_id, values
             )
-            assigned = db.get(LoopItem, resolved_item_id)
         else:
-            assigned = loop_item_service.assign(
+            loop_item_service.assign(
                 db,
                 project_id=project.id,
                 item_id=resolved_item_id,
                 user_id=token_info.user_id,
                 values=values,
-            )
-        if assignee_type in {"agent", "group"} and assigned is not None:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(
-                db, item=assigned, user=_user(db, token_info.user_id)
             )
         return _read_item(db, project, resolved_item_id, token_info.user_id)
 
@@ -670,23 +652,14 @@ async def update_board_item(
         resolved_item_id = _item_id(db, token_info, item_id)
         current = _read_item(db, project, resolved_item_id, token_info.user_id)
         values = LoopItemUpdate.model_validate(item)
-        updated = _update_item(
+        _update_item(
             db,
             project,
             resolved_item_id,
             token_info.user_id,
             values,
         )
-        result = _read_item(db, project, resolved_item_id, token_info.user_id)
-        if updated is not None and (
-            values.assignee_agent_id or values.assignee_group_id
-        ):
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(
-                db, item=updated, user=_user(db, token_info.user_id)
-            )
-        return result
+        return _read_item(db, project, resolved_item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")

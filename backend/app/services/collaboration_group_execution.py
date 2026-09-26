@@ -11,7 +11,6 @@ member runs, round barriers, and every continuation after this handoff.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
@@ -21,10 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
-from app.services.loop_item_executions.profile import (
-    WeworkExecutionProfile,
-    native_runtime_contract,
-)
+from app.services.loop_item_executions.profile import native_runtime_contract
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.service import bot_config, compiled_bot_config
 from app.services.workspaces import workspace_service
@@ -34,7 +30,10 @@ Coordinate the collaboration group through the project-space management tools.
 Assign one concurrent batch of concrete tasks at a time. Each task must identify
 its assignee and, when configured, its workflow stage. Do not execute member work
 yourself. After every batch finishes, evaluate the evidence and either assign the
-next batch or explicitly update the Issue status."""
+next batch or explicitly update the Issue status. When updating the Issue status,
+use the optional comment field of update_issue_status if collaborators need an
+explanation. Do not publish the same decision again with a separate comment tool;
+the Executor already records manager and member runs in the Issue activity."""
 
 
 def ensure_collaboration_group_execution(
@@ -113,33 +112,12 @@ def ensure_collaboration_group_execution(
         priority=item.priority,
         dispatch_context=context,
     )
-    profile = replace(
-        WeworkExecutionProfile.for_project_robot(
-            leader,
-            db=db,
-            cloud_project_id=str(project.id),
-        ),
-        execution_prompt=manager_user_message,
-    )
-    request = profile.build_runtime_request(
-        db,
-        execution_id=dispatch.id,
-        runtime_task_id=dispatch.runtime_task_id,
-        task=item,
-        cloud_project_id=str(project.id),
-        origin_context=context,
-        execution_device_id=device_id or "",
-    )
     dispatch.execution_payload = json.dumps(
         {
             "runtime_selection": dict(dispatch.runtime_selection),
             "origin_context": context,
             "dispatch_request": {
                 "kind": "collaboration_group",
-                "manager_runtime_request": request.model_dump(
-                    by_alias=True,
-                    exclude_none=True,
-                ),
             },
         },
         ensure_ascii=False,
@@ -205,7 +183,7 @@ def _manager_agent(
         raise HTTPException(422, "Collaboration group manager must be an AI member")
     leader_id = str(leader.get("id") or "")
     agents = _project_agents(db, project_id=str(project.id))
-    resolved = _resolve_agent(agents, leader_id)
+    resolved = resolve_collaboration_group_agent(agents, leader_id)
     if not leader_id or resolved is None:
         raise HTTPException(422, "Collaboration group has no AI manager")
     return resolved
@@ -222,7 +200,7 @@ def _project_agents(db: Session, *, project_id: str) -> list[ProjectChatAgent]:
     )
 
 
-def _resolve_agent(
+def resolve_collaboration_group_agent(
     agents: list[ProjectChatAgent], member_id: str
 ) -> ProjectChatAgent | None:
     return next(

@@ -9,12 +9,13 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
-from app.models.loop_item_execution import LoopItemExecution
+from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.delivery import LoopItemUpdate
 from app.services.collaboration_group_execution import (
@@ -48,7 +49,7 @@ def _require_manager_dispatch(
     user_id: int,
     dispatch_id: str,
     manager_agent_id: str,
-) -> ProjectChatAgent:
+) -> tuple[ProjectChatAgent, LoopItemExecution]:
     group = collaboration_group_for_item(db, item=item, user_id=user_id)
     if group is None:
         raise HTTPException(
@@ -74,18 +75,24 @@ def _require_manager_dispatch(
         )
         .all()
     )
-    if not any(
-        execution.executor_type == "collaboration_group_dispatch"
-        and str(_dispatch_context(execution).get("dispatch_id") or "") == dispatch_id
-        and str(_dispatch_context(execution).get("manager_agent_id") or "")
-        == manager.id
-        for execution in dispatches
-    ):
+    dispatch = next(
+        (
+            execution
+            for execution in dispatches
+            if execution.executor_type == "collaboration_group_dispatch"
+            and str(_dispatch_context(execution).get("dispatch_id") or "")
+            == dispatch_id
+            and str(_dispatch_context(execution).get("manager_agent_id") or "")
+            == manager.id
+        ),
+        None,
+    )
+    if dispatch is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
-    return manager
+    return manager, dispatch
 
 
 def _decision_message_key(dispatch_id: str, idempotency_key: str) -> str:
@@ -122,7 +129,7 @@ def apply_collaboration_manager_decision(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    manager = _require_manager_dispatch(
+    manager, dispatch = _require_manager_dispatch(
         db,
         project_id=project_id,
         item=item,
@@ -151,6 +158,17 @@ def apply_collaboration_manager_decision(
             LoopItemUpdate(version=item.version, status=target_status),
             commit=False,
         )
+    if dispatch.status not in {"completed", "failed", "cancelled"}:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        dispatch.status = "completed"
+        dispatch.completed_at = now
+        dispatch.lease_expires_at = EPOCH_TIME
+        dispatch.observed_state = "succeeded"
+        dispatch.sync_state = "in_sync"
+        dispatch.observed_at = now
+        dispatch.execution_note = reason
+        dispatch.termination_reason = "manager_status_decision"
+        dispatch.version += 1
     message = existing_comment
     if normalized_comment and message is None:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())

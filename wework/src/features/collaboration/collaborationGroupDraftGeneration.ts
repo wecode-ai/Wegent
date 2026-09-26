@@ -362,7 +362,7 @@ export function parseCollaborationGroupDraft(
       : fallbackLeader
   const leader = {
     ...leaderIdentity,
-    responsibility: responsibilities.get(`${leaderIdentity.kind}:${leaderIdentity.id}`) ?? '',
+    responsibility: '',
   }
   const members = selectedParticipants
     .filter(participant => participant.kind !== leader.kind || participant.id !== leader.id)
@@ -435,12 +435,12 @@ export async function generateCollaborationGroupDraft(options: {
     'principle 结构：{"type":"principle","text":"string"}。每条只表达一个规则。',
     'stage 结构：{"type":"stage","id":"string","name":"string"}。',
     '必须严格使用给定的 kind 和 id，不得新增、删除或重复协作者。',
-    'leader 同时也是实际工作成员，负责人也可以直接执行工作；职责必须同时包含协调和具体执行，不要把负责人描述成只管理不干活。',
+    'leader 只负责拆解、分派、验收、综合判断和更新 Issue 状态，不得执行任何成员任务；leader 的 participant_delta 只描述协调职责。',
     '每个成员的 responsibility 必须精炼、具体且可执行，避免重复项目背景和分配原则。',
     '每条 principle 只表达一个规则；只保留负责人如何分派、成员如何反馈、阻塞如何升级，不要重复项目背景、职责或执行流程。',
     preferredLeaderId
       ? `优先让 agent:${preferredLeaderId} 担任 leader，因为它是当前设备智能体且具备通用执行能力。`
-      : '从现有智能体中选择最适合协调且能直接执行工作的 leader。',
+      : '从现有智能体中选择最适合拆解、分派和验收工作的 leader。',
     '每个协作者都必须输出一次 participant_started，并紧接着输出其全部 participant_delta。',
     '生成 2 到 4 个阶段。',
     '所有 name、delta、text 字段必须使用与“用户补充要求”相同的语言书写（Use the language of the user request for all generated text）。',

@@ -69,8 +69,8 @@ use crate::{
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
-        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
-        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        LocalCommentCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
+        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -825,72 +825,6 @@ impl AppIpcServer {
 
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
-        }
-
-        if method == "executions.claim_next" {
-            let Some(handler) = &self.runtime_work_handler else {
-                return Err(AppIpcError::new(
-                    "runtime_unavailable",
-                    "Runtime work handler is not available",
-                ));
-            };
-            let runtime_instance_id = self.runtime_instance_id.as_ref().ok_or_else(|| {
-                AppIpcError::new(
-                    "runtime_identity_unavailable",
-                    "Runtime instance identity is not available",
-                )
-            })?;
-            let capacity = handler
-                .handle_runtime_rpc(json!({
-                    "method": "runtime.capacity.get",
-                    "payload": {},
-                }))
-                .await?;
-            let limit = capacity
-                .get("limit")
-                .and_then(Value::as_u64)
-                .filter(|value| (1..=20).contains(value))
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime capacity is not available",
-                    )
-                })?;
-            let mut params = params.as_object().cloned().ok_or_else(|| {
-                AppIpcError::new("invalid_request", "Claim params must be an object")
-            })?;
-            let claim = params
-                .get_mut("claim")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
-            claim.insert(
-                "execution_device_id".to_owned(),
-                Value::String(self.device_id.clone()),
-            );
-            claim.insert(
-                "runtime_instance_id".to_owned(),
-                Value::String(runtime_instance_id.clone()),
-            );
-            claim.insert("device_capacity".to_owned(), Value::from(limit));
-            claim.insert(
-                "runtime_active".to_owned(),
-                capacity.get("active").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active capacity is not available",
-                    )
-                })?,
-            );
-            claim.insert(
-                "runtime_active_task_ids".to_owned(),
-                capacity.get("active_task_ids").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active task identities are not available",
-                    )
-                })?,
-            );
-            return handle_task_runtime_request(method, Value::Object(params)).await;
         }
 
         if method.starts_with("projects.")
@@ -2505,14 +2439,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .cancel_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
-        }
-        "executions.claim_next" => {
-            let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
-            serialize_task_value(
-                runtime
-                    .claim_next_local_execution(input)
                     .map_err(task_runtime_error)?,
             )
         }

@@ -2017,7 +2017,7 @@
   }
 
   .task-detail-state-leading {
-    width: calc(100% - 92px);
+    width: 100%;
   }
 
   .task-detail-state-metrics {
@@ -2027,7 +2027,7 @@
   }
 
   .task-detail-state-action {
-    margin-left: auto;
+    margin-left: 0;
   }
 
   .task-detail-activity-agent {

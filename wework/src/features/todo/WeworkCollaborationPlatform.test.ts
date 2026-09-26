@@ -2246,6 +2246,143 @@ describe('Wework collaboration workspace API', () => {
     ])
   })
 
+  it('initializes the latest persisted local environment when the rendered version is stale', async () => {
+    const executionEnvironment = {
+      repositories: [],
+      setup_steps: [{ command: 'pnpm install', working_directory: '' }],
+    }
+    const updateCloudProject = vi
+      .fn()
+      .mockImplementation(async (_projectId: string, input: Record<string, unknown>) => ({
+        id: 'local-project',
+        name: 'Local project',
+        project_store: 'local',
+        version: 3,
+        execution_environment: input.execution_environment,
+      }))
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            project_key: 'WORK',
+            name: 'My Tasks',
+            project_store: 'local',
+            metadata: { system_kind: 'default_work_items' },
+          },
+          {
+            id: 'local-project',
+            name: 'Local project',
+            project_store: 'local',
+            version: 2,
+            execution_environment: executionEnvironment,
+          },
+        ],
+      }),
+      updateCloudProject,
+    } as unknown as DeliveryApi
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: JSON.stringify({ workspacePath: '/workspace/local-project' }),
+      stderr: '',
+      error: '',
+    })
+    const details = {
+      ...createLocalDetailServices(),
+      deviceApi: {
+        ...createLocalDetailServices().deviceApi,
+        executeCommand,
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, details)!
+
+    await expect(
+      api.projects.initializeExecutionEnvironment!('local-project', {
+        deviceId: 7,
+        version: 1,
+      })
+    ).resolves.toMatchObject({
+      version: 3,
+      execution_environment: {
+        devices: {
+          'local-device': {
+            status: 'ready',
+            workspace_path: '/workspace/local-project',
+          },
+        },
+      },
+    })
+    expect(updateCloudProject).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        version: 2,
+        execution_environment: expect.objectContaining({
+          setup_steps: executionEnvironment.setup_steps,
+        }),
+      })
+    )
+  })
+
+  it('persists local workspace execution configuration through its backing project', async () => {
+    const executionEnvironment = {
+      repositories: [],
+      setup_steps: [{ command: 'pnpm install', working_directory: '' }],
+    }
+    const updateCloudProject = vi.fn().mockResolvedValue({
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: 'WORK',
+      name: 'My Tasks',
+      project_store: 'local',
+      metadata: { system_kind: 'default_work_items' },
+      version: 2,
+      execution_environment: executionEnvironment,
+    })
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            project_key: 'WORK',
+            name: 'My Tasks',
+            project_store: 'local',
+            metadata: { system_kind: 'default_work_items' },
+            version: 1,
+          },
+          {
+            id: 'local-project',
+            name: 'Local project',
+            project_store: 'local',
+            version: 1,
+          },
+        ],
+      }),
+      updateCloudProject,
+    } as unknown as DeliveryApi
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, createLocalDetailServices())!
+
+    await expect(
+      api.workspaces!.update('wework-local-workspace', {
+        version: 1,
+        executionEnvironment: {
+          repositories: [],
+          setupSteps: [{ command: 'pnpm install', workingDirectory: '' }],
+        },
+      })
+    ).resolves.toMatchObject({
+      version: 2,
+      execution_environment: executionEnvironment,
+    })
+    expect(updateCloudProject).toHaveBeenCalledWith(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      expect.objectContaining({
+        version: 1,
+        execution_environment: executionEnvironment,
+      })
+    )
+  })
+
   it('omits the git repository catalog capability from the local workspace api', () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),

@@ -223,31 +223,6 @@ class LoopItemApproval(ProjectChatSchema):
     reason: str | None = Field(default=None, max_length=2_000)
 
 
-class LoopItemExecutionClaim(ProjectChatSchema):
-    """Claim the next queued run for one robot on one device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    agent_id: str = Field(min_length=1, max_length=128)
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    execution_environment: Literal["local", "cloud"] = "local"
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
-    assigner_user_id: int | None = Field(default=None)
-
-
-class LoopItemExecutionDeviceClaim(ProjectChatSchema):
-    """Claim the next queued local run for any robot bound to a device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
-
-
 class LoopItemExecutionHeartbeat(ProjectChatSchema):
     """Extend the lease of a running robot run."""
 
@@ -327,17 +302,27 @@ class LoopItemExecutionManagerDecision(ProjectChatSchema):
 
 class LoopItemExecutionStatusQuery(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
-    execution_ids: list[int] = Field(default_factory=list, max_length=20)
-    human_assignment_ids: list[str] = Field(default_factory=list, max_length=20)
+    human_assignment_ids: list[str] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
     def validate_targets(self) -> "LoopItemExecutionStatusQuery":
-        target_count = len(self.execution_ids) + len(self.human_assignment_ids)
-        if target_count < 1 or target_count > 20:
-            raise ValueError(
-                "Provide between 1 and 20 execution or human assignment ids"
-            )
+        if len(self.human_assignment_ids) > 20:
+            raise ValueError("Provide between 1 and 20 human assignment ids")
         return self
+
+
+class LoopItemExecutionAssignmentStatus(ProjectChatSchema):
+    """Display-only status reported by an Executor-owned collaboration member."""
+
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    round_id: str = Field(min_length=1, max_length=128)
+    assignment_id: str = Field(min_length=1, max_length=128)
+    runtime_device_id: str = Field(min_length=1, max_length=255)
+    runtime_task_id: str = Field(min_length=1, max_length=255)
+    status: Literal["running", "completed", "failed", "cancelled"]
+    result: str = Field(default="", max_length=100_000)
+    error: str = Field(default="", max_length=2_000)
 
 
 class LoopItemExecutionView(ProjectChatSchema):
@@ -456,16 +441,6 @@ class ProjectChatCommentExecution(ProjectChatSchema):
     project_id: str = Field(min_length=1, max_length=64)
     task_id: str = Field(min_length=1, max_length=64)
     trigger_message_id: str = Field(min_length=1, max_length=64)
-    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
-
-
-class ProjectChatWegentContinuation(ProjectChatSchema):
-    """Continue the native Wegent Task behind one board comment thread."""
-
-    project_id: str = Field(min_length=1, max_length=64)
-    task_id: str = Field(min_length=1, max_length=64)
-    trigger_message_id: str = Field(min_length=1, max_length=64)
-    agent_id: str = Field(min_length=1, max_length=128)
     attachment_ids: list[int] = Field(default_factory=list, max_length=64)
 
 

@@ -148,7 +148,9 @@ describe("shared Issue threads", () => {
       '[data-testid="collaboration-chat-message-root"]',
     );
     expect(event?.textContent).toContain("Codex 负责人");
-    expect(event?.textContent).toContain("分配给 诊断智能体、复核成员");
+    expect(event?.textContent).toContain("分配任务：");
+    expect(event?.textContent).toContain("采集运行证据 → 诊断智能体");
+    expect(event?.textContent).toContain("独立复核结论 → 复核成员");
     expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
   });
 

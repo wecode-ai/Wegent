@@ -43,6 +43,7 @@ vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
 
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
+import { collaborationTestIds } from "./testIds";
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
@@ -309,6 +310,45 @@ describe("CollaborationApp API boundary", () => {
     expect(firstSettings?.key).toContain("project-1");
     expect(refreshedSettings?.key).toBe(firstSettings?.key);
     expect(refreshedSettings?.props.project.version).toBe(2);
+  });
+
+  it("blocks Issue creation and opens environment settings before initialization", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        project_store: "local",
+        access_role: "Owner",
+      }),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    expect(createButton).toBeDefined();
+    createButton?.props.onClick();
+
+    expect(host.notify).toHaveBeenCalledWith(
+      "请先完成项目执行环境初始化，再创建 Issue。",
+      "error",
+    );
+    expect(host.navigate).toHaveBeenCalledWith({
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+      projectSettingsSection: "environments",
+    });
   });
 
   it("uses the shared project settings content as the vertical scroller", () => {

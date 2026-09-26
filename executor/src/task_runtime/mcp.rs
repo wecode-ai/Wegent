@@ -45,7 +45,7 @@ pub(crate) struct CloudCollaborationRoundCommand {
     pub(crate) item_id: String,
     pub(crate) dispatch_id: String,
     pub(crate) round_id: String,
-    pub(crate) execution_ids: Vec<i64>,
+    pub(crate) assignments: Vec<Value>,
     pub(crate) human_assignment_ids: Vec<String>,
 }
 
@@ -69,6 +69,29 @@ impl CloudCollaborationRoundDispatcher {
 impl fmt::Debug for CloudCollaborationRoundDispatcher {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CloudCollaborationRoundDispatcher")
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct CollaborationManagerTurnCompleter(
+    Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+);
+
+impl CollaborationManagerTurnCompleter {
+    pub(crate) fn new(
+        complete: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(complete))
+    }
+
+    fn complete(&self, manager_runtime_task_id: &str) -> Result<(), String> {
+        (self.0)(manager_runtime_task_id)
+    }
+}
+
+impl fmt::Debug for CollaborationManagerTurnCompleter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CollaborationManagerTurnCompleter")
     }
 }
 
@@ -110,6 +133,7 @@ pub(crate) struct SpaceMcpRequestContext {
     auth_token: Option<String>,
     surface: WeworkMcpSurface,
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
+    collaboration_manager_turn_completer: Option<CollaborationManagerTurnCompleter>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -138,6 +162,7 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::ProjectSpace,
             cloud_collaboration_dispatcher: None,
+            collaboration_manager_turn_completer: None,
         }
     }
 
@@ -148,6 +173,7 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::Notifications,
             cloud_collaboration_dispatcher: None,
+            collaboration_manager_turn_completer: None,
         }
     }
 
@@ -179,6 +205,13 @@ impl SpaceMcpRequestContext {
         dispatcher: Option<CloudCollaborationRoundDispatcher>,
     ) {
         self.cloud_collaboration_dispatcher = dispatcher;
+    }
+
+    pub(crate) fn set_collaboration_manager_turn_completer(
+        &mut self,
+        completer: Option<CollaborationManagerTurnCompleter>,
+    ) {
+        self.collaboration_manager_turn_completer = completer;
     }
 }
 
@@ -894,6 +927,7 @@ async fn call_tool_with_context(
         context.backend_url.as_deref(),
         context.auth_token.as_deref(),
         context.cloud_collaboration_dispatcher.as_ref(),
+        context.collaboration_manager_turn_completer.as_ref(),
     )
     .await
 }
@@ -921,6 +955,7 @@ async fn call_tool_with_grant(
         backend_url.as_deref(),
         auth_token.as_deref(),
         None,
+        None,
     )
     .await
 }
@@ -933,6 +968,7 @@ async fn call_tool_with_runtime_context(
     backend_url: Option<&str>,
     auth_token: Option<&str>,
     collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
+    manager_turn_completer: Option<&CollaborationManagerTurnCompleter>,
 ) -> Value {
     if is_role_bound(grant.as_ref()) && board_tool_category(name).is_none() {
         return text_result(
@@ -1021,6 +1057,7 @@ async fn call_tool_with_runtime_context(
             &arguments,
             grant.as_ref(),
             collaboration_dispatcher,
+            manager_turn_completer,
         )
         .await
         {
@@ -1046,6 +1083,7 @@ async fn call_tool_with_runtime_context(
             &arguments,
             grant.as_ref(),
             collaboration_dispatcher,
+            manager_turn_completer,
         )
         .await
         {
@@ -1077,9 +1115,20 @@ async fn call_tool_with_runtime_context(
                 super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
             });
             match (manager_task_id, plan) {
-                (Ok(manager_task_id), Ok(plan)) => {
-                    runtime.submit_collaboration_round(manager_task_id, plan)
-                }
+                (Ok(manager_task_id), Ok(plan)) => runtime
+                    .submit_collaboration_round(manager_task_id, plan)
+                    .and_then(|result| {
+                        manager_turn_completer
+                            .ok_or_else(|| {
+                                super::TaskRuntimeError::Invalid(
+                                    "Executor collaboration manager lifecycle is unavailable"
+                                        .to_owned(),
+                                )
+                            })?
+                            .complete(manager_task_id)
+                            .map_err(super::TaskRuntimeError::Invalid)?;
+                        Ok(result)
+                    }),
                 (Err(error), _) => Err(super::TaskRuntimeError::Invalid(error)),
                 (_, Err(error)) => Err(error),
             }
@@ -1919,6 +1968,7 @@ async fn call_backend_tool(
     arguments: &Value,
     grant: Option<&SpaceContextGrant>,
     collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
+    manager_turn_completer: Option<&CollaborationManagerTurnCompleter>,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
@@ -2005,34 +2055,94 @@ async fn call_backend_tool(
                 .map_err(|error| error.to_string())?,
         )
         .await?;
-        let assignments = response
-            .get("executions")
+        let human_receipts = response
+            .get("human_assignments")
             .and_then(Value::as_array)
-            .ok_or_else(|| "Backend collaboration assignments are missing".to_owned())?;
-        if assignments.len() != items.len() {
-            return Err("Backend did not persist every collaboration assignment".to_owned());
+            .cloned()
+            .unwrap_or_default();
+        let mut assignments = Vec::with_capacity(items.len());
+        let mut human_assignment_ids = Vec::new();
+        for item in items {
+            let assignee_type = item
+                .get("assignee_type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Collaboration assignment assignee_type is required".to_owned())?;
+            let assignment_id = item
+                .get("assignment_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Collaboration assignment assignment_id is required".to_owned())?;
+            let assignee_id = item
+                .get("assignee_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Collaboration assignment assignee_id is required".to_owned())?;
+            let title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Collaboration assignment title is required".to_owned())?;
+            let instructions = item
+                .get("instructions")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Collaboration assignment instructions are required".to_owned())?;
+            let mut assignment = json!({
+                "assignee_type": assignee_type,
+                "assignment_id": assignment_id,
+                "assignee_id": assignee_id,
+                "task_title": title,
+                "instructions": instructions,
+                "workflow_stage_id": item.get("workflow_stage_id"),
+            });
+            if assignee_type == "agent" {
+                assignment["agent_id"] = Value::String(assignee_id.to_owned());
+            } else if assignee_type == "human" {
+                let receipt = human_receipts
+                    .iter()
+                    .find(|receipt| {
+                        receipt.get("assignment_id").and_then(Value::as_str) == Some(assignment_id)
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "Backend did not persist human collaboration assignment {assignment_id}"
+                        )
+                    })?;
+                let human_assignment_id = receipt
+                    .get("human_assignment_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "Backend human collaboration assignment {assignment_id} has no identity"
+                        )
+                    })?
+                    .to_owned();
+                human_assignment_ids.push(human_assignment_id);
+                if let (Some(target), Some(receipt)) =
+                    (assignment.as_object_mut(), receipt.as_object())
+                {
+                    target.extend(receipt.clone());
+                }
+            } else {
+                return Err(format!(
+                    "Unsupported collaboration assignee type '{assignee_type}'"
+                ));
+            }
+            assignments.push(assignment);
         }
-        let execution_ids = assignments
+        let agent_assignment_count = assignments
             .iter()
             .filter(|assignment| {
                 assignment.get("assignee_type").and_then(Value::as_str) == Some("agent")
+                    && assignment
+                        .get("agent_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
             })
-            .filter_map(|assignment| assignment.get("execution_id").and_then(Value::as_i64))
-            .collect::<Vec<_>>();
-        let human_assignment_ids = assignments
-            .iter()
-            .filter(|assignment| {
-                assignment.get("assignee_type").and_then(Value::as_str) == Some("human")
-            })
-            .filter_map(|assignment| {
-                assignment
-                    .get("human_assignment_id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-            })
-            .collect::<Vec<_>>();
-        if execution_ids.len() + human_assignment_ids.len() != assignments.len() {
-            return Err("Backend returned an invalid collaboration assignment".to_owned());
+            .count();
+        if agent_assignment_count + human_assignment_ids.len() != assignments.len() {
+            return Err("Collaboration plan contains an invalid assignment".to_owned());
         }
         collaboration_dispatcher
             .ok_or_else(|| "Executor collaboration coordinator is unavailable".to_owned())?
@@ -2042,17 +2152,17 @@ async fn call_backend_tool(
                 item_id: item_id.to_owned(),
                 dispatch_id: dispatch_id.clone(),
                 round_id: round_id.to_owned(),
-                execution_ids,
+                assignments: assignments.clone(),
                 human_assignment_ids,
             })?;
+        manager_turn_completer
+            .ok_or_else(|| "Executor collaboration manager lifecycle is unavailable".to_owned())?
+            .complete(&grant.task_id)?;
         return Ok(json!({
             "dispatch_id": dispatch_id,
             "round_id": round_id,
             "state": "dispatched",
-            "assignments": response
-                .get("executions")
-                .cloned()
-                .unwrap_or_else(|| json!([])),
+            "assignments": assignments,
             "next_action": "End this manager turn. The Executor will restart the manager after every assignment in this round reaches a terminal state.",
         }));
     }
@@ -4202,6 +4312,7 @@ mod tests {
             &json!({"title": "Review", "body": "Review failed", "item_id": "ISSUE-1"}),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4252,6 +4363,7 @@ mod tests {
             "12",
             "get_assignment_candidates",
             &json!({}),
+            None,
             None,
             None,
         )
@@ -4320,6 +4432,7 @@ mod tests {
             }),
             Some(&grant),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4342,17 +4455,22 @@ mod tests {
                 assert_eq!(body["round_id"], "round-1");
                 assert_eq!(body["manager_runtime_task_id"], "manager-task");
                 assert_eq!(body["manager_agent_id"], "manager-agent");
+                assert_eq!(
+                    body["items"][0],
+                    json!({
+                        "assignment_id": "collect",
+                        "title": "Collect evidence",
+                        "assignee_type": "agent",
+                        "assignee_id": "collector",
+                        "instructions": "Collect evidence",
+                        "workflow_stage_id": "investigate"
+                    })
+                );
                 Json(json!({
-                    "executions": [
+                    "human_assignments": [
                         {
-                            "assignee_type": "agent",
-                            "execution_id": 41,
-                            "task_title": "Collect evidence"
-                        },
-                        {
-                            "assignee_type": "human",
-                            "human_assignment_id": "human-assignment-1",
-                            "task_title": "Review evidence"
+                            "assignment_id": "review",
+                            "human_assignment_id": "human-assignment-1"
                         }
                     ]
                 }))
@@ -4363,6 +4481,12 @@ mod tests {
         let observed = dispatched.clone();
         let dispatcher = CloudCollaborationRoundDispatcher::new(move |command| {
             observed.lock().unwrap().push(command);
+            Ok(())
+        });
+        let completed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_completed = completed.clone();
+        let completer = CollaborationManagerTurnCompleter::new(move |task_id| {
+            observed_completed.lock().unwrap().push(task_id.to_owned());
             Ok(())
         });
         let grant = SpaceContextGrant {
@@ -4382,7 +4506,8 @@ mod tests {
                         "title": "Collect evidence",
                         "assignee_type": "agent",
                         "assignee_id": "collector",
-                        "instructions": "Collect evidence"
+                        "instructions": "Collect evidence",
+                        "workflow_stage_id": "investigate"
                     },
                     {
                         "assignment_id": "review",
@@ -4403,6 +4528,7 @@ mod tests {
             &plan,
             Some(&grant),
             Some(&dispatcher),
+            Some(&completer),
         )
         .await
         .unwrap();
@@ -4412,8 +4538,19 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].manager_runtime_task_id, "manager-task");
         assert_eq!(commands[0].round_id, "round-1");
-        assert_eq!(commands[0].execution_ids, vec![41]);
+        assert_eq!(commands[0].assignments.len(), 2);
+        assert_eq!(commands[0].assignments[0]["agent_id"], "collector");
+        assert_eq!(commands[0].assignments[0]["task_title"], "Collect evidence");
+        assert_eq!(
+            commands[0].assignments[0]["instructions"],
+            "Collect evidence"
+        );
+        assert_eq!(
+            commands[0].assignments[0]["workflow_stage_id"],
+            "investigate"
+        );
         assert_eq!(commands[0].human_assignment_ids, vec!["human-assignment-1"]);
+        assert_eq!(*completed.lock().unwrap(), vec!["manager-task"]);
         server.abort();
     }
 
@@ -4469,6 +4606,7 @@ mod tests {
                 Some(&url),
                 Some("unit-token"),
                 None,
+                None,
             )
             .await;
             assert_eq!(result["isError"], false, "{result}");
@@ -4494,6 +4632,7 @@ mod tests {
                 None,
                 backend,
                 token,
+                None,
                 None,
             )
             .await;

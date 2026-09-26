@@ -277,12 +277,6 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
-        if execution.team_id:
-            from app.services.board_team_execution import (
-                schedule_board_robot_execution,
-            )
-
-            schedule_board_robot_execution(db, execution)
         logger.info(
             "[ProjectAutomation] Queued project robot run=%s execution=%s device=%s",
             run.id,
@@ -432,9 +426,6 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
-        from app.services.board_team_execution import schedule_board_robot_execution
-
-        schedule_board_robot_execution(db, execution)
 
     @staticmethod
     def _assign_non_robot_target(

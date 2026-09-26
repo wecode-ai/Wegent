@@ -23,6 +23,7 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 
 interface CollaborationIssue {
   id: string
@@ -32,17 +33,16 @@ interface CollaborationIssue {
 }
 
 interface CollaborationExecution {
+  id: number
   loopItemId: string
+  agentId: string | null
   status: string
-  observedState: string
-  displayState: string
-  teamId: number | null
   executorType: string
+  backendTaskId: number | null
   runtimeTaskId: string | null
-  automationRunId: string | null
   executionEnvironment: string | null
-  startedAt: string | null
-  completedAt: string | null
+  executionDeviceId: string | null
+  runtimeDeviceId: string | null
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -94,8 +94,13 @@ test.describe('Collaboration group Executor coordination', () => {
         fixture.issueId,
         1
       )
+      expect(executions[0].agentId).toBe(agent.id)
+      expect(executions[0].executorType).not.toBe('collaboration_group_dispatch')
+      expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('cloud')
+      expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
+      expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -263,31 +268,36 @@ test.describe('Collaboration group Executor coordination', () => {
       )
       expect(assigned.assignee_group_id).toBe(groupId)
 
+      const collectorCard = page
+        .locator('[data-testid^="cloud-task-activity-card-"]')
+        .filter({ hasText: collectorTask })
+      const reviewerCard = page
+        .locator('[data-testid^="cloud-task-activity-card-"]')
+        .filter({ hasText: reviewerTask })
+      await expect(collectorCard).toBeVisible({ timeout: 60_000 })
+      await expect(reviewerCard).toBeVisible({ timeout: 60_000 })
+      await expect(
+        collectorCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
+      ).toHaveAttribute('data-status', 'running')
+      await expect(
+        reviewerCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
+      ).toHaveAttribute('data-status', 'running')
+      await captureEvidence(page, testInfo, '02-first-round-members-running-in-parallel')
+
       const executions = await waitForCollaborationExecutions(
         request,
         model.token,
         fixture.projectId,
         fixture.issueId,
-        4
+        1
       )
-      const dispatches = executions.filter(
-        item => item.executorType === 'collaboration_group_dispatch'
-      )
-      const members = executions.filter(
-        item => item.executorType !== 'collaboration_group_dispatch'
-      )
-      const firstRoundMembers = members.filter(item =>
-        item.automationRunId?.includes(`:${firstRoundId}:`)
-      )
-      const secondRoundMembers = members.filter(item =>
-        item.automationRunId?.includes(`:${secondRoundId}:`)
-      )
-      expect(dispatches).toHaveLength(1)
-      expect(firstRoundMembers).toHaveLength(2)
-      expect(secondRoundMembers).toHaveLength(1)
-      expect(new Set(members.map(item => item.runtimeTaskId)).size).toBe(3)
-      expect(members.every(item => item.status === 'completed')).toBe(true)
-      expectExecutionsToOverlap(firstRoundMembers)
+      expect(executions[0].executorType).toBe('collaboration_group_dispatch')
+      expect(executions[0].backendTaskId).toBeNull()
+      expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
+      expect(executions[0].executionEnvironment).toBe('cloud')
+      expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
+      expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
+      expect(executions[0].status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -315,9 +325,39 @@ test.describe('Collaboration group Executor coordination', () => {
       const collectorScenario = await getToolScenarioState(request, collectorTask)
       const reviewerScenario = await getToolScenarioState(request, reviewerTask)
       const synthesisScenario = await getToolScenarioState(request, synthesisTask)
+      const collectorSessionIds = distinctSessionIds(
+        await getScenarioRequestHeaders(request, collectorTask)
+      )
+      const reviewerSessionIds = distinctSessionIds(
+        await getScenarioRequestHeaders(request, reviewerTask)
+      )
+      const synthesisSessionIds = distinctSessionIds(
+        await getScenarioRequestHeaders(request, synthesisTask)
+      )
       expect(collectorScenario.nextStep).toBe(1)
       expect(reviewerScenario.nextStep).toBe(1)
       expect(synthesisScenario.nextStep).toBe(1)
+      expect(collectorSessionIds).toHaveLength(1)
+      expect(reviewerSessionIds).toHaveLength(1)
+      expect(synthesisSessionIds).toHaveLength(1)
+      const memberRuntimeSessionIds = [
+        collectorSessionIds[0],
+        reviewerSessionIds[0],
+        synthesisSessionIds[0],
+      ]
+      expect(new Set(memberRuntimeSessionIds).size).toBe(3)
+      expect(
+        memberRuntimeSessionIds.every(sessionId => !managerSessionIds.includes(sessionId))
+      ).toBe(true)
+      expect(collectorSessionIds[0]).toBe(
+        `${executions[0].runtimeTaskId}-member-${firstRoundId}-collector-${suffix}`
+      )
+      expect(reviewerSessionIds[0]).toBe(
+        `${executions[0].runtimeTaskId}-member-${firstRoundId}-reviewer-${suffix}`
+      )
+      expect(synthesisSessionIds[0]).toBe(
+        `${executions[0].runtimeTaskId}-member-${secondRoundId}-synthesis-${suffix}`
+      )
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
@@ -325,7 +365,7 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
-      await captureEvidence(page, testInfo, '02-manager-reviewed-two-rounds')
+      await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')
     } finally {
       await clearSynthesisScenario()
       await clearReviewerScenario()
@@ -334,29 +374,6 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 })
-
-function expectExecutionsToOverlap(executions: CollaborationExecution[]): void {
-  const starts = executions.map(item =>
-    parseExecutionTime(item.startedAt, executionLabel(item), 'start')
-  )
-  const completions = executions.map(item =>
-    parseExecutionTime(item.completedAt, executionLabel(item), 'completion')
-  )
-  expect(Math.max(...starts)).toBeLessThan(Math.min(...completions))
-}
-
-function executionLabel(execution: CollaborationExecution): string {
-  return execution.automationRunId ?? execution.runtimeTaskId ?? 'collaboration execution'
-}
-
-function parseExecutionTime(value: string | null, execution: string, label: string): number {
-  expect(value, `${execution} should expose a ${label} timestamp`).toBeTruthy()
-  const timestamp = Date.parse(value ?? '')
-  expect(Number.isNaN(timestamp), `${execution} should expose a valid ${label} timestamp`).toBe(
-    false
-  )
-  return timestamp
-}
 
 function distinctSessionIds(
   headers: Array<Record<string, string | string[] | undefined>>

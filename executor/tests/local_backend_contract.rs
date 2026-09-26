@@ -776,7 +776,7 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
-        Arc::new(StaticRuntimeWorkHandler(json!({"success": true}))),
+        Arc::new(QueueRuntimeWorkHandler),
         event_rx,
     );
     drop(event_tx);
@@ -803,28 +803,27 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
 }
 
 #[tokio::test]
-async fn registration_publishes_capacity_without_waiting_for_periodic_heartbeat() {
+async fn registration_pulls_without_publishing_scheduler_capacity() {
     let transport = RecordingTransport::with_responses(vec![
         json!({"success": true}),
         json!({"success": true, "task": null}),
     ]);
-    let capacity = json!({"limit": 4, "active": 0, "active_task_ids": [], "queued": 0});
     let (_event_tx, event_rx) = broadcast::channel(8);
     let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
-        Arc::new(StaticRuntimeWorkHandler(capacity.clone())),
+        Arc::new(QueueRuntimeWorkHandler),
         event_rx,
     );
 
     runner.connect_and_register().await.unwrap();
 
-    // No periodic heartbeat loop is running: capacity must be published by
-    // the initial work poll even when the backend has no work to deliver.
-    let heartbeats = transport.wait_for_emit_count("device:heartbeat", 2).await;
-    assert!(heartbeats[0].payload["runtime_capacity"].is_null());
-    assert_eq!(heartbeats[1].payload["runtime_capacity"], capacity);
-    assert_eq!(heartbeats[1].payload["runtime_instance_id"], "runtime-1");
+    let calls = transport.wait_for_calls(2).await;
+    assert_eq!(calls[1].event, "runtime.tasks.pull");
+    assert_eq!(calls[1].payload, json!({}));
+    let heartbeats = transport.wait_for_emit_count("device:heartbeat", 1).await;
+    assert!(heartbeats[0].payload.get("runtime_capacity").is_none());
+    assert_eq!(heartbeats[0].payload["runtime_instance_id"], "runtime-1");
 }
 
 #[tokio::test]
@@ -1222,6 +1221,23 @@ impl RuntimeWorkHandler for StaticRuntimeWorkHandler {
         _data: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+struct QueueRuntimeWorkHandler;
+
+impl RuntimeWorkHandler for QueueRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            if data.get("method").and_then(Value::as_str) == Some("runtime.capacity.get") {
+                Ok(json!({"limit": 2, "active": 0, "queued": 0}))
+            } else {
+                Ok(json!({"success": true}))
+            }
+        })
     }
 }
 

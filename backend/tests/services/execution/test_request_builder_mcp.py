@@ -434,7 +434,7 @@ def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(
             "spec": {},
             "metadata": {
                 "labels": {
-                    "source": "board_team_assignment",
+                    "source": "project_automation",
                     "weworkSpaceProjectId": "100",
                     "weworkSpaceTaskId": "SPACE-1",
                 }

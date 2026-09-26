@@ -6,7 +6,8 @@
 
 The queue is a derived view over this table: any non-terminal row is part of
 the queue. The task row keeps the assignment chain; this table records each
-run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
+run's lifecycle (approval, queuing, atomic claiming, lease, retries). Executors
+own local capacity and pull queued work when they have an available slot.
 """
 
 import json

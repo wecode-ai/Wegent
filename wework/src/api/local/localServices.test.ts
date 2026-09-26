@@ -18,6 +18,7 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import { resolveEffectiveLocalCodexProxy } from '@/desktop/systemProxy'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
@@ -77,6 +78,219 @@ describe('createLocalAppServices', () => {
     } finally {
       listFromDisk.mockRestore()
     }
+  })
+
+  test('snapshots complete agent and collaboration runtimes when assigning a local Issue', async () => {
+    const group = {
+      id: 'group-1',
+      workspace_id: 'local',
+      owner_type: 'workspace' as const,
+      owner_id: 'wework-local-workspace',
+      name: 'Diagnostics',
+      description: 'Coordinate independent diagnostics.',
+      instructions: 'Dispatch verifiable work and evaluate every completed round.',
+      leader: { kind: 'agent' as const, id: 'leader', responsibility: 'Coordinate' },
+      members: [{ kind: 'agent' as const, id: 'worker', responsibility: 'Collect evidence' }],
+      coordination_mode: 'manager' as const,
+      stages: [],
+      version: 1,
+      created_by_user_id: 0,
+      created_at: '2026-09-26T00:00:00Z',
+      updated_at: '2026-09-26T00:00:00Z',
+    }
+    const project = {
+      id: 'project-1',
+      resource_type: 'project',
+      cloud_project_id: null,
+      parent_id: null,
+      public_id: 'project-1',
+      project_key: 'LOCAL',
+      name: 'Local diagnostics',
+      title: null,
+      description: '',
+      created_by_user_id: 0,
+      sequence_number: null,
+      status: 'active',
+      priority: null,
+      sort_order: 0,
+      current_delivery_id: null,
+      metadata: {
+        task_provider: 'local',
+        tags: [],
+        collaboration_groups: [group],
+        workflow_definition: { stages: [{ id: 'verify', name: 'Verify' }] },
+        execution_environment: {
+          repositories: [],
+          setup_steps: [],
+          fingerprint: 'diagnostics-v1',
+          devices: {
+            'local-device': {
+              status: 'ready',
+              workspace_path: '/workspace/diagnostics',
+              prepared_at: '2026-09-26T00:00:00Z',
+              error: '',
+            },
+          },
+        },
+      },
+      version: 1,
+      created_at: '2026-09-26T00:00:00Z',
+      updated_at: '2026-09-26T00:00:00Z',
+      completed_at: null,
+    }
+    const task = {
+      ...project,
+      id: 'LOCAL-1',
+      resource_type: 'task',
+      cloud_project_id: 'project-1',
+      public_id: null,
+      project_key: null,
+      name: null,
+      title: 'Inspect CPU',
+      description: 'Collect two independent read-only samples.',
+      sequence_number: 1,
+      status: 'inbox',
+      priority: 'none',
+      metadata: { tags: [] },
+    }
+    const agent = (id: string, name: string, mcpCommand: string, projectId = 'project-1') => ({
+      id,
+      project_id: projectId,
+      name,
+      display_name: name,
+      runtime: 'codex',
+      model: 'gpt-5.6-sol',
+      model_type: 'runtime',
+      model_namespace: 'default',
+      system_prompt: `${name} developer instructions`,
+      additional_skills: [
+        { name: `${id}-skill`, namespace: 'default', isPublic: false, skillId: 1 },
+      ],
+      mcp_servers: { evidence: { command: mcpCommand } },
+      status: 'active',
+      execution_environment: 'local',
+      execution_mode: 'auto',
+      workspace_policy: 'project',
+      plugins: [],
+      version: 1,
+    })
+    const updates: Array<Record<string, unknown>> = []
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [project]
+      if (method === 'todos.get') return task
+      if (method === 'chat_agents.list') {
+        return params?.project_id === 'project-1'
+          ? [agent('worker', 'Worker', 'worker-mcp')]
+          : [agent('leader', 'Manager', 'manager-mcp', 'wework-project-space')]
+      }
+      if (method === 'todos.update') {
+        updates.push(params?.todo as Record<string, unknown>)
+        return task
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const localStatus = {
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    }
+    const services = createLocalAppServices({
+      available: vi.fn().mockResolvedValue(localStatus),
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      user: AUTHENTICATED_CLOUD_USER,
+    })
+
+    await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'agent',
+      assigneeId: 'worker',
+    })
+    await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'group',
+      assigneeId: 'group-1',
+    })
+
+    expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toEqual([
+      ['chat_agents.list', { project_id: 'project-1' }],
+      ['chat_agents.list', { project_id: DEFAULT_WORK_ITEM_PROJECT_ID }],
+      ['chat_agents.list', { project_id: 'project-1' }],
+      ['chat_agents.list', { project_id: DEFAULT_WORK_ITEM_PROJECT_ID }],
+    ])
+    expect(updates[0]).toMatchObject({
+      assignee_agent_id: 'worker',
+      execution_payload: {
+        title: 'Inspect CPU',
+        executionRequest: {
+          task_title: 'Inspect CPU',
+          system_prompt: 'Worker developer instructions',
+          project_workspace_path: '/workspace/diagnostics',
+          runtime_workspace_roots: ['/workspace/diagnostics'],
+          bot: [{ id: 'worker', mcp_servers: { evidence: { command: 'worker-mcp' } } }],
+          skill_names: ['worker-skill'],
+        },
+      },
+    })
+    expect(updates[1]).toMatchObject({
+      assignee_group_id: 'group-1',
+      execution_payload: {
+        dispatchKind: 'collaboration_group',
+        dispatchTaskId: 'LOCAL-1',
+        managerRuntimeRequest: {
+          executionRequest: {
+            system_prompt: 'Manager developer instructions',
+            prompt: expect.stringContaining(
+              '协作规则：Dispatch verifiable work and evaluate every completed round.'
+            ),
+          },
+        },
+      },
+    })
+    const groupPayload = updates[1].execution_payload as {
+      memberRuntimeProfiles: Array<{
+        memberIds: string[]
+        agentId: string
+        runtimePayload: { executionRequest: Record<string, unknown> }
+      }>
+    }
+    expect(groupPayload.memberRuntimeProfiles.map(profile => profile.agentId)).toEqual([
+      'leader',
+      'worker',
+    ])
+    expect(groupPayload.memberRuntimeProfiles[0]).toMatchObject({
+      memberIds: ['leader'],
+      runtimePayload: {
+        executionRequest: {
+          system_prompt: 'Manager developer instructions',
+          bot: [
+            expect.objectContaining({
+              id: 'leader',
+              mcp_servers: { evidence: { command: 'manager-mcp' } },
+            }),
+          ],
+        },
+      },
+    })
+    expect(groupPayload.memberRuntimeProfiles[1]).toMatchObject({
+      memberIds: ['worker'],
+      runtimePayload: {
+        executionRequest: {
+          system_prompt: 'Worker developer instructions',
+          bot: [
+            expect.objectContaining({
+              id: 'worker',
+              mcp_servers: { evidence: { command: 'worker-mcp' } },
+            }),
+          ],
+        },
+      },
+    })
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {

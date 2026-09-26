@@ -6,9 +6,10 @@
 
 The queue is a derived view over `loop_item_executions`: any row in a
 non-terminal state is part of the queue. This service owns the run lifecycle
-(assignment -> approval -> queued -> capacity-gated claim -> running ->
-terminal) plus lease-based recovery so multi-device local pullers and
-multi-worker cloud dispatchers never double-claim a run.
+(assignment -> approval -> queued -> claimed -> running -> terminal) plus
+lease-based recovery. Executors own local capacity and pull work when a slot is
+available; Backend stores observable state and atomically prevents duplicate
+claims across devices.
 """
 
 import json
@@ -275,11 +276,7 @@ def execution_display_state(execution: LoopItemExecution) -> str:
     if execution.status == STATUS_CANCEL_REQUESTED:
         return "cancelling"
     if execution.status == STATUS_CLAIMED:
-        return (
-            "starting"
-            if execution.observed_state == OBSERVED_UNCONFIRMED
-            else "waiting_runtime"
-        )
+        return "starting"
     if (
         execution.status == STATUS_RUNNING
         and execution.observed_state == OBSERVED_RUNNING
@@ -352,50 +349,6 @@ def _occupied_execution_scopes(
             LoopItemExecution.execution_scope.in_(execution_scopes),
         )
     return {scope for (scope,) in query.all()}
-
-
-def _runtime_capacity_used(
-    db: Session,
-    *,
-    owner_user_id: int,
-    runtime_instance_id: str,
-    runtime_active: int,
-    runtime_active_task_ids: set[str] | frozenset[str],
-) -> int | None:
-    """Combine Runtime truth with durable reservations without double-counting."""
-
-    # Managed Wegent runs execute in the Chat runtime, never occupy a device
-    # Runtime slot, and therefore never carry a runtime instance identity.
-    # Treating them as ambiguous would stall every device claim for this owner
-    # for as long as one Wegent run holds capacity.
-    ambiguous = (
-        db.query(LoopItemExecution.id)
-        .filter(
-            LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            LoopItemExecution.execution_environment != "wegent",
-            LoopItemExecution.runtime_instance_id == "",
-        )
-        .first()
-    )
-    if ambiguous is not None:
-        return None
-    durable_task_ids = [
-        str(runtime_task_id or "")
-        for (runtime_task_id,) in db.query(LoopItemExecution.runtime_task_id)
-        .filter(
-            LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.runtime_instance_id == runtime_instance_id,
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-        )
-        .all()
-    ]
-    pending_reservations = sum(
-        1
-        for runtime_task_id in durable_task_ids
-        if not runtime_task_id or runtime_task_id not in runtime_active_task_ids
-    )
-    return runtime_active + pending_reservations
 
 
 def _canonical_execution_device(
@@ -555,27 +508,6 @@ def _execution_is_claimable_by_device(
     )
 
 
-def _active_agent_counts(
-    db: Session,
-    agent_ids: set[str] | None = None,
-) -> dict[str, int]:
-    if agent_ids is not None and not agent_ids:
-        return {}
-    query = db.query(
-        LoopItemExecution.agent_id,
-        func.count(LoopItemExecution.id),
-    ).filter(
-        LoopItemExecution.status.in_(CAPACITY_STATUSES),
-        LoopItemExecution.agent_id != "",
-    )
-    if agent_ids is not None:
-        query = query.filter(LoopItemExecution.agent_id.in_(agent_ids))
-    return {
-        str(agent_id): int(count)
-        for agent_id, count in query.group_by(LoopItemExecution.agent_id).all()
-    }
-
-
 def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
     if not agent_ids:
         return {}
@@ -589,55 +521,21 @@ def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
     }
 
 
-def _agent_has_capacity(
-    agent_id: str,
-    *,
-    active_counts: dict[str, int],
-    claimed_counts: dict[str, int],
-    limits: dict[str, int],
-) -> bool:
-    if not agent_id:
-        return True
-    return active_counts.get(agent_id, 0) + claimed_counts.get(
-        agent_id, 0
-    ) < limits.get(agent_id, 1)
-
-
-def _fair_single_candidate(
+def _next_claimable_candidate(
     rows: list[LoopItemExecution],
     *,
     occupied_scopes: set[str],
-    active_counts: dict[str, int],
-    limits: dict[str, int],
 ) -> LoopItemExecution | None:
-    """Pick FIFO per agent and least-active agent within the top priority."""
+    """Return the first priority/FIFO row whose execution scope is free."""
 
-    for priority in sorted({row.priority_weight for row in rows}, reverse=True):
-        first_by_agent: dict[str, LoopItemExecution] = {}
-        for row in rows:
-            if row.priority_weight != priority:
-                continue
-            if not _agent_has_capacity(
-                row.agent_id,
-                active_counts=active_counts,
-                claimed_counts={},
-                limits=limits,
-            ):
-                continue
-            if row.execution_scope and row.execution_scope in occupied_scopes:
-                continue
-            key = row.agent_id or f"automation:{row.id}"
-            first_by_agent.setdefault(key, row)
-        if first_by_agent:
-            candidates = list(first_by_agent.values())
-            return min(
-                enumerate(candidates),
-                key=lambda item: (
-                    active_counts.get(item[1].agent_id, 0),
-                    item[0],
-                ),
-            )[1]
-    return None
+    return next(
+        (
+            row
+            for row in rows
+            if not row.execution_scope or row.execution_scope not in occupied_scopes
+        ),
+        None,
+    )
 
 
 def utcnow() -> datetime:
@@ -715,6 +613,7 @@ class LoopItemExecutionService:
             if automation_context is not None
             else inferred_context
         )
+        effective_context.setdefault("dispatch_role", "executor")
         if instruction is not None:
             effective_context["execution_prompt"] = instruction
         persisted_config = bot_config(agent)
@@ -1516,7 +1415,7 @@ class LoopItemExecutionService:
         return result
 
     # ------------------------------------------------------------------
-    # Capacity-gated claiming
+    # Executor-pulled claiming
     # ------------------------------------------------------------------
 
     def claim(
@@ -1528,18 +1427,14 @@ class LoopItemExecutionService:
         environment: str,
         owner_user_id: int,
         runtime_instance_id: str,
-        device_capacity: int,
-        runtime_active: int,
-        runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         assigner_filter: Optional[int] = None,
     ) -> Optional[LoopItemExecution]:
         """Atomically claim the next queued run for one robot on one device.
 
-        Returns None when the robot's queue is empty or the device has no free
-        capacity. The caller is responsible for holding the per-device Redis
-        lock when multiple workers/pullers race (cloud dispatchers); the CAS
-        below keeps a single claim atomic even without it.
+        The Executor calls this only after its local scheduler has an available
+        slot. Backend owns queue ordering, eligibility, leases, and the atomic
+        CAS; it does not mirror or gate the Executor's local capacity.
         """
 
         submitted_execution_device_id = execution_device_id
@@ -1553,25 +1448,6 @@ class LoopItemExecutionService:
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
         )
-        running_count = _runtime_capacity_used(
-            db,
-            owner_user_id=owner_user_id,
-            runtime_instance_id=runtime_instance_id,
-            runtime_active=runtime_active,
-            runtime_active_task_ids=runtime_active_task_ids,
-        )
-        if running_count is None or running_count >= device_capacity:
-            return None
-        active_counts = _active_agent_counts(db, {agent_id})
-        limits = _agent_limits(db, {agent_id})
-        if not _agent_has_capacity(
-            agent_id,
-            active_counts=active_counts,
-            claimed_counts={},
-            limits=limits,
-        ):
-            return None
-
         query = (
             db.query(LoopItemExecution)
             .filter(
@@ -1653,9 +1529,6 @@ class LoopItemExecutionService:
         runtime_device_id: Optional[str] = None,
         environment: str,
         runtime_instance_id: str,
-        device_capacity: int,
-        runtime_active: int,
-        runtime_active_task_ids: set[str] | frozenset[str],
         owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
@@ -1672,15 +1545,6 @@ class LoopItemExecutionService:
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
         )
-        running_count = _runtime_capacity_used(
-            db,
-            owner_user_id=owner_user_id,
-            runtime_instance_id=runtime_instance_id,
-            runtime_active=runtime_active,
-            runtime_active_task_ids=runtime_active_task_ids,
-        )
-        if running_count is None or running_count >= device_capacity:
-            return None
         queue_filters = (
             LoopItemExecution.executor_owner_user_id == owner_user_id,
             or_(
@@ -1692,16 +1556,6 @@ class LoopItemExecutionService:
             ),
             LoopItemExecution.status == STATUS_QUEUED,
         )
-        agent_ids = {
-            str(agent_id)
-            for (agent_id,) in db.query(LoopItemExecution.agent_id)
-            .filter(*queue_filters, LoopItemExecution.agent_id != "")
-            .distinct()
-            .all()
-        }
-        active_counts = _active_agent_counts(db, agent_ids)
-        limits = _agent_limits(db, agent_ids)
-
         rows = (
             db.query(LoopItemExecution)
             .filter(*queue_filters)
@@ -1726,11 +1580,9 @@ class LoopItemExecutionService:
             db,
             {row.execution_scope for row in rows if row.execution_scope},
         )
-        candidate = _fair_single_candidate(
+        candidate = _next_claimable_candidate(
             rows,
             occupied_scopes=occupied_scopes,
-            active_counts=active_counts,
-            limits=limits,
         )
         if candidate is None:
             return None
@@ -1764,187 +1616,6 @@ class LoopItemExecutionService:
             return None
         db.refresh(candidate)
         return candidate
-
-    def claim_batch_for_device(
-        self,
-        db: Session,
-        *,
-        execution_device_id: str,
-        environment: str,
-        runtime_instance_id: str,
-        device_capacity: int,
-        runtime_active: int,
-        runtime_active_task_ids: set[str] | frozenset[str],
-        owner_user_id: int,
-        lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        batch_size: int = 16,
-    ) -> list[LoopItemExecution]:
-        """Atomically claim a batch of queued runs for one device.
-
-        The caller holds the per-device lock, so this is the single consumer
-        path for a device. Runs move to `claimed` (taken but not yet handed to
-        the executor); `mark_start_requested` records when the execution
-        subtask may deliver Start. Capacity includes every claimed or active run
-        (already taken by this pass) so the device is never over-subscribed
-        across consumers.
-        """
-
-        occupied = _runtime_capacity_used(
-            db,
-            owner_user_id=owner_user_id,
-            runtime_instance_id=runtime_instance_id,
-            runtime_active=runtime_active,
-            runtime_active_task_ids=runtime_active_task_ids,
-        )
-        if occupied is None or occupied >= device_capacity:
-            return []
-        candidates = db.query(LoopItemExecution).filter(
-            LoopItemExecution.execution_device_id == execution_device_id,
-            LoopItemExecution.execution_environment == environment,
-            LoopItemExecution.status == STATUS_QUEUED,
-        )
-        candidates = candidates.filter(
-            LoopItemExecution.executor_owner_user_id == owner_user_id
-        )
-        candidates = candidates.order_by(
-            LoopItemExecution.priority_weight.desc(),
-            LoopItemExecution.queued_at.asc(),
-            LoopItemExecution.id.asc(),
-        ).all()
-        if not candidates:
-            return []
-        slots = min(batch_size, max(0, device_capacity - occupied))
-        claimable: list[int] = []
-        claimed_agent_counts: dict[str, int] = {}
-        seen_scopes: set[str] = set()
-        agent_ids = {
-            candidate.agent_id for candidate in candidates if candidate.agent_id
-        }
-        execution_scopes = {
-            candidate.execution_scope
-            for candidate in candidates
-            if candidate.execution_scope
-        }
-        occupied_scopes = _occupied_execution_scopes(db, execution_scopes)
-        active_counts = _active_agent_counts(db, agent_ids)
-        limits = _agent_limits(db, agent_ids)
-        priorities = sorted(
-            {candidate.priority_weight for candidate in candidates}, reverse=True
-        )
-        for priority in priorities:
-            queues: dict[str, list[LoopItemExecution]] = {}
-            for candidate in candidates:
-                if candidate.priority_weight != priority:
-                    continue
-                key = candidate.agent_id or f"automation:{candidate.id}"
-                queues.setdefault(key, []).append(candidate)
-            while queues and len(claimable) < slots:
-                progressed = False
-                for key in list(queues):
-                    queue = queues[key]
-                    selected = None
-                    while queue:
-                        candidate = queue.pop(0)
-                        if not _agent_has_capacity(
-                            candidate.agent_id,
-                            active_counts=active_counts,
-                            claimed_counts=claimed_agent_counts,
-                            limits=limits,
-                        ):
-                            queue.clear()
-                            break
-                        if candidate.execution_scope and (
-                            candidate.execution_scope in occupied_scopes
-                            or candidate.execution_scope in seen_scopes
-                        ):
-                            continue
-                        selected = candidate
-                        break
-                    if not queue:
-                        queues.pop(key, None)
-                    if selected is None:
-                        continue
-                    claimable.append(selected.id)
-                    if selected.agent_id:
-                        claimed_agent_counts[selected.agent_id] = (
-                            claimed_agent_counts.get(selected.agent_id, 0) + 1
-                        )
-                    if selected.execution_scope:
-                        seen_scopes.add(selected.execution_scope)
-                    progressed = True
-                    if len(claimable) >= slots:
-                        break
-                if not progressed:
-                    break
-            if len(claimable) >= slots:
-                break
-        if not claimable:
-            return []
-        now = utcnow()
-        updated = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.id.in_(claimable),
-                LoopItemExecution.status == STATUS_QUEUED,
-            )
-            .update(
-                {
-                    "status": STATUS_CLAIMED,
-                    "claimed_at": now,
-                    "heartbeat_at": now,
-                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_instance_id": runtime_instance_id,
-                    "version": LoopItemExecution.version + 1,
-                },
-                synchronize_session=False,
-            )
-        )
-        db.flush()
-        if updated != len(claimable):
-            db.rollback()
-            return []
-        db.expire_all()
-        rows = (
-            db.query(LoopItemExecution)
-            .filter(LoopItemExecution.id.in_(claimable))
-            .all()
-        )
-        for row in rows:
-            row.runtime_device_id = execution_device_id
-            row.runtime_task_id = runtime_task_id_for(row.id)
-        db.commit()
-        for row in rows:
-            db.refresh(row)
-        by_id = {row.id: row for row in rows}
-        return [
-            by_id[execution_id] for execution_id in claimable if execution_id in by_id
-        ]
-
-    def claim_next_unbound_local(
-        self,
-        db: Session,
-        *,
-        owner_user_id: int,
-        execution_device_id: str,
-        runtime_instance_id: str,
-        device_capacity: int,
-        runtime_active: int,
-        runtime_active_task_ids: set[str] | frozenset[str],
-        lease_seconds: int = DEFAULT_LEASE_SECONDS,
-    ) -> Optional[LoopItemExecution]:
-        """Use the unified project-authorized claim path for old callers."""
-
-        return self.claim_next_for_device(
-            db,
-            execution_device_id=execution_device_id,
-            environment="local",
-            runtime_instance_id=runtime_instance_id,
-            device_capacity=device_capacity,
-            runtime_active=runtime_active,
-            runtime_active_task_ids=runtime_active_task_ids,
-            owner_user_id=owner_user_id,
-            lease_seconds=lease_seconds,
-        )
 
     def mark_start_requested(
         self,
@@ -2422,6 +2093,10 @@ class LoopItemExecutionService:
                 or self._automation_rule_id(db, execution),
                 "automation_run_id": execution.automation_run_id,
                 "model": profile.model or None,
+                "dispatch_role": origin_context.get("dispatch_role"),
+                "workflow_task_title": origin_context.get("workflow_task_title"),
+                "workflow_stage_id": origin_context.get("workflow_stage_id"),
+                "coordination_round_id": origin_context.get("coordination_round_id"),
             }
         )
         row.message_type = "agent_chunk"
@@ -3633,36 +3308,69 @@ class LoopItemExecutionService:
 
         if execution.executor_type == "collaboration_group_dispatch":
             dispatch_request = execution.execution_intent.get("dispatch_request")
-            if not isinstance(dispatch_request, dict):
+            if (
+                not isinstance(dispatch_request, dict)
+                or dispatch_request.get("kind") != "collaboration_group"
+            ):
                 raise WeworkRuntimeConfigurationError(
                     "Collaboration group dispatch request is unavailable"
                 )
-            manager_request = dispatch_request.get("manager_runtime_request")
-            if not isinstance(manager_request, dict):
+            if not execution_target_id or not executor_device_id:
                 raise WeworkRuntimeConfigurationError(
-                    "Collaboration group manager request is unavailable"
+                    "Collaboration group dispatch requires a claimed Executor"
                 )
-            if execution_target_id:
-                requested_device_id = str(manager_request.get("deviceId") or "")
-                if requested_device_id and not _same_runtime_device(
-                    db,
-                    owner_user_id=execution.executor_owner_user_id,
-                    left_device_id=requested_device_id,
-                    right_device_id=execution_target_id,
-                ):
-                    raise WeworkExecutionProfileError(
-                        "Collaboration dispatch target does not match the claimed queue"
-                    )
-                if not executor_device_id:
-                    raise WeworkExecutionProfileError(
-                        "Executor device identity is required"
-                    )
-                manager_request = dict(manager_request)
-                manager_request["deviceId"] = executor_device_id
+            if execution.execution_device_id and not _same_runtime_device(
+                db,
+                owner_user_id=execution.executor_owner_user_id,
+                left_device_id=execution.execution_device_id,
+                right_device_id=execution_target_id,
+            ):
+                raise WeworkExecutionProfileError(
+                    "Collaboration dispatch target does not match the claimed queue"
+                )
+            profile, origin_context = self._runtime_profile_and_context(
+                db,
+                execution=execution,
+            )
+            task = self.resolve_task_context(
+                db,
+                execution=execution,
+                user_id=execution.executor_owner_user_id,
+            )
+            if task is None:
+                raise WeworkRuntimeConfigurationError(
+                    f"Execution task '{execution.loop_item_id}' is unavailable"
+                )
+            request = profile.build_runtime_request(
+                db,
+                execution_id=execution.id,
+                runtime_task_id=(
+                    execution.runtime_task_id or runtime_task_id_for(execution.id)
+                ),
+                task=task,
+                cloud_project_id=execution.cloud_project_id,
+                origin_context=origin_context,
+                execution_device_id=executor_device_id,
+            )
+            from app.services.runtime_work_service import compile_runtime_task_create
+
+            manager_request = compile_runtime_task_create(
+                db=db,
+                user_id=execution.executor_owner_user_id,
+                request=request,
+            ).payload
+            member_runtime_profiles = self._collaboration_member_runtime_profiles(
+                db,
+                execution=execution,
+                task=task,
+                origin_context=origin_context,
+                executor_device_id=executor_device_id,
+            )
             return {
                 "dispatchKind": "collaboration_group",
                 "dispatchTaskId": execution.runtime_task_id,
                 "managerRuntimeRequest": manager_request,
+                "memberRuntimeProfiles": member_runtime_profiles,
             }
 
         try:
@@ -3778,6 +3486,145 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 f"Execution model '{model_label}' is unavailable"
             ) from exc
+
+    def _collaboration_member_runtime_profiles(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        task: TaskContext,
+        origin_context: dict[str, Any],
+        executor_device_id: str,
+    ) -> list[dict[str, Any]]:
+        """Compile immutable member profiles in the root Executor handoff."""
+
+        from app.services.project_chat.service import bot_config
+        from app.services.runtime_work_service import compile_runtime_task_create
+
+        group = origin_context.get("collaboration_group")
+        if not isinstance(group, dict):
+            raise WeworkRuntimeConfigurationError(
+                "Collaboration group snapshot is unavailable"
+            )
+        references = [
+            value
+            for value in [
+                group.get("leader"),
+                *(
+                    group.get("members")
+                    if isinstance(group.get("members"), list)
+                    else []
+                ),
+            ]
+            if isinstance(value, dict) and value.get("kind") == "agent"
+        ]
+        agents = (
+            db.query(ProjectChatAgent)
+            .filter(
+                ProjectChatAgent.cloud_project_id == execution.cloud_project_id,
+                ProjectChatAgent.status == "active",
+            )
+            .all()
+        )
+        profiles: list[dict[str, Any]] = []
+        compiled_agent_ids: set[str] = set()
+        for reference in references:
+            member_id = str(reference.get("id") or "")
+            agent = next(
+                (
+                    candidate
+                    for candidate in agents
+                    if str(candidate.id) == member_id
+                    or str(bot_config(candidate).get("wegent_team_id") or "")
+                    == member_id
+                ),
+                None,
+            )
+            if agent is None:
+                raise WeworkRuntimeConfigurationError(
+                    f"Collaboration group agent '{member_id}' is unavailable"
+                )
+            if agent.id in compiled_agent_ids:
+                continue
+            compiled_agent_ids.add(agent.id)
+            aliases = sorted(
+                {
+                    str(agent.id),
+                    *[
+                        str(value.get("id") or "")
+                        for value in references
+                        if (
+                            str(value.get("id") or "") == str(agent.id)
+                            or str(bot_config(agent).get("wegent_team_id") or "")
+                            == str(value.get("id") or "")
+                        )
+                    ],
+                }
+                - {""}
+            )
+            profile = replace(
+                WeworkExecutionProfile.for_project_robot(
+                    agent,
+                    db=db,
+                    cloud_project_id=execution.cloud_project_id,
+                ),
+                execution_prompt="Collaboration member task",
+            )
+            template_task_id = (
+                f"{execution.runtime_task_id or runtime_task_id_for(execution.id)}"
+                f"-member-profile-{agent.id}"
+            )
+            member_origin = {
+                **origin_context,
+                "dispatch_role": "member",
+                "workflow_task_title": "Collaboration member task",
+                "system_prompt": profile.system_prompt,
+            }
+            request = profile.build_runtime_request(
+                db,
+                execution_id=execution.id,
+                runtime_task_id=template_task_id,
+                task=task,
+                cloud_project_id=execution.cloud_project_id,
+                origin_context=member_origin,
+                execution_device_id=executor_device_id,
+            )
+            payload = compile_runtime_task_create(
+                db=db,
+                user_id=int(
+                    agent.created_by_user_id or execution.executor_owner_user_id
+                ),
+                request=request,
+            ).payload
+            self._detach_collaboration_member_payload(payload)
+            profiles.append(
+                {
+                    "memberIds": aliases,
+                    "agentId": agent.id,
+                    "agentName": agent.title or agent.name or "AI",
+                    "runtimePayload": payload,
+                }
+            )
+        return profiles
+
+    @staticmethod
+    def _detach_collaboration_member_payload(payload: dict[str, Any]) -> None:
+        """Remove the root execution identity from a reusable member profile."""
+
+        origin = payload.get("origin")
+        if isinstance(origin, dict):
+            origin.pop("executionId", None)
+            origin.pop("execution_id", None)
+        execution_request = payload.get("executionRequest")
+        if not isinstance(execution_request, dict):
+            return
+        extra = execution_request.get("extra")
+        if not isinstance(extra, dict):
+            return
+        request_origin = extra.get("origin")
+        if isinstance(request_origin, dict):
+            request_origin.pop("executionId", None)
+            request_origin.pop("execution_id", None)
 
     def _runtime_profile_and_context(
         self,

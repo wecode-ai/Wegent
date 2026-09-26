@@ -33,7 +33,7 @@ impl RuntimeWorkRpcHandler {
                     "collaboration manager Runtime request is required",
                 )
             })?;
-        let manager_task_id = id_field(&manager_request, "taskId")
+        let claimed_dispatch_task_id = id_field(&manager_request, "taskId")
             .or_else(|| id_field(&manager_request, "localTaskId"))
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
@@ -42,12 +42,25 @@ impl RuntimeWorkRpcHandler {
                     "collaboration manager task identity is required",
                 )
             })?;
-        if manager_task_id != dispatch_task_id {
+        if claimed_dispatch_task_id != dispatch_task_id {
             return Err(AppIpcError::new(
                 "bad_request",
                 "collaboration manager must run inside the claimed dispatch",
             ));
         }
+        let manager_task_id = format!("{dispatch_task_id}-manager-initial");
+        let member_profiles = payload
+            .get("memberRuntimeProfiles")
+            .and_then(Value::as_array)
+            .filter(|profiles| !profiles.is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration member Runtime profiles are required",
+                )
+            })?;
+        detach_collaboration_manager_from_backend_execution(&mut manager_request, &manager_task_id);
         let manager_context = string_field(&manager_request, "message")
             .or_else(|| string_field(&manager_request, "content"))
             .filter(|value| !value.trim().is_empty())
@@ -74,6 +87,20 @@ impl RuntimeWorkRpcHandler {
                 .insert(
                     COLLABORATION_MANAGER_CONTEXT_KEY.to_owned(),
                     Value::String(manager_context),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationDispatchTaskId".to_owned(),
+                    Value::String(dispatch_task_id),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationMemberRuntimeProfiles".to_owned(),
+                    Value::Array(member_profiles),
                 );
         }
         self.create_task(manager_request).await
@@ -697,7 +724,12 @@ impl RuntimeWorkRpcHandler {
                 .or_else(|| payload.get("runtime_handle"))
                 .and_then(Value::as_object),
         ) {
-            for key in ["wegentTeam", COLLABORATION_MANAGER_CONTEXT_KEY] {
+            for key in [
+                "wegentTeam",
+                COLLABORATION_MANAGER_CONTEXT_KEY,
+                "collaborationDispatchTaskId",
+                "collaborationMemberRuntimeProfiles",
+            ] {
                 if let Some(value) = payload_handle.get(key) {
                     runtime_handle.insert(key.to_owned(), value.clone());
                 }
@@ -2021,6 +2053,51 @@ impl RuntimeWorkRpcHandler {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
         self.upsert_local_task(link);
+    }
+}
+
+fn detach_collaboration_manager_from_backend_execution(
+    manager_request: &mut Value,
+    manager_task_id: &str,
+) {
+    let Some(request) = manager_request.as_object_mut() else {
+        return;
+    };
+    request.insert(
+        "taskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    request.insert(
+        "localTaskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    if let Some(origin) = request.get_mut("origin").and_then(Value::as_object_mut) {
+        origin.remove("executionId");
+        origin.remove("execution_id");
+    }
+    let execution_request = if request.contains_key("executionRequest") {
+        request.get_mut("executionRequest")
+    } else {
+        request.get_mut("execution_request")
+    };
+    if let Some(execution_request) = execution_request.and_then(Value::as_object_mut) {
+        execution_request.insert(
+            "task_id".to_owned(),
+            Value::String(manager_task_id.to_owned()),
+        );
+        execution_request.insert(
+            "subtask_id".to_owned(),
+            Value::String(format!("{manager_task_id}-initial")),
+        );
+        if let Some(origin) = execution_request
+            .get_mut("extra")
+            .and_then(Value::as_object_mut)
+            .and_then(|extra| extra.get_mut("origin"))
+            .and_then(Value::as_object_mut)
+        {
+            origin.remove("executionId");
+            origin.remove("execution_id");
+        }
     }
 }
 

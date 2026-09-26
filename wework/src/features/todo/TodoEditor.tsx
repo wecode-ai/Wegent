@@ -2,6 +2,7 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
+  createCollaborationTranslator,
   createSharedIssueDetailPort,
   type SharedEditorIssue,
   type SharedEditorProject,
@@ -102,7 +103,11 @@ export type TodoEditorProps = TodoEditorApiProps & {
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 export function TodoEditor(props: TodoEditorProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const collaborationTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const workspaceApi = useMemo<SharedIssueDetailWorkspaceApi>(() => {
     if (props.sharedApi) return props.sharedApi
     const deliveryApi = createWeworkDeliverySharedWorkspaceApi(props.api)
@@ -198,8 +203,11 @@ export function TodoEditor(props: TodoEditorProps) {
   const commonProps = {
     port,
     extensions,
-    translate: (key: string, fallback?: string, options?: Record<string, string | number>) =>
-      fallback === undefined ? t(key, options) : t(key, fallback, options),
+    translate: (key: string, fallback?: string, options?: Record<string, string | number>) => {
+      const shared = collaborationTranslate(key, undefined, options)
+      if (shared !== key) return shared
+      return fallback === undefined ? t(key, options) : t(key, fallback, options)
+    },
     loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,
