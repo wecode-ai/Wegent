@@ -870,6 +870,41 @@ describe('AiChatModal', () => {
     )
   })
 
+  it('remounts a bound task conversation when its device alias resolves', () => {
+    const { rerender } = render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'app-record-65', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+    const firstMount = Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+
+    rerender(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'electron-runtime-device', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-device-id',
+      'electron-runtime-device'
+    )
+    expect(
+      Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+    ).toBeGreaterThan(firstMount)
+  })
+
   it('separates returning to the Issue from closing the unified sidebar', async () => {
     const onBack = vi.fn()
     const onClose = vi.fn()

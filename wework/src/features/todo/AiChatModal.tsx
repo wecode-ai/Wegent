@@ -385,6 +385,7 @@ export function AiChatModal({
           }
         >
           <TemporaryChatPanel
+            key={`${initialAddress.deviceId}:${initialAddress.taskId}`}
             currentProject={selectedLocalProject}
             source={initialAddress}
             instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
@@ -485,6 +486,7 @@ export function AiChatModal({
               ) : null}
             </header>
             <TemporaryChatPanel
+              key={`${initialAddress.deviceId}:${initialAddress.taskId}`}
               currentProject={selectedLocalProject}
               source={initialAddress}
               instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
