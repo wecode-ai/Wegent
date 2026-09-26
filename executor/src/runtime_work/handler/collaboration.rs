@@ -704,6 +704,7 @@ fn fresh_cloud_manager_payload(
         "schemaVersion": 1,
         "taskId": task_id,
         "runtime": source_link.runtime,
+        "collaboration_model": "single",
         "title": source_link.title,
         "message": prompt,
         "workspacePath": source_link.workspace_path,
@@ -853,6 +854,17 @@ mod tests {
             payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
             source.runtime_handle["collaborationMemberRuntimeProfiles"]
         );
+    }
+
+    #[test]
+    fn fresh_cloud_manager_payload_keeps_single_collaboration_mode() {
+        let (mut request, payload) =
+            fresh_cloud_manager_payload(&source_link(), &command(), &[]).unwrap();
+
+        apply_runtime_payload_metadata(&mut request, &payload);
+
+        assert_eq!(payload["collaboration_model"], "single");
+        assert_eq!(request.extra["collaborationMode"], "single");
     }
 
     #[test]
