@@ -72,29 +72,6 @@ impl fmt::Debug for CloudCollaborationRoundDispatcher {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct CollaborationManagerTurnCompleter(Arc<ManagerTurnCompletionCallback>);
-
-type ManagerTurnCompletionCallback = dyn Fn(&str) -> Result<(), String> + Send + Sync;
-
-impl CollaborationManagerTurnCompleter {
-    pub(crate) fn new(
-        complete: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
-    ) -> Self {
-        Self(Arc::new(complete))
-    }
-
-    fn complete(&self, manager_runtime_task_id: &str) -> Result<(), String> {
-        (self.0)(manager_runtime_task_id)
-    }
-}
-
-impl fmt::Debug for CollaborationManagerTurnCompleter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("CollaborationManagerTurnCompleter")
-    }
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SpaceContextRole {
@@ -133,7 +110,6 @@ pub(crate) struct SpaceMcpRequestContext {
     auth_token: Option<String>,
     surface: WeworkMcpSurface,
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
-    collaboration_manager_turn_completer: Option<CollaborationManagerTurnCompleter>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -162,7 +138,6 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::ProjectSpace,
             cloud_collaboration_dispatcher: None,
-            collaboration_manager_turn_completer: None,
         }
     }
 
@@ -173,7 +148,6 @@ impl SpaceMcpRequestContext {
             auth_token,
             surface: WeworkMcpSurface::Notifications,
             cloud_collaboration_dispatcher: None,
-            collaboration_manager_turn_completer: None,
         }
     }
 
@@ -205,13 +179,6 @@ impl SpaceMcpRequestContext {
         dispatcher: Option<CloudCollaborationRoundDispatcher>,
     ) {
         self.cloud_collaboration_dispatcher = dispatcher;
-    }
-
-    pub(crate) fn set_collaboration_manager_turn_completer(
-        &mut self,
-        completer: Option<CollaborationManagerTurnCompleter>,
-    ) {
-        self.collaboration_manager_turn_completer = completer;
     }
 }
 
@@ -952,7 +919,6 @@ async fn call_tool_with_runtime_context(
     let grant = context.grant.as_ref();
     let backend_url = context.backend_url.as_deref();
     let auth_token = context.auth_token.as_deref();
-    let manager_turn_completer = context.collaboration_manager_turn_completer.as_ref();
     if is_role_bound(grant) && board_tool_category(name).is_none() {
         return text_result(
             format!("The current dispatch role cannot call wework_space tool: {name}"),
@@ -1038,7 +1004,6 @@ async fn call_tool_with_runtime_context(
             project_id: "",
             grant,
             collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
-            manager_turn_completer: context.collaboration_manager_turn_completer.as_ref(),
         };
         return match call_backend_tool(&backend_context, name, &arguments).await {
             Ok(Value::Array(mut cloud_projects)) => {
@@ -1061,7 +1026,6 @@ async fn call_tool_with_runtime_context(
             project_id,
             grant,
             collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
-            manager_turn_completer: context.collaboration_manager_turn_completer.as_ref(),
         };
         return match call_backend_tool(&backend_context, name, &arguments).await {
             Ok(value) => text_result(value.to_string(), false),
@@ -1090,20 +1054,9 @@ async fn call_tool_with_runtime_context(
                 super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
             });
             match (manager_task_id, plan) {
-                (Ok(manager_task_id), Ok(plan)) => runtime
-                    .submit_collaboration_round(manager_task_id, plan)
-                    .and_then(|result| {
-                        manager_turn_completer
-                            .ok_or_else(|| {
-                                super::TaskRuntimeError::Invalid(
-                                    "Executor collaboration manager lifecycle is unavailable"
-                                        .to_owned(),
-                                )
-                            })?
-                            .complete(manager_task_id)
-                            .map_err(super::TaskRuntimeError::Invalid)?;
-                        Ok(result)
-                    }),
+                (Ok(manager_task_id), Ok(plan)) => {
+                    runtime.submit_collaboration_round(manager_task_id, plan)
+                }
                 (Err(error), _) => Err(super::TaskRuntimeError::Invalid(error)),
                 (_, Err(error)) => Err(error),
             }
@@ -1941,7 +1894,6 @@ struct BackendToolContext<'a> {
     project_id: &'a str,
     grant: Option<&'a SpaceContextGrant>,
     collaboration_dispatcher: Option<&'a CloudCollaborationRoundDispatcher>,
-    manager_turn_completer: Option<&'a CollaborationManagerTurnCompleter>,
 }
 
 async fn call_backend_tool(
@@ -1955,7 +1907,6 @@ async fn call_backend_tool(
     let grant = context.grant;
     let auth_token = context.auth_token;
     let collaboration_dispatcher = context.collaboration_dispatcher;
-    let manager_turn_completer = context.manager_turn_completer;
     if name == "update_issue_status" {
         let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
         let dispatch_id = manager_dispatch_id(Some(grant))?;
@@ -2139,9 +2090,6 @@ async fn call_backend_tool(
                 assignments: assignments.clone(),
                 human_assignment_ids,
             })?;
-        manager_turn_completer
-            .ok_or_else(|| "Executor collaboration manager lifecycle is unavailable".to_owned())?
-            .complete(&grant.task_id)?;
         return Ok(json!({
             "dispatch_id": dispatch_id,
             "round_id": round_id,
@@ -4295,7 +4243,6 @@ mod tests {
             project_id: "12",
             grant: None,
             collaboration_dispatcher: None,
-            manager_turn_completer: None,
         };
         let result = call_backend_tool(
             &context,
@@ -4351,7 +4298,6 @@ mod tests {
             project_id: "12",
             grant: None,
             collaboration_dispatcher: None,
-            manager_turn_completer: None,
         };
         let result = call_backend_tool(&context, "get_assignment_candidates", &json!({}))
             .await
@@ -4413,7 +4359,6 @@ mod tests {
             project_id: "12",
             grant: Some(&grant),
             collaboration_dispatcher: None,
-            manager_turn_completer: None,
         };
         let decision = call_backend_tool(
             &context,
@@ -4474,12 +4419,6 @@ mod tests {
             observed.lock().unwrap().push(command);
             Ok(())
         });
-        let completed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let observed_completed = completed.clone();
-        let completer = CollaborationManagerTurnCompleter::new(move |task_id| {
-            observed_completed.lock().unwrap().push(task_id.to_owned());
-            Ok(())
-        });
         let grant = SpaceContextGrant {
             task_id: "manager-task".to_owned(),
             space_id: Some("12".to_owned()),
@@ -4518,7 +4457,6 @@ mod tests {
             project_id: "12",
             grant: Some(&grant),
             collaboration_dispatcher: Some(&dispatcher),
-            manager_turn_completer: Some(&completer),
         };
         let result = call_backend_tool(&context, "submit_workflow_plan", &plan)
             .await
@@ -4541,7 +4479,6 @@ mod tests {
             "investigate"
         );
         assert_eq!(commands[0].human_assignment_ids, vec!["human-assignment-1"]);
-        assert_eq!(*completed.lock().unwrap(), vec!["manager-task"]);
         server.abort();
     }
 

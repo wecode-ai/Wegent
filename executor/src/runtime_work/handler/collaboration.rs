@@ -5,13 +5,8 @@
 use super::*;
 use crate::task_runtime::{
     collaboration_member_profile_instructions, collaboration_member_system_prompt,
-    mcp::{
-        CloudCollaborationRoundCommand, CloudCollaborationRoundDispatcher,
-        CollaborationManagerTurnCompleter,
-    },
-    mcp_http::{
-        register_cloud_collaboration_dispatcher, register_collaboration_manager_turn_completer,
-    },
+    mcp::{CloudCollaborationRoundCommand, CloudCollaborationRoundDispatcher},
+    mcp_http::register_cloud_collaboration_dispatcher,
 };
 
 const CLOUD_COLLABORATION_ROUND_KEY: &str = "cloudCollaborationRound";
@@ -43,44 +38,6 @@ impl RuntimeWorkRpcHandler {
                 &[("error", error)],
             );
         }
-        let handler = self.clone();
-        let completer = CollaborationManagerTurnCompleter::new(move |manager_runtime_task_id| {
-            handler.complete_collaboration_manager_turn(manager_runtime_task_id)
-        });
-        if let Err(error) = register_collaboration_manager_turn_completer(completer) {
-            log_executor_event(
-                "collaboration manager lifecycle registration failed",
-                &[("error", error)],
-            );
-        }
-    }
-
-    fn complete_collaboration_manager_turn(
-        &self,
-        manager_runtime_task_id: &str,
-    ) -> Result<(), String> {
-        let link = self
-            .local_task_link(manager_runtime_task_id)
-            .ok_or_else(|| "Collaboration manager Runtime task was not found".to_owned())?;
-        self.persist_and_clear_active_codex_transcript(manager_runtime_task_id, "completed");
-        if self.is_active_local_task(manager_runtime_task_id) {
-            self.force_settle_local_task_execution(
-                manager_runtime_task_id,
-                link.thread_id,
-                "done",
-                "collaboration_round_dispatched",
-            );
-        } else {
-            self.store.update_task(manager_runtime_task_id, |task| {
-                task.running = false;
-                task.status = "done".to_owned();
-                task.thread_status = "idle".to_owned();
-                task.turn_status = Some("completed".to_owned());
-                task.updated_at = now_ms();
-                task.completed_at = Some(task.updated_at);
-            });
-        }
-        Ok(())
     }
 
     pub(super) fn resume_cloud_collaboration_rounds(&self) {

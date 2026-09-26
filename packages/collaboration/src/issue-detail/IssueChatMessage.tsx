@@ -217,6 +217,7 @@ export function IssueChatMessage({
   onOpenAttachment,
   testId,
   executionTestId,
+  executionAliasTestId,
   message,
   mine,
   compact = false,
@@ -240,6 +241,7 @@ export function IssueChatMessage({
   onOpenAttachment?(id: string, filename: string): void;
   testId?: string;
   executionTestId?: string;
+  executionAliasTestId?: string;
   message: ProjectChatMessage;
   mine: boolean;
   compact?: boolean;
@@ -385,6 +387,7 @@ export function IssueChatMessage({
             <ExecutionStatusBadge
               translate={t}
               testId={executionTestId}
+              aliasTestId={executionAliasTestId}
               messageId={message.messageId}
               status={runStatus}
               onOpenExecution={openExecution}
@@ -588,6 +591,7 @@ export function IssueChatMessage({
             <ExecutionStatusBadge
               translate={t}
               testId={executionTestId}
+              aliasTestId={executionAliasTestId}
               messageId={message.messageId}
               status={runStatus}
               onOpenExecution={openExecution}
@@ -653,6 +657,7 @@ export function IssueChatMessage({
               <ExecutionStatusBadge
                 translate={t}
                 testId={executionTestId}
+                aliasTestId={executionAliasTestId}
                 messageId={message.messageId}
                 status={runStatus}
                 onOpenExecution={openExecution}
@@ -731,6 +736,7 @@ export function IssueChatMessage({
           <ExecutionStatusBadge
             translate={t}
             testId={executionTestId}
+            aliasTestId={executionAliasTestId}
             messageId={message.messageId}
             status={runStatus}
             onOpenExecution={openExecution}
@@ -745,6 +751,7 @@ export function IssueChatMessage({
 function ExecutionStatusBadge({
   translate: t,
   testId,
+  aliasTestId,
   messageId,
   status,
   onOpenExecution,
@@ -753,6 +760,7 @@ function ExecutionStatusBadge({
 }: {
   translate: CollaborationTranslate;
   testId?: string;
+  aliasTestId?: string;
   messageId: string;
   status: string;
   onOpenExecution?: () => void;
@@ -809,7 +817,11 @@ function ExecutionStatusBadge({
         "task-detail-execution-pill",
         !onOpenExecution && "is-static",
       )}
+      data-testid={aliasTestId}
       data-status={kind}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onOpenExecution?.();
+      }}
     >
       <button
         type="button"

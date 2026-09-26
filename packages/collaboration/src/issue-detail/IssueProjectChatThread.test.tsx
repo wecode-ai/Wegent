@@ -248,6 +248,17 @@ describe("shared Issue threads", () => {
         '[data-testid="collaboration-chat-reply-input-root"]',
       ),
     ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).not.toBeNull();
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {
