@@ -191,6 +191,31 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         ],
     )
 
+    leader_assignment = LoopItemExecutionBatchCreate(
+        loop_item_id=parent.id,
+        dispatch_id="dispatch-1",
+        round_id="leader-round",
+        manager_runtime_task_id="manager-runtime-1",
+        manager_agent_id=manager.id,
+        items=[
+            LoopItemExecutionBatchItem(
+                assignment_id="manager-cannot-execute",
+                title="Manager task",
+                instructions="This must be rejected.",
+                assignee_type="agent",
+                assignee_id=manager.id,
+            )
+        ],
+    )
+    with pytest.raises(HTTPException) as error:
+        loop_item_executions.enqueue_execution_batch(
+            project.id, leader_assignment, test_db, test_user
+        )
+    assert error.value.status_code == 422
+    assert error.value.detail == (
+        "Collaboration group leader cannot execute an assignment"
+    )
+
     first = loop_item_executions.enqueue_execution_batch(
         project.id, values, test_db, test_user
     )

@@ -5853,6 +5853,34 @@ mod tests {
                 },
             )
             .unwrap();
+        let reviewer = store
+            .create_chat_agent(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                ChatAgentCreate {
+                    name: "Review Bot".to_owned(),
+                    display_name: Some("Review Bot".to_owned()),
+                    namespace: None,
+                    runtime: "codex".to_owned(),
+                    model: Some("gpt-6-mini".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: None,
+                    capability_description: Some("Review evidence".to_owned()),
+                    capability_mode: Some("follow_device".to_owned()),
+                    system_prompt: Some("Only review submitted evidence.".to_owned()),
+                    visibility: Some("creator_admin".to_owned()),
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
+                    local_project_id: None,
+                    created_by_user_id: Some(7),
+                    plugins: Vec::new(),
+                    additional_skills: Vec::new(),
+                    mcp_servers: json!({}),
+                },
+            )
+            .unwrap();
         let project = store
             .update_project(
                 &project.id,
@@ -5878,6 +5906,10 @@ mod tests {
                             "kind": "agent",
                             "id": member.id,
                             "responsibility": "Collect CPU evidence."
+                        }, {
+                            "kind": "agent",
+                            "id": reviewer.id,
+                            "responsibility": "Review the collected evidence."
                         }, {
                             "kind": "human",
                             "id": "42",
@@ -5958,6 +5990,25 @@ mod tests {
                                 }
                             }
                         }, {
+                            "memberIds": [reviewer.id],
+                            "runtimePayload": {
+                                "taskId": "reviewer-template",
+                                "runtime": "codex",
+                                "executionRequest": {
+                                    "task_id": "reviewer-template",
+                                    "subtask_id": "reviewer-template-initial",
+                                    "bot": [{
+                                        "id": reviewer.id,
+                                        "name": "Reviewer",
+                                        "shell_type": "Codex"
+                                    }],
+                                    "model_config": {
+                                        "model": "openai",
+                                        "model_id": "gpt-6-sol"
+                                    }
+                                }
+                            }
+                        }, {
                             "memberIds": [member.id],
                             "runtimePayload": {
                                 "taskId": "member-template",
@@ -6014,7 +6065,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            2
+            3
         );
         assert!(payload["message"]
             .as_str()
@@ -6055,6 +6106,24 @@ mod tests {
                 .as_deref(),
             Some("in_progress")
         );
+        let leader_assignment_error = store
+            .submit_collaboration_round(
+                runtime_task_id,
+                &json!({
+                    "round_id": "leader-round",
+                    "items": [{
+                        "assignment_id": "manager-cannot-execute",
+                        "title": "负责人不得执行",
+                        "instructions": "This assignment must be rejected.",
+                        "assignee_type": "agent",
+                        "assignee_id": leader.id,
+                    }],
+                }),
+            )
+            .unwrap_err();
+        assert!(leader_assignment_error.to_string().contains(
+            "collaboration group leader coordinates work and cannot be an assignment target"
+        ));
         let round = store
             .submit_collaboration_round(
                 runtime_task_id,
@@ -6072,7 +6141,7 @@ mod tests {
                         "title": "独立复核证据",
                         "instructions": "Review the evidence independently.",
                         "assignee_type": "agent",
-                        "assignee_id": leader.id,
+                        "assignee_id": reviewer.id,
                         "workflow_stage_id": "diagnosis",
                     }, {
                         "assignment_id": "review-human",
@@ -6087,6 +6156,7 @@ mod tests {
             .unwrap();
         assert_eq!(round["state"], "dispatched");
         assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
+        assert_eq!(round["assignments"][1]["agent_name"], "Review Bot");
         assert_eq!(round["assignments"][2]["assignee_name"], "Human reviewer");
         let human_task_id = round["assignments"][2]["human_assignment_id"]
             .as_str()
@@ -6184,7 +6254,7 @@ mod tests {
             })
             .unwrap()
             .expect("second member execution must be claimable concurrently");
-        assert_eq!(second_member_execution.agent_id, leader.id);
+        assert_eq!(second_member_execution.agent_id, reviewer.id);
         assert_eq!(
             second_member_execution.execution_payload.as_ref().unwrap()["title"],
             "独立复核证据"

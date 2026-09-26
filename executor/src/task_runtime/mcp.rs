@@ -2952,7 +2952,7 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "submit_workflow_plan",
-            "Dispatch one concurrent collaboration round. Each item starts a separate Executor run for the selected group agent. After every run finishes, the Executor starts a fresh manager run with the batch results.",
+            "Dispatch one concurrent collaboration round. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. Agent items start separate Executor runs, while human items wait for delivery. After every item finishes, the Executor starts a fresh manager run with the batch results.",
             json!({
                 "type": "object",
                 "properties": {

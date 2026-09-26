@@ -1705,7 +1705,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-popup-conversation-WEG-1')).not.toBeInTheDocument()
   })
 
-  it('preloads a failed task conversation only once per mounted task address', async () => {
+  it('preloads a task conversation once per runtime task signature', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
       {
@@ -1782,7 +1782,7 @@ describe('CloudTodoWorkspace', () => {
     view.rerender(
       <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_001)} workspaceActive />
     )
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
 
     view.rerender(
       <CloudTodoWorkspace
@@ -1791,10 +1791,10 @@ describe('CloudTodoWorkspace', () => {
         workspaceActive
       />
     )
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(3))
   })
 
-  it('discards a preload response after the runtime task changes', async () => {
+  it('discards a stale preload response and keeps the refreshed task transcript', async () => {
     const workbenchServices = services()
     const address = { deviceId: 'local-device', taskId: 'runtime-stale-preload' }
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
@@ -1813,12 +1813,36 @@ describe('CloudTodoWorkspace', () => {
     const transcriptPromise = new Promise<RuntimeTranscriptResponse>(resolve => {
       resolveTranscript = resolve
     })
-    const getRuntimeTranscript = vi.fn(() => transcriptPromise)
+    const getRuntimeTranscript = vi
+      .fn()
+      .mockReturnValueOnce(transcriptPromise)
+      .mockResolvedValueOnce({
+        taskId: address.taskId,
+        workspacePath: '/tmp/wegent',
+        runtime: 'codex',
+        running: false,
+        fullContent: true,
+        messages: [],
+        turns: [
+          {
+            id: 'fresh-turn',
+            status: 'done',
+            items: [
+              {
+                id: 'fresh-assistant',
+                type: 'assistant_text',
+                content: 'fresh response',
+                createdAt: '2026-08-23T00:03:00Z',
+              },
+            ],
+          },
+        ],
+      } satisfies RuntimeTranscriptResponse)
     workbenchServices.runtimeWorkApi = {
       ...workbenchServices.runtimeWorkApi,
       getRuntimeTranscript,
     } as WorkbenchServices['runtimeWorkApi']
-    const runtimeWork = (updatedAt: number) => ({
+    const runtimeWork = (updatedAt: number, status?: string) => ({
       projects: [
         {
           project: { id: project.id, name: project.name },
@@ -1835,6 +1859,7 @@ describe('CloudTodoWorkspace', () => {
                   runtime: 'codex' as const,
                   running: false,
                   updatedAt,
+                  status,
                 },
               ],
             },
@@ -1855,7 +1880,10 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
 
-    view.rerender(<CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_001)} />)
+    view.rerender(
+      <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_000, 'completed')} />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
     resolveTranscript({
       taskId: address.taskId,
       workspacePath: '/tmp/wegent',
@@ -1882,8 +1910,9 @@ describe('CloudTodoWorkspace', () => {
     await act(async () => {
       await transcriptPromise
     })
-    expect(getRuntimeConversationTurns(address)).toEqual([])
-    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    await waitFor(() =>
+      expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['fresh-turn'])
+    )
   })
 
   it('preserves older cached turns when the board preload transcript is bounded', async () => {

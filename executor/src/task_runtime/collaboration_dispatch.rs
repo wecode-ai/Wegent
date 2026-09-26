@@ -458,7 +458,7 @@ fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, TaskRunti
 }
 
 fn validate_group_agent(group: &Value, agent_id: &str) -> Result<(), TaskRuntimeError> {
-    let leader_matches = group.pointer("/leader/id").and_then(Value::as_str) == Some(agent_id);
+    reject_group_leader(group, "agent", agent_id)?;
     let member_matches = group
         .get("members")
         .and_then(Value::as_array)
@@ -468,7 +468,7 @@ fn validate_group_agent(group: &Value, agent_id: &str) -> Result<(), TaskRuntime
             member.get("kind").and_then(Value::as_str) == Some("agent")
                 && member.get("id").and_then(Value::as_str) == Some(agent_id)
         });
-    if leader_matches || member_matches {
+    if member_matches {
         Ok(())
     } else {
         Err(TaskRuntimeError::Invalid(
@@ -478,6 +478,7 @@ fn validate_group_agent(group: &Value, agent_id: &str) -> Result<(), TaskRuntime
 }
 
 fn validate_group_human(group: &Value, human_id: &str) -> Result<String, TaskRuntimeError> {
+    reject_group_leader(group, "human", human_id)?;
     group
         .get("members")
         .and_then(Value::as_array)
@@ -500,6 +501,26 @@ fn validate_group_human(group: &Value, human_id: &str) -> Result<String, TaskRun
                 "workflow plan assignee is not a human in the collaboration group".to_owned(),
             )
         })
+}
+
+fn reject_group_leader(
+    group: &Value,
+    assignee_type: &str,
+    assignee_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    let leader = group.get("leader").filter(|leader| leader.is_object());
+    let is_leader = leader.is_some_and(|leader| {
+        leader.get("kind").and_then(Value::as_str) == Some(assignee_type)
+            && leader.get("id").and_then(Value::as_str) == Some(assignee_id)
+    });
+    if is_leader {
+        Err(TaskRuntimeError::Invalid(
+            "collaboration group leader coordinates work and cannot be an assignment target"
+                .to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

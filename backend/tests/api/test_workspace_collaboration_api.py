@@ -772,6 +772,40 @@ def test_collaboration_group_rejects_stage_assignee_outside_members(
     )
 
 
+def test_collaboration_group_rejects_leader_as_stage_executor(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+) -> None:
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"负责人阶段校验 {uuid.uuid4().hex[:6]}"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "负责人只协调",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [{"kind": "human", "id": str(test_user.id)}],
+            "stages": [
+                {
+                    "id": "review",
+                    "name": "评审",
+                    "assignee": {"kind": "human", "id": str(test_user.id)},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Collaboration group leader cannot execute a stage"
+    )
+
+
 def _project_agent(
     test_db: Session,
     *,

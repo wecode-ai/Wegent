@@ -1005,8 +1005,7 @@ export function CloudTodoWorkspace({
   const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
     Record<string, RuntimeGoal | null>
   >({})
-  const runtimeConversationAttemptedAddressesRef = useRef(new Set<string>())
-  const runtimeConversationTaskSignaturesRef = useRef(new Map<string, string>())
+  const runtimeConversationAttemptedSignaturesRef = useRef(new Map<string, string>())
   const runtimeGoalRequestsRef = useRef(new Set<string>())
   // Applies a freshly fetched board snapshot. `boardError` distinguishes a
   // loaded-but-empty project (renders empty columns) from a failed fetch
@@ -2988,6 +2987,10 @@ export function CloudTodoWorkspace({
         })
         const task = runtimeTasksByKey.get(addressKey)
         const taskSignature = JSON.stringify([
+          item.status,
+          item.execution_id ?? null,
+          item.execution_state ?? null,
+          item.execution_last_event_seq ?? null,
           task?.runtime ?? null,
           task?.threadId ?? null,
           task?.workspacePath ?? null,
@@ -2997,9 +3000,10 @@ export function CloudTodoWorkspace({
           task?.turnStatus ?? null,
           task?.runtimeHandle ?? null,
         ])
-        runtimeConversationTaskSignaturesRef.current.set(addressKey, taskSignature)
-        if (runtimeConversationAttemptedAddressesRef.current.has(addressKey)) continue
-        runtimeConversationAttemptedAddressesRef.current.add(addressKey)
+        if (runtimeConversationAttemptedSignaturesRef.current.get(addressKey) === taskSignature) {
+          continue
+        }
+        runtimeConversationAttemptedSignaturesRef.current.set(addressKey, taskSignature)
         void runtimeWorkApi
           .getRuntimeTranscript({
             deviceId: binding.device_id,
@@ -3011,7 +3015,9 @@ export function CloudTodoWorkspace({
             limit: 20,
           })
           .then(transcript => {
-            if (runtimeConversationTaskSignaturesRef.current.get(addressKey) !== taskSignature) {
+            if (
+              runtimeConversationAttemptedSignaturesRef.current.get(addressKey) !== taskSignature
+            ) {
               return
             }
             const projectedTranscript = projectRuntimePaneTranscript(transcript)

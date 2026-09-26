@@ -125,11 +125,24 @@ def _require_project_execution(
     return row
 
 
-def _collaboration_group_members(group: dict[str, object]) -> set[tuple[str, str]]:
-    values: set[tuple[str, str]] = set()
+def _collaboration_group_leader(
+    group: dict[str, object],
+) -> tuple[str, str] | None:
     leader = group.get("leader")
-    if isinstance(leader, dict):
-        values.add((str(leader.get("kind") or ""), str(leader.get("id") or "")))
+    if not isinstance(leader, dict):
+        return None
+    kind = str(leader.get("kind") or "")
+    member_id = str(leader.get("id") or "")
+    if kind not in {"agent", "human"} or not member_id:
+        return None
+    return kind, member_id
+
+
+def _collaboration_group_execution_members(
+    group: dict[str, object],
+) -> set[tuple[str, str]]:
+    values: set[tuple[str, str]] = set()
+    leader_identity = _collaboration_group_leader(group)
     members = group.get("members")
     if isinstance(members, list):
         values.update(
@@ -140,27 +153,39 @@ def _collaboration_group_members(group: dict[str, object]) -> set[tuple[str, str
     return {
         (kind, member_id)
         for kind, member_id in values
-        if kind in {"agent", "human"} and member_id
+        if kind in {"agent", "human"}
+        and member_id
+        and (kind, member_id) != leader_identity
     }
 
 
-def _collaboration_group_agent_members(group: dict[str, object]) -> list[object]:
-    """Return every configured agent reference, including the leader."""
+def _collaboration_group_execution_agent_members(
+    group: dict[str, object],
+) -> list[object]:
+    """Return configured executor references, excluding the coordinator."""
 
-    values: list[object] = [group.get("leader")]
     members = group.get("members")
-    if isinstance(members, list):
-        values.extend(members)
-    return values
+    if not isinstance(members, list):
+        return []
+    leader_identity = _collaboration_group_leader(group)
+    return [
+        member
+        for member in members
+        if not (
+            isinstance(member, dict)
+            and (str(member.get("kind") or ""), str(member.get("id") or ""))
+            == leader_identity
+        )
+    ]
 
 
-def _collaboration_group_contains_agent(
+def _collaboration_group_contains_execution_agent(
     group: dict[str, object],
     agent: ProjectChatAgent,
 ) -> bool:
     return any(
         collaboration_group_agent_matches(member, agent)
-        for member in _collaboration_group_agent_members(group)
+        for member in _collaboration_group_execution_agent_members(group)
     )
 
 
@@ -423,11 +448,17 @@ def enqueue_execution_batch(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Manager is not the collaboration group leader",
         )
-    allowed_members = _collaboration_group_members(group)
+    leader_identity = _collaboration_group_leader(group)
+    allowed_members = _collaboration_group_execution_members(group)
     human_assignments: list[dict[str, object]] = []
     assignment_activity: list[dict[str, object]] = []
     for command in values.items:
         member_key = (command.assignee_type, command.assignee_id)
+        if command.assignee_type == "human" and member_key == leader_identity:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Collaboration group leader cannot execute an assignment",
+            )
         if command.assignee_type == "human" and member_key not in allowed_members:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -439,7 +470,12 @@ def enqueue_execution_batch(
                 project_id=project_id,
                 agent_id=command.assignee_id,
             )
-            if not _collaboration_group_contains_agent(group, agent):
+            if collaboration_group_agent_matches(group.get("leader"), agent):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Collaboration group leader cannot execute an assignment",
+                )
+            if not _collaboration_group_contains_execution_agent(group, agent):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignment target is not part of the collaboration group",

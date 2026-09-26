@@ -384,9 +384,30 @@ jobs:
           docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
           chmod 0755 executor/target/release/wegent-executor
 
+      - name: Extract registry Executor binary
+        if: steps.access.outputs.artifact != 'true'
+        env:
+          EXECUTOR_E2E_IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          docker pull "$EXECUTOR_E2E_IMAGE"
+          mkdir -p executor/target/release
+          container_id="$(docker create "$EXECUTOR_E2E_IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
+          chmod 0755 executor/target/release/wegent-executor
+
       - name: Archive fork Executor E2E runtime
         if: steps.access.outputs.artifact == 'true'
         run: .github/scripts/archive-executor-e2e-runtime.sh
+
+      - name: Upload Executor E2E binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executor-e2e-binary
+          path: executor/target/release/wegent-executor
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
       - name: Upload fork Executor E2E runtime
         if: steps.access.outputs.artifact == 'true'
@@ -403,7 +424,12 @@ jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    needs: [build-backend-rs-e2e-runtime, prepare-platform-e2e-image]
+    needs:
+      [
+        build-backend-rs-e2e-runtime,
+        build-executor-e2e-runtime,
+        prepare-platform-e2e-image,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -534,6 +560,15 @@ jobs:
             .ci-artifacts
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
+      - name: Download Executor E2E binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            executor-e2e-binary \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-executor
+
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
 
@@ -641,6 +676,25 @@ jobs:
             && wait_for_url http://localhost:9999/health \
             || (cat backend/backend.log knowledge_runtime/ci.log backend/chat_shell.log frontend/next-dev.log frontend/mock-model-server.log; exit 1)
 
+      - name: Start local Executor device
+        env:
+          EXECUTOR_MODE: local
+          WEGENT_BACKEND_URL: http://localhost:8000
+          DEVICE_ID: e2e-platform-device-${{ matrix.shardIndex }}
+          DEVICE_NAME: E2E Platform Device ${{ matrix.shardIndex }}
+          DEVICE_TYPE: app
+          BIND_SHELL: codex
+          WEGENT_EXECUTOR_HOME: /tmp/wegent-platform-executor-${{ matrix.shardIndex }}
+          LOCAL_WORKSPACE_ROOT: /tmp/wegent-platform-workspace-${{ matrix.shardIndex }}
+          WORKSPACE_ROOT: /tmp/wegent-platform-workspace-${{ matrix.shardIndex }}
+          LOCAL_HEARTBEAT_INTERVAL: "5"
+          LOG_LEVEL: info
+        run: |
+          .github/scripts/start-local-e2e-executor.sh \
+            .ci-artifacts/wegent-executor \
+            executor/platform-executor.log \
+            executor/platform-executor.pid
+
       - name: Verify backend is running
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
@@ -671,6 +725,7 @@ jobs:
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          E2E_USE_ISOLATED_USERS: "false"
           CI: true
         run: |
           pnpm exec playwright test --project=chromium --project=api \
@@ -686,6 +741,7 @@ jobs:
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           E2E_QDRANT_URL: http://qdrant:6333
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_USE_ISOLATED_USERS: "false"
           CI: true
         run: |
           pnpm exec playwright test \
@@ -708,6 +764,14 @@ jobs:
           if [ -f mock-server.pid ]; then
             kill $(cat mock-server.pid) 2>/dev/null || true
             rm mock-server.pid
+          fi
+
+      - name: Stop local Executor device
+        if: always()
+        run: |
+          if [ -f executor/platform-executor.pid ]; then
+            kill "$(cat executor/platform-executor.pid)" 2>/dev/null || true
+            rm executor/platform-executor.pid
           fi
 
       - name: Stop frontend dev server
@@ -756,6 +820,7 @@ jobs:
             knowledge_runtime/ci.log
             frontend/next-dev.log
             frontend/mock-model-server.log
+            executor/platform-executor.log
           retention-days: 7
 
   executor-e2e-tests:
@@ -959,19 +1024,19 @@ jobs:
             .ci-artifacts
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
+      - name: Download Executor E2E binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            executor-e2e-binary \
+            .ci-artifacts
+          mkdir -p executor/target/release
+          cp .ci-artifacts/wegent-executor executor/target/release/wegent-executor
+          chmod 0755 executor/target/release/wegent-executor
+
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
-
-      - name: Extract content-addressed Executor binary
-        if: needs.build-executor-e2e-runtime.outputs.artifact != 'true'
-        env:
-          EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
-        run: |
-          mkdir -p executor/target/release
-          container_id="$(docker create "$EXECUTOR_E2E_IMAGE")"
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
-          chmod 0755 executor/target/release/wegent-executor
 
       - name: Download fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
@@ -1077,68 +1142,10 @@ jobs:
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
           CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY: "false"
         run: |
-          for i in {1..120}; do
-            if curl -sf http://localhost:8000/api/docs >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          TOKEN=$(python - <<'PY'
-          import json
-          import os
-          import urllib.error
-          import urllib.request
-
-          API_BASE_URL = "http://localhost:8000/api"
-          ADMIN_PASSWORD = os.environ["E2E_BOOTSTRAP_ADMIN_PASSWORD"]
-
-
-          def request_json(path, *, method="GET", payload=None, allowed_statuses=()):
-              data = None
-              headers = {"Content-Type": "application/json"}
-              if payload is not None:
-                  data = json.dumps(payload).encode("utf-8")
-              request = urllib.request.Request(
-                  f"{API_BASE_URL}{path}",
-                  data=data,
-                  headers=headers,
-                  method=method,
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=30) as response:
-                      return json.load(response)
-              except urllib.error.HTTPError as error:
-                  if error.code in allowed_statuses:
-                      return None
-                  body = error.read().decode("utf-8", errors="replace")
-                  raise RuntimeError(
-                      f"{method} {path} failed with HTTP {error.code}: {body}"
-                  ) from error
-
-
-          request_json(
-              "/auth/admin-password/setup",
-              method="POST",
-              payload={"password": ADMIN_PASSWORD},
-              allowed_statuses=(409,),
-          )
-
-          token_response = request_json(
-              "/auth/login",
-              method="POST",
-              payload={"user_name": "admin", "password": ADMIN_PASSWORD},
-          )
-          print(token_response["access_token"])
-          PY
-          )
-          test -x executor/target/release/wegent-executor
-          test -x "$CODEX_BINARY_PATH"
-          nohup env \
-            -u GIT_TOKEN_AES_KEY \
-            -u GIT_TOKEN_AES_IV \
-            WEGENT_AUTH_TOKEN="$TOKEN" \
-            executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
-          echo $! > executor/local-executor.pid
+          .github/scripts/start-local-e2e-executor.sh \
+            executor/target/release/wegent-executor \
+            executor/local-executor.log \
+            executor/local-executor.pid
 
       - name: Start Executor Manager
         working-directory: ./executor_manager

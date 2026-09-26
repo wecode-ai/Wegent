@@ -158,6 +158,14 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
   const initialize = page.locator(
     '[data-testid^="collaboration-project-execution-environment-initialize-"]'
   )
+  if ((await initialize.count()) === 0) {
+    await page.getByTestId('collaboration-project-execution-environment-add').click()
+    const candidate = page
+      .locator('[data-testid^="collaboration-project-execution-environment-candidate-"]')
+      .first()
+    await expect(candidate).toBeVisible()
+    await candidate.click()
+  }
   await expect(initialize.first()).toBeVisible()
   await initialize.first().click()
   await expect(

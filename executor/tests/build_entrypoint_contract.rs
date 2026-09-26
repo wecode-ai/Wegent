@@ -227,8 +227,13 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(e2e_workflow.contains(
         "docker cp \"$container_id:/app/executor\" executor/target/release/wegent-executor"
     ));
-    assert!(e2e_workflow.contains("test -x executor/target/release/wegent-executor"));
+    assert!(e2e_workflow.contains(".github/scripts/start-local-e2e-executor.sh"));
     assert!(!e2e_workflow.contains("cd executor\n            cargo build --release --locked"));
+
+    let local_e2e_start =
+        fs::read_to_string("../.github/scripts/start-local-e2e-executor.sh").unwrap();
+    assert!(local_e2e_start.contains("test -x \"$binary_path\""));
+    assert!(local_e2e_start.contains("test -x \"$CODEX_BINARY_PATH\""));
 
     let e2e_fixture =
         fs::read_to_string("../frontend/e2e/fixtures/claudecode-executor/Dockerfile").unwrap();
