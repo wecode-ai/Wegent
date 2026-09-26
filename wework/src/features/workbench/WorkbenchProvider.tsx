@@ -136,6 +136,7 @@ import {
   settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
+  syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
@@ -327,6 +328,7 @@ export function WorkbenchProvider({
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
+    syncRuntimeConversationDeviceAliases(state.devices)
     lifecycleStore.syncDevices(state.devices)
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
   }, [lifecycleStore, state.devices, state.runtimeWork])

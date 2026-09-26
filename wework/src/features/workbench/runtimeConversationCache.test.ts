@@ -38,6 +38,7 @@ import {
   settleRuntimeConversationSubagents,
   setRuntimeConversationGoal,
   setRuntimeConversationTaskPlan,
+  syncRuntimeConversationDeviceAliases,
   takeAppliedRuntimeConversationGuidance,
   takeInterruptedRuntimeConversationGuidance,
   restoreOptimisticallyInterruptedRuntimeConversation,
@@ -69,6 +70,60 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('shares one conversation cache across executor device aliases', () => {
+    syncRuntimeConversationDeviceAliases([
+      {
+        id: 0,
+        device_id: 'electron-local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        app_device_id: 'electron-local-device',
+        socket_device_id: 'app-record-65',
+        runtime_instance_id: 'runtime-local-device',
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: 'electron-local-device',
+            runtime_device_id: 'app-record-65',
+            device_type: 'local',
+            name: 'Local Executor',
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    const bindingAddress = {
+      deviceId: 'app-record-65',
+      taskId: 'task-1',
+    }
+    const executorAddress = {
+      deviceId: 'electron-local-device',
+      taskId: 'task-1',
+    }
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(bindingAddress, listener)
+
+    applyRuntimeConversationAction(executorAddress, {
+      type: 'user_added',
+      message: {
+        id: 'user-1',
+        role: 'user',
+        content: 'hello through the binding alias',
+        status: 'done',
+        createdAt: '2026-09-26T00:00:00.000Z',
+      },
+    })
+
+    expect(getRuntimeConversationMessages(bindingAddress)).toEqual(
+      getRuntimeConversationMessages(executorAddress)
+    )
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   test('reuses the projection while the canonical turns are unchanged', () => {

@@ -14,6 +14,7 @@ import {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
+  DeviceInfo,
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
   RuntimeGuidanceAppliedPayload,
@@ -21,6 +22,7 @@ import type {
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -78,6 +80,7 @@ const terminalConversationEvictionTimers = new Map<
   ReturnType<typeof globalThis.setTimeout>
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
+const canonicalDeviceIdByAlias = new Map<string, string>()
 let nextRuntimeGoalSnapshotVersion = 1
 
 export interface RuntimeConversationMetadata {
@@ -833,7 +836,29 @@ export function cacheRuntimeConversationQueuePausedByKey(key: string, paused: bo
 }
 
 export function runtimeConversationKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.taskId}`
+  return `${canonicalRuntimeConversationDeviceId(address.deviceId)}:${address.taskId}`
+}
+
+export function syncRuntimeConversationDeviceAliases(devices: DeviceInfo[]): void {
+  for (const device of devices) {
+    const canonicalDeviceId = device.device_id.trim()
+    if (!canonicalDeviceId) continue
+    for (const alias of getWorkbenchDeviceIds(device)) {
+      canonicalDeviceIdByAlias.set(alias, canonicalDeviceId)
+    }
+  }
+}
+
+function canonicalRuntimeConversationDeviceId(deviceId: string): string {
+  let current = deviceId.trim()
+  const visited = new Set<string>()
+  while (!visited.has(current)) {
+    visited.add(current)
+    const canonical = canonicalDeviceIdByAlias.get(current)
+    if (!canonical || canonical === current) break
+    current = canonical
+  }
+  return current
 }
 
 function updateRuntimeConversationMetadata(
@@ -970,6 +995,7 @@ export function clearRuntimeConversationCacheForTests() {
   queuedMessagesByConversation.clear()
   queuedMessagesPausedByConversation.clear()
   interruptedGuidanceIdsByConversation.clear()
+  canonicalDeviceIdByAlias.clear()
   clearConversationViewportCache()
 }
 
