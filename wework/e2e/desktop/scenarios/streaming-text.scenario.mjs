@@ -10,6 +10,10 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const TOOL_DETAIL_PERSISTENCE_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_DETAIL_PERSISTS'
+const TOOL_DETAIL_PERSISTENCE_CALL_ID = 'wework-tool-detail-persistence'
+const TOOL_DETAIL_PERSISTENCE_OUTPUT = 'WEWORK_DESKTOP_E2E_TOOL_DETAIL_OUTPUT'
+const TOOL_DETAIL_PERSISTENCE_COMPLETION = 'WEWORK_DESKTOP_E2E_TOOL_DETAIL_PERSISTS_FINAL_ANSWER'
 const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
@@ -477,6 +481,10 @@ function findHistoryTurn(body) {
 
 function requestContainsToolRegressionPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
+}
+
+function requestContainsToolDetailPersistencePrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(TOOL_DETAIL_PERSISTENCE_PROMPT)
 }
 
 function requestContainsPhaseFlipPrompt(body) {
@@ -957,6 +965,7 @@ export function createDesktopScenario({
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
   let subagentChildStage = 'initial'
+  let toolDetailPersistenceStage = 'initial'
   let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
   let timerStage = 'initial'
@@ -968,6 +977,8 @@ export function createDesktopScenario({
   let releaseScrollButtonAppend
   let releaseStart
   let releaseSubagentCompletion
+  let releaseToolDetailPersistenceCompletion
+  let releaseToolDetailPersistenceFinalText
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let releaseTimerFinalCompletion
@@ -978,6 +989,8 @@ export function createDesktopScenario({
   let resolveScrollButtonAppendWritten
   let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
+  let resolveToolDetailPersistenceFinalTextStarted
+  let resolveToolDetailPersistenceFollowUp
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
   let targetRequest
@@ -1025,6 +1038,18 @@ export function createDesktopScenario({
   })
   const subagentPartialWritten = new Promise(resolve => {
     resolveSubagentPartialWritten = resolve
+  })
+  const toolDetailPersistenceCompletionRelease = new Promise(resolve => {
+    releaseToolDetailPersistenceCompletion = resolve
+  })
+  const toolDetailPersistenceFinalTextRelease = new Promise(resolve => {
+    releaseToolDetailPersistenceFinalText = resolve
+  })
+  const toolDetailPersistenceFollowUpReceived = new Promise(resolve => {
+    resolveToolDetailPersistenceFollowUp = resolve
+  })
+  const toolDetailPersistenceFinalTextStarted = new Promise(resolve => {
+    resolveToolDetailPersistenceFinalTextStarted = resolve
   })
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
@@ -1667,6 +1692,32 @@ export function createDesktopScenario({
         response.write(sse([responseCreated(responseId), assistantMessage(ORDER_STOP_PARTIAL)]))
         return true
       }
+      if (
+        toolDetailPersistenceStage === 'awaiting-tool-output' &&
+        requestContainsToolOutputForCall(body, TOOL_DETAIL_PERSISTENCE_CALL_ID)
+      ) {
+        toolDetailPersistenceStage = 'awaiting-final-completion'
+        resolveToolDetailPersistenceFollowUp()
+        await toolDetailPersistenceFinalTextRelease
+        const stream = streamingEvents(responseId, TOOL_DETAIL_PERSISTENCE_COMPLETION)
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(
+          sse([
+            ...stream.start,
+            ...textDeltaEvents(stream.itemId, TOOL_DETAIL_PERSISTENCE_COMPLETION),
+          ])
+        )
+        resolveToolDetailPersistenceFinalTextStarted()
+        await toolDetailPersistenceCompletionRelease
+        toolDetailPersistenceStage = 'complete'
+        response.end(sse(stream.finish))
+        return true
+      }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         timerStage = 'awaiting-final-completion'
         const stream = streamingEvents(responseId, TIMER_COMPLETION)
@@ -1774,6 +1825,27 @@ export function createDesktopScenario({
           return true
         }
         throw new Error(`Unexpected tool-text-offset stage: ${toolRegressionStage}`)
+      }
+
+      if (requestContainsToolDetailPersistencePrompt(body)) {
+        if (toolDetailPersistenceStage === 'initial') {
+          const tool = selectShellTool(
+            body,
+            workspacePath,
+            `printf '${TOOL_DETAIL_PERSISTENCE_OUTPUT}\\n'`
+          )
+          toolDetailPersistenceStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        throw new Error(`Unexpected tool-detail-persistence stage: ${toolDetailPersistenceStage}`)
       }
 
       if (requestContainsPhaseFlipPrompt(body)) {
@@ -2268,6 +2340,104 @@ export function createDesktopScenario({
         'The composer in the short control conversation'
       )
       await capture(control, 'streaming-text-05-short-control-composer-docked.png')
+
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
+      await control.command('fill', COMPOSER_SELECTOR, {
+        value: TOOL_DETAIL_PERSISTENCE_PROMPT,
+      })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      try {
+        await Promise.race([
+          toolDetailPersistenceFollowUpReceived,
+          new Promise((_, reject) =>
+            setTimeout(
+              () =>
+                reject(new Error('The tool-detail-persistence follow-up request was not received')),
+              uiTimeoutMs
+            )
+          ),
+        ])
+      } catch (error) {
+        releaseToolDetailPersistenceFinalText()
+        releaseToolDetailPersistenceCompletion()
+        throw error
+      }
+      const collapsedToolDetailSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${TOOL_DETAIL_PERSISTENCE_CALL_ID}"] [data-tool-detail-toggle][aria-label="展开工具详情"]`
+      const expandedToolDetailSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${TOOL_DETAIL_PERSISTENCE_CALL_ID}"] [data-tool-detail-toggle][aria-label="收起工具详情"]`
+      await control.command('waitFor', collapsedToolDetailSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', collapsedToolDetailSelector)
+      await control.command('waitFor', expandedToolDetailSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${TOOL_DETAIL_PERSISTENCE_CALL_ID}"]`,
+        {
+          text: TOOL_DETAIL_PERSISTENCE_OUTPUT,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+
+      releaseToolDetailPersistenceFinalText()
+      await toolDetailPersistenceFinalTextStarted
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: TOOL_DETAIL_PERSISTENCE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+          )
+        ),
+        0,
+        'The expanded tool detail collapsed when final text started streaming'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', expandedToolDetailSelector)),
+        1,
+        'The tool detail did not remain expanded while final text streamed'
+      )
+
+      releaseToolDetailPersistenceCompletion()
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`,
+          { value: 'aria-expanded' }
+        ),
+        'true',
+        'The expanded tool detail collapsed when the turn completed'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', expandedToolDetailSelector)),
+        1,
+        'The tool detail did not remain expanded after the turn completed'
+      )
+
+      await control.command('click', expandedToolDetailSelector)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`,
+          { value: 'aria-expanded' }
+        ),
+        'false',
+        'The completed processing timeline did not collapse after the user closed tool details'
+      )
 
       await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownTimerTaskRows = new Set(

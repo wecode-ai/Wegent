@@ -147,6 +147,7 @@ export function LiveProcessingPreview({
   onOpenWorkspaceFile,
   fileEditDurations,
   stateKey,
+  onExpandedDetailChange,
   onOpenSubagent,
 }: {
   rows: ProcessingDisplayRow[];
@@ -155,6 +156,7 @@ export function LiveProcessingPreview({
   onOpenWorkspaceFile?: (path: string) => void;
   fileEditDurations: FileEditDurationsByBlock;
   stateKey?: string;
+  onExpandedDetailChange?: (expanded: boolean) => void;
   onOpenSubagent?: (block: SubagentBlock) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -162,7 +164,6 @@ export function LiveProcessingPreview({
     () => new Set(),
   );
   const hasExpandedDetail = rows.some((row) => expandedRowIds.has(row.id));
-
   const updateExpandedRow = useCallback((rowId: string, expanded: boolean) => {
     setExpandedRowIds((current) => {
       if (current.has(rowId) === expanded) return current;
@@ -178,6 +179,10 @@ export function LiveProcessingPreview({
       });
     }
   }, []);
+
+  useLayoutEffect(() => {
+    onExpandedDetailChange?.(hasExpandedDetail);
+  }, [hasExpandedDetail, onExpandedDetailChange]);
 
   useLayoutEffect(() => {
     const scrollArea = scrollRef.current;

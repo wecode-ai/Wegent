@@ -1653,6 +1653,38 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-summary-chevron')).not.toHaveClass('-rotate-90')
   })
 
+  test('keeps an explicitly expanded tool detail open when streaming enters the final phase', () => {
+    const { rerender } = render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        processingPhase="live"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        processingPhase="final"
+      />
+    )
+
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
+
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+  })
+
   test('keeps completed and running tools as flat preview rows', () => {
     const completedSearchBlock: ProcessingBlock = {
       id: 'search-1',

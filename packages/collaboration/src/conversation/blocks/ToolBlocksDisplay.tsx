@@ -20,7 +20,11 @@ import {
   isContextCompactionToolBlock,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
-import { usePersistentProcessingExpansion } from './processingExpansionState'
+import {
+  collapsePersistentProcessingExpansions,
+  useAnyPersistentProcessingExpansion,
+  usePersistentProcessingExpansion,
+} from './processingExpansionState'
 import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 import { SubagentActivityGroup } from './SubagentBlockItem'
@@ -99,6 +103,8 @@ export function ToolBlocksDisplay({
     stateKey ? `${stateKey}:processing` : undefined
   )
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
+  const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] =
+    useState(false)
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -193,6 +199,13 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const previewDetailStateKeys = useMemo(
+    () => rows.map(row => (stateKey ? `${stateKey}:${row.id}` : row.id)),
+    [rows, stateKey]
+  )
+  const hasExpandedPreviewDetail =
+    useAnyPersistentProcessingExpansion(previewDetailStateKeys) ||
+    hasLocallyExpandedPreviewDetail
   const hasSubagentActivity = displayItems.some(item => item.type === 'subagent_group')
   const sourceFileEditDurations = useMemo(
     () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
@@ -237,11 +250,13 @@ export function ToolBlocksDisplay({
       !expanded &&
       (hasRunningToolActivity ||
         (hasLivePreview && !livePreviewCollapsed) ||
+        hasExpandedPreviewDetail ||
         (usesUnifiedToolList && userExpanded))
         ? rows
         : [],
     [
       expanded,
+      hasExpandedPreviewDetail,
       hasLivePreview,
       hasRunningToolActivity,
       livePreviewCollapsed,
@@ -253,6 +268,10 @@ export function ToolBlocksDisplay({
   const summaryExpanded = expanded || previewRows.length > 0
   const toggleSummary = () => {
     if (hasLivePreview) {
+      if (!livePreviewCollapsed) {
+        setHasLocallyExpandedPreviewDetail(false)
+        collapsePersistentProcessingExpansions(previewDetailStateKeys)
+      }
       setLivePreviewCollapsed(value => !value)
       return
     }
@@ -390,6 +409,7 @@ export function ToolBlocksDisplay({
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
           stateKey={stateKey}
+          onExpandedDetailChange={setHasLocallyExpandedPreviewDetail}
           onOpenSubagent={onOpenSubagent}
         />
       ) : null}

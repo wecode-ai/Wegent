@@ -5880,7 +5880,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses at final text, preserves expansion, and keeps the final text mounted', () => {
+  test('keeps expanded tool details open while final text streams, then collapses when done', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -5894,7 +5894,7 @@ describe('MessageList', () => {
     const streamingMessage = {
       id: '2',
       role: 'assistant' as const,
-      content: 'Let me explore the repo structure for you.',
+      content: '',
       status: 'streaming' as const,
       createdAt: '2026-05-25T18:46:00.000+08:00',
     }
@@ -5910,11 +5910,27 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
-    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(screen.getByTestId('final-processing-toggle'))
-    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('已处理')
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...streamingMessage,
+            content: 'Let me explore the repo structure for you.',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     const content = screen.getByTestId('assistant-message-content')
 
     rerender(
@@ -5922,14 +5938,18 @@ describe('MessageList', () => {
         messages={[
           {
             ...streamingMessage,
-            content: `${streamingMessage.content} More text.`,
+            content: 'Let me explore the repo structure for you. More text.',
             blocks: [completedBlock],
           },
         ]}
       />
     )
 
-    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
 
     rerender(
@@ -5938,7 +5958,7 @@ describe('MessageList', () => {
         messages={[
           {
             ...streamingMessage,
-            content: `${streamingMessage.content} More text. Done.`,
+            content: 'Let me explore the repo structure for you. More text. Done.',
             status: 'done',
             blocks: [completedBlock],
           },
@@ -5946,7 +5966,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.getByTestId('assistant-message-content')).toBe(content)
     expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
 
@@ -5955,7 +5979,7 @@ describe('MessageList', () => {
         messages={[
           {
             ...streamingMessage,
-            content: `${streamingMessage.content} More text. Done.`,
+            content: 'Let me explore the repo structure for you. More text. Done.',
             status: 'done',
             blocks: [completedBlock],
           },
@@ -5964,6 +5988,15 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('assistant-message-content')).toBe(content)
+
+    fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {

@@ -50,6 +50,33 @@ export function usePersistentProcessingExpansion(
   return [expanded, setPersistentExpanded];
 }
 
+export function useAnyPersistentProcessingExpansion(
+  keys: readonly string[],
+): boolean {
+  const subscribe = useCallback((listener: () => void) => {
+    expansionStateListeners.add(listener);
+    return () => expansionStateListeners.delete(listener);
+  }, []);
+  const getSnapshot = useCallback(
+    () => keys.some((key) => readExpansionState(key, false)),
+    [keys],
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export function collapsePersistentProcessingExpansions(
+  keys: readonly string[],
+) {
+  let changed = false;
+  for (const key of keys) {
+    if (!expansionStateByKey.get(key)) continue;
+    expansionStateByKey.set(key, false);
+    changed = true;
+  }
+  if (changed) emitExpansionStateChange();
+}
+
 export function clearPersistentProcessingExpansions() {
   if (expansionStateByKey.size === 0) return;
   expansionStateByKey.clear();
