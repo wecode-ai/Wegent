@@ -22,7 +22,6 @@ describe("SharedWorkspaceApi boundaries", () => {
       | "attachments"
       | "collaborators"
       | "taskBindings"
-      | "workflowPlans"
       | "members"
       | "files"
       | "deliveries"
@@ -42,7 +41,6 @@ describe("SharedWorkspaceApi boundaries", () => {
       "attachments",
       "collaborators",
       "taskBindings",
-      "workflowPlans",
       "members",
       "files",
       "deliveries",
@@ -62,7 +60,7 @@ describe("SharedWorkspaceApi boundaries", () => {
     expectTypeOf<WeworkWorkspaceRuntimePort>().toHaveProperty(
       "trackProjectTask",
     );
-    expectTypeOf<WeworkWorkspaceRuntimePort>().toHaveProperty(
+    expectTypeOf<WeworkWorkspaceRuntimePort>().not.toHaveProperty(
       "claimNextExecution",
     );
   });

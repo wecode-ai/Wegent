@@ -10,6 +10,7 @@ import {
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
   resolveLocalWorkbenchDeviceId,
+  resolveWorkbenchDeviceId,
 } from './workbench-device'
 
 function createDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -110,6 +111,8 @@ describe('workbench-device', () => {
 
     expect(findWorkbenchDevice(devices, 'socket-device')?.device_id).toBe('logical-device')
     expect(findWorkbenchDevice(devices, 'runtime-device')?.device_id).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'runtime-device')).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'unknown-device')).toBe('unknown-device')
     expect(getWorkbenchDeviceIds(device)).toEqual([
       'logical-device',
       'app-device',

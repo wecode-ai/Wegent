@@ -9,7 +9,6 @@ import type {
   WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
-  WorkspaceWorkflowPlan,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAssignment,
@@ -69,63 +68,22 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    humanAssignmentId: nullableString(
+      row.human_assignment_id ?? row.humanAssignmentId,
+    ),
+    dispatchId: nullableString(row.dispatch_id ?? row.dispatchId),
+    dispatchRoundId: nullableString(
+      row.dispatch_round_id ?? row.dispatchRoundId,
+    ),
+    assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
       (row.modelSelection as Record<string, unknown> | null | undefined) ??
       (row.model_selection as Record<string, unknown> | null | undefined) ??
       null,
-    workflowNodeId: nullableString(row.workflow_node_id ?? row.workflowNodeId),
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }
       : {}),
     linkedAt: String(row.linked_at ?? row.linkedAt ?? ""),
-  };
-}
-
-export function mapWorkspaceWorkflowPlanDto(
-  input: WorkspaceDto,
-): WorkspaceWorkflowPlan {
-  const row = asRecord(input);
-  return {
-    runId: String(row.run_id ?? row.runId ?? ""),
-    issueId: String(row.issue_id ?? row.issueId ?? ""),
-    stageId: String(row.stage_id ?? row.stageId ?? ""),
-    planVersion: Number(row.plan_version ?? row.planVersion),
-    approvalPolicy:
-      (row.approval_policy ?? row.approvalPolicy) === "automatic"
-        ? "automatic"
-        : "required",
-    status: row.status as WorkspaceWorkflowPlan["status"],
-    summary: String(row.summary ?? ""),
-    items: Array.isArray(row.items)
-      ? row.items.map((item) => ({ ...(item as Record<string, unknown>) }))
-      : [],
-    managerRun:
-      ((row.manager_run ?? row.managerRun) as
-        | Record<string, unknown>
-        | null
-        | undefined) ?? null,
-  };
-}
-
-export function mapWorkspaceWorkflowStageContextDto(
-  input: WorkspaceDto,
-): Record<string, unknown> & { compiledTaskInstruction: string } {
-  const row = asRecord(input);
-  const {
-    compiled_task_instruction: compiledTaskInstructionSnake,
-    compiledTaskInstruction: compiledTaskInstructionCamel,
-    ...context
-  } = row;
-  const compiledTaskInstruction =
-    compiledTaskInstructionCamel ?? compiledTaskInstructionSnake;
-  if (typeof compiledTaskInstruction !== "string") {
-    throw new TypeError(
-      "Workspace workflow stage context is missing compiled_task_instruction",
-    );
-  }
-  return {
-    ...context,
-    compiledTaskInstruction,
   };
 }
 
@@ -491,7 +449,6 @@ export function mapCollaborationAssignmentDto(
     target_type: rawType === "agent" ? "agent" : "human",
     target_id: String(row.target_id ?? row.targetId ?? ""),
     target_name: String(row.target_name ?? row.targetName ?? ""),
-    workflow_step: nullableString(row.workflow_step ?? row.workflowStep),
     body: String(row.body ?? ""),
     comment_id: nullableString(row.comment_id ?? row.commentId),
     created_by_user_id: Number(

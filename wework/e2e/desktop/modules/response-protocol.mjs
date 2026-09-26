@@ -540,6 +540,17 @@ function selectConvertedTool(request, toolName, argumentsValue) {
 function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const searchedNamespace = requestToolSearchResults(request).find(
+    tool =>
+      tool?.type === 'namespace' &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  if (searchedNamespace) {
+    return {
+      mode: 'direct',
+      ...selectMcpTool(request, searchedNamespace.name, toolName, argumentsValue),
+    }
+  }
   const advertisesToolSearch = tools.some(
     tool =>
       tool?.type === 'tool_search' ||

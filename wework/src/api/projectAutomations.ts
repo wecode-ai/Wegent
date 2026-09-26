@@ -1,15 +1,6 @@
 import type { HttpClient } from './http'
 import type { LocalLoopItemExecution } from './local/localDelivery'
-
-type ProjectAutomationExecution = LocalLoopItemExecution & {
-  automation_run_id: string
-}
 import type { ProjectWorkflowDefinition } from './deliveries'
-import type {
-  WorkspaceProjectManagerAction,
-  WorkspaceProjectManagerConfig,
-  WorkspaceProjectManagerRun,
-} from '@wegent/collaboration'
 
 export type ProjectAutomationRunStatus =
   | 'pending'
@@ -32,17 +23,22 @@ export type ProjectAutomationEventType =
   | 'change_request.comment_created'
   | 'document.changed'
 
-interface ProjectAutomationRuleBase {
+export type ProjectAutomationTargetKind = 'human' | 'agent' | 'collaboration_group'
+
+export interface ProjectAutomationRule {
   id: string
   projectId: string
   name: string
   prompt: string
-  triggerType: 'schedule' | 'event' | 'workflow'
+  triggerType: 'manual' | 'schedule' | 'event' | 'workflow'
   eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
   timezone: string
-  agentName: string
+  executionDeviceId: string | null
+  targetKind: ProjectAutomationTargetKind
+  targetId: string
+  targetName: string
   enabled: boolean
   nextRunAt: string | null
   lastRunAt: string | null
@@ -50,23 +46,6 @@ interface ProjectAutomationRuleBase {
   version: number
   createdAt: string
   updatedAt: string
-  roleSource?: 'generic' | 'agent'
-  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
-  runtimeProfileId?: string | null
-  runtimeUserId?: number | null
-  targetKind?: 'human' | 'agent' | 'collaboration_group' | null
-  targetId?: string | null
-  targetName?: string | null
-}
-
-export interface ProjectAutomationRule extends ProjectAutomationRuleBase {
-  assignmentMode: 'manual' | 'ai_managed'
-  managerType: 'custom' | 'wegent' | null
-  agentId: string | null
-  wegentTeamId: number | null
-  model: string | null
-  executionEnvironment: 'local' | 'cloud' | 'managed'
-  executionDeviceId: string | null
 }
 
 export interface ProjectAutomationRun {
@@ -87,33 +66,23 @@ export interface ProjectAutomationRun {
   updatedAt: string
   completedAt: string | null
   retryable?: boolean
+  triggerType?: 'schedule' | 'event' | 'workflow' | null
+  eventType?: ProjectAutomationEventType | null
+  eventConfig?: Record<string, unknown> | null
 }
 
-interface ProjectAutomationInputBase {
+export interface ProjectAutomationInput {
   name: string
   prompt: string
-  triggerType: 'schedule' | 'event' | 'workflow'
+  triggerType: 'manual' | 'schedule' | 'event' | 'workflow'
   eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
   timezone: string
-  enabled: boolean
-  roleSource?: 'generic' | 'agent'
-  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
-  runtimeProfileId?: string | null
-  runtimeUserId?: number | null
-  targetKind?: 'human' | 'agent' | 'collaboration_group' | null
-  targetId?: string | null
-}
-
-export interface ProjectAutomationInput extends ProjectAutomationInputBase {
-  assignmentMode: 'manual' | 'ai_managed'
-  managerType: 'custom' | 'wegent' | null
-  agentId: string | null
-  wegentTeamId: number | null
-  model: string | null
-  executionEnvironment: 'local' | 'cloud' | null
   executionDeviceId: string | null
+  targetKind: ProjectAutomationTargetKind
+  targetId: string
+  enabled: boolean
 }
 
 export interface ProjectAutomationWorkflowMigrationResult {
@@ -127,111 +96,8 @@ export interface ProjectAutomationDeleteResult {
   workflowAutomationId: string | null
 }
 
-function cloudExecution(row: Record<string, unknown>): ProjectAutomationExecution {
-  const payload = (row.runtimePayload as Record<string, unknown> | null) ?? null
-  const bots = Array.isArray(payload?.bot) ? payload.bot : []
-  const bot = (bots[0] as Record<string, unknown> | undefined) ?? {}
-  return {
-    id: Number(row.id),
-    loop_item_id: String(row.loopItemId ?? ''),
-    cloud_project_id: String(row.cloudProjectId ?? ''),
-    task_title: String(row.taskTitle ?? ''),
-    task_status: row.taskStatus == null ? null : String(row.taskStatus),
-    task_priority: row.taskPriority == null ? null : String(row.taskPriority),
-    agent_id: String(row.agentId ?? ''),
-    automation_run_id: String(row.automationRunId ?? ''),
-    assigner_user_id: Number(row.assignerUserId ?? 0),
-    execution_environment: String(row.executionEnvironment ?? ''),
-    execution_device_id: row.executionDeviceId == null ? null : String(row.executionDeviceId),
-    runtime_instance_id: row.runtimeInstanceId == null ? null : String(row.runtimeInstanceId),
-    status: String(row.status ?? ''),
-    display_state: String(row.displayState ?? 'unknown'),
-    observed_state: String(row.observedState ?? 'unconfirmed'),
-    sync_state: String(row.syncState ?? 'pending'),
-    priority_weight: Number(row.priorityWeight ?? 0),
-    queued_at: row.queuedAt == null ? null : String(row.queuedAt),
-    started_at: row.startedAt == null ? null : String(row.startedAt),
-    completed_at: row.completedAt == null ? null : String(row.completedAt),
-    lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
-    heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
-    claimed_at: row.claimedAt == null ? null : String(row.claimedAt),
-    start_requested_at: row.startRequestedAt == null ? null : String(row.startRequestedAt),
-    observed_at: row.observedAt == null ? null : String(row.observedAt),
-    cancel_requested_at: row.cancelRequestedAt == null ? null : String(row.cancelRequestedAt),
-    attempt_no: Number(row.attemptNo ?? 1),
-    previous_execution_id: row.previousExecutionId == null ? null : Number(row.previousExecutionId),
-    execution_scope: String(row.executionScope ?? ''),
-    last_event_seq: Number(row.lastEventSeq ?? 0),
-    termination_reason: String(row.terminationReason ?? ''),
-    retry_attempt: Number(row.retryAttempt ?? 0),
-    error_message: String(row.errorMessage ?? ''),
-    execution_note: String(row.executionNote ?? ''),
-    runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
-    runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
-    version: Number(row.version ?? 1),
-    created_at: String(row.createdAt ?? ''),
-    updated_at: String(row.updatedAt ?? ''),
-    agent_name: String(bot.name ?? 'AI'),
-    agent_system_prompt: String(bot.system_prompt ?? bot.systemPrompt ?? ''),
-    agent_model: payload?.modelId == null ? null : String(payload.modelId),
-    agent_max_concurrent_executions: Number(row.agentMaxConcurrentExecutions ?? 1),
-    runtime_payload: payload,
-  }
-}
-
 export function createProjectAutomationApi(client: HttpClient) {
   return {
-    getProjectManager(projectId: string) {
-      return client.get<WorkspaceProjectManagerConfig>(
-        `/v1/cloud-projects/${projectId}/project-manager`
-      )
-    },
-    saveProjectManager(
-      projectId: string,
-      config: Omit<WorkspaceProjectManagerConfig, 'projectId'>
-    ) {
-      return client.put<WorkspaceProjectManagerConfig>(
-        `/v1/cloud-projects/${projectId}/project-manager`,
-        config
-      )
-    },
-    runProjectManager(
-      projectId: string,
-      message: string,
-      modelSelection?: import('@wegent/collaboration').WorkspaceProjectManagerModelSelection
-    ) {
-      return client.post<WorkspaceProjectManagerRun>(
-        `/v1/cloud-projects/${projectId}/project-manager/runs`,
-        { message, modelSelection }
-      )
-    },
-    listProjectManagerRuns(projectId: string) {
-      return client.get<WorkspaceProjectManagerRun[]>(
-        `/v1/cloud-projects/${projectId}/project-manager/runs`
-      )
-    },
-    getProjectManagerRun(projectId: string, runId: string) {
-      return client.get<WorkspaceProjectManagerRun>(
-        `/v1/cloud-projects/${projectId}/project-manager/runs/${runId}`
-      )
-    },
-    decideProjectManagerAction(
-      projectId: string,
-      runId: string,
-      actionId: string,
-      approve: boolean,
-      version: number
-    ) {
-      return client.post<WorkspaceProjectManagerAction>(
-        `/v1/cloud-projects/${projectId}/project-manager/runs/${runId}/actions/${actionId}/decision`,
-        { approve, version }
-      )
-    },
-    claimNext(claim: { execution_device_id: string; lease_seconds: number }) {
-      return client
-        .post<Record<string, unknown> | null>('/v1/loop-item-executions/claim-my-next', claim)
-        .then(row => (row ? cloudExecution(row) : null))
-    },
     heartbeat(
       execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
       runtimeDeviceId: string | null,
@@ -341,18 +207,6 @@ export function createProjectAutomationApi(client: HttpClient) {
     runNow(projectId: string, automationId: string) {
       return client.post<ProjectAutomationRun>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,
-        {}
-      )
-    },
-    runWorkflowNode(
-      projectId: string,
-      itemId: string,
-      workflowNodeId: string,
-      automationId: string
-    ) {
-      const query = new URLSearchParams({ automation_id: automationId })
-      return client.post<ProjectAutomationRun>(
-        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/run?${query.toString()}`,
         {}
       )
     },

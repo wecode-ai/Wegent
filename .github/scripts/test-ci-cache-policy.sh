@@ -401,6 +401,7 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   fail "Platform E2E shards must consume the immutable toolchain image without runtime installs"
 fi
 
+local_executor_start="$script_dir/start-local-e2e-executor.sh"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
@@ -413,9 +414,10 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F 'CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex' \
       >/dev/null ||
+  ! grep -F 'test -x "$CODEX_BINARY_PATH"' "$local_executor_start" >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
-    grep -F 'test -x "$CODEX_BINARY_PATH"' >/dev/null ||
+    grep -F '.github/scripts/start-local-e2e-executor.sh' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  platform-e2e-summary:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F \

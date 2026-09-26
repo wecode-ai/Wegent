@@ -4,8 +4,7 @@ import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
 
 export function buildWorkItemRuntimeContext(
   project: CloudProject,
-  task?: CloudLoopItem,
-  workflowNodeId?: string
+  task?: CloudLoopItem
 ): Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'> {
   return {
     cloudProjectId: String(project.id),
@@ -44,23 +43,6 @@ export function buildWorkItemRuntimeContext(
                     assigneeAgentId: task.assignee_agent_id || null,
                     dueDate: task.due_at ?? null,
                   },
-                  orchestration: task.workflow
-                    ? {
-                        advancementPolicy: task.workflow.advancement_policy ?? 'manual',
-                        stageMode:
-                          task.workflow.stage_mode ?? (task.workflow.nodes.length ? 'dag' : 'none'),
-                        currentStageId: workflowNodeId ?? null,
-                        stages: task.workflow.nodes.map(node => ({
-                          id: node.id,
-                          name: node.name,
-                          prompt: node.prompt ?? '',
-                          status: node.status,
-                          dependsOn: node.depends_on,
-                          dependencyContext: node.dependency_context ?? {},
-                          required: node.required,
-                        })),
-                      }
-                    : null,
                 }),
                 '</issue_environment>',
                 'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',

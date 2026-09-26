@@ -221,7 +221,7 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
-  type: 'board_comment' | 'board_task' | 'project_automation'
+  type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string
   rootCommentId?: string

@@ -1,5 +1,6 @@
 import {
   mapAutomationExecutionCatalog,
+  type CollaborationExecutionEnvironmentConfig,
   type CollaborationMember,
   type CollaborationGroup,
   type CollaborationProject,
@@ -7,7 +8,6 @@ import {
   type SharedWorkspaceApi,
   type WorkspaceAutomationRule,
 } from '@wegent/collaboration'
-import { DEFAULT_PROJECT_MANAGER_PROMPT } from '@wegent/collaboration/project-manage'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   isDefaultWorkItemProject,
@@ -27,6 +27,7 @@ import {
   isDefaultLocalAgent,
   isDefaultLocalAgentName,
 } from '@/features/collaboration/defaultLocalAgent'
+import { sha256Hex } from '@/api/fileHash'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
 export function createLocalWorkspaceApi(
@@ -77,11 +78,149 @@ export function createLocalWorkspaceApi(
         updated_at: now,
       }))
   }
+  const executionEnvironmentFingerprint = async (
+    configuration: CollaborationExecutionEnvironmentConfig
+  ) =>
+    sha256Hex(
+      new Blob([
+        JSON.stringify({
+          repositories: configuration.repositories.map(repository => ({
+            name: repository.name.trim(),
+            url: repository.url.trim(),
+            ref: repository.ref.trim(),
+            path: repository.path.trim(),
+            primary: repository.primary,
+          })),
+          setup_steps: configuration.setup_steps
+            .filter(step => step.command.trim())
+            .map(step => ({
+              command: step.command.trim(),
+              working_directory: step.working_directory.trim(),
+            })),
+        }),
+      ])
+    )
+  const commandOutputRecord = (value: unknown): Record<string, unknown> => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>
+    }
+    if (typeof value !== 'string') return {}
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {}
+    } catch {
+      return {}
+    }
+  }
+  const initializeProjectExecutionEnvironment = async (
+    projectId: string,
+    input: { deviceId: number; version: number }
+  ): Promise<CollaborationProject> => {
+    const deviceApi = detailServices?.deviceApi
+    if (!deviceApi) {
+      throw new Error(
+        locale === 'zh-CN' ? '当前设备执行服务不可用' : 'The current device executor is unavailable'
+      )
+    }
+    const [project, environments] = await Promise.all([
+      delivery.projects.get(projectId),
+      executionEnvironments(),
+    ])
+    const environment = environments.find(candidate => candidate.device_id === input.deviceId)
+    if (!environment?.device_key?.trim()) {
+      throw new Error(locale === 'zh-CN' ? '未找到执行设备' : 'Execution device was not found')
+    }
+    const deviceKey = environment.device_key.trim()
+    if (environment.status !== 'online') {
+      throw new Error(locale === 'zh-CN' ? '执行设备当前不在线' : 'Execution device is offline')
+    }
+    const configuration: CollaborationExecutionEnvironmentConfig =
+      project.execution_environment ?? {
+        repositories: [],
+        setup_steps: [],
+      }
+    const fingerprint = await executionEnvironmentFingerprint(configuration)
+    const baseConfiguration: CollaborationExecutionEnvironmentConfig = {
+      repositories: configuration.repositories,
+      setup_steps: configuration.setup_steps,
+      fingerprint,
+      devices:
+        configuration.fingerprint === fingerprint ? { ...(configuration.devices ?? {}) } : {},
+    }
+    const persistDeviceState = async (
+      state: NonNullable<CollaborationExecutionEnvironmentConfig['devices']>[string]
+    ) =>
+      decorateProject(
+        await deliveryApi.updateCloudProject(projectId, {
+          version: project.version,
+          execution_environment: {
+            ...baseConfiguration,
+            devices: {
+              ...baseConfiguration.devices,
+              [deviceKey]: state,
+            },
+          } as CollaborationExecutionEnvironmentConfig,
+        })
+      )
+    try {
+      const response = await deviceApi.executeCommand(deviceKey, {
+        command_key: 'environment_prepare',
+        args: [
+          JSON.stringify({
+            environmentId: `${projectId}-${fingerprint.slice(0, 12)}`,
+            repositories: baseConfiguration.repositories,
+            setupSteps: baseConfiguration.setup_steps.map(step => ({
+              command: step.command,
+              workingDirectory: step.working_directory,
+            })),
+            fingerprint,
+          }),
+        ],
+        timeout_seconds: 1800,
+        max_output_bytes: 65536,
+      })
+      const workspacePath = String(commandOutputRecord(response.stdout).workspacePath ?? '').trim()
+      if (!response.success || !workspacePath) {
+        return persistDeviceState({
+          status: 'error',
+          workspace_path: '',
+          prepared_at: null,
+          error:
+            response.error ||
+            response.stderr ||
+            (locale === 'zh-CN'
+              ? '执行环境初始化失败'
+              : 'Execution environment initialization failed'),
+        })
+      }
+      return persistDeviceState({
+        status: 'ready',
+        workspace_path: workspacePath,
+        prepared_at: new Date().toISOString(),
+        error: '',
+      })
+    } catch (error) {
+      return persistDeviceState({
+        status: 'error',
+        workspace_path: '',
+        prepared_at: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : locale === 'zh-CN'
+              ? '执行环境初始化失败'
+              : 'Execution environment initialization failed',
+      })
+    }
+  }
   const workspace = async (): Promise<CollaborationWorkspace> => {
-    const [items, environments, agents] = await Promise.all([
+    const [items, environments, agents, backingProject] = await Promise.all([
       projects(),
       executionEnvironments(),
       localAgentResources(),
+      delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID),
     ])
     const now = new Date().toISOString()
     return {
@@ -99,7 +238,8 @@ export function createLocalWorkspaceApi(
       execution_environment_count: environments.length,
       project_count: items.length,
       created_by_user_id: userId,
-      version: 1,
+      version: backingProject.version,
+      execution_environment: backingProject.execution_environment,
       created_at: now,
       updated_at: now,
     }
@@ -226,6 +366,27 @@ export function createLocalWorkspaceApi(
     })
     return updated.version
   }
+  const automationTargetName = async (
+    projectId: string,
+    targetKind: WorkspaceAutomationRule['targetKind'],
+    targetId: string
+  ) => {
+    if (targetKind === 'human') {
+      return (
+        (await currentMember()).find(member => String(member.user_id) === targetId)?.user_name ??
+        targetId
+      )
+    }
+    if (targetKind === 'agent') {
+      return (
+        (await listProjectAgents(projectId)).find(agent => agent.id === targetId)?.name ?? targetId
+      )
+    }
+    return (
+      (await projectCollaborationGroups(projectId)).find(group => group.id === targetId)?.name ??
+      targetId
+    )
+  }
   const localAutomations: NonNullable<SharedWorkspaceApi['automations']> = {
     list: projectAutomaticProcessingRules,
     async create(projectId, input) {
@@ -236,6 +397,10 @@ export function createLocalWorkspaceApi(
         projectId,
         name: String(input.name ?? ''),
         enabled: input.enabled !== false,
+        targetName: await automationTargetName(projectId, input.targetKind, input.targetId),
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: null,
         version: 1,
         createdAt: now,
         updatedAt: now,
@@ -294,7 +459,6 @@ export function createLocalWorkspaceApi(
         throw new Error(locale === 'zh-CN' ? '没有可处理的 Issue' : 'No open Issues to process')
       return runs[0]
     },
-    runWorkflowNode: unavailable,
     listRuns: (projectId, automationId) =>
       detailServices?.localProjectAutomationApi?.listRuns(projectId, automationId) ?? unavailable(),
     cancelRun: (projectId, runId) =>
@@ -317,61 +481,6 @@ export function createLocalWorkspaceApi(
       loadPlugins: async () => [],
     },
     automations: localAutomations,
-    projectManager: {
-      async get(projectId) {
-        const project = await delivery.projects.get(projectId)
-        return project.project_manager
-          ? {
-              ...project.project_manager,
-              projectId,
-              version: project.version,
-            }
-          : {
-              projectId,
-              version: project.version,
-              enabled: false,
-              agentId: '',
-              prompt: '',
-              triggers: [],
-            }
-      },
-      async save(projectId, config) {
-        const project = await delivery.projects.update(projectId, {
-          version: config.version,
-          projectManager: { ...config, projectId },
-        })
-        return { ...config, projectId, version: project.version }
-      },
-      async run(projectId, message, modelSelection) {
-        if (!detailServices?.localProjectAutomationApi) return unavailable()
-        return detailServices.localProjectAutomationApi.runManager(
-          projectId,
-          message,
-          modelSelection
-        )
-      },
-      async listRuns(projectId) {
-        if (!detailServices?.localProjectAutomationApi) return unavailable()
-        return detailServices.localProjectAutomationApi.listManagerRuns(projectId)
-      },
-      async getRun(projectId, runId) {
-        if (!detailServices?.localProjectAutomationApi) return unavailable()
-        const runs = await detailServices.localProjectAutomationApi.listManagerRuns(projectId)
-        const run = runs.find(item => item.id === runId)
-        if (!run) throw new Error('Project AI run was not found')
-        return run
-      },
-      async decide(projectId, runId, actionId, approve, version) {
-        if (!detailServices?.localProjectAutomationApi) return unavailable()
-        return detailServices.localProjectAutomationApi.decideManagerAction(
-          projectId,
-          runId,
-          actionId,
-          approve,
-          version
-        )
-      },
-    },
     ...(automation.incomingHooks
       ? {
           incomingHooks: {
@@ -384,7 +493,17 @@ export function createLocalWorkspaceApi(
       list: async () => [await workspace()],
       get: workspace,
       create: unavailable,
-      update: unavailable,
+      async update(_workspaceId, input) {
+        const updated = await delivery.projects.update(DEFAULT_WORK_ITEM_PROJECT_ID, {
+          version: input.version,
+          executionEnvironment: input.executionEnvironment,
+        })
+        return {
+          ...(await workspace()),
+          version: updated.version,
+          execution_environment: updated.execution_environment,
+        }
+      },
       archive: unavailable,
       listMembers: currentMember,
       addMember: unavailable,
@@ -403,7 +522,18 @@ export function createLocalWorkspaceApi(
       listExecutionEnvironments: executionEnvironments,
       addExecutionEnvironment: unavailable,
       removeExecutionEnvironment: unavailable,
-      initializeExecutionEnvironment: unavailable,
+      async initializeExecutionEnvironment(_workspaceId, input) {
+        const project = await initializeProjectExecutionEnvironment(
+          DEFAULT_WORK_ITEM_PROJECT_ID,
+          input
+        )
+        const current = await workspace()
+        return {
+          ...current,
+          version: project.version,
+          execution_environment: project.execution_environment,
+        }
+      },
     },
     resources: {
       list: async () => ({
@@ -509,32 +639,14 @@ export function createLocalWorkspaceApi(
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
       create: async input => {
         const { includeDefaultAgent = true, ...projectInput } = input
-        let project = decorateProject(await delivery.projects.create(projectInput))
+        const project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
-          const agent = await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(
-            error => {
-              console.warn(
-                `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
-                error
-              )
-              return null
-            }
-          )
-          if (agent) {
-            project = decorateProject(
-              await delivery.projects.update(project.id, {
-                version: project.version,
-                projectManager: {
-                  projectId: project.id,
-                  version: project.version,
-                  enabled: true,
-                  agentId: agent.id,
-                  prompt: DEFAULT_PROJECT_MANAGER_PROMPT,
-                  triggers: [],
-                },
-              })
+          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
+            console.warn(
+              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+              error
             )
-          }
+          })
         }
         return project
       },
@@ -543,7 +655,7 @@ export function createLocalWorkspaceApi(
       listExecutionEnvironments: executionEnvironments,
       addExecutionEnvironment: unavailable,
       removeExecutionEnvironment: unavailable,
-      initializeExecutionEnvironment: unavailable,
+      initializeExecutionEnvironment: initializeProjectExecutionEnvironment,
       importMessages: unavailable,
       listCollaborationGroups: projectCollaborationGroups,
       createCollaborationGroup,

@@ -35,6 +35,7 @@ import {
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
+import { isAnsweredRequestUserInputBlock } from '@wegent/chat-core/runtime-user-input'
 import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
@@ -368,9 +369,30 @@ export function replaceRuntimeConversationSnapshot(
   snapshotTurns: RuntimeConversationTurn[]
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
-  cacheRuntimeConversationTurns(key, snapshotTurns)
+  const localTurnsById = new Map(
+    (turnsByConversation.get(key) ?? []).flatMap(turn =>
+      turn.id === null ? [] : ([[turn.id, turn]] as const)
+    )
+  )
+  const turns = snapshotTurns.map(snapshotTurn => {
+    if (snapshotTurn.id === null) return snapshotTurn
+    const localTurn = localTurnsById.get(snapshotTurn.id)
+    if (!localTurn) return snapshotTurn
+
+    const mergedTurn = mergeRuntimeConversationTurns([localTurn], [snapshotTurn])[0]
+    const authoritativeItemIds = new Set(snapshotTurn.items.map(item => item.id))
+    return {
+      ...mergedTurn,
+      items: mergedTurn.items.filter(
+        item =>
+          authoritativeItemIds.has(item.id) ||
+          (item.type === 'block' && isAnsweredRequestUserInputBlock(item.block))
+      ),
+    }
+  })
+  cacheRuntimeConversationTurns(key, turns)
   notifyRuntimeConversation(key)
-  return projectRuntimeConversationMessages(key, snapshotTurns)
+  return projectRuntimeConversationMessages(key, turns)
 }
 
 export function runtimeConversationSnapshotSettlesLatestTurn(

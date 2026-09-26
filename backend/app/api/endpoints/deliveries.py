@@ -35,7 +35,6 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
-from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
@@ -57,6 +56,7 @@ from app.schemas.delivery import (
     LoopItemCreate,
     LoopItemListResponse,
     LoopItemPageResponse,
+    LoopItemRead,
     LoopItemReorder,
     LoopItemResponse,
     LoopItemTaskBind,
@@ -65,23 +65,11 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
-from app.schemas.human_issue_work import (
-    HumanWorkActionResponse,
-    HumanWorkReview,
-    HumanWorkStart,
-    HumanWorkSubmit,
-)
 from app.schemas.issue_assignment import (
     IssueAssignmentCreate,
     IssueAssignmentCreateResponse,
     IssueAssignmentListResponse,
     IssueAssignmentResponse,
-)
-from app.schemas.issue_workflow import (
-    WorkflowNodeDecisionRequest,
-    WorkflowPlanSubmit,
-    WorkflowPlanView,
-    WorkflowTaskOutcomeSubmit,
 )
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.project_incoming_hook import (
@@ -95,11 +83,7 @@ from app.services.cloud_projects.access import (
     require_issue_action,
 )
 from app.services.delivery import delivery_service
-from app.services.human_issue_work import human_issue_work_service
 from app.services.issue_assignments import issue_assignment_service
-from app.services.issue_workflow_decision import issue_workflow_decision_service
-from app.services.issue_workflow_planning import issue_workflow_planning_service
-from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
     is_processing_status,
@@ -124,17 +108,9 @@ from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
 )
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-ACTIVE_MANAGER_RUN_STATUSES = {
-    "pending",
-    "queued",
-    "waiting_device",
-    "running",
-    "cancel_requested",
-}
 
 
 def _loop_item_response(
@@ -143,81 +119,6 @@ def _loop_item_response(
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id)
     )
-
-
-async def _human_work_response(
-    db: Session,
-    item: LoopItem,
-    user: User,
-    message: ProjectChatMessage | None = None,
-    *,
-    created: bool = False,
-) -> HumanWorkActionResponse:
-    from app.api.ws.wework_runtime_namespace import (
-        PROJECT_CHAT_CREATED_EVENT,
-        WEWORK_RUNTIME_NAMESPACE,
-        project_chat_room,
-    )
-    from app.core.socketio import get_sio
-    from app.services.project_chat.service import ProjectChatService
-
-    message_view = ProjectChatService.to_view(message) if message is not None else None
-    if created and message_view is not None:
-        try:
-            await get_sio().emit(
-                PROJECT_CHAT_CREATED_EVENT,
-                message_view.model_dump(mode="json", by_alias=True),
-                room=project_chat_room(str(item.cloud_project_id), item.id),
-                namespace=WEWORK_RUNTIME_NAMESPACE,
-            )
-        except Exception:
-            logger.exception(
-                "Human Issue activity broadcast failed: item_id=%s", item.id
-            )
-    return HumanWorkActionResponse(
-        issue=_loop_item_response(db, item, user), message=message_view
-    )
-
-
-@router.post("/loop-items/{item_id}/work/start", response_model=HumanWorkActionResponse)
-async def start_human_issue_work(
-    item_id: str,
-    values: HumanWorkStart,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> HumanWorkActionResponse:
-    item = human_issue_work_service.start(db, item_id, current_user.id, values)
-    return await _human_work_response(db, item, current_user)
-
-
-@router.post(
-    "/loop-items/{item_id}/work/submit", response_model=HumanWorkActionResponse
-)
-async def submit_human_issue_work(
-    item_id: str,
-    values: HumanWorkSubmit,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> HumanWorkActionResponse:
-    item, message, created = human_issue_work_service.submit(
-        db, item_id, current_user.id, values
-    )
-    return await _human_work_response(db, item, current_user, message, created=created)
-
-
-@router.post(
-    "/loop-items/{item_id}/work/review", response_model=HumanWorkActionResponse
-)
-async def review_human_issue_work(
-    item_id: str,
-    values: HumanWorkReview,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> HumanWorkActionResponse:
-    item, message, created = human_issue_work_service.review(
-        db, item_id, current_user.id, values
-    )
-    return await _human_work_response(db, item, current_user, message, created=created)
 
 
 def _automation_selection_error(
@@ -275,123 +176,18 @@ def _selected_event_automation_id(
 def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
     return DeliveryResponse.model_validate(
         {
-            **delivery.__dict__,
+            "id": delivery.id,
+            "loop_item_id": delivery.loop_item_id,
+            "created_by_user_id": delivery.created_by_user_id,
+            "source_task_binding_id": delivery.source_task_binding_id,
+            "source_task_snapshot": delivery.source_task_snapshot,
+            "status": delivery.status,
+            "created_at": delivery.created_at,
+            "delivered_at": delivery.delivered_at,
             "assets": delivery_service.list_assets(db, delivery.id),
             "fulfillments": delivery_service.fulfillment_values(delivery),
         }
     )
-
-
-def _publish_workflow_plan_changed(
-    db: Session,
-    *,
-    item_id: str,
-    user_id: int,
-    reason: str,
-) -> None:
-    item = db.get(LoopItem, item_id, populate_existing=True)
-    if item is None:
-        return
-    publish_loop_item_changed(
-        db,
-        item=item,
-        reason=reason,
-        actor_user_id=user_id,
-    )
-
-
-def _schedule_workflow_plan_executions(
-    db: Session,
-    plan: WorkflowPlanView,
-) -> None:
-    from app.services.board_team_execution import (
-        schedule_board_robot_execution_by_id,
-        workflow_plan_execution_ids,
-    )
-
-    execution_ids = workflow_plan_execution_ids(db, plan)
-    db.rollback()
-    for execution_id in execution_ids:
-        try:
-            schedule_board_robot_execution_by_id(execution_id)
-        except Exception:
-            logger.exception(
-                "Workflow plan execution scheduling failed execution_id=%s",
-                execution_id,
-            )
-
-
-def _approve_and_dispatch_workflow_plan(
-    db: Session,
-    *,
-    item_id: str,
-    user: User,
-) -> WorkflowPlanView:
-    plan = issue_workflow_planning_service.approve(
-        db,
-        issue_id=item_id,
-        user_id=user.id,
-    )
-    _schedule_workflow_plan_executions(db, plan)
-    refreshed = issue_workflow_planning_service.get(
-        db,
-        issue_id=item_id,
-        user_id=user.id,
-    )
-    if refreshed is None:
-        raise RuntimeError("Approved workflow plan is unavailable")
-    return refreshed
-
-
-async def _dispatch_workflow_manager(
-    db: Session,
-    *,
-    item_id: str,
-    user: User,
-) -> None:
-    item = db.get(LoopItem, item_id)
-    if item is None:
-        raise ValueError("Issue not found")
-    project = cloud_project_service.get(
-        db,
-        int(str(item.cloud_project_id)),
-        user.id,
-    )
-    await issue_workflow_start_service.start(
-        db,
-        item=item,
-        project=project,
-        user_id=user.id,
-    )
-
-
-async def _cancel_workflow_manager(
-    db: Session,
-    *,
-    plan: WorkflowPlanView,
-    user: User,
-) -> bool:
-    manager_run = issue_workflow_planning_service.manager_automation_run(
-        db,
-        workflow_run_id=plan.run_id,
-    )
-    if manager_run is None or manager_run.status not in ACTIVE_MANAGER_RUN_STATUSES:
-        return False
-    result = await project_automation_service.cancel_run(
-        db,
-        str(manager_run.cloud_project_id),
-        str(manager_run.id),
-        user.id,
-    )
-    return str(result.get("status") or "") in ACTIVE_MANAGER_RUN_STATUSES
-
-
-def _workflow_manager_is_active(db: Session, plan: WorkflowPlanView) -> bool:
-    manager_run = issue_workflow_planning_service.manager_automation_run(
-        db,
-        workflow_run_id=plan.run_id,
-    )
-    return manager_run is not None and manager_run.status in ACTIVE_MANAGER_RUN_STATUSES
 
 
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
@@ -513,47 +309,6 @@ def bind_cloud_project_task(
         db, project_id, values, current_user.id
     )
     return LoopItemTaskBindingResponse.model_validate(binding)
-
-
-@router.get(
-    "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/input-context",
-    response_model=dict,
-)
-def get_workflow_stage_input_context(
-    item_id: str,
-    workflow_node_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> dict:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    item = loop_item_service.get(db, item_id, current_user.id)
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.loop_item_id == item_id,
-            LoopItemTaskBinding.task_user_id == current_user.id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .order_by(LoopItemTaskBinding.linked_at.desc())
-        .all()
-    )
-    stage_binding = next(
-        (
-            candidate
-            for candidate in binding
-            if candidate.workflow_node_id == workflow_node_id
-        ),
-        None,
-    )
-    if stage_binding is not None:
-        snapshot = workflow_stage_context_resolver.binding_snapshot(stage_binding)
-        if snapshot is not None:
-            return snapshot
-    return workflow_stage_context_resolver.resolve(
-        db,
-        item=item,
-        target_node_id=workflow_node_id,
-    )
 
 
 @router.delete("/runtime-tasks/cloud-context", status_code=status.HTTP_204_NO_CONTENT)
@@ -715,31 +470,6 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if (
-            not has_explicit_human_assignee
-            and issue_workflow_start_service.should_start_after_creation(
-                created.internal_item,
-                project,
-            )
-        ):
-            await issue_workflow_start_service.start(
-                db,
-                item=created.internal_item,
-                project=project,
-                user_id=current_user.id,
-            )
-            db.refresh(created.internal_item)
-        if created.internal_item.assignee_agent_id:
-            from app.services.board_team_execution import (
-                dispatch_board_team_assignment,
-            )
-
-            await dispatch_board_team_assignment(
-                db,
-                item=created.internal_item,
-                user=current_user,
-            )
-            db.refresh(created.internal_item)
         if project.task_provider in {"github", "gitlab"}:
             return LoopItemResponse.model_validate(
                 external_loop_item_provider.get(
@@ -795,6 +525,7 @@ def get_loop_item(
 @router.post("/loop-items/{item_id}/read", response_model=LoopItemResponse)
 def mark_loop_item_read(
     item_id: str,
+    values: LoopItemRead | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
@@ -803,318 +534,13 @@ def mark_loop_item_read(
             status.HTTP_409_CONFLICT,
             "External provider tasks do not support Wegent read state",
         )
-    item = loop_item_service.mark_read(db, item_id, current_user.id)
-    return _loop_item_response(db, item, current_user)
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/decision",
-    response_model=LoopItemResponse,
-)
-async def decide_loop_item_workflow_node(
-    item_id: str,
-    workflow_node_id: str,
-    values: WorkflowNodeDecisionRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> LoopItemResponse:
-    item = issue_workflow_decision_service.decide(
+    item = loop_item_service.mark_read(
         db,
-        item_id=item_id,
-        workflow_node_id=workflow_node_id,
-        values=values,
-        user_id=current_user.id,
-    )
-    from app.services.project_automations import project_automation_service
-    from app.services.workflow_loop_runtime import forced_loop_handler_run_ids
-
-    for run_id in forced_loop_handler_run_ids(item):
-        try:
-            await project_automation_service.cancel_run(
-                db,
-                str(item.cloud_project_id),
-                run_id,
-                current_user.id,
-            )
-        except Exception:
-            logger.exception(
-                "Loop force advance cancel failed item=%s run=%s",
-                item_id,
-                run_id,
-            )
-    publish_loop_item_changed(
-        db,
-        item=item,
-        reason="workflow_decision",
-        actor_user_id=current_user.id,
+        item_id,
+        current_user.id,
+        activity_sequence=values.activity_sequence if values else None,
     )
     return _loop_item_response(db, item, current_user)
-
-
-@router.get(
-    "/loop-items/{item_id}/workflow-plan",
-    response_model=WorkflowPlanView | None,
-)
-def get_loop_item_workflow_plan(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView | None:
-    try:
-        return issue_workflow_planning_service.get(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan",
-    response_model=WorkflowPlanView,
-)
-async def submit_loop_item_workflow_plan(
-    item_id: str,
-    values: WorkflowPlanSubmit,
-    automation_run_id: str = Header(
-        default="",
-        alias="X-Wegent-Automation-Run-ID",
-        include_in_schema=False,
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> WorkflowPlanView:
-    try:
-        plan = (
-            project_automation_execution.submit_manager_workflow_plan(
-                db,
-                run_id=automation_run_id,
-                issue_id=item_id,
-                user_id=current_user.id,
-                values=values,
-            )
-            if automation_run_id
-            else issue_workflow_planning_service.submit(
-                db,
-                issue_id=item_id,
-                user_id=current_user.id,
-                values=values,
-            )
-        )
-        if plan.approval_policy == "automatic":
-            plan = _approve_and_dispatch_workflow_plan(
-                db,
-                item_id=item_id,
-                user=current_user,
-            )
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_submitted",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan/approve",
-    response_model=WorkflowPlanView,
-)
-async def approve_loop_item_workflow_plan(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView:
-    try:
-        plan = _approve_and_dispatch_workflow_plan(
-            db,
-            item_id=item_id,
-            user=current_user,
-        )
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_approved",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan/pause",
-    response_model=WorkflowPlanView,
-)
-async def pause_loop_item_workflow_plan(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView:
-    try:
-        current = issue_workflow_planning_service.get(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        if current is not None:
-            await _cancel_workflow_manager(db, plan=current, user=current_user)
-        plan = issue_workflow_planning_service.pause(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_paused",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan/resume",
-    response_model=WorkflowPlanView,
-)
-async def resume_loop_item_workflow_plan(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView:
-    try:
-        current = issue_workflow_planning_service.get(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        if current is not None and _workflow_manager_is_active(db, current):
-            raise ValueError("The AI manager is still stopping")
-        plan = issue_workflow_planning_service.resume(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        if plan.status == "planning":
-            await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
-        elif plan.status == "running":
-            _schedule_workflow_plan_executions(db, plan)
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_resumed",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan/replan",
-    response_model=WorkflowPlanView,
-)
-async def replan_loop_item_workflow_plan(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView:
-    try:
-        current = issue_workflow_planning_service.get(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        if current is not None:
-            stopping = await _cancel_workflow_manager(
-                db,
-                plan=current,
-                user=current_user,
-            )
-            if stopping:
-                raise ValueError("The AI manager is still stopping")
-        plan = issue_workflow_planning_service.replan(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_replanned",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-plan/review",
-    response_model=WorkflowPlanView,
-)
-async def approve_loop_item_workflow_review(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> WorkflowPlanView:
-    try:
-        plan = issue_workflow_planning_service.approve_review(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-        )
-        if plan.status == "planning":
-            await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
-        _publish_workflow_plan_changed(
-            db,
-            item_id=item_id,
-            user_id=current_user.id,
-            reason="workflow_plan_reviewed",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-
-
-@router.post(
-    "/loop-items/{item_id}/workflow-outcome",
-    response_model=WorkflowPlanView,
-)
-async def report_loop_item_workflow_outcome(
-    item_id: str,
-    values: WorkflowTaskOutcomeSubmit,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> WorkflowPlanView:
-    try:
-        plan = issue_workflow_planning_service.report_outcome(
-            db,
-            child_id=item_id,
-            user_id=current_user.id,
-            values=values,
-        )
-        if plan.status == "planning":
-            await _dispatch_workflow_manager(
-                db,
-                item_id=plan.issue_id,
-                user=current_user,
-            )
-        _publish_workflow_plan_changed(
-            db,
-            item_id=plan.issue_id,
-            user_id=current_user.id,
-            reason="workflow_outcome_reported",
-        )
-        return plan
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
@@ -1129,13 +555,7 @@ async def update_loop_item(
         response = external_loop_item_provider.update(
             db, item_id, current_user.id, values
         )
-        if values.assignee_agent_id:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            item = db.get(LoopItem, item_id)
-            if item is None:
-                raise RuntimeError("External robot assignment index is unavailable")
-            await dispatch_board_team_assignment(db, item=item, user=current_user)
+        if values.assignee_agent_id or values.assignee_group_id:
             from app.tasks.robot_queue_tasks import consume_queues_background
 
             background_tasks.add_task(consume_queues_background)
@@ -1161,7 +581,9 @@ async def update_loop_item(
         previous_status=previous_status,
         current_status=requested_status,
     )
-    if requested_status != previous_status and requested_transition.entered_processing:
+    status_changed = requested_status != previous_status
+    entered_processing = status_changed and requested_transition.entered_processing
+    if entered_processing:
         event_payload = _loop_item_response(
             db,
             existing,
@@ -1181,20 +603,11 @@ async def update_loop_item(
             actor_user_id=current_user.id,
             payload=event_payload,
         )
-        item_metadata = (
-            existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
-        )
-        workflow_binding = item_metadata.get("workflow_automation")
-        bound_rule_id = (
-            str(workflow_binding.get("rule_id") or "")
-            if isinstance(workflow_binding, dict)
-            else ""
-        )
         selected_status_automation_id = _selected_event_automation_id(
             db,
             event,
             requested_id=values.automation_rule_id,
-            bound_rule_id=bound_rule_id,
+            bound_rule_id="",
         )
     requested_tags = (
         set(values.tags)
@@ -1210,15 +623,6 @@ async def update_loop_item(
         ).model_dump(mode="json")
         event_payload["tags"] = sorted(requested_tags)
         event_payload["added_tags"] = sorted(requested_added_tags)
-        item_metadata = (
-            existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
-        )
-        workflow_binding = item_metadata.get("workflow_automation")
-        bound_rule_id = (
-            str(workflow_binding.get("rule_id") or "")
-            if isinstance(workflow_binding, dict)
-            else ""
-        )
         selected_tag_automation_id = _selected_event_automation_id(
             db,
             ProjectAutomationEvent(
@@ -1230,62 +634,19 @@ async def update_loop_item(
                 payload=event_payload,
             ),
             requested_id=values.automation_rule_id,
-            bound_rule_id=bound_rule_id,
+            bound_rule_id="",
         )
 
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    issue_workflow_planning_service.sync_from_child(
-        db,
-        child_id=item.id,
-        commit=True,
-    )
-    workflow_updated = "workflow" in values.model_fields_set
-    status_changed = (
-        "status" in values.model_fields_set and previous_status != item.status
-    )
-    status_transition = project_status_transition(
-        project,
-        previous_status=previous_status,
-        current_status=item.status,
-    )
-    entered_processing = status_changed and status_transition.entered_processing
-    should_start_workflow = (
-        not human_issue_work_service.is_direct_human_assignment(db, item)
-        and selected_status_automation_id is None
-        and (
-            entered_processing
-            or (workflow_updated and is_processing_status(project, item.status))
-        )
-    )
-    logger.info(
-        "[issue-workflow-start] update item=%s project=%s previous_status=%s "
-        "status=%s workflow_updated=%s should_start=%s fields=%s",
-        item.id,
-        item.cloud_project_id,
-        previous_status,
-        item.status,
-        workflow_updated,
-        should_start_workflow,
-        sorted(values.model_fields_set),
-    )
     queue_wakeup_scheduled = False
-    if should_start_workflow:
-        await issue_workflow_start_service.start(
-            db,
-            item=item,
-            project=project,
-            user_id=current_user.id,
-        )
-        db.refresh(item)
-    if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
+    if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
+        "assignee_group_id" in values.model_fields_set
+        and values.assignee_group_id is not None
+    ):
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         queue_wakeup_scheduled = True
-        db.refresh(item)
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
     ):
@@ -1294,71 +655,34 @@ async def update_loop_item(
             item=item,
             user_id=current_user.id,
         )
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         queue_wakeup_scheduled = True
-        db.refresh(item)
     if status_changed and not queue_wakeup_scheduled:
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
     if status_changed:
-        item_metadata_before_automation = (
-            item.metadata_json if isinstance(item.metadata_json, dict) else {}
-        )
-        workflow_before_automation = item_metadata_before_automation.get("workflow")
         try:
-            dispatched_automations = (
-                await project_incoming_hook_service.ingest_internal(
-                    db,
-                    ProjectAutomationEvent(
-                        event_type="task.status_changed",
-                        project_id=str(item.cloud_project_id),
-                        subject_id=str(item.id),
-                        source="board",
-                        actor_user_id=current_user.id,
-                        payload={
-                            **_loop_item_response(db, item, current_user).model_dump(
-                                mode="json"
-                            ),
-                            "previous_status": previous_status,
-                        },
-                    ),
-                    automation_id=selected_status_automation_id,
-                )
+            await project_incoming_hook_service.ingest_internal(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.status_changed",
+                    project_id=str(item.cloud_project_id),
+                    subject_id=str(item.id),
+                    source="board",
+                    actor_user_id=current_user.id,
+                    payload={
+                        **_loop_item_response(db, item, current_user).model_dump(
+                            mode="json"
+                        ),
+                        "previous_status": previous_status,
+                    },
+                ),
+                automation_id=selected_status_automation_id,
             )
             db.refresh(item)
-            item_metadata_after_automation = (
-                item.metadata_json if isinstance(item.metadata_json, dict) else {}
-            )
-            workflow_after_automation = item_metadata_after_automation.get("workflow")
-            workflow_nodes = (
-                workflow_after_automation.get("nodes")
-                if isinstance(workflow_after_automation, dict)
-                else []
-            )
-            logger.info(
-                "[project-automation-routing] status update item=%s project=%s "
-                "previous_status=%s status=%s dispatched=%s workflow_before=%s "
-                "workflow_after=%s node_ids=%s node_statuses=%s",
-                item.id,
-                item.cloud_project_id,
-                previous_status,
-                item.status,
-                dispatched_automations,
-                isinstance(workflow_before_automation, dict),
-                isinstance(workflow_after_automation, dict),
-                [node.get("id") for node in workflow_nodes if isinstance(node, dict)],
-                [
-                    node.get("status")
-                    for node in workflow_nodes
-                    if isinstance(node, dict)
-                ],
-            )
         except Exception:
             db.rollback()
             logger.exception(
@@ -1641,19 +965,15 @@ async def create_issue_assignment(
                 )
 
     if values.target_type == "agent":
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        indexed_item = db.get(LoopItem, item_id)
-        if indexed_item is None:
-            raise RuntimeError("Agent assignment index is unavailable")
-        await dispatch_board_team_assignment(db, item=indexed_item, user=current_user)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
         if is_external:
             issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
         else:
-            db.refresh(indexed_item)
+            indexed_item = db.get(LoopItem, item_id)
+            if indexed_item is None:
+                raise RuntimeError("Agent assignment index is unavailable")
             issue_values = loop_item_service.response_values(
                 db, indexed_item, current_user.id
             )
@@ -1688,8 +1008,7 @@ def remove_issue_assignment(
         issue_id=item_id,
         user_id=current_user.id,
     )
-    was_human = human_issue_work_service.is_direct_human_assignment(db, item)
-    removed = issue_assignment_service.remove(
+    issue_assignment_service.remove(
         db,
         project_id=int(project.id),
         issue_id=item_id,
@@ -1697,24 +1016,6 @@ def remove_issue_assignment(
         user_id=current_user.id,
     )
     issue_assignment_service.project_legacy_assignment(db, item=item)
-    if was_human and removed.member_type == "human":
-        metadata = dict(item.metadata_json or {})
-        metadata.pop("human_work", None)
-        if item.status in {"in_progress", "in_review"}:
-            write_status_change(
-                metadata,
-                project=project,
-                from_status=item.status,
-                to_status="pending",
-                trigger="unassigned",
-                by_user_id=current_user.id,
-            )
-            item.status = "pending"
-            item.sort_order = 0
-            item.completed_at = None
-        item.metadata_json = advance_content_revision(
-            metadata, actor_user_id=current_user.id
-        )
     db.commit()
     publish_loop_item_changed(
         db, item=item, reason="assignment_removed", actor_user_id=current_user.id
@@ -1981,26 +1282,12 @@ async def finalize_delivery(
 ) -> DeliveryResponse:
     draft = delivery_service.get_delivery(db, delivery_id, current_user.id)
     item = loop_item_service.get(db, draft.loop_item_id, current_user.id)
-    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
     delivery = delivery_service.finalize(
         db,
         delivery_id,
         current_user.id,
         values or DeliveryFinalize(),
     )
-    db.refresh(item)
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    if newly_ready:
-        started = await issue_workflow_start_service.continue_ready_stages(
-            db,
-            item=item,
-            user_id=current_user.id,
-            stage_ids=newly_ready,
-        )
-        if started:
-            db.refresh(delivery)
     return _delivery_response(db, delivery)
 
 

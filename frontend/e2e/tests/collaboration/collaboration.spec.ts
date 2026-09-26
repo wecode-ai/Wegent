@@ -4,6 +4,7 @@
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
 import { writeSharedComposer } from '../../utils/collaboration-test-support'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
@@ -164,6 +165,7 @@ test.describe('Collaboration module', () => {
     expect(projectId).not.toBe('')
     await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
+    await initializeProjectExecutionEnvironment(page)
     await page.getByTestId('collaboration-issue-create').click()
     await page.getByTestId('cloud-todo-title').fill(issueTitle)
     await page

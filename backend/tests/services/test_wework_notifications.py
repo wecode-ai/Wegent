@@ -141,7 +141,9 @@ def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):
     assert len(rows) == 1
     assert rows[0].user_id == member.id
     assert rows[0].url == issue_url(str(project.id), item.id)
-    assert rows[0].payload["actorName"] == test_user.user_name
+    assert rows[0].actor_user_id == test_user.id
+    assert rows[0].payload["action"] == "create_personal_task"
+    assert rows[0].payload["taskTitle"] == item.title
 
 
 def test_version_conflict_rolls_back_notification(
@@ -240,7 +242,7 @@ def test_inbox_categories_have_independent_pagination_and_unread_counts(
             body=kind,
             kind=kind,
         )
-        for kind in ("message", "assignment", "human_work", "new_kind")
+        for kind in ("message", "assignment", "issue_dispatch_assignment", "new_kind")
     ]
     test_db.commit()
     headers = {"Authorization": f"Bearer {test_token}"}
@@ -271,6 +273,10 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
 ):
     """The bell files board work a member is pulled into under collaboration."""
 
+    collaboration_kinds = (
+        "mention",
+        "execution",
+    )
     rows = {
         kind: create_notification(
             test_db,
@@ -280,7 +286,7 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
             body=kind,
             kind=kind,
         )
-        for kind in ("mention", "execution", "message")
+        for kind in (*collaboration_kinds, "message")
     }
     test_db.commit()
     headers = {"Authorization": f"Bearer {test_token}"}
@@ -290,8 +296,7 @@ def test_board_mentions_and_runs_join_the_collaboration_category(
         f"{path}?category=collaboration", headers=headers
     ).json()
     assert {item["id"] for item in collaboration["items"]} == {
-        rows["mention"].id,
-        rows["execution"].id,
+        rows[kind].id for kind in collaboration_kinds
     }
     general = test_client.get(f"{path}?category=general", headers=headers).json()
     assert {item["id"] for item in general["items"]} == {rows["message"].id}

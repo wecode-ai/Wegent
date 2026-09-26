@@ -115,7 +115,6 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
-from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.device_pull import (
     acknowledge_execution,
@@ -129,7 +128,6 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.project_chat.service import project_chat_service
-from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -843,81 +841,6 @@ def _publish_execution_item_change(
     )
 
 
-def _project_execution_workflow_status(
-    db: Session,
-    *,
-    execution: object,
-    projected_status: str,
-    ready_before: set[str],
-) -> dict[str, Any] | None:
-    """Project accepted runtime truth onto its bound workflow task."""
-
-    from app.models.delivery import LoopItemTaskBinding, loop_datetime_is_unset
-
-    user_id = int(getattr(execution, "executor_owner_user_id", 0) or 0)
-    device_id = str(getattr(execution, "runtime_device_id", "") or "")
-    task_id = str(getattr(execution, "runtime_task_id", "") or "")
-    loop_item_id = str(getattr(execution, "loop_item_id", "") or "")
-    if not all((user_id, device_id, task_id, loop_item_id, projected_status)):
-        return None
-
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.loop_item_id == loop_item_id,
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
-            LoopItemTaskBinding.task_id == task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .first()
-    )
-    if binding is None:
-        return None
-
-    from app.models.delivery import LoopItem
-    from app.services.project_workflow_projection import (
-        update_workflow_plan_task_status,
-    )
-
-    item = (
-        update_workflow_task_status(
-            db,
-            user_id=user_id,
-            device_id=device_id,
-            task_id=task_id,
-            execution_status=projected_status,
-        )
-        if binding.workflow_node_id
-        else update_workflow_plan_task_status(
-            db,
-            child_id=loop_item_id,
-            device_id=binding.device_id,
-            task_id=task_id,
-            execution_status=projected_status,
-        )
-    )
-    if item is None:
-        return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    logger.info(
-        "[IssueWorkflowContinuation] detected item=%s execution=%s event_status=%s "
-        "ready_before=%s newly_ready=%s",
-        item.id,
-        getattr(execution, "id", None),
-        projected_status,
-        sorted(ready_before),
-        sorted(newly_ready),
-    )
-    return {
-        "item_id": str(item.id),
-        "user_id": user_id,
-        "stage_ids": sorted(newly_ready),
-    }
-
-
 def _workflow_status_for_runtime_event(
     event_name: str,
     payload: dict[str, Any],
@@ -940,279 +863,6 @@ def _workflow_status_for_runtime_event(
     }:
         return "running"
     return None
-
-
-def _execution_ready_robot_stage_ids(
-    db: Session,
-    execution: object | None,
-) -> set[str]:
-    if execution is None:
-        return set()
-    loop_item_id = getattr(execution, "loop_item_id", None)
-    if not isinstance(loop_item_id, str) or not loop_item_id:
-        return set()
-    from app.models.delivery import LoopItem
-
-    item = db.get(LoopItem, loop_item_id)
-    if item is None:
-        return set()
-    return issue_workflow_start_service.ready_robot_stage_ids(item)
-
-
-def _project_bound_runtime_event_status(
-    db: Session,
-    *,
-    user_id: int,
-    device_id: str,
-    task_id: str,
-    event_name: str,
-    payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Project a manually bound Runtime task that has no execution row."""
-
-    from app.models.delivery import (
-        LoopItem,
-        LoopItemTaskBinding,
-        loop_datetime_is_unset,
-    )
-
-    projected_status = _workflow_status_for_runtime_event(event_name, payload)
-    if projected_status is None:
-        return None
-    from app.services.loop_item_executions.service import runtime_device_identity_ids
-
-    device_ids = runtime_device_identity_ids(
-        db,
-        device_id,
-        owner_user_id=user_id,
-    )
-    if not device_ids:
-        logger.info(
-            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-        )
-        return None
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id.in_(device_ids),
-            LoopItemTaskBinding.task_id == task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .first()
-    )
-    if binding is None or not binding.loop_item_id:
-        logger.info(
-            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-        )
-        return None
-    item_before = db.get(LoopItem, binding.loop_item_id)
-    if item_before is None:
-        logger.warning(
-            "[IssueTaskRuntimeSync] item_miss user=%s device=%s task=%s "
-            "binding=%s item=%s",
-            user_id,
-            device_id,
-            task_id,
-            binding.id,
-            binding.loop_item_id,
-        )
-        return None
-    if not binding.workflow_node_id:
-        raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
-        if isinstance(raw_event_seq, bool):
-            raw_event_seq = None
-        try:
-            event_seq = int(raw_event_seq)
-        except (TypeError, ValueError):
-            event_seq = 0
-        binding_metadata = (
-            dict(binding.metadata_json)
-            if isinstance(binding.metadata_json, dict)
-            else {}
-        )
-        raw_last_event_seq = binding_metadata.get("runtime_status_event_seq")
-        try:
-            last_event_seq = int(raw_last_event_seq)
-        except (TypeError, ValueError):
-            last_event_seq = 0
-        if event_seq <= 0:
-            logger.warning(
-                "[IssueTaskRuntimeSync] rejected unsequenced direct binding event "
-                "user=%s device=%s task=%s event=%s",
-                user_id,
-                device_id,
-                task_id,
-                event_name,
-            )
-            return None
-        if event_seq <= last_event_seq:
-            logger.info(
-                "[IssueTaskRuntimeSync] ignored reordered direct binding event "
-                "user=%s device=%s task=%s event=%s current_seq=%s incoming_seq=%s",
-                user_id,
-                device_id,
-                task_id,
-                event_name,
-                last_event_seq,
-                event_seq,
-            )
-            return None
-        binding_metadata["runtime_status_event_seq"] = event_seq
-        binding.metadata_json = binding_metadata
-        from app.services.human_issue_work import human_issue_work_service
-
-        if human_issue_work_service.is_direct_human_assignment(db, item_before):
-            logger.info(
-                "[IssueTaskRuntimeSync] kept human Issue status "
-                "user=%s device=%s task=%s event=%s item=%s",
-                user_id,
-                device_id,
-                task_id,
-                event_name,
-                item_before.id,
-            )
-            return None
-        next_status = (
-            "in_progress"
-            if projected_status == "running"
-            else (
-                "in_review"
-                if projected_status in {"succeeded", "failed", "cancelled"}
-                and item_before.status not in {"completed", "in_review"}
-                else None
-            )
-        )
-        if next_status is None or item_before.status == next_status:
-            return None
-        from app.models.delivery import CloudProject
-        from app.services.loop_item_status_history import write_status_change
-
-        project = db.get(CloudProject, item_before.cloud_project_id)
-        metadata = (
-            dict(item_before.metadata_json)
-            if isinstance(item_before.metadata_json, dict)
-            else {}
-        )
-        if project is not None:
-            write_status_change(
-                metadata,
-                project=project,
-                from_status=item_before.status,
-                to_status=next_status,
-                trigger=f"runtime_{projected_status}",
-                by_user_id=None,
-            )
-        item_before.metadata_json = metadata
-        item_before.status = next_status
-        item_before.completed_at = project_chat_service._loop_unset_datetime(db)
-        item_before.sort_order = 0
-        item_before.version += 1
-        db.flush()
-        publish_loop_item_changed(
-            db,
-            item=item_before,
-            reason="runtime_execution_status",
-            actor_user_id=user_id,
-        )
-        logger.info(
-            "[IssueTaskRuntimeSync] projected source=direct_binding user=%s "
-            "device=%s task=%s event=%s status=%s item=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-            projected_status,
-            item_before.id,
-        )
-        return {
-            "item_id": str(item_before.id),
-            "user_id": user_id,
-            "stage_ids": [],
-        }
-
-    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item_before)
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
-    )
-    if item is None:
-        return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    logger.info(
-        "[IssueTaskRuntimeSync] projected source=binding user=%s device=%s "
-        "task=%s event=%s status=%s item=%s node=%s newly_ready=%s",
-        user_id,
-        device_id,
-        task_id,
-        event_name,
-        projected_status,
-        item.id,
-        binding.workflow_node_id,
-        sorted(newly_ready),
-    )
-    return {
-        "item_id": str(item.id),
-        "user_id": user_id,
-        "stage_ids": sorted(newly_ready),
-    }
-
-
-async def _continue_projected_workflow(intent: dict[str, Any] | None) -> None:
-    if not intent or not intent.get("stage_ids"):
-        return
-    from app.models.delivery import LoopItem
-
-    with get_db_session() as db:
-        item = db.get(LoopItem, str(intent["item_id"]))
-        if item is None:
-            logger.warning(
-                "[IssueWorkflowContinuation] skipped item=%s reason=item_missing "
-                "stages=%s",
-                intent["item_id"],
-                intent["stage_ids"],
-            )
-            return
-        logger.info(
-            "[IssueWorkflowContinuation] dispatching item=%s stages=%s user=%s",
-            item.id,
-            intent["stage_ids"],
-            intent["user_id"],
-        )
-        try:
-            started = await issue_workflow_start_service.continue_ready_stages(
-                db,
-                item=item,
-                user_id=int(intent["user_id"]),
-                stage_ids=set(intent["stage_ids"]),
-            )
-        except Exception:
-            logger.exception(
-                "[IssueWorkflowContinuation] failed item=%s stages=%s user=%s",
-                item.id,
-                intent["stage_ids"],
-                intent["user_id"],
-            )
-            raise
-        logger.info(
-            "[IssueWorkflowContinuation] completed item=%s stages=%s started=%s",
-            item.id,
-            intent["stage_ids"],
-            started,
-        )
 
 
 def _project_chat_runtime_event_sync(
@@ -1272,11 +922,6 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             owner_user_id=user_id,
         )
-        ready_before = (
-            _execution_ready_robot_stage_ids(db, execution)
-            if projected_status is not None
-            else set()
-        )
         previous_item_version = (
             _execution_item_version(db, execution) if execution is not None else None
         )
@@ -1299,16 +944,7 @@ def _project_chat_runtime_event_sync(
             )
             return None
         if matched_execution is not None:
-            workflow_continuation = (
-                _project_execution_workflow_status(
-                    db,
-                    execution=matched_execution,
-                    projected_status=projected_status,
-                    ready_before=ready_before,
-                )
-                if projected_status is not None
-                else None
-            )
+            workflow_continuation = None
             log_projection = (
                 logger.info if projected_status is not None else logger.debug
             )
@@ -1333,26 +969,7 @@ def _project_chat_runtime_event_sync(
                 previous_version=previous_item_version,
             )
         else:
-            workflow_continuation = (
-                _project_bound_runtime_event_status(
-                    db,
-                    user_id=user_id,
-                    device_id=device_id,
-                    task_id=runtime_task_id,
-                    event_name=event_name,
-                    payload=payload,
-                )
-                if user_id is not None
-                else None
-            )
-            if user_id is None:
-                logger.info(
-                    "[IssueTaskRuntimeSync] skipped reason=no_execution_or_user "
-                    "device=%s task=%s event=%s",
-                    device_id,
-                    runtime_task_id,
-                    event_name,
-                )
+            workflow_continuation = None
         projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
@@ -1392,11 +1009,6 @@ def _execution_runtime_event_sync(
                 owner_user_id=user_id,
             )
             projected_status = _workflow_status_for_runtime_event(event_name, payload)
-            ready_before = (
-                _execution_ready_robot_stage_ids(db, execution)
-                if projected_status is not None
-                else set()
-            )
             previous_item_version = (
                 _execution_item_version(db, execution)
                 if execution is not None
@@ -1411,23 +1023,12 @@ def _execution_runtime_event_sync(
                 owner_user_id=user_id,
             )
             if matched is not None:
-                workflow_continuation = (
-                    _project_execution_workflow_status(
-                        db,
-                        execution=matched,
-                        projected_status=projected_status,
-                        ready_before=ready_before,
-                    )
-                    if projected_status is not None
-                    else None
-                )
                 db.flush()
                 _publish_execution_item_change(
                     db,
                     execution=matched,
                     previous_version=previous_item_version,
                 )
-                return workflow_continuation
             return None
     except Exception:
         logger.exception(
@@ -2642,6 +2243,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_device_id = session.get("device_id")
         execution_target_id = session.get("execution_target_id")
         runtime_instance_id = session.get("runtime_instance_id")
+        device_type = str(session.get("device_type") or "")
         if (
             not user_id
             or not runtime_device_id
@@ -2649,11 +2251,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
-        runtime_capacity = (
-            data.get("runtime_capacity")
-            if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)
-            else None
-        )
         return await run_sync_in_executor(
             partial(
                 pull_execution,
@@ -2661,11 +2258,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
-                # The Executor pull channel only carries cloud work; local rows
-                # are claimed by the desktop App which resolves local model
-                # credentials at claim time and never writes them to the queue.
-                environment="cloud",
-                runtime_capacity=runtime_capacity,
+                environment=(
+                    "cloud" if device_type in {"cloud", "remote"} else "local"
+                ),
             )
         )
 
@@ -3155,7 +2750,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 event_type,
                 event_data,
             )
-            await _continue_projected_workflow(workflow_continuation)
 
         data = args[0]
         if not isinstance(data, dict):
@@ -3367,9 +2961,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 user_id,
                 True,
             )
-            await _continue_projected_workflow(
-                projected.get("workflow_continuation") if projected else None
-            )
             if projected and projected.get("message"):
                 message = projected["message"]
                 project_id = str(message["projectId"])
@@ -3485,9 +3076,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # prevent the durable chat record from advancing.
         projected = await run_sync_in_executor(
             _project_chat_runtime_event_sync, device_id, payload, user_id
-        )
-        await _continue_projected_workflow(
-            projected.get("workflow_continuation") if projected else None
         )
         if projected and projected.get("message"):
             message = projected["message"]

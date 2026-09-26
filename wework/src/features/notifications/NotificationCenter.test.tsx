@@ -9,6 +9,7 @@ import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
 } from './NotificationTaskSource'
+import { useIssueDispatchNotificationActionRegistration } from './useIssueDispatchNotificationActionRegistration'
 import { readActiveNotificationPreferences } from './notificationPreferences'
 
 const api = vi.hoisted(() => ({
@@ -78,9 +79,26 @@ const task = {
   projectName: 'Project',
 }
 const markRuntimeTaskRead = vi.fn()
+const issueDispatchNotificationAction = vi.fn()
+
+function IssueDispatchNotificationActionBridge() {
+  useIssueDispatchNotificationActionRegistration(
+    'issue-dispatch-test',
+    true,
+    issueDispatchNotificationAction
+  )
+  return null
+}
+
 const viewWithTask = (value = connection) => (
   <NotificationTaskSourceProvider>
     <NotificationTaskSourceBridge id="task-tab" active />
+    {view(value)}
+  </NotificationTaskSourceProvider>
+)
+const viewWithIssueDispatchAction = (value = connection) => (
+  <NotificationTaskSourceProvider>
+    <IssueDispatchNotificationActionBridge />
     {view(value)}
   </NotificationTaskSourceProvider>
 )
@@ -140,6 +158,7 @@ beforeEach(() => {
     unreadTaskKeys: new Set([task.key]),
     markRuntimeTaskRead,
   }
+  issueDispatchNotificationAction.mockResolvedValue(undefined)
 })
 
 describe('notification center', () => {
@@ -281,13 +300,18 @@ describe('notification center', () => {
       title: 'Assigned',
       payload: { actorName: 'Alice', projectName: 'Project', itemTitle: 'Issue' },
     }
-    const review = { ...entry, id: 'review-1', kind: 'human_work', title: 'Review' }
+    const dispatch = {
+      ...entry,
+      id: 'dispatch-1',
+      kind: 'issue_dispatch_assignment',
+      title: 'Dispatch',
+    }
     api.list.mockImplementation((offset, category) =>
       Promise.resolve(
         category === 'collaboration'
           ? offset === 0
             ? { items: [assignment], unread_count: 2, next_offset: 1 }
-            : { items: [review], unread_count: 2, next_offset: null }
+            : { items: [dispatch], unread_count: 2, next_offset: null }
           : { items: [entry], unread_count: 1, next_offset: null }
       )
     )
@@ -299,7 +323,7 @@ describe('notification center', () => {
     expect(screen.getByTestId('wework-notification-assignment-1')).toBeVisible()
     expect(screen.queryByTestId('wework-notification-n1')).toBeNull()
     fireEvent.click(screen.getByTestId('wework-notifications-more'))
-    expect(await screen.findByTestId('wework-notification-review-1')).toBeVisible()
+    expect(await screen.findByTestId('wework-notification-dispatch-1')).toBeVisible()
     expect(api.list).toHaveBeenCalledWith(1, 'collaboration')
     fireEvent.click(screen.getByTestId('wework-notifications-back'))
     fireEvent.click(screen.getByTestId('wework-notifications-category-general'))
@@ -372,6 +396,65 @@ describe('notification center', () => {
     expect(row).toHaveTextContent('admin 把「修复登录」分配给了你')
     expect(screen.getByTestId('wework-notification-n1-summary')).toHaveTextContent('test-pro')
     expect(screen.queryByTestId('wework-notification-n1-body')).toBeNull()
+  })
+
+  it('creates or opens the personal task assigned by an Issue dispatch notification', async () => {
+    const dispatchNotification = {
+      ...entry,
+      kind: 'issue_dispatch_assignment',
+      title: '新任务：采集 CPU 证据',
+      body: '负责人向你分配了协作任务。',
+      url: null,
+      payload: {
+        projectId: '12',
+        itemId: 'issue-1',
+        issueId: 'issue-1',
+        dispatchTaskId: 'human-assignment-1',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'dispatch-1',
+        roundId: 'round-1',
+        assignmentId: 'collect-cpu',
+        taskTitle: '采集 CPU 证据',
+        instructions: '只读采集 CPU 证据并提交交付。',
+        workflowStageId: 'investigate',
+        action: 'create_personal_task',
+        idempotencyKey: 'human-assignment:human-assignment-1',
+      },
+    }
+    api.list.mockImplementation((_offset, category) =>
+      Promise.resolve(
+        category === 'collaboration'
+          ? { items: [dispatchNotification], unread_count: 1, next_offset: null }
+          : { items: [], unread_count: 0, next_offset: null }
+      )
+    )
+    api.read.mockResolvedValue({
+      ...dispatchNotification,
+      read_at: '2026-09-25T01:00:00+00:00',
+    })
+
+    render(viewWithIssueDispatchAction())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-collaboration'))
+    fireEvent.click(await screen.findByTestId('issue-dispatch-notification-create-task'))
+
+    await waitFor(() =>
+      expect(issueDispatchNotificationAction).toHaveBeenCalledWith({
+        projectId: '12',
+        itemId: 'issue-1',
+        issueId: 'issue-1',
+        dispatchTaskId: 'human-assignment-1',
+        humanAssignmentId: 'human-assignment-1',
+        dispatchId: 'dispatch-1',
+        roundId: 'round-1',
+        assignmentId: 'collect-cpu',
+        taskTitle: '采集 CPU 证据',
+        instructions: '只读采集 CPU 证据并提交交付。',
+        workflowStageId: 'investigate',
+        idempotencyKey: 'human-assignment:human-assignment-1',
+      })
+    )
+    expect(screen.queryByTestId('wework-notifications-popover')).toBeNull()
   })
 
   it('updates notification channels from the settings view', async () => {

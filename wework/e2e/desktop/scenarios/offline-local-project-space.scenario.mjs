@@ -5,7 +5,8 @@ import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
-  selectCollaborationDomain,
+  initializeFirstProjectExecutionEnvironment,
+  openProjectAgentCreator,
   selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
 
@@ -138,17 +139,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
           timeoutMs: uiTimeoutMs,
         }
       )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
-          )
-        ),
-        0,
-        'The local collaboration domain mixed in a cloud Workspace'
-      )
-      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'cloud')
       await control.command(
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),
@@ -161,20 +151,13 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         Number(
           await control.command(
             'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
+            scoped(
+              '[data-testid="collaboration-domain-local"], [data-testid="collaboration-domain-cloud"]'
+            )
           )
         ),
         0,
-        'The cloud collaboration domain mixed in the device-owned local Workspace'
-      )
-      await selectCollaborationDomain(control, ACTIVE_WORKBENCH_SELECTOR, 'local')
-      await control.command(
-        'waitFor',
-        sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
-        {
-          text: '本地空间',
-          timeoutMs: uiTimeoutMs,
-        }
+        'The unified collaboration board still exposed local/cloud mode selectors'
       )
 
       const platformSnapshot = await snapshot(control)
@@ -259,6 +242,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       assertLocalIsolation()
 
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
@@ -303,12 +292,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-project-settings-participants"]')
       )
-      await control.command('clickWhenEnabled', scoped('[data-testid="project-agent-add"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-display-name"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await openProjectAgentCreator(
+        control,
+        scoped('[data-testid="project-agent-add"]'),
+        uiTimeoutMs
+      )
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '离线本地智能体',
       })
@@ -400,16 +388,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: '本地空间',
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            sidebarScoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`)
-          )
-        ),
-        0,
-        'Returning to the local domain mixed in a cloud Workspace'
-      )
 
       assert.equal(
         cloudWorkspaceListFailures,

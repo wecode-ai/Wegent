@@ -41,7 +41,7 @@ function descendants(element: ReactElement): ReactElement[] {
 }
 
 describe("KanbanColumnDropzone", () => {
-  it("constrains the Radix content wrapper so long cards cannot widen the column", () => {
+  it("constrains long cards so they cannot widen the column", () => {
     const element = KanbanColumnDropzone({
       children: (
         <article>{"LongTaskTitleWithoutWordBreaks".repeat(20)}</article>
@@ -52,9 +52,9 @@ describe("KanbanColumnDropzone", () => {
     });
     const [viewport] = elementChildren(element);
 
-    expect(viewport.props.className).toContain("[&>div]:!block");
-    expect(viewport.props.className).toContain("[&>div]:w-full");
+    expect(viewport.props.className).toContain("overflow-y-auto");
     expect(viewport.props.className).toContain("pr-1.5");
+    expect(elementChildren(viewport)[0].props.className).toContain("w-full");
   });
 
   it("preserves the Wework dropzone classes, test id and active drag hint", () => {
@@ -94,20 +94,6 @@ describe("KanbanColumnDropzone", () => {
         (node) =>
           node.props["data-testid"] ===
           "cloud-todo-column-dropzone-pending-content",
-      ),
-    ).toBeDefined();
-    expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] ===
-          "cloud-todo-column-dropzone-pending-scrollbar",
-      ),
-    ).toBeDefined();
-    expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] ===
-          "cloud-todo-column-dropzone-pending-scrollbar-thumb",
       ),
     ).toBeDefined();
   });

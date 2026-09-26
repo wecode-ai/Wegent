@@ -21,7 +21,6 @@ from app.services.execution.router import CommunicationMode, ExecutionRouter
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_managed_execution import (
     ManagedTeamExecutionHandle,
-    _resolve_primary_team_model_id,
     project_automation_managed_execution_service,
 )
 from shared.models import ExecutionRequest
@@ -53,48 +52,6 @@ def _managed_task_json(*, subtask_id: int, status: str = "PENDING") -> dict:
         },
         "status": {"status": status, "progress": 0},
     }
-
-
-def test_primary_team_model_id_uses_first_executable_bot(monkeypatch):
-    db = MagicMock()
-    bot = SimpleNamespace(id=9, name="claude-bot")
-    team = SimpleNamespace(
-        user_id=7,
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Team",
-            "metadata": {"name": "claude-team", "namespace": "default"},
-            "spec": {
-                "members": [
-                    {
-                        "botRef": {
-                            "name": "claude-bot",
-                            "namespace": "default",
-                        }
-                    }
-                ],
-                "collaborationModel": "solo",
-            },
-        },
-    )
-    get_bot = MagicMock(return_value=bot)
-    resolve_model = MagicMock(return_value="claude-model")
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution."
-        "kindReader.get_by_name_and_namespace",
-        get_bot,
-    )
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution."
-        "resolve_model_name_for_bot",
-        resolve_model,
-    )
-
-    model_id = _resolve_primary_team_model_id(db, team=team, user_id=11)
-
-    assert model_id == "claude-model"
-    get_bot.assert_called_once_with(db, 7, "Bot", "default", "claude-bot")
-    resolve_model.assert_called_once_with(db, bot, 11)
 
 
 @pytest.mark.asyncio
@@ -177,448 +134,6 @@ async def test_managed_dispatch_creates_real_task_with_board_labels(monkeypatch)
         prompt="Triage this board event",
         developer_instruction="Hidden project manager context",
     )
-
-
-@pytest.mark.asyncio
-async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
-    monkeypatch,
-):
-    task = SimpleNamespace(id=51, json={"metadata": {"labels": {}}})
-    result = SimpleNamespace(
-        task=task,
-        user_subtask=SimpleNamespace(id=52),
-        assistant_subtask=SimpleNamespace(id=53),
-    )
-    create_chat_task = AsyncMock(return_value=result)
-    update_json = MagicMock(
-        side_effect=lambda db, *, task, payload: setattr(task, "json", payload)
-    )
-    enqueue = MagicMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution.create_chat_task",
-        create_chat_task,
-    )
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution.task_store.update_json",
-        update_json,
-    )
-    resolve_model_id = MagicMock(return_value="claude-model")
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution."
-        "_resolve_primary_team_model_id",
-        resolve_model_id,
-    )
-    monkeypatch.setattr(
-        "app.tasks.project_automation_tasks."
-        "execute_managed_project_automation.delay",
-        enqueue,
-    )
-    execution = SimpleNamespace(
-        id=61,
-        loop_item_id="board-task-1",
-        cloud_project_id="project-1",
-        agent_id="robot-9",
-        team_id=8,
-        executor_owner_user_id=7,
-        backend_task_id=None,
-        runtime_origin_context={},
-    )
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.service.loop_item_execution_service._linked_activity",
-        MagicMock(return_value=None),
-    )
-    db = MagicMock()
-    db.get.side_effect = lambda model, row_id: (
-        execution if model is LoopItemExecution and row_id == 61 else None
-    )
-    owner = SimpleNamespace(id=7)
-    agent = SimpleNamespace(
-        id="robot-9",
-        cloud_project_id="project-1",
-        title="Code Reviewer",
-        name="code-reviewer",
-        status="active",
-    )
-    team = SimpleNamespace(id=8, kind="Team", name="Review Team", is_active=True)
-
-    handle = await project_automation_managed_execution_service.dispatch_board_team(
-        db=db,
-        owner=owner,
-        agent=agent,
-        team=team,
-        prompt="  Review the task  ",
-        title="Board review",
-        project_id="project-1",
-        loop_item_id="board-task-1",
-        execution_id=61,
-    )
-
-    assert handle == ManagedTeamExecutionHandle(
-        task_id=51,
-        subtask_id=53,
-        source="board_team_assignment",
-        execution_id=61,
-    )
-    assert execution.backend_task_id == 51
-    resolve_model_id.assert_called_once_with(db, team=team, user_id=owner.id)
-    assert create_chat_task.await_args.kwargs["commit"] is False
-    params = create_chat_task.await_args.kwargs["params"]
-    assert params.auto_delete_executor == "false"
-    assert task.json["metadata"]["labels"] == {
-        "source": "board_team_assignment",
-        "boardTeamExecutionId": "61",
-        "boardTeamSubtaskId": "53",
-        "boardTeamTeamId": "8",
-        "weworkSpaceProjectId": "project-1",
-        "weworkSpaceTaskId": "board-task-1",
-        "modelId": "claude-model",
-    }
-    activity = db.add.call_args.args[0]
-    assert activity.sender_id == "robot-9"
-    assert activity.sender_name == "Code Reviewer"
-    assert activity.agent_id == "robot-9"
-    assert activity.metadata_json["execution_id"] == 61
-    enqueue.assert_called_once_with(
-        task_id=51,
-        assistant_subtask_id=53,
-        user_subtask_id=52,
-        team_id=8,
-        user_id=7,
-        prompt="Review the task",
-        source="board_team_assignment",
-        execution_id=61,
-    )
-
-
-def test_board_runtime_activation_task_marks_worker_failure(monkeypatch):
-    from app.tasks.project_automation_tasks import dispatch_board_robot_execution
-
-    db = MagicMock()
-    dispatch = AsyncMock(side_effect=RuntimeError("invalid runtime target"))
-    fail = MagicMock()
-    monkeypatch.setattr(
-        "app.tasks.project_automation_tasks.SessionLocal",
-        MagicMock(return_value=db),
-    )
-    monkeypatch.setattr(
-        "app.services.board_team_execution.dispatch_board_robot_execution",
-        dispatch,
-    )
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.service." "loop_item_execution_service.fail",
-        fail,
-    )
-
-    with pytest.raises(RuntimeError, match="invalid runtime target"):
-        dispatch_board_robot_execution.run(execution_id=61)
-
-    db.rollback.assert_called_once_with()
-    fail.assert_called_once_with(
-        db,
-        execution_id=61,
-        error="invalid runtime target",
-        termination_reason="wegent_runtime_activation_failed",
-    )
-    db.close.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_board_team_completion_updates_only_matching_execution_truth(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    team = Kind(
-        kind="Team",
-        name="board-completion-team",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={},
-    )
-    task = TaskResource(
-        user_id=test_user.id,
-        kind="Task",
-        name="board-team-task",
-        namespace="default",
-        json={"metadata": {"labels": {}}},
-    )
-    item = LoopItem(
-        id="board-team-item",
-        cloud_project_id="project-1",
-        title="Review board task",
-        status="inbox",
-        created_by_user_id=test_user.id,
-        metadata_json={},
-    )
-    test_db.add_all([team, task, item])
-    test_db.flush()
-    execution = LoopItemExecution(
-        loop_item_id=item.id,
-        cloud_project_id="project-1",
-        executor_owner_user_id=test_user.id,
-        team_id=team.id,
-        backend_task_id=task.id,
-        assigner_user_id=test_user.id,
-        execution_environment="managed",
-        status="running",
-        observed_state="running",
-        sync_state="in_sync",
-    )
-    test_db.add(execution)
-    test_db.flush()
-    task.json = {
-        "metadata": {
-            "labels": {
-                "source": "board_team_assignment",
-                "boardTeamExecutionId": str(execution.id),
-                "boardTeamSubtaskId": "53",
-                "boardTeamTeamId": str(team.id),
-                "weworkSpaceProjectId": "project-1",
-                "weworkSpaceTaskId": item.id,
-            }
-        },
-        "status": {"status": "COMPLETED"},
-    }
-    test_db.commit()
-
-    @contextmanager
-    def session():
-        yield test_db
-
-    monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
-    from app.services.board_team_completion import handle_board_team_task_completed
-
-    await handle_board_team_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=54,
-            user_id=test_user.id,
-            status="COMPLETED",
-            result={"value": "Unrelated completion"},
-        )
-    )
-    test_db.refresh(execution)
-    assert execution.status == "running"
-
-    await handle_board_team_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=53,
-            user_id=test_user.id,
-            status="COMPLETED",
-            result={"result": "Review complete"},
-        )
-    )
-
-    test_db.refresh(execution)
-    assert execution.status == "completed"
-    assert execution.observed_state == "succeeded"
-    assert execution.backend_task_id == task.id
-
-
-@pytest.mark.asyncio
-async def test_board_team_continuation_projects_to_its_comment_without_rewriting_execution(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    task = TaskResource(
-        user_id=test_user.id,
-        kind="Task",
-        name="board-team-continuation",
-        namespace="default",
-        json={"metadata": {"labels": {}}},
-    )
-    item = LoopItem(
-        id="board-team-continuation-item",
-        cloud_project_id="project-1",
-        title="Continue board task",
-        status="in_review",
-        created_by_user_id=test_user.id,
-        metadata_json={},
-    )
-    test_db.add_all([task, item])
-    test_db.flush()
-    execution = LoopItemExecution(
-        loop_item_id=item.id,
-        cloud_project_id="project-1",
-        executor_owner_user_id=test_user.id,
-        team_id=8,
-        backend_task_id=task.id,
-        assigner_user_id=test_user.id,
-        execution_environment="wegent",
-        status="completed",
-        observed_state="succeeded",
-        sync_state="in_sync",
-    )
-    test_db.add(execution)
-    test_db.flush()
-    continuation_subtask = Subtask(
-        user_id=test_user.id,
-        task_id=task.id,
-        team_id=8,
-        title="Continue board task",
-        bot_ids=[],
-        role=SubtaskRole.ASSISTANT,
-        status=SubtaskStatus.COMPLETED,
-        progress=100,
-    )
-    test_db.add(continuation_subtask)
-    test_db.flush()
-    activity = ProjectChatMessage(
-        message_id="continuation-activity",
-        client_message_id="continuation-activity",
-        project_id="project-1",
-        task_id=item.id,
-        sender_type="agent",
-        sender_id="board-agent-1",
-        sender_name="Board Agent",
-        message_type="agent_chunk",
-        content="",
-        metadata_json={
-            "execution_id": execution.id,
-            "executor_type": "wegent_team",
-            "backend_task_id": task.id,
-            "backend_subtask_id": continuation_subtask.id,
-            "run_status": "running",
-        },
-        agent_id="board-agent-1",
-        runtime_task_id=f"wegent:{task.id}:{continuation_subtask.id}",
-        status="streaming",
-    )
-    test_db.add(activity)
-    test_db.flush()
-    task.json = {
-        "metadata": {
-            "labels": {
-                "source": "board_team_assignment",
-                "boardTeamExecutionId": str(execution.id),
-                "boardTeamSubtaskId": "53",
-                "boardTeamTeamId": "8",
-                "boardTeamActiveSubtaskId": str(continuation_subtask.id),
-                "boardTeamActiveMessageId": activity.message_id,
-                "weworkSpaceProjectId": "project-1",
-                "weworkSpaceTaskId": item.id,
-            }
-        },
-        "status": {"status": "COMPLETED"},
-    }
-    test_db.commit()
-
-    @contextmanager
-    def session():
-        yield test_db
-
-    push = MagicMock()
-    monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
-    monkeypatch.setattr(
-        "app.services.board_team_continuation.push_project_chat_message", push
-    )
-    from app.services.board_team_completion import handle_board_team_task_completed
-
-    await handle_board_team_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=continuation_subtask.id,
-            user_id=test_user.id,
-            status="COMPLETED",
-            result={"value": "继续执行完成"},
-        )
-    )
-
-    test_db.refresh(activity)
-    test_db.refresh(execution)
-    assert activity.status == "completed"
-    assert activity.content == "继续执行完成"
-    assert activity.metadata_json["run_status"] == "completed"
-    assert execution.status == "completed"
-    assert execution.observed_state == "succeeded"
-    push.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_board_team_cancel_event_projects_runtime_acknowledged_truth(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    team = Kind(
-        kind="Team",
-        name="board-cancel-team",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=True,
-        json={},
-    )
-    task = TaskResource(
-        user_id=test_user.id,
-        kind="Task",
-        name="board-cancel-task",
-        namespace="default",
-        json={"metadata": {"labels": {}}},
-    )
-    item = LoopItem(
-        id="board-cancel-item",
-        cloud_project_id="project-1",
-        title="Cancel board task",
-        status="inbox",
-        created_by_user_id=test_user.id,
-        metadata_json={},
-    )
-    test_db.add_all([team, task, item])
-    test_db.flush()
-    execution = LoopItemExecution(
-        loop_item_id=item.id,
-        cloud_project_id="project-1",
-        executor_owner_user_id=test_user.id,
-        team_id=team.id,
-        backend_task_id=task.id,
-        assigner_user_id=test_user.id,
-        execution_environment="wegent",
-        status="running",
-        observed_state="running",
-        sync_state="in_sync",
-    )
-    test_db.add(execution)
-    test_db.flush()
-    task.json = {
-        "metadata": {
-            "labels": {
-                "source": "board_team_assignment",
-                "boardTeamExecutionId": str(execution.id),
-                "boardTeamSubtaskId": "53",
-                "boardTeamTeamId": str(team.id),
-                "weworkSpaceProjectId": "project-1",
-                "weworkSpaceTaskId": item.id,
-            }
-        },
-        "status": {"status": "CANCELLED"},
-    }
-    test_db.commit()
-
-    @contextmanager
-    def session():
-        yield test_db
-
-    monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
-    from app.services.board_team_completion import handle_board_team_task_completed
-
-    await handle_board_team_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=53,
-            user_id=test_user.id,
-            status="CANCELLED",
-            result={"value": "Stopped in Wegent"},
-        )
-    )
-
-    test_db.refresh(execution)
-    assert execution.status == "cancelled"
-    assert execution.observed_state == "cancelled"
-    assert execution.sync_state == "in_sync"
-    assert execution.termination_reason == "runtime_cancel_acknowledged"
 
 
 @pytest.mark.asyncio
@@ -770,127 +285,6 @@ async def test_managed_execution_builds_explicit_board_mcp_and_has_no_device(
     assert request.system_prompt == ("Coordinate the project without executing Issues.")
     assert dispatched is True
     mark_started.assert_called_once_with(task_id=51)
-    dispatcher.dispatch.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_board_team_execution_reads_status_before_session_closes(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    execution = LoopItemExecution(
-        loop_item_id="board-task-1",
-        cloud_project_id="project-1",
-        executor_owner_user_id=test_user.id,
-        agent_id="board-agent-1",
-        team_id=8,
-        assigner_user_id=test_user.id,
-        execution_environment="wegent",
-        status="queued",
-    )
-    test_db.add(execution)
-    test_db.flush()
-    execution_id = execution.id
-    activity = ProjectChatMessage(
-        message_id="board-team-execution-activity",
-        client_message_id="board-team-execution-activity",
-        project_id="project-1",
-        task_id="board-task-1",
-        sender_type="agent",
-        sender_id="board-agent-1",
-        sender_name="Board Agent",
-        message_type="agent_status",
-        content="",
-        metadata_json={"execution_id": execution_id, "run_status": "queued"},
-        agent_id="board-agent-1",
-        status="pending",
-    )
-    test_db.add(activity)
-    test_db.commit()
-    test_db.expire_on_commit = True
-
-    session_closed = False
-
-    @contextmanager
-    def session():
-        nonlocal session_closed
-        try:
-            yield test_db
-        finally:
-            test_db.expunge_all()
-            session_closed = True
-
-    objects = SimpleNamespace(
-        task=SimpleNamespace(id=51),
-        assistant_subtask=SimpleNamespace(id=53),
-        team=SimpleNamespace(id=8),
-        user=SimpleNamespace(id=test_user.id),
-    )
-    request = ExecutionRequest(task_id=51, subtask_id=53, device_id=None)
-    build_request = AsyncMock(return_value=request)
-
-    async def dispatch(_request, device_id=None, emitter=None):
-        assert session_closed is True
-        assert device_id is None
-        await emitter.close()
-
-    dispatcher = MagicMock()
-    dispatcher.dispatch = AsyncMock(side_effect=dispatch)
-    push_activity = MagicMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution.get_db_session", session
-    )
-    monkeypatch.setattr(
-        "app.services.board_team_completion.register_board_team_completion_handler",
-        MagicMock(),
-    )
-    monkeypatch.setattr(
-        project_automation_managed_execution_service,
-        "_claim_pending_execution",
-        MagicMock(return_value=True),
-    )
-    monkeypatch.setattr(
-        project_automation_managed_execution_service,
-        "_load_detached_execution_objects",
-        MagicMock(return_value=objects),
-    )
-    monkeypatch.setattr(
-        project_automation_managed_execution_service,
-        "_execution_is_running",
-        MagicMock(return_value=True),
-    )
-    monkeypatch.setattr(
-        "app.services.chat.trigger.unified.build_execution_request",
-        build_request,
-    )
-    monkeypatch.setattr(
-        "app.services.execution.execution_dispatcher",
-        dispatcher,
-    )
-    monkeypatch.setattr(loop_item_execution_service, "_push_activity", push_activity)
-
-    dispatched = await project_automation_managed_execution_service.execute(
-        handle=ManagedTeamExecutionHandle(
-            task_id=51,
-            subtask_id=53,
-            source="board_team_assignment",
-            execution_id=execution_id,
-        ),
-        user_subtask_id=52,
-        team_id=8,
-        user_id=test_user.id,
-        prompt="Handle board task",
-        source="board_team_assignment",
-        execution_id=execution_id,
-    )
-
-    persisted = test_db.get(LoopItemExecution, execution_id)
-    assert dispatched is True
-    assert persisted is not None
-    assert persisted.status == "running"
-    assert persisted.backend_task_id == 51
-    assert push_activity.call_count == 1
     dispatcher.dispatch.assert_awaited_once()
 
 
@@ -1164,7 +558,13 @@ async def test_completion_handler_persists_comment_and_run_once(
         description="Choose a robot",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+        metadata_json={
+            "dispatch_target": {
+                "kind": "collaboration_group",
+                "id": "1",
+                "name": "Team",
+            }
+        },
     )
     run = ProjectAutomationRun(
         id="run-1",
@@ -1243,11 +643,11 @@ async def test_completion_handler_persists_comment_and_run_once(
 
     test_db.refresh(run)
     test_db.refresh(message)
-    assert run.status == "failed"
+    assert run.status == "succeeded"
     assert run.backend_task_id == task.id
     assert run.completed_at is not None
     assert run.version == 2
-    assert message.status == "failed"
+    assert message.status == "completed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id
@@ -1255,113 +655,6 @@ async def test_completion_handler_persists_comment_and_run_once(
 
 
 @pytest.mark.asyncio
-async def test_manager_callback_failure_keeps_completed_member_assignment(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    task = TaskResource(
-        user_id=test_user.id,
-        kind="Task",
-        name="assigned-manager-task",
-        namespace="default",
-        json={
-            "metadata": {
-                "labels": {
-                    "source": "project_automation",
-                    "projectAutomationSubtaskId": "63",
-                    "projectAutomationRunId": "assigned-run-1",
-                    "projectChatMessageId": "assigned-message-1",
-                    "weworkSpaceProjectId": "project-1",
-                    "weworkSpaceTaskId": "assigned-board-task-1",
-                }
-            }
-        },
-    )
-    board_item = LoopItem(
-        id="assigned-board-task-1",
-        cloud_project_id="project-1",
-        title="Assigned board task",
-        status="inbox",
-        created_by_user_id=test_user.id,
-        assignee_user_id=test_user.id,
-        metadata_json={},
-    )
-    rule = ProjectAutomationRule(
-        id="assigned-rule-1",
-        cloud_project_id="project-1",
-        title="Assigned managed rule",
-        description="Choose a project member",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
-    )
-    run = ProjectAutomationRun(
-        id="assigned-run-1",
-        cloud_project_id="project-1",
-        parent_id=rule.id,
-        task_id=board_item.id,
-        title="Assigned managed run",
-        status="succeeded",
-        created_by_user_id=test_user.id,
-        metadata_json={"activity_message_id": "assigned-message-1"},
-    )
-    message = ProjectChatMessage(
-        message_id="assigned-message-1",
-        client_message_id="assigned-message-1",
-        project_id="project-1",
-        task_id=board_item.id,
-        sender_type="agent",
-        sender_id="wegent_team:8",
-        sender_name="Wegent manager",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "automation_run_id": run.id,
-            "run_status": "running",
-            "selected_assignee_type": "user",
-            "selected_assignee_id": str(test_user.id),
-        },
-        status="streaming",
-    )
-    test_db.add_all([task, board_item, rule, run, message])
-    test_db.commit()
-
-    @contextmanager
-    def session():
-        yield test_db
-
-    pushed = MagicMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_completion.get_db_session", session
-    )
-    monkeypatch.setattr(
-        "app.services.project_automation_completion.push_project_chat_message",
-        pushed,
-    )
-    from app.services.project_automation_completion import (
-        handle_project_automation_task_completed,
-    )
-
-    await handle_project_automation_task_completed(
-        TaskCompletedEvent(
-            task_id=task.id,
-            subtask_id=63,
-            user_id=test_user.id,
-            status="FAILED",
-            error="result stream closed",
-        )
-    )
-
-    test_db.refresh(run)
-    test_db.refresh(message)
-    assert run.status == "succeeded"
-    assert board_item.assignee_user_id == test_user.id
-    assert message.status == "completed"
-    assert message.content == "AI 调度员已完成分派，但调度结果回传失败。"
-    pushed.assert_called_once()
-
-
 @pytest.mark.asyncio
 async def test_executor_callback_projects_managed_parent_comment(
     test_db,
@@ -1401,7 +694,13 @@ async def test_executor_callback_projects_managed_parent_comment(
         description="Choose a robot",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+        metadata_json={
+            "dispatch_target": {
+                "kind": "collaboration_group",
+                "id": "1",
+                "name": "Team",
+            }
+        },
     )
     run = ProjectAutomationRun(
         id="callback-run-1",
@@ -1516,9 +815,9 @@ async def test_executor_callback_projects_managed_parent_comment(
     test_db.refresh(run)
     test_db.refresh(message)
     assert response.status == "ok"
-    assert run.status == "failed"
+    assert run.status == "succeeded"
     assert run.backend_task_id == task.id
-    assert message.status == "failed"
+    assert message.status == "completed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id

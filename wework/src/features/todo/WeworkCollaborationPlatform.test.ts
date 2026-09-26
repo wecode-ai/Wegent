@@ -1322,7 +1322,6 @@ describe('Wework collaboration workspace API', () => {
           modelType: 'codex',
           options: {},
         },
-        workflowNodeId: 'node-1',
         bindingType: 'system',
         linkedAt: '2026-09-14T00:00:00Z',
       })
@@ -1340,7 +1339,6 @@ describe('Wework collaboration workspace API', () => {
         modelType: 'codex',
         options: {},
       },
-      workflow_node_id: 'node-1',
       binding_type: 'system',
       linked_at: '2026-09-14T00:00:00Z',
     })
@@ -2127,12 +2125,7 @@ describe('Wework collaboration workspace API', () => {
     const delivery = {
       ...createLocalDeliveryApi(),
       createCloudProject: vi.fn().mockResolvedValue({ id: 'new-local', name: 'New local' }),
-      updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => ({
-        id: 'new-local',
-        name: 'New local',
-        version: 2,
-        project_manager: input.project_manager,
-      })),
+      updateCloudProject: vi.fn(),
     }
     const details = {
       ...createLocalDetailServices(),
@@ -2158,15 +2151,7 @@ describe('Wework collaboration workspace API', () => {
         capabilityMode: 'follow_device',
       })
     )
-    expect(delivery.updateCloudProject).toHaveBeenCalledWith(
-      'new-local',
-      expect.objectContaining({
-        project_manager: expect.objectContaining({
-          enabled: true,
-          agentId: 'LA-new-local',
-        }),
-      })
-    )
+    expect(delivery.updateCloudProject).not.toHaveBeenCalled()
   })
 
   it('does not add the default local Agent when local project creation opts out', async () => {
@@ -2261,6 +2246,143 @@ describe('Wework collaboration workspace API', () => {
     ])
   })
 
+  it('initializes the latest persisted local environment when the rendered version is stale', async () => {
+    const executionEnvironment = {
+      repositories: [],
+      setup_steps: [{ command: 'pnpm install', working_directory: '' }],
+    }
+    const updateCloudProject = vi
+      .fn()
+      .mockImplementation(async (_projectId: string, input: Record<string, unknown>) => ({
+        id: 'local-project',
+        name: 'Local project',
+        project_store: 'local',
+        version: 3,
+        execution_environment: input.execution_environment,
+      }))
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            project_key: 'WORK',
+            name: 'My Tasks',
+            project_store: 'local',
+            metadata: { system_kind: 'default_work_items' },
+          },
+          {
+            id: 'local-project',
+            name: 'Local project',
+            project_store: 'local',
+            version: 2,
+            execution_environment: executionEnvironment,
+          },
+        ],
+      }),
+      updateCloudProject,
+    } as unknown as DeliveryApi
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: JSON.stringify({ workspacePath: '/workspace/local-project' }),
+      stderr: '',
+      error: '',
+    })
+    const details = {
+      ...createLocalDetailServices(),
+      deviceApi: {
+        ...createLocalDetailServices().deviceApi,
+        executeCommand,
+      },
+    } as unknown as ProjectSpaceDetailServices
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, details)!
+
+    await expect(
+      api.projects.initializeExecutionEnvironment!('local-project', {
+        deviceId: 7,
+        version: 1,
+      })
+    ).resolves.toMatchObject({
+      version: 3,
+      execution_environment: {
+        devices: {
+          'local-device': {
+            status: 'ready',
+            workspace_path: '/workspace/local-project',
+          },
+        },
+      },
+    })
+    expect(updateCloudProject).toHaveBeenCalledWith(
+      'local-project',
+      expect.objectContaining({
+        version: 2,
+        execution_environment: expect.objectContaining({
+          setup_steps: executionEnvironment.setup_steps,
+        }),
+      })
+    )
+  })
+
+  it('persists local workspace execution configuration through its backing project', async () => {
+    const executionEnvironment = {
+      repositories: [],
+      setup_steps: [{ command: 'pnpm install', working_directory: '' }],
+    }
+    const updateCloudProject = vi.fn().mockResolvedValue({
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: 'WORK',
+      name: 'My Tasks',
+      project_store: 'local',
+      metadata: { system_kind: 'default_work_items' },
+      version: 2,
+      execution_environment: executionEnvironment,
+    })
+    const delivery = {
+      ...createLocalDeliveryApi(),
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: DEFAULT_WORK_ITEM_PROJECT_ID,
+            project_key: 'WORK',
+            name: 'My Tasks',
+            project_store: 'local',
+            metadata: { system_kind: 'default_work_items' },
+            version: 1,
+          },
+          {
+            id: 'local-project',
+            name: 'Local project',
+            project_store: 'local',
+            version: 1,
+          },
+        ],
+      }),
+      updateCloudProject,
+    } as unknown as DeliveryApi
+    const api = createLocalWorkspaceApi(delivery, 1, 'admin', null, createLocalDetailServices())!
+
+    await expect(
+      api.workspaces!.update('wework-local-workspace', {
+        version: 1,
+        executionEnvironment: {
+          repositories: [],
+          setupSteps: [{ command: 'pnpm install', workingDirectory: '' }],
+        },
+      })
+    ).resolves.toMatchObject({
+      version: 2,
+      execution_environment: executionEnvironment,
+    })
+    expect(updateCloudProject).toHaveBeenCalledWith(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      expect.objectContaining({
+        version: 1,
+        execution_environment: executionEnvironment,
+      })
+    )
+  })
+
   it('omits the git repository catalog capability from the local workspace api', () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),
@@ -2303,10 +2425,14 @@ describe('Wework collaboration workspace API', () => {
 
     const created = await api?.automations?.create('local-project', {
       name: '新 Issue 自动处理',
+      prompt: '处理新 Issue',
       enabled: true,
       triggerType: 'event',
       eventType: 'task.created',
       eventConfig: { executionTarget: 'existing_issue' },
+      cronExpression: null,
+      timezone: 'Asia/Shanghai',
+      executionDeviceId: null,
       targetKind: 'agent',
       targetId: 'agent-1',
     })
@@ -2316,6 +2442,10 @@ describe('Wework collaboration workspace API', () => {
       name: '新 Issue 自动处理',
       targetKind: 'agent',
       targetId: 'agent-1',
+      targetName: 'agent-1',
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: null,
       version: 1,
     })
     await expect(api?.automations?.list('local-project')).resolves.toEqual([created])
@@ -2352,7 +2482,6 @@ describe('Wework collaboration workspace API', () => {
       update: vi.fn(async () => ({})),
       remove: vi.fn(async () => ({ projectVersion: 2, workflowAutomationId: null })),
       runNow: vi.fn(async () => ({})),
-      runWorkflowNode: vi.fn(async () => ({})),
       listRuns: vi.fn(async () => []),
       cancelRun: vi.fn(async () => ({})),
       retryRun: vi.fn(async () => ({})),
@@ -2375,12 +2504,6 @@ describe('Wework collaboration workspace API', () => {
     await api!.automations!.update('cloud-project', 'automation-1', { version: 1 })
     await api!.automations!.remove('cloud-project', 'automation-1')
     await api!.automations!.runNow('cloud-project', 'automation-1')
-    await api!.automations!.runWorkflowNode(
-      'cloud-project',
-      'issue-1',
-      'workflow-node-1',
-      'automation-1'
-    )
     await api!.automations!.listRuns('cloud-project', 'automation-1')
     await api!.automations!.cancelRun('cloud-project', 'run-1')
     await api!.automations!.retryRun('cloud-project', 'run-1')
@@ -2395,12 +2518,6 @@ describe('Wework collaboration workspace API', () => {
     })
     expect(cloudAutomations.remove).toHaveBeenCalledWith('cloud-project', 'automation-1')
     expect(cloudAutomations.runNow).toHaveBeenCalledWith('cloud-project', 'automation-1')
-    expect(cloudAutomations.runWorkflowNode).toHaveBeenCalledWith(
-      'cloud-project',
-      'issue-1',
-      'workflow-node-1',
-      'automation-1'
-    )
     expect(cloudAutomations.listRuns).toHaveBeenCalledWith('cloud-project', 'automation-1')
     expect(cloudAutomations.cancelRun).toHaveBeenCalledWith('cloud-project', 'run-1')
     expect(cloudAutomations.retryRun).toHaveBeenCalledWith('cloud-project', 'run-1')

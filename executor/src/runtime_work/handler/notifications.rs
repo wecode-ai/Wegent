@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-
 impl RuntimeWorkRpcHandler {
     pub(super) fn begin_active_codex_transcript(
         &self,

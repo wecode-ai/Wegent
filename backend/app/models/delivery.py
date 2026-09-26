@@ -254,13 +254,13 @@ class ProjectAutomationRun(LoopNode):
 
 
 class ProjectWorkflowRun(LoopNode):
-    """One durable AI planning attempt for an Issue."""
+    """Persisted legacy workflow run rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_run"}
 
 
 class ProjectWorkflowPlanItem(LoopNode):
-    """One proposed concrete child task in a workflow plan version."""
+    """Persisted legacy workflow plan rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
 
@@ -303,6 +303,29 @@ class LoopItemTaskBinding(LoopNode):
             return None
         value = metadata.get("workflow_node_id")
         return value if isinstance(value, str) and value else None
+
+    def _metadata_text(self, key: str) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def human_assignment_id(self) -> str | None:
+        return self._metadata_text("human_assignment_id")
+
+    @property
+    def dispatch_id(self) -> str | None:
+        return self._metadata_text("dispatch_id")
+
+    @property
+    def dispatch_round_id(self) -> str | None:
+        return self._metadata_text("dispatch_round_id")
+
+    @property
+    def assignment_id(self) -> str | None:
+        return self._metadata_text("assignment_id")
 
     @property
     def change_requests(self) -> list[dict[str, object]]:

@@ -40,7 +40,6 @@ import {
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
-import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
 import {
   getComposerApps,
   publishComposerApps,
@@ -255,10 +254,6 @@ export function WorkbenchProvider({
   )
   const executorClient = useMemo(() => {
     return createExecutorClientForWorkbenchServices(resolvedServices)
-  }, [resolvedServices])
-  useEffect(() => {
-    if (!resolvedServices.localLoopItemExecutionApi) return
-    return startLocalRobotQueueDispatcher(resolvedServices)
   }, [resolvedServices])
   const sharedLifecycleStore = useMemo(
     () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),

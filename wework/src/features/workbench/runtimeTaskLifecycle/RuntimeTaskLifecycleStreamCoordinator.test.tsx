@@ -458,6 +458,20 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
     store.turnStarted(address, 'provisional-turn')
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'optimistic-user',
+        role: 'user',
+        content: 'continue',
+        status: 'done',
+        createdAt: '2026-08-21T14:39:00.000Z',
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      subtaskId: 'provisional-turn',
+    })
     let streamHandlers: ChatStreamHandlers = {}
     const listRuntimeWork = vi.fn()
     const getRuntimeTranscript = vi.fn().mockResolvedValue({
@@ -465,6 +479,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       workspacePath: address.workspacePath,
       runtime: address.runtime,
       running: false,
+      fullContent: true,
       messages: [
         {
           id: 'assistant-1',
@@ -520,11 +535,102 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'fast completed answer',
+    ])
+  })
+
+  test('replaces an optimistic turn after the executor projection settles during transcript refresh', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'provisional-turn')
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'optimistic-user',
+        role: 'user',
+        content: 'continue',
+        status: 'done',
+        createdAt: '2026-08-21T14:39:00.000Z',
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      subtaskId: 'provisional-turn',
+    })
+    let streamHandlers: ChatStreamHandlers = {}
+    let resolveTranscript: ((value: RuntimeTranscriptResponse) => void) | undefined
+    const getRuntimeTranscript = vi.fn(
+      () =>
+        new Promise<RuntimeTranscriptResponse>(resolve => {
+          resolveTranscript = resolve
+        })
+    )
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'provider-renamed-turn',
+        result: {},
+      } as never)
+    })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    act(() => store.syncRuntimeWork(runtimeWork(false)))
+    await act(async () => {
+      resolveTranscript?.({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: address.runtime,
+        running: false,
+        fullContent: true,
+        messages: [],
+        turns: [
+          {
+            id: 'provider-renamed-turn',
+            status: 'completed',
+            completedAt: 1_786_692_066_192,
+            items: [
+              {
+                id: 'assistant-item-1',
+                type: 'assistant_text',
+                content: 'authoritative completed answer',
+                createdAt: 1_786_692_066_192,
+              },
+            ],
+          },
+        ],
+      })
+    })
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'authoritative completed answer',
+    ])
   })
 
   test('does not settle a newer turn from a repeated old terminal event', async () => {
@@ -590,6 +696,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     expect(store.getTask(address)?.turn.id).toBe('turn-2')
@@ -749,6 +856,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))

@@ -6,7 +6,8 @@
 
 The queue is a derived view over this table: any non-terminal row is part of
 the queue. The task row keeps the assignment chain; this table records each
-run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
+run's lifecycle (approval, queuing, atomic claiming, lease, retries). Executors
+own local capacity and pull queued work when they have an available slot.
 """
 
 import json
@@ -219,11 +220,11 @@ class LoopItemExecution(Base):
         """Return the transport role without persisting redundant state."""
 
         configured = self.runtime_selection.get("executor_kind")
-        if configured in {"generic_robot", "automation_manager"}:
+        if configured in {"generic_robot", "collaboration_group_dispatch"}:
             return str(configured)
         if self.agent_id:
             return "project_robot"
-        return "wegent_team" if self.team_id else "automation_manager"
+        return "wegent_team" if self.team_id else "generic_robot"
 
     @property
     def runtime_selection(self) -> dict:

@@ -1008,7 +1008,7 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         headers=_auth(visitor_token),
         json={"title": "Visitor task", "description": "visitor details"},
     )
-    assert visitor_item_response.status_code == 201
+    assert visitor_item_response.status_code == 201, visitor_item_response.text
     visitor_item = visitor_item_response.json()
     visitor_items = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
@@ -2472,15 +2472,15 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
             "prompt": "Summarize yesterday's completed work.",
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
-            "agentId": agent["id"],
+            "targetKind": "agent",
+            "targetId": agent["id"],
             "enabled": True,
         },
     )
     assert created.status_code == 201
     rule = created.json()
-    assert rule["agentId"] == agent["id"]
-    assert rule["runtimeSource"] == "agent_default"
-    assert rule["runtimeProfileId"] is None
+    assert rule["targetKind"] == "agent"
+    assert rule["targetId"] == agent["id"]
     assert rule["nextRunAt"] is not None
     assert rule["nextRunAt"].endswith("Z")
 
@@ -2505,172 +2505,11 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     assert task.json()["tags"] == ["automation"]
 
 
-def test_cloud_project_automation_supports_managed_executor_sources(
+def test_cloud_project_manual_automation_queues_for_local_executor_pull(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
-) -> None:
-    test_db.add(
-        Kind(
-            kind="Device",
-            name="desktop-a",
-            namespace="default",
-            user_id=test_user.id,
-            is_active=True,
-            json={
-                "spec": {"deviceType": "local"},
-                "metadata": {"name": "desktop-a"},
-            },
-        )
-    )
-    test_db.commit()
-    project = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={"project_key": "managed", "name": "Managed automation"},
-    ).json()
-    runtime_profile = test_client.post(
-        "/api/v1/runtime-profiles",
-        headers=_auth(test_token),
-        json={
-            "name": "Managed Runtime",
-            "executionEnvironment": "local",
-            "executionDeviceId": "desktop-a",
-            "model": "model-a",
-            "workspacePolicy": "project",
-        },
-    ).json()
-
-    custom = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "Custom AI",
-            "prompt": "Read the project and handle the event.",
-            "assignmentMode": "ai_managed",
-            "managerType": "custom",
-            "runtimeSource": "fixed_profile",
-            "runtimeProfileId": runtime_profile["id"],
-            "cronExpression": "0 3 * * *",
-        },
-    )
-    assert custom.status_code == 201, custom.text
-    assert custom.json()["assignmentMode"] == "ai_managed"
-    assert custom.json()["managerType"] == "custom"
-    assert custom.json()["runtimeSource"] == "fixed_profile"
-    assert custom.json()["runtimeProfileId"] == runtime_profile["id"]
-    assert custom.json()["agentId"] is None
-
-    team = _create_runnable_wegent_team(
-        test_db,
-        user_id=test_user.id,
-        prefix="managed-automation",
-    )
-    wegent = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "Reusable robot",
-            "prompt": "Read the project and handle the event.",
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
-            "wegentTeamId": team.id,
-            "cronExpression": "0 4 * * *",
-        },
-    )
-    assert wegent.status_code == 201, wegent.text
-    assert wegent.json()["assignmentMode"] == "ai_managed"
-    assert wegent.json()["managerType"] == "wegent"
-    assert wegent.json()["wegentTeamId"] == team.id
-    assert wegent.json()["agentId"] is None
-
-    team_model = (
-        test_db.query(Kind)
-        .filter(
-            Kind.user_id == test_user.id,
-            Kind.kind == "Model",
-            Kind.name == "managed-automation-model",
-        )
-        .one()
-    )
-    team_model.is_active = False
-    test_db.commit()
-    missing_model = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "Broken reusable robot",
-            "prompt": "This request must be rejected before dispatch.",
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
-            "wegentTeamId": team.id,
-            "cronExpression": "0 4 * * *",
-        },
-    )
-    missing_model_update = test_client.patch(
-        f"/api/v1/cloud-projects/{project['id']}/automations/{custom.json()['id']}",
-        headers=_auth(test_token),
-        json={
-            "version": custom.json()["version"],
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
-            "wegentTeamId": team.id,
-        },
-    )
-    assert missing_model.status_code == 422, missing_model.text
-    assert "model is unavailable" in missing_model.json()["detail"]
-    assert missing_model_update.status_code == 422, missing_model_update.text
-    team_model.is_active = True
-    test_db.commit()
-
-    inactive_team = Kind(
-        kind="Team",
-        name="inactive-agent",
-        namespace="default",
-        user_id=test_user.id,
-        is_active=False,
-        json={"spec": {"name": "inactive-agent"}},
-    )
-    test_db.add(inactive_team)
-    test_db.commit()
-    test_db.refresh(inactive_team)
-    inaccessible = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "Inactive robot",
-            "prompt": "This request must be rejected.",
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
-            "wegentTeamId": inactive_team.id,
-            "cronExpression": "0 5 * * *",
-        },
-    )
-    assert inaccessible.status_code == 422, inaccessible.text
-
-    removed_contract = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "Legacy executor fields",
-            "prompt": "This request must be rejected.",
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
-            "wegentTeamName": team.name,
-            "wegentTeamNamespace": team.namespace,
-            "cronExpression": "0 5 * * *",
-        },
-    )
-    assert removed_contract.status_code == 422, removed_contract.text
-
-
-def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_claim(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(
         Kind(
@@ -2722,7 +2561,8 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
             "prompt": "Scan bugs.",
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
-            "agentId": agent["id"],
+            "targetKind": "agent",
+            "targetId": agent["id"],
             "enabled": True,
         },
     ).json()
@@ -2746,129 +2586,14 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert queued_execution.execution_environment == "local"
     assert queued_execution.executor_owner_user_id == test_user.id
 
-    monkeypatch.setattr(
-        "app.services.device.capacity.cache_manager.get_sync_or_raise",
-        lambda _key: {
-            "runtime_instance_id": "runtime-automation-local",
-            "runtime_capacity": {
-                "limit": 1,
-                "active": 0,
-                "active_task_ids": [],
-                "queued": 0,
-            },
-        },
-    )
-    claimed = test_client.post(
-        "/api/v1/loop-item-executions/claim-my-next",
-        headers=_auth(test_token),
-        json={
-            "executionDeviceId": "automation-local-device",
-            "leaseSeconds": 300,
-        },
-    )
-    assert claimed.status_code == 200, claimed.text
-    execution = claimed.json()
-    assert execution["executionDeviceId"] == "automation-local-device"
-    assert execution["status"] == "claimed"
-    assert execution["displayState"] == "starting"
-    assert execution["observedState"] == "unconfirmed"
-    assert execution["automationRunId"] == run["id"]
-    assert "executionPayload" not in execution
-    assert execution["runtimePayload"]["message"]
-    assert "executionRequest" not in execution["runtimePayload"]
-    assert "executorProfile" not in execution
-    assert execution["runtimePayload"]["modelId"] == "test-model"
-
-    started_runtime = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
-        headers=_auth(test_token),
-        json={
-            "runtime_device_id": "automation-local-device",
-            "runtime_task_id": execution["runtimeTaskId"],
-            "prompt": "Scan bugs.",
-        },
-    )
-    assert started_runtime.status_code == 200, started_runtime.text
-    accepted = started_runtime.json()
-    assert accepted["status"] == "claimed"
-    assert accepted["displayState"] == "waiting_runtime"
-    assert accepted["observedState"] == "accepted"
-
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
         headers=_auth(test_token),
     )
     assert runs.status_code == 200, runs.text
-    activated = runs.json()[0]
-    assert activated["status"] == "queued"
-    assert activated["taskId"]
-
-
-def test_ai_manager_assignment_endpoint_applies_tool_selected_member(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-) -> None:
-    project = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={"project_key": "managedassign", "name": "Managed assignment"},
-    ).json()
-    task = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Choose an owner"},
-    ).json()
-    rule = ProjectAutomationRule(
-        id="api-manager-rule",
-        cloud_project_id=project["id"],
-        title="AI manager",
-        description="Match the task to project capabilities.",
-        status="enabled",
-        created_by_user_id=test_user.id,
-        metadata_json={
-            "action": "ai_assign",
-            "role": {"source": "generic", "agent_id": None},
-            "runtime": {
-                "source": "issue_creator",
-                "runtime_profile_id": None,
-                "user_id": None,
-            },
-            "manager": {"type": "custom", "wegent_team_id": None},
-        },
-    )
-    run = ProjectAutomationRun(
-        id="api-manager-run",
-        cloud_project_id=project["id"],
-        parent_id=rule.id,
-        task_id=task["id"],
-        title="AI manager run",
-        status="running",
-        created_by_user_id=test_user.id,
-        metadata_json={"trigger": "task_created"},
-    )
-    test_db.add_all([rule, run])
-    test_db.commit()
-    task_token = create_task_token(
-        task_id=0,
-        subtask_id=0,
-        user_id=test_user.id,
-        user_name=test_user.user_name,
-    )
-
-    assigned = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automation-runs/{run.id}/assign",
-        headers=_auth(task_token),
-        json={"assigneeType": "user", "assigneeId": str(test_user.id)},
-    )
-
-    assert assigned.status_code == 200, assigned.text
-    assert assigned.json()["assignee_user_id"] == test_user.id
-    stored = test_db.get(LoopItem, task["id"])
-    assert stored is not None
-    assert stored.assignee_user_id == test_user.id
-    assert stored.assignee_agent_id == ""
+    queued = runs.json()[0]
+    assert queued["status"] == "queued"
+    assert queued["taskId"]
 
 
 def test_cloud_project_owner_can_manage_members(

@@ -342,7 +342,7 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
-  it("persists read state on detail open and updates every board snapshot", async () => {
+  it("preserves the read cursor until visible activity advances it", async () => {
     const unread = { ...issue, is_unread: true, content_revision: 2 };
     const read = { ...unread, is_unread: false };
     const { api, commands } = createController();
@@ -359,14 +359,13 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.markRead).not.toHaveBeenCalled();
     await commands.loadSelectedIssue(issue.id);
 
+    expect(api.issues.markRead).not.toHaveBeenCalled();
+    expect(state.selectedIssue).toEqual(unread);
+    expect(state.issues).toEqual([unread]);
+    expect(state.projectItems[project.id]).toEqual([unread]);
+    await commands.markIssueRead(unread);
     expect(api.issues.markRead).toHaveBeenCalledExactlyOnceWith(issue.id);
     expect(state.selectedIssue).toEqual(read);
-    expect(state.issues).toEqual([read]);
-    expect(state.projectItems[project.id]).toEqual([read]);
-    commands.clearSelectedIssue();
-    expect(state.issues[0].is_unread).toBe(false);
-    await commands.markIssueRead(read);
-    expect(api.issues.markRead).toHaveBeenCalledTimes(1);
   });
 
   it("preserves unread state on failure and allows retry without reopening detail", async () => {
@@ -378,6 +377,8 @@ describe("collaboration workspace controller", () => {
     await commands.loadSelectedIssue(issue.id);
 
     expect(state.selectedIssue?.is_unread).toBe(true);
+    expect(state.error).toBeNull();
+    await commands.markIssueRead(unread);
     expect(state.error).toBe("save failed");
     expect(notify).toHaveBeenCalledWith("save failed", "error");
     await commands.markIssueRead(unread);
@@ -519,67 +520,6 @@ describe("collaboration workspace controller", () => {
 
     expect(await load).toEqual(savedIssue);
     expect(state.selectedIssue).toEqual(savedIssue);
-    expect(state.attachments).toEqual([attachment]);
-    expect(state.comments).toEqual([comment]);
-  });
-
-  it("keeps started human work when a queued detail load applies afterward", () => {
-    const pending = {
-      ...issue,
-      assignee_user_id: 1,
-      human_work: {
-        assignment_id: "assignment-1",
-        assignee_user_id: 1,
-        reviewer_user_id: null,
-        submission_message_id: null,
-        submitted_by_user_id: null,
-        state: "none" as const,
-        can_start: true,
-        can_submit: false,
-        can_review: false,
-      },
-    };
-    const started = {
-      ...pending,
-      status: "in_progress",
-      version: pending.version + 1,
-      human_work: {
-        ...pending.human_work,
-        can_start: false,
-        can_submit: true,
-      },
-    };
-    state = {
-      ...state,
-      project,
-      issues: [pending],
-      projectItems: { [project.id]: [pending] },
-      selectedIssue: pending,
-    };
-
-    state = collaborationWorkspaceControllerReducer(state, {
-      type: "replace-issue",
-      issue: started,
-    });
-    state = collaborationWorkspaceControllerReducer(state, {
-      type: "issue-loaded",
-      issue: pending,
-      attachments: [attachment],
-      comments: [comment],
-      assignments: [],
-      executions: [],
-      preserveAttachments: false,
-      preserveComments: false,
-      preserveAssignments: false,
-    });
-    state = collaborationWorkspaceControllerReducer(state, {
-      type: "replace-issue",
-      issue: pending,
-    });
-
-    expect(state.selectedIssue).toEqual(started);
-    expect(state.issues).toEqual([started]);
-    expect(state.projectItems[project.id]).toEqual([started]);
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([comment]);
   });

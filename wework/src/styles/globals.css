@@ -209,10 +209,22 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   text-decoration: none;
 }
 
-/* The description editor always sits in the main content area; the side menu
-   floats in the surrounding margin instead of reserving an inner gutter. */
+/* Compact description editors do not reserve BlockNote's default side gutter. */
 .task-description-editor .bn-editor {
   padding-inline: 0;
+}
+
+/* Keep the Issue detail editor's hover controls inside its rounded surface. */
+.task-detail-workspace-description:not(.task-detail-content-readonly)
+  .task-description-editor
+  .bn-editor {
+  padding-inline: 32px 0;
+}
+
+.task-detail-workspace-description:not(.task-detail-content-readonly)
+  .task-description-editor
+  .bn-side-menu {
+  margin-inline-start: 16px;
 }
 
 .issue-description-editor,

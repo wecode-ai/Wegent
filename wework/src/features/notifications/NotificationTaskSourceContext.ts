@@ -6,13 +6,48 @@ export type TaskSource = Pick<
   'items' | 'unreadTaskKeys' | 'markRuntimeTaskRead'
 >
 
+export interface IssueDispatchPersonalTaskAction {
+  projectId: string
+  itemId: string
+  issueId: string
+  dispatchTaskId: string
+  idempotencyKey: string
+  humanAssignmentId: string
+  dispatchId: string
+  roundId: string
+  assignmentId: string
+  taskTitle: string
+  instructions: string
+  workflowStageId?: string
+}
+
+export function issueDispatchPersonalTaskInput(
+  action: Pick<IssueDispatchPersonalTaskAction, 'taskTitle' | 'instructions'>
+): string {
+  return `${action.taskTitle}\n\n${action.instructions}`
+}
+
+export type IssueDispatchNotificationAction = (
+  action: IssueDispatchPersonalTaskAction
+) => Promise<void>
+
 export interface NotificationTaskContextValue {
   taskSource: TaskSource | null
   registerTaskSource: (id: string, source: TaskSource | null, active: boolean) => void
+  issueDispatchAction: IssueDispatchNotificationAction | null
+  registerIssueDispatchAction: (
+    id: string,
+    action: IssueDispatchNotificationAction | null,
+    active: boolean
+  ) => void
 }
 
 export const NotificationTaskContext = createContext<NotificationTaskContextValue | null>(null)
 
 export function useNotificationTaskSource(): TaskSource | null {
   return useContext(NotificationTaskContext)?.taskSource ?? null
+}
+
+export function useIssueDispatchNotificationAction(): IssueDispatchNotificationAction | null {
+  return useContext(NotificationTaskContext)?.issueDispatchAction ?? null
 }

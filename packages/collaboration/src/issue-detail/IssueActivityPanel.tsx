@@ -100,6 +100,7 @@ export function IssueActivityPanel({
     api.activity,
     issue.cloud_project_id,
     issue.id,
+    issue.version,
   );
   const cancel = useCallback(
     (address: RuntimeTaskAddress) => {
@@ -114,9 +115,32 @@ export function IssueActivityPanel({
     cancel,
     translate("activity.task_activity_stop_failed"),
   );
+  const markActivityRead = useCallback(
+    async (sequence: number) => {
+      if (!api.issues) return;
+      try {
+        const updated = await api.issues.markRead(issue.id, sequence);
+        onTaskUpdated?.(updated);
+      } catch {
+        onError();
+      }
+    },
+    [api.issues, issue.id, onError, onTaskUpdated],
+  );
+  const latestActivitySequence = chat.messages.reduce(
+    (latest, message) => Math.max(latest, message.sequenceNumber),
+    0,
+  );
+  const entryReadSequence =
+    (issue.activity_read_sequence ?? 0) > 0 || issue.is_unread
+      ? (issue.activity_read_sequence ?? 0)
+      : latestActivitySequence;
   const scroll = useIssueActivityScroll({
     messages: chat.messages,
     loading: chat.loading,
+    issueId: issue.id,
+    readSequence: entryReadSequence,
+    onReadSequence: api.issues ? markActivityRead : undefined,
     cardTestIdPrefix: "collaboration-chat-card-",
   });
   const threads = useMemo(
@@ -145,7 +169,6 @@ export function IssueActivityPanel({
         : issueActivityEntries(assignments, comments, executions),
     [api.activity, assignments, comments, executions],
   );
-
   const content = (
     <IssueMarkdownProvider attachments={api.attachments}>
       <IssueActivityFeed
@@ -165,20 +188,22 @@ export function IssueActivityPanel({
             : translate("activity.task_activity_empty_without_ai")
         }
         tools={
-          api.issues ? (
-            <BrowserIssueActivityTools
-              key={issue.id}
-              api={{ ...api, issues: api.issues }}
-              issue={issue}
-              project={project}
-              agents={agents}
-              currentUserId={chat.currentUserId}
-              messages={chat.messages}
-              onMessages={chat.merge}
-              onTaskUpdated={onTaskUpdated}
-              translate={translate}
-            />
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {api.issues ? (
+              <BrowserIssueActivityTools
+                key={issue.id}
+                api={{ ...api, issues: api.issues }}
+                issue={issue}
+                project={project}
+                agents={agents}
+                currentUserId={chat.currentUserId}
+                messages={chat.messages}
+                onMessages={chat.merge}
+                onTaskUpdated={onTaskUpdated}
+                translate={translate}
+              />
+            ) : null}
+          </div>
         }
         composer={
           api.runtime &&
@@ -225,8 +250,8 @@ export function IssueActivityPanel({
               translate={translate}
               send={async (body, mentions) => {
                 if (api.activity) {
-                  await chat.send(body, undefined, mentions)
-                  return
+                  await chat.send(body, undefined, mentions);
+                  return;
                 }
                 return api.comments.create(issue.id, body);
               }}
@@ -276,7 +301,6 @@ export function IssueActivityPanel({
                         message,
                         taskBindings,
                         issue.title,
-                        issue.workflow?.nodes,
                         onOpenTaskConversation,
                       )
                     }
@@ -300,14 +324,7 @@ export function IssueActivityPanel({
                   : entry.kind === "assignment"
                     ? entry.assignment.created_by_user_name ||
                       translate("todo.someone", "项目成员")
-                    : translate(
-                        entry.run.executor_type === "automation_manager"
-                          ? "todo.execution_manager_run"
-                          : "todo.execution_run",
-                        entry.run.executor_type === "automation_manager"
-                          ? "AI 调度"
-                          : "执行任务",
-                      );
+                    : translate("todo.execution_run", "执行任务");
               const content =
                 entry.kind === "comment"
                   ? activityDisplayBody(entry.comment.body, "")
@@ -388,15 +405,6 @@ export function IssueActivityPanel({
                             data-testid={`collaboration-run-error-${entry.run.id}`}
                           >
                             {entry.run.error_message}
-                          </p>
-                        ) : null}
-                        {entry.run.executor_type === "automation_manager" &&
-                        entry.run.display_state === "succeeded" ? (
-                          <p>
-                            {translate(
-                              "todo.execution_manager_completed",
-                              "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
-                            )}
                           </p>
                         ) : null}
                       </>

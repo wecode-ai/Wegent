@@ -255,15 +255,17 @@ export function IssueDetailAttachments({
         {...dropHandlers}
       >
         {attachments.length === 0 ? (
-          <p
-            className={
-              compact
-                ? "task-detail-rail-empty"
-                : "shared-issue-detail-attachment-empty"
-            }
-          >
-            {labels.empty}
-          </p>
+          compact ? null : (
+            <p
+              className={
+                compact
+                  ? "task-detail-rail-empty"
+                  : "shared-issue-detail-attachment-empty"
+              }
+            >
+              {labels.empty}
+            </p>
+          )
         ) : (
           <div
             className={
@@ -369,7 +371,7 @@ export function IssueDetailAttachments({
             ))}
           </div>
         )}
-        {editable ? (
+        {editable && (!compact || attachments.length > 0) ? (
           <label
             className={
               compact

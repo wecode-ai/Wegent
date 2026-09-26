@@ -731,16 +731,23 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         );
         enqueueGenerationAgent(agent.id, participant?.responsibility);
       });
+      const selectedAgentIds = selectedAgents.map((agent) => agent.id);
+      while (
+        groupGenerationRunRef.current === runId &&
+        selectedAgentIds.some(
+          (agentId) => !groupGenerationRevealedAgentIdsRef.current.has(agentId),
+        )
+      ) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+      }
+      if (groupGenerationRunRef.current !== runId) return;
       if (groupGenerationAgentTimerRef.current !== null) {
         window.clearTimeout(groupGenerationAgentTimerRef.current);
         groupGenerationAgentTimerRef.current = null;
       }
       groupGenerationAgentQueueRef.current = [];
       groupGenerationQueuedAgentIdsRef.current.clear();
-      groupGenerationRevealedAgentIdsRef.current = new Set(
-        selectedAgents.map((agent) => agent.id),
-      );
-      setRevealedGenerationAgentIds(selectedAgents.map((agent) => agent.id));
+      groupGenerationAgentSettlingRef.current = false;
       setGroupEditorDraft(draft);
     } catch (cause) {
       if (groupGenerationRunRef.current !== runId) return;
@@ -1127,9 +1134,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                             </strong>
                             <small>
                               {isLeader
-                                ? participant.responsibility
-                                  ? `${labels.leaderWorks} · ${participant.responsibility}`
-                                  : labels.leaderWorks
+                                ? labels.leaderWorks
                                 : participant.responsibility ||
                                   labels.specialistWorks}
                             </small>
@@ -1639,8 +1644,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                                 ) : null
                               }
                               renderResponsibility={(participant) =>
-                                participant.draftParticipant ||
-                                participant.responsibility ? (
+                                !participant.leader &&
+                                (participant.draftParticipant ||
+                                  participant.responsibility) ? (
                                   <span
                                     className="collaboration-project-create-duty-bubble"
                                     role="status"

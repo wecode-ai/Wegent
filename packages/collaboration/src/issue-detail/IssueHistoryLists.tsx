@@ -6,7 +6,7 @@ import { ArrowRight } from "lucide-react";
 
 export interface IssueAssignmentHistoryEntry {
   by_user_id: number;
-  to_type: "user" | "agent" | "team" | null;
+  to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
   action: "assign" | "reassign" | "unassign";
@@ -33,6 +33,7 @@ export function IssueAssignmentHistoryList({
   labels: {
     team: string;
     agent: string;
+    group: string;
     unassigned: string;
     actions: Record<IssueAssignmentHistoryEntry["action"], string>;
   };
@@ -40,9 +41,15 @@ export function IssueAssignmentHistoryList({
   return entries.map((entry, index) => {
     const byName = memberName(entry.by_user_id);
     const toName =
-      entry.to_type === "agent" || entry.to_type === "team"
+      entry.to_type === "agent" ||
+      entry.to_type === "team" ||
+      entry.to_type === "group"
         ? (entry.to_name ??
-          (entry.to_type === "team" ? labels.team : labels.agent))
+          (entry.to_type === "team"
+            ? labels.team
+            : entry.to_type === "group"
+              ? labels.group
+              : labels.agent))
         : (entry.to_name ?? memberName(Number(entry.to_id)));
     return (
       <div key={`${entry.at}-${index}`} className="rounded-md px-1.5 py-1.5">
@@ -65,9 +72,11 @@ export function IssueStatusHistoryList({
   entries,
   memberName,
   labels,
+  startIndex = 0,
 }: {
   entries: IssueStatusHistoryEntry[];
   memberName(userId: number | null): string | null;
+  startIndex?: number;
   labels: {
     system: string;
     unset: string;
@@ -88,7 +97,7 @@ export function IssueStatusHistoryList({
       <div
         key={`${entry.at}-${index}`}
         className="rounded-md px-1.5 py-1.5"
-        data-testid={`cloud-todo-status-history-entry-${index}`}
+        data-testid={`cloud-todo-status-history-entry-${startIndex + index}`}
       >
         <div className="flex items-center gap-1.5 text-xs text-text-primary">
           <span className="shrink-0 font-medium">{actor}</span>

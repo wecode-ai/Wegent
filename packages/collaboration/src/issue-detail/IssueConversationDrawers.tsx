@@ -28,17 +28,23 @@ export function IssueConversationDrawers({
   const containerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  const closeCommittedRef = useRef(false);
   const [retainedConversation, setRetainedConversation] =
     useState(conversation);
   const [dismissing, setDismissing] = useState(false);
   const hasConversation = Boolean(conversation);
   const requestClose = () => setDismissing(true);
+  onCloseRef.current = onClose;
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation);
   }
 
   useLayoutEffect(() => {
-    if (!dismissing && hasConversation) return;
+    if (!dismissing) {
+      closeCommittedRef.current = false;
+      if (hasConversation) return;
+    }
     let active = true;
     const finishExit = async () => {
       // getAnimations flushes style and includes the transition started by this commit.
@@ -58,14 +64,18 @@ export function IssueConversationDrawers({
         animations = runningAnimations();
       }
       if (!active) return;
-      if (dismissing) onClose();
+      if (dismissing) {
+        if (closeCommittedRef.current) return;
+        closeCommittedRef.current = true;
+        onCloseRef.current();
+      }
       else setRetainedConversation(null);
     };
     void finishExit();
     return () => {
       active = false;
     };
-  }, [conversation, hasConversation, dismissing, onClose]);
+  }, [hasConversation, dismissing]);
 
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;

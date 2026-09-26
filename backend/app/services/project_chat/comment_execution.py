@@ -18,7 +18,6 @@ from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatCommentExecution,
     ProjectChatMessageView,
-    ProjectChatWegentContinuation,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_executions.service import loop_item_execution_service
@@ -121,7 +120,7 @@ def _response(
         project_id=request.project_id,
         task_id=request.task_id,
         sender_type="agent",
-        sender_id=agent_id or f"automation_manager:{execution.automation_run_id}",
+        sender_id=agent_id or f"execution:{execution.id}",
         sender_name=name,
         agent_id=agent_id or "",
         content="",
@@ -222,10 +221,6 @@ def _new_execution(
         "run_status": execution.status,
     }
     db.commit()
-    if execution.team_id:
-        from app.services.board_team_execution import schedule_board_robot_execution
-
-        schedule_board_robot_execution(db, execution)
     return response
 
 
@@ -369,21 +364,6 @@ async def execute_comment(
             agent_id=execution.agent_id,
             active_only=True,
         )
-    if execution.team_id:
-        from app.services.board_team_continuation import board_team_continuation_service
-
-        result = await board_team_continuation_service.start(
-            db,
-            user_id=user_id,
-            request=ProjectChatWegentContinuation(
-                project_id=request.project_id,
-                task_id=request.task_id,
-                trigger_message_id=trigger.message_id,
-                agent_id=execution.agent_id,
-                attachment_ids=request.attachment_ids,
-            ),
-        )
-        return [result.message]
     response = await _continue_runtime(
         db, request, trigger, target, execution, attachments
     )

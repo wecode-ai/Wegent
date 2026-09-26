@@ -1260,3 +1260,38 @@ fn context_compaction_history_keeps_provider_completion_after_turn_interruption(
     assert_eq!(messages[0]["status"], "cancelled");
     assert_eq!(messages[0]["blocks"][0]["status"], "done");
 }
+
+#[test]
+fn context_compaction_before_user_stays_in_the_user_response_turn() {
+    let messages = transcript_messages(
+        &json!({
+            "turns": [{
+                "id": "turn-1",
+                "status": "completed",
+                "items": [
+                    {"id": "compact-1", "type": "contextCompaction"},
+                    {
+                        "id": "user-1",
+                        "clientId": "client-user-1",
+                        "type": "userMessage",
+                        "content": [{"type": "input_text", "text": "Continue"}]
+                    },
+                    {
+                        "id": "assistant-1",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done"
+                    }
+                ]
+            }]
+        }),
+        "device-1",
+    );
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["clientUserMessageId"], "client-user-1");
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["content"], "Done");
+    assert_eq!(messages[1]["blocks"][0]["tool_name"], "context_compaction");
+}

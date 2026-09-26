@@ -17,7 +17,11 @@ from sqlalchemy import func, select
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 
@@ -66,7 +70,6 @@ def scan_robot_queue(self) -> dict:
                     [run.id for run in stalled],
                 )
                 emit_runtime_cancels(stalled)
-                emit_managed_cancels(stalled)
             ROBOT_QUEUE_DEPTH.set(
                 db.scalar(
                     select(func.count(LoopItemExecution.id)).where(
@@ -94,7 +97,7 @@ def scan_robot_queue(self) -> dict:
 
 
 def _queued_devices(db) -> list[tuple[int, str]]:
-    rows = db.execute(
+    bound_rows = db.execute(
         select(
             LoopItemExecution.executor_owner_user_id,
             LoopItemExecution.execution_device_id,
@@ -107,11 +110,74 @@ def _queued_devices(db) -> list[tuple[int, str]]:
         )
         .distinct()
     ).all()
-    devices = {(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]}
+    devices = {(int(row[0]), str(row[1])) for row in bound_rows if row[0] and row[1]}
+    devices.update(_unbound_queue_devices(db))
     from app.services.workspace_cleanup_intents import due_execution_targets
 
     devices.update(due_execution_targets(db))
     return sorted(devices)
+
+
+def _unbound_queue_devices(db) -> set[tuple[int, str]]:
+    """Resolve project-authorized devices without cross-collation joins."""
+
+    queued_projects = db.execute(
+        select(
+            LoopItemExecution.executor_owner_user_id,
+            LoopItemExecution.cloud_project_id,
+        )
+        .where(
+            LoopItemExecution.status == "queued",
+            LoopItemExecution.execution_environment.in_(("local", "cloud")),
+            LoopItemExecution.execution_device_id == "",
+        )
+        .distinct()
+    ).all()
+    if not queued_projects:
+        return set()
+    project_ids = {str(project_id) for _, project_id in queued_projects if project_id}
+    grants = (
+        db.query(ResourceMember.entity_id, ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.DEVICE.value,
+            ResourceMember.entity_type == "project",
+            ResourceMember.entity_id.in_(project_ids),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .all()
+    )
+    granted_device_ids_by_project: dict[str, set[int]] = {}
+    for project_id, device_id in grants:
+        if project_id and device_id:
+            granted_device_ids_by_project.setdefault(str(project_id), set()).add(
+                int(device_id)
+            )
+    device_ids = {
+        device_id
+        for granted_ids in granted_device_ids_by_project.values()
+        for device_id in granted_ids
+    }
+    if not device_ids:
+        return set()
+    active_devices = (
+        db.query(Kind)
+        .filter(
+            Kind.id.in_(device_ids),
+            Kind.kind == "Device",
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    devices_by_id = {int(device.id): device for device in active_devices}
+    return {
+        (int(owner_user_id), runtime_device_route_id(device))
+        for owner_user_id, project_id in queued_projects
+        for device_id in granted_device_ids_by_project.get(str(project_id), set())
+        if owner_user_id
+        and (device := devices_by_id.get(device_id)) is not None
+        and int(device.user_id) == int(owner_user_id)
+        and runtime_device_route_id(device)
+    }
 
 
 def _publish_work_availability(devices: list[tuple[int, str]]) -> None:
@@ -174,8 +240,11 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     for execution in executions:
         runtime_task_id = execution.runtime_task_id or ""
         runtime_device_id = execution.runtime_device_id or ""
+        execution_target_id = (
+            execution.execution_device_id or execution.runtime_device_id or ""
+        )
         owner_user_id = execution.executor_owner_user_id
-        if not runtime_task_id or not runtime_device_id or not owner_user_id:
+        if not runtime_task_id or not execution_target_id or not owner_user_id:
             continue
         try:
             with httpx.Client(
@@ -190,7 +259,7 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
                     },
                     json={
                         "user_id": owner_user_id,
-                        "device_id": runtime_device_id,
+                        "device_id": execution_target_id,
                         "method": "runtime.tasks.cancel",
                         "payload": {
                             "taskId": runtime_task_id,
@@ -218,37 +287,6 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
                 execution.id,
             )
     return confirmed_execution_ids
-
-
-def emit_managed_cancels(executions: list[LoopItemExecution]) -> set[int]:
-    """Stop managed Wegent runs, which have no device Runtime to receive an RPC."""
-
-    import asyncio
-
-    from app.services.project_automation_managed_execution import (
-        project_automation_managed_execution_service,
-    )
-
-    cancelled_execution_ids: set[int] = set()
-    for execution in executions:
-        if not execution.team_id or not execution.backend_task_id:
-            continue
-        try:
-            asyncio.run(
-                project_automation_managed_execution_service.cancel(
-                    task_id=execution.backend_task_id,
-                    user_id=execution.executor_owner_user_id,
-                    source="board_team_assignment",
-                )
-            )
-        except Exception:
-            logger.exception(
-                "[RobotQueue] Managed cancel failed execution=%s",
-                execution.id,
-            )
-            continue
-        cancelled_execution_ids.add(execution.id)
-    return cancelled_execution_ids
 
 
 async def reconcile_device_executions(

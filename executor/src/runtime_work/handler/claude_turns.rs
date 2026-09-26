@@ -342,6 +342,7 @@ impl RuntimeWorkRpcHandler {
             }
             match &outcome {
                 ExecutionOutcome::Completed { content } => {
+                    let result_content = content.clone();
                     let blocks = transcript
                         .lock()
                         .map(|transcript| transcript.blocks())
@@ -370,8 +371,20 @@ impl RuntimeWorkRpcHandler {
                     }
                     let _ = sink.send(builder.response_completed(content)).await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::Succeeded,
+                        None,
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::Succeeded,
+                        None,
+                        Some(result_content),
+                    );
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
+                    let stop_reason = stop_reason.clone();
                     let blocks = transcript
                         .lock()
                         .map(|transcript| transcript.blocks())
@@ -385,32 +398,68 @@ impl RuntimeWorkRpcHandler {
                         None,
                     );
                     let _ = sink
-                        .send(builder.response_waiting_for_user_input(stop_reason))
+                        .send(builder.response_waiting_for_user_input(&stop_reason))
                         .await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::NeedsAttention,
+                        Some(stop_reason.clone()),
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::NeedsAttention,
+                        Some(stop_reason),
+                        Some(String::new()),
+                    );
                 }
                 ExecutionOutcome::Failed { message } => {
+                    let message = message.clone();
                     handler.persist_claude_assistant_message(
                         &local_task_id,
                         &request,
                         "",
                         transcript.lock().expect("Claude transcript lock").blocks(),
                         "failed",
-                        Some(message),
+                        Some(&message),
                     );
-                    let _ = sink.send(builder.error(message, "runtime_error")).await;
+                    let _ = sink.send(builder.error(&message, "runtime_error")).await;
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
+                    handler.finish_automation_run(
+                        &local_task_id,
+                        AutomationRunStatus::Failed,
+                        Some(message.clone()),
+                    );
+                    handler.finish_queue_run(
+                        &local_task_id,
+                        AutomationRunStatus::Failed,
+                        Some(message),
+                        None,
+                    );
                 }
                 ExecutionOutcome::Cancelled { message } => {
+                    let message = message.clone();
                     handler.persist_claude_assistant_message(
                         &local_task_id,
                         &request,
                         "",
                         transcript.lock().expect("Claude transcript lock").blocks(),
                         "cancelled",
-                        Some(message),
+                        Some(&message),
                     );
-                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
+                    if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
+                        handler.finish_automation_run(
+                            &local_task_id,
+                            AutomationRunStatus::Cancelled,
+                            Some(message.clone()),
+                        );
+                        handler.finish_queue_run(
+                            &local_task_id,
+                            AutomationRunStatus::Cancelled,
+                            Some(message.clone()),
+                            None,
+                        );
+                    }
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,

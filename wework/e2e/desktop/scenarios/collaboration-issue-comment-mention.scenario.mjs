@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
+import {
+  createLocalCollaborationProject,
+  initializeFirstProjectExecutionEnvironment,
+} from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
 const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
@@ -10,8 +13,8 @@ const ACTIVE_BOARD = `${ACTIVE_CONTENT} [data-testid="wework-collaboration-platf
 const MENTION_CANDIDATE_PREFIX = 'collaboration-issue-mention-member-'
 const MENTION_MENU = '[data-testid="local-skill-autocomplete"]'
 const MENTION_CHIP = '[data-composer-reference-kind="member"]'
-const CARD_COMPOSER_PREFIX = 'cloud-task-activity-card-composer-'
-const CARD_SEND_PREFIX = 'cloud-task-activity-card-send-'
+const CARD_REPLY_TOGGLE_PREFIX = 'cloud-task-activity-reply-toggle-'
+const REPLY_COMPOSER = 'issue-reply-composer'
 
 function board(selector) {
   return `${ACTIVE_BOARD} ${selector}`
@@ -80,6 +83,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         text: PROJECT_NAME,
         timeoutMs: uiTimeoutMs,
       })
+      await initializeFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
+      await control.command('click', board('[data-testid="collaboration-tab-board"]'))
 
       await control.command('click', board('[data-testid="collaboration-empty-project-create"]'))
       await control.command('waitFor', board('[data-testid="cloud-todo-title"]'), {
@@ -133,23 +138,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
 
-      const cardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-      const cardComposerTestId = cardSnapshot.testIds.find(testId =>
-        testId.startsWith(CARD_COMPOSER_PREFIX)
+      const collapsedCardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
+      const cardReplyToggleTestId = collapsedCardSnapshot.testIds.find(testId =>
+        testId.startsWith(CARD_REPLY_TOGGLE_PREFIX)
       )
       assert.ok(
-        cardComposerTestId,
-        'The posted comment did not render a card reply composer in the Issue activity'
+        cardReplyToggleTestId,
+        'The posted comment did not render its reply action in the Issue activity'
       )
-      const rootId = cardComposerTestId.slice(CARD_COMPOSER_PREFIX.length)
+      await control.command('click', board(`[data-testid="${cardReplyToggleTestId}"]`), {
+        visible: true,
+      })
+      const rootId = cardReplyToggleTestId.slice(CARD_REPLY_TOGGLE_PREFIX.length)
+      await control.command('waitFor', board(`[data-testid="${REPLY_COMPOSER}"]`), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      const cardSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
+      assert.ok(
+        cardSnapshot.testIds.includes(REPLY_COMPOSER),
+        'The posted comment did not activate the Issue reply composer'
+      )
       const replyName = await chooseMention(control, {
         captureName: 'collaboration-issue-comment-mention-02-card-reply.png',
-        composer: board(`[data-testid="${cardComposerTestId}"]`),
+        composer: board(
+          `[data-testid="${REPLY_COMPOSER}"] [data-testid="cloud-task-activity-composer"]`
+        ),
         scope: ACTIVE_BOARD,
       })
       await control.command(
         'clickWhenEnabled',
-        board(`[data-testid="${CARD_SEND_PREFIX}${rootId}"]`),
+        board('[data-testid="task-comment-form"] [data-testid="send-message-button"]'),
         { timeoutMs: uiTimeoutMs }
       )
       await control.command(

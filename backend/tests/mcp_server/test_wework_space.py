@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -17,14 +19,12 @@ from app.mcp_server.tools import wework_space
 from app.models.delivery import (
     CloudProject,
     LoopItem,
-    ProjectAutomationRule,
-    ProjectAutomationRun,
     ProjectChatAgent,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanSubmit
-from app.services.issue_workflow_planning import issue_workflow_planning_service
+from app.services import collaboration_manager_decisions
 
 
 class _SessionContext:
@@ -66,6 +66,115 @@ def _token(user: User) -> MCPAuthInfo:
     )
 
 
+def test_update_issue_status_is_scoped_to_manager_board_task(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    manager = ProjectChatAgent(
+        id="manager-agent",
+        cloud_project_id=project.id,
+        title="Issue manager",
+        name="Issue manager",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"runtime": "codex"},
+    )
+    item = LoopItem(
+        id=f"{project.project_key}-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Review executor results",
+        status="in_progress",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "collaboration_group": {
+                "id": "group-1",
+                "name": "Managed group",
+            },
+            "collaboration_group_assignment_key": "assignment-1",
+        },
+    )
+    dispatch = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        execution_payload=json.dumps(
+            {
+                "runtime_selection": {
+                    "executor_kind": "collaboration_group_dispatch",
+                },
+                "origin_context": {
+                    "dispatch_kind": "collaboration_group",
+                    "dispatch_id": "dispatch-1",
+                    "manager_agent_id": manager.id,
+                    "run_id": "collaboration-group:assignment-1",
+                    "collaboration_group_id": "group-1",
+                    "collaboration_group": {
+                        "id": "group-1",
+                        "name": "Managed group",
+                        "leader": {"kind": "agent", "id": manager.id},
+                        "members": [],
+                    },
+                },
+            }
+        ),
+        status="completed",
+    )
+    test_db.add_all([manager, item, dispatch])
+    test_db.commit()
+    labels = {
+        "source": "project_automation",
+        "weworkSpaceProjectId": str(project.id),
+        "weworkSpaceTaskId": item.id,
+        "dispatchId": "dispatch-1",
+        "dispatchRole": "manager",
+        "managerAgentId": manager.id,
+    }
+    monkeypatch.setattr(
+        collaboration_manager_decisions,
+        "push_project_chat_message",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(wework_space, "_task_labels", lambda *_args: labels)
+
+    result = wework_space.update_issue_status(
+        _token(test_user),
+        "decision-1",
+        "in_review",
+        "Executor evidence is ready for confirmation.",
+        "执行结果已满足验收条件，请确认。",
+    )
+
+    assert result["id"] == item.id
+    assert result["status"] == "in_review"
+    comment = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.task_id == item.id)
+        .one()
+    )
+    assert comment.sender_id == manager.id
+    assert comment.sender_name == "Issue manager"
+    assert comment.content == "执行结果已满足验收条件，请确认。"
+    assert comment.metadata_json == {
+        "dispatch_role": "manager",
+        "activity_type": "manager_status_comment",
+        "dispatch_id": "dispatch-1",
+        "target_status": "in_review",
+        "reason": "Executor evidence is ready for confirmation.",
+    }
+    labels["dispatchRole"] = "executor"
+    with pytest.raises(ValueError, match="not a dispatch manager"):
+        wework_space.update_issue_status(
+            _token(test_user),
+            "decision-2",
+            "completed",
+            "Executors cannot decide the Issue status.",
+        )
+
+
 def test_local_board_comment_uses_internal_provider(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
@@ -93,122 +202,6 @@ def test_local_board_comment_uses_internal_provider(
     )
 
     assert comment["body"] == "Please check the plan"
-
-
-def _workflow_issue(
-    db: Session,
-    project: CloudProject,
-    user: User,
-) -> tuple[LoopItem, ProjectChatAgent]:
-    robot = ProjectChatAgent(
-        id=f"robot-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Implementation robot",
-        name="Implementation robot",
-        status="active",
-        created_by_user_id=user.id,
-        metadata_json={
-            "runtime": "codex",
-            "execution_mode": "auto",
-            "execution_environment": "local",
-        },
-    )
-    item = LoopItem(
-        id=f"{project.project_key}-1",
-        cloud_project_id=project.id,
-        sequence_number=1,
-        title="Coordinate this task",
-        description="Implement and verify the requested change.",
-        status="pending",
-        priority="medium",
-        created_by_user_id=user.id,
-        metadata_json={
-            "workflow": {
-                "version": 1,
-                "definition_version": 1,
-                "stage_mode": "none",
-                "advancement_policy": "ai",
-                "approval_policy": "required",
-                "ai_automation_rule_id": "rule-1",
-                "orchestration_status": "idle",
-                "nodes": [],
-            }
-        },
-    )
-    db.add_all([robot, item])
-    project.next_item_number = 2
-    db.commit()
-    db.refresh(item)
-    return item, robot
-
-
-def _workflow_plan(robot: ProjectChatAgent) -> dict[str, object]:
-    return {
-        "summary": "Implement, then verify.",
-        "items": [
-            {
-                "client_key": "implement",
-                "title": "Implement the change",
-                "description": "Implement the requested change and add tests.",
-                "assignee_type": "agent",
-                "assignee_id": robot.id,
-                "assignee_name": robot.name,
-                "rationale": "The robot has implementation capability.",
-            }
-        ],
-    }
-
-
-def _manager_run(
-    db: Session,
-    project: CloudProject,
-    item: LoopItem,
-    user: User,
-    *,
-    status: str = "running",
-    workflow_run_id: str = "",
-) -> tuple[ProjectAutomationRun, ProjectChatMessage]:
-    rule = ProjectAutomationRule(
-        id=f"rule-{uuid.uuid4().hex[:10]}",
-        cloud_project_id=project.id,
-        title="Managed planning",
-        status="enabled",
-        created_by_user_id=user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
-    )
-    run = ProjectAutomationRun(
-        cloud_project_id=project.id,
-        parent_id=rule.id,
-        task_id=item.id,
-        title="Managed run",
-        status=status,
-        created_by_user_id=user.id,
-        metadata_json={},
-    )
-    message_id = str(uuid.uuid4())
-    activity = ProjectChatMessage(
-        message_id=message_id,
-        client_message_id=message_id,
-        project_id=str(project.id),
-        task_id=item.id,
-        sender_type="agent",
-        sender_id=f"automation_manager:{rule.id}",
-        sender_name="AI manager",
-        message_type="agent_status",
-        content="",
-        metadata_json={
-            "automation_run_id": str(run.id),
-            "run_status": status,
-        },
-        status="streaming" if status == "running" else "failed",
-    )
-    run.metadata_json = {
-        "activity_message_id": message_id,
-        "event": {"payload": {"workflow_run_id": workflow_run_id}},
-    }
-    db.add_all([rule, run, activity])
-    db.commit()
-    return run, activity
 
 
 def test_local_project_tools_use_canonical_loop_item_service(
@@ -261,8 +254,7 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
             json={
                 "metadata": {
                     "labels": {
-                        "source": "board_team_assignment",
-                        "boardTeamExecutionId": "42",
+                        "source": "project_automation",
                         "weworkSpaceProjectId": str(project.id),
                         "weworkSpaceTaskId": item.id,
                     }
@@ -275,7 +267,6 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
 
     assert context["space_id"] == str(project.id)
     assert context["item_id"] == item.id
-    assert context["board_team_execution_id"] == "42"
     assert context["space"]["name"] == "Managed board"
     assert context["item"]["title"] == "Bound board task"
 
@@ -324,148 +315,36 @@ def test_project_details_expose_assignable_members(
     assert details["groups"] == []
 
 
-async def test_ai_manager_submits_structured_plan_for_current_issue(
-    test_db: Session, test_user: User, monkeypatch
+async def test_manager_mcp_assignment_to_human_returns_plain_issue(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    manager_run, activity = _manager_run(
-        test_db,
-        project,
-        item,
-        test_user,
-        workflow_run_id=workflow_run.id,
-    )
-    test_db.commit()
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item.id,
-            "project_automation_run_id": str(manager_run.id),
-        },
+        "app.services.project_incoming_hooks."
+        "project_incoming_hook_service.ingest_internal",
+        AsyncMock(),
     )
 
-    submitted = await wework_space.submit_workflow_plan(
+    created = await wework_space.create_board_item(
         _token(test_user),
-        _workflow_plan(robot),
-    )
-
-    test_db.refresh(workflow_run)
-    test_db.refresh(activity)
-    assert submitted["run_id"] == workflow_run.id
-    assert submitted["stage_id"] == "__issue__"
-    assert submitted["items"][0]["stage_id"] == "__issue__"
-    assert submitted["status"] == "awaiting_approval"
-    assert submitted["items"][0]["task_id"] is None
-    assert workflow_run.metadata_json["project_automation_run_id"] == manager_run.id
-    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
-    assert activity.metadata_json["workflow_plan_version"] == 1
-
-
-async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    workflow_run = issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    manager_run, _activity = _manager_run(
-        test_db,
-        project,
-        item,
-        test_user,
-        status="failed",
-        workflow_run_id=workflow_run.id,
-    )
-    test_db.commit()
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item.id,
-            "project_automation_run_id": str(manager_run.id),
+        {
+            "title": "Human evidence review",
+            "description": "Review the evidence and submit a decision.",
+            "status": "pending",
         },
+        str(project.id),
     )
-
-    with pytest.raises(RuntimeError, match="not active"):
-        await wework_space.submit_workflow_plan(
-            _token(test_user),
-            _workflow_plan(robot),
-        )
-
-    test_db.expire_all()
-    restored = issue_workflow_planning_service.get(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    assert restored is not None
-    assert restored.run_id == workflow_run.id
-    assert restored.status == "planning"
-    assert restored.items == []
-
-
-async def test_workflow_child_reports_one_parent_review_outcome(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    test_db.commit()
-    issue_workflow_planning_service.submit(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-        values=WorkflowPlanSubmit.model_validate(_workflow_plan(robot)),
-    )
-    approved = issue_workflow_planning_service.approve(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    child_id = approved.items[0].task_id
-    assert child_id is not None
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
-            "space_id": str(project.id),
-            "item_id": child_id,
-            "board_team_execution_id": "42",
-        },
-    )
-
-    reported = await wework_space.report_workflow_outcome(
+    assigned = await wework_space.assign_board_item(
         _token(test_user),
-        "passed",
-        "Implementation and tests passed.",
+        "user",
+        str(test_user.id),
+        str(project.id),
+        str(created["id"]),
     )
 
-    assert reported["issue_id"] == item.id
-    assert reported["status"] == "awaiting_review"
-    assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, item.id).status == "in_review"
+    assert assigned["assignee_user_id"] == test_user.id
+    assert "human_work" not in assigned
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(
@@ -505,27 +384,17 @@ async def test_external_project_tools_route_list_read_and_assignment_to_provider
         calls.append(("get", (requested_id, user_id)))
         return dict(current)
 
-    def assign_from_manager(_db, **values):
-        calls.append(("assign", values))
-        return {**current, "assignee_user_id": int(values["assignee_id"])}
+    def assign_item(_db, requested_id, user_id, values):
+        calls.append(("assign", (requested_id, user_id, values)))
+        current["assignee_user_id"] = int(values.assignee_id)
 
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(wework_space.external_loop_item_provider, "list", list_items)
     monkeypatch.setattr(wework_space.external_loop_item_provider, "get", get_item)
     monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "project_automation",
-            "space_id": str(project.id),
-            "item_id": item_id,
-            "project_automation_run_id": "run-1",
-        },
-    )
-    monkeypatch.setattr(
-        wework_space.project_automation_execution,
-        "assign_from_manager",
-        assign_from_manager,
+        wework_space.external_loop_item_provider,
+        "assign",
+        assign_item,
     )
 
     listed = wework_space.list_board_items(_token(test_user), str(project.id))
@@ -541,15 +410,15 @@ async def test_external_project_tools_route_list_read_and_assignment_to_provider
     assert listed[0]["description"] == "Provider-owned details"
     assert detail["id"] == item_id
     assert assigned["assignee_user_id"] == test_user.id
-    assert [name for name, _ in calls] == ["list", "get", "get", "assign"]
-    assign_values = calls[-1][1]
-    assert assign_values["run_id"] == "run-1"
-    assert assign_values["assignee_type"] == "user"
-    assert assign_values["task_id"] == item_id
+    assert [name for name, _ in calls] == ["list", "get", "get", "assign", "get"]
+    assigned_item_id, assigned_user_id, assign_values = calls[-2][1]
+    assert assigned_item_id == item_id
+    assert assigned_user_id == test_user.id
+    assert assign_values.assignee_type == "user"
 
 
 async def test_board_robot_task_can_assign_item_to_another_project_robot(
-    test_db: Session, test_user: User, monkeypatch, mocker
+    test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
     robot = ProjectChatAgent(
@@ -577,14 +446,10 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
         wework_space,
         "_board_context",
         lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
+            "source": "project_automation",
             "space_id": str(project.id),
             "item_id": item.id,
         },
-    )
-    dispatch = mocker.patch(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
-        return_value=None,
     )
 
     assigned = await wework_space.assign_board_item(
@@ -592,7 +457,6 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
     )
 
     assert assigned["assignee_agent_id"] == robot.id
-    dispatch.assert_awaited_once()
 
 
 @pytest.mark.parametrize("url", [None, "wework://boards"])

@@ -115,6 +115,10 @@ class LoopItemPermissions(BaseModel):
     execute: bool = False
 
 
+class LoopItemRead(BaseModel):
+    activity_sequence: int | None = Field(default=None, ge=0)
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -145,7 +149,6 @@ class LoopItemResponse(BaseModel):
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
-    human_work: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
@@ -164,6 +167,7 @@ class LoopItemResponse(BaseModel):
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
+    activity_read_sequence: int = 0
     is_unread: bool = False
     current_delivery_id: str | None
     version: int
@@ -409,6 +413,30 @@ class LoopItemTaskBind(BaseModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    human_assignment_id: str | None = Field(
+        default=None,
+        alias="humanAssignmentId",
+        min_length=1,
+        max_length=64,
+    )
+    dispatch_id: str | None = Field(
+        default=None,
+        alias="dispatchId",
+        min_length=1,
+        max_length=255,
+    )
+    dispatch_round_id: str | None = Field(
+        default=None,
+        alias="dispatchRoundId",
+        min_length=1,
+        max_length=128,
+    )
+    assignment_id: str | None = Field(
+        default=None,
+        alias="assignmentId",
+        min_length=1,
+        max_length=128,
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -427,6 +455,10 @@ class LoopItemTaskBindingResponse(BaseModel):
         alias="modelSelection",
     )
     workflow_node_id: str | None = None
+    human_assignment_id: str | None = None
+    dispatch_id: str | None = None
+    dispatch_round_id: str | None = None
+    assignment_id: str | None = None
     change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime

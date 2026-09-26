@@ -54,6 +54,7 @@ const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
     Waiting {
@@ -575,8 +576,11 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    local_issue_scheduler_started: Arc<AtomicBool>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
     task_store_path: Arc<PathBuf>,
@@ -843,8 +847,11 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
+            local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
@@ -913,6 +920,7 @@ impl RuntimeWorkRpcHandler {
             .startup_recovery_deferred
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
+        handler.start_local_issue_scheduler();
         handler
     }
 
@@ -921,6 +929,8 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.register_cloud_collaboration_dispatcher();
+        self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
     }
@@ -996,6 +1006,36 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    fn retain_runtime_model_config(&self, local_task_id: &str, model_config: &Value) {
+        let mut configs = self
+            .runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned");
+        if model_config
+            .as_object()
+            .is_some_and(|value| !value.is_empty())
+        {
+            configs.insert(local_task_id.to_owned(), model_config.clone());
+        } else {
+            configs.remove(local_task_id);
+        }
+    }
+
+    fn runtime_model_config(&self, local_task_id: &str) -> Option<Value> {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
     /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
     ///
     /// The connection snapshot is unavailable before the device finishes
@@ -1037,6 +1077,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
             "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
@@ -1218,6 +1259,7 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod collaboration;
 mod composer_catalog;
 mod runtime_rpc;
 

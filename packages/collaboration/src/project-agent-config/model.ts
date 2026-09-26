@@ -106,6 +106,6 @@ export function createResourceAgentBindingInput(
   agent: CollaborationOwnedAgent,
 ): Record<string, unknown> {
   return agent.project_binding_input
-    ? { ...agent.project_binding_input }
+    ? { ...agent.project_binding_input, name: agent.name }
     : createSharedAgentBindingInput(agent);
 }

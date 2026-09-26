@@ -9,6 +9,7 @@ import { webApi, writeSharedComposer } from '../../utils/collaboration-test-supp
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const appBaseUrl = process.env.E2E_BASE_URL || 'http://localhost:3000'
 const evidenceDir = process.env.COLLABORATION_EVIDENCE_DIR
@@ -354,14 +355,13 @@ async function openRegularUserProject(
 }
 
 test.describe('Collaboration cloud capabilities', () => {
-  test('aligns Web resource navigation and collaboration-group assignment with cloud collaboration', async ({
+  test('aligns Web resource navigation and requires a ready environment for group assignment', async ({
     page,
   }) => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     const workspaceGroupName = `Workspace group ${suffix}`
     const projectName = `Group project ${suffix}`
-    const issueTitle = `Group issue ${suffix}`
     let projectId = ''
     let workspaceId = ''
 
@@ -457,32 +457,8 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(projectGroup.members).toContainEqual(projectGroup.leader)
 
       await page.getByTestId('collaboration-issue-create').click()
-      await page.getByTestId('cloud-todo-title').fill(issueTitle)
-      await page.getByTestId('cloud-todo-create-assignee').click()
-      await page.getByTestId(`cloud-todo-create-assignee-option-group:${projectGroup.id}`).click()
-      await expect(page.getByTestId('cloud-todo-create-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
-      )
-      await page.getByTestId('cloud-todo-create-confirm').click()
-      await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
-      const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
-      await expect
-        .poll(async () => {
-          const created = await issue(page, issueId)
-          return {
-            groupId: created.assignee_group_id,
-            groupName: created.assignee_group_name,
-          }
-        })
-        .toEqual({
-          groupId: projectGroup.id,
-          groupName: projectGroup.name,
-        })
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
-      )
+      await expect(page.getByTestId('collaboration-project-settings-environments')).toBeVisible()
+      await expect(page.getByTestId('collaboration-issue-create-dialog')).toHaveCount(0)
       await captureEvidence(page, 'web-00-cloud-collaboration-group')
     } finally {
       if (projectId) await archiveProject(page, projectId)
@@ -545,6 +521,7 @@ test.describe('Collaboration cloud capabilities', () => {
         project.name
       )
 
+      await initializeProjectExecutionEnvironment(page)
       await page.getByTestId('collaboration-issue-create').click()
       await page.getByTestId('cloud-todo-title').fill(`Cloud Issue ${suffix}`)
       await page
@@ -869,92 +846,6 @@ test.describe('Collaboration cloud capabilities', () => {
       ).toBeVisible()
       await expect(page.getByTestId(`automatic-processing-rule-${createdRule.id}`)).toBeVisible()
       await captureEvidence(page, 'web-09-automatic-processing-rule')
-    } finally {
-      if (projectId) await archiveProject(page, projectId)
-      if (workspaceId) await archiveWorkspace(page, workspaceId)
-    }
-  })
-
-  test('renders and advances a shared cloud workflow from the Web Issue detail', async ({
-    page,
-  }) => {
-    test.setTimeout(120_000)
-    const suffix = Date.now()
-    const stageId = `review-${suffix}`
-    let projectId = ''
-    let workspaceId = ''
-
-    try {
-      await page.goto('/collaboration')
-      const workspace = await createWorkspaceByApi(page, `Workflow Workspace ${suffix}`)
-      workspaceId = workspace.id
-      const project = await createProjectByApi(page, workspace.id, `Workflow ${suffix}`)
-      projectId = project.id
-      const created = await createIssueByApi(page, project.id, `Workflow Issue ${suffix}`, {
-        workflow: {
-          version: 1,
-          definition_version: 1,
-          stage_mode: 'dag',
-          advancement_policy: 'manual',
-          coordinator_prompt: '',
-          nodes: [
-            {
-              id: stageId,
-              name: 'Web 人工验收',
-              prompt: '通过 Web 共享详情页完成人工验收。',
-              execution_mode: 'human',
-              depends_on: [],
-              dependency_context: {},
-              required: true,
-              required_deliverables: [],
-              workspace_policy: 'none',
-              automation_rule_id: null,
-              execution_config: null,
-              execution_config_override: false,
-              status: 'awaiting_approval',
-              task_ids: [],
-            },
-          ],
-        },
-      })
-
-      await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
-      await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
-      await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
-      await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
-      await captureEvidence(page, 'web-11-workflow-awaiting-approval')
-
-      const decisionResponse = page.waitForResponse(response => {
-        const pathname = new URL(response.url()).pathname
-        return (
-          response.request().method() === 'POST' &&
-          pathname.endsWith(
-            `/loop-items/${encodeURIComponent(created.id)}/workflow-nodes/${encodeURIComponent(
-              stageId
-            )}/decision`
-          )
-        )
-      })
-      await page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`).click()
-      const response = await decisionResponse
-      expect(response.ok(), `Workflow approval failed: ${await response.text()}`).toBe(true)
-      await expect
-        .poll(async () => {
-          const updated = await issue(page, created.id)
-          return updated.workflow?.nodes.find(node => node.id === stageId)?.status
-        })
-        .toBe('completed')
-
-      await page.reload()
-      await page.getByTestId('cloud-todo-toggle-tasks').click()
-      await expect(page.getByTestId('cloud-todo-workflow-stages')).toBeVisible()
-      await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
-      await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toHaveCount(0)
-      await expect(page.getByTestId(`cloud-todo-workflow-node-${stageId}`)).toContainText(
-        /已完成|Completed/
-      )
-      await captureEvidence(page, 'web-12-workflow-completed')
     } finally {
       if (projectId) await archiveProject(page, projectId)
       if (workspaceId) await archiveWorkspace(page, workspaceId)

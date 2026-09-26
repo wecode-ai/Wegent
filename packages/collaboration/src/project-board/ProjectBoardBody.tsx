@@ -6,7 +6,6 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import * as ScrollArea from "@radix-ui/react-scroll-area";
 import { Tooltip } from "../issue-detail/Tooltip";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -34,30 +33,18 @@ export function ProjectBoardScrollArea({
   viewportRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <ScrollArea.Root
-      type="always"
+    <div
       data-testid="cloud-board-scroll-area"
-      className="relative min-h-0 min-w-0 flex-1"
+      className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
     >
-      <ScrollArea.Viewport
+      <div
         ref={viewportRef}
         data-testid="cloud-board-scroll"
-        className="h-full w-full [&>div]:!block [&>div]:h-full [&>div]:w-max [&>div]:min-w-full"
+        className="h-full w-full overflow-x-auto"
       >
         {children}
-      </ScrollArea.Viewport>
-      <ScrollArea.Scrollbar
-        forceMount
-        orientation="horizontal"
-        data-testid="cloud-board-horizontal-scrollbar"
-        className="project-board-scrollbar project-board-scrollbar-horizontal"
-      >
-        <ScrollArea.Thumb
-          data-testid="cloud-board-horizontal-scrollbar-thumb"
-          className="project-board-scrollbar-thumb"
-        />
-      </ScrollArea.Scrollbar>
-    </ScrollArea.Root>
+      </div>
+    </div>
   );
 }
 

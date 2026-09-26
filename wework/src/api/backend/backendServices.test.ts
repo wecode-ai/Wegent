@@ -88,7 +88,7 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.sharedWorkspaceApi?.agents.list).toBeTypeOf('function')
     expect(services.workspaceRuntimePort?.bindTask).toBeTypeOf('function')
     expect(services.workspaceRuntimePort?.trackProjectTask).toBeTypeOf('function')
-    expect(services.workspaceRuntimePort?.claimNextExecution).toBeTypeOf('function')
+    expect(services.workspaceRuntimePort).not.toHaveProperty('claimNextExecution')
     expect(services.workspaceRuntimePort?.reportExecutionLifecycle).toBeTypeOf('function')
     expect('collaborationApi' in services).toBe(false)
   })

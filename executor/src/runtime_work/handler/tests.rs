@@ -174,6 +174,60 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
 }
 
 #[tokio::test]
+async fn create_task_persists_collaboration_member_runtime_profiles() {
+    let (handler, root) = isolated_runtime_work_handler("collaboration-member-profiles");
+    {
+        let mut scheduler = handler
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned");
+        scheduler.max_concurrent_tasks = 1;
+        scheduler.active_tasks = 1;
+    }
+    let profiles = json!([{
+        "memberIds": ["agent-2"],
+        "runtimePayload": {
+            "taskId": "member-template",
+            "runtime": "codex"
+        }
+    }]);
+    let request = ExecutionRequest {
+        task_id: "manager-task-1".to_owned(),
+        subtask_id: "manager-task-1-initial".to_owned(),
+        prompt: Value::String("Manage the Issue".to_owned()),
+        project_workspace_path: Some("/tmp/project".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let response = handler
+        .create_task(json!({
+            "schemaVersion": 1,
+            "taskId": "manager-task-1",
+            "runtime": "codex",
+            "title": "Issue manager",
+            "workspacePath": "/tmp/project",
+            "executionRequest": request,
+            "runtimeHandle": {
+                "collaborationManagerContext": "Issue context",
+                "collaborationDispatchTaskId": "dispatch-task-1",
+                "collaborationMemberRuntimeProfiles": profiles,
+            }
+        }))
+        .await
+        .expect("manager task should be accepted");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(
+        handler
+            .local_task_link("manager-task-1")
+            .expect("manager task should be persisted")
+            .runtime_handle["collaborationMemberRuntimeProfiles"],
+        profiles
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn default_work_item_binding_uses_the_handler_store_path() {
     let root = temp_runtime_work_index_path("default-work-item-store").with_extension("directory");
     let database_path = root.join("tasks.sqlite");
@@ -4353,6 +4407,55 @@ async fn transcript_without_session_preserves_known_terminal_state() {
 
     assert_eq!(result["running"], false);
     assert_eq!(result["messages"], json!([]));
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_not_ready() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-provider-not-ready");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "completed-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Completed task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    link.status = "done".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Persisted final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "completed-task",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("completed transcript should remain readable before the provider session is ready");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"][0]["content"], "Persisted final answer");
+    assert_eq!(
+        result["turns"][0]["items"][0]["content"],
+        "Persisted final answer"
+    );
     let _ = std::fs::remove_file(index_path);
 }
 

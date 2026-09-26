@@ -128,17 +128,12 @@ describe("ProjectBoardBody", () => {
       nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll"),
     ).toBeDefined();
     expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] === "cloud-board-horizontal-scrollbar",
-      ),
-    ).toBeDefined();
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
+        ?.props.className,
+    ).toContain("overflow-x-auto");
     expect(
-      nodes.find(
-        (node) =>
-          node.props["data-testid"] ===
-          "cloud-board-horizontal-scrollbar-thumb",
-      ),
-    ).toBeDefined();
+      nodes.find((node) => node.props["data-testid"] === "cloud-board-scroll")
+        ?.props.className,
+    ).not.toContain("[&>div]");
   });
 });

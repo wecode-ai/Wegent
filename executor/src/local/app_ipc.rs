@@ -69,8 +69,8 @@ use crate::{
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
-        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
-        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        LocalCommentCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
+        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -829,72 +829,6 @@ impl AppIpcServer {
 
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
-        }
-
-        if method == "executions.claim_next" {
-            let Some(handler) = &self.runtime_work_handler else {
-                return Err(AppIpcError::new(
-                    "runtime_unavailable",
-                    "Runtime work handler is not available",
-                ));
-            };
-            let runtime_instance_id = self.runtime_instance_id.as_ref().ok_or_else(|| {
-                AppIpcError::new(
-                    "runtime_identity_unavailable",
-                    "Runtime instance identity is not available",
-                )
-            })?;
-            let capacity = handler
-                .handle_runtime_rpc(json!({
-                    "method": "runtime.capacity.get",
-                    "payload": {},
-                }))
-                .await?;
-            let limit = capacity
-                .get("limit")
-                .and_then(Value::as_u64)
-                .filter(|value| (1..=20).contains(value))
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime capacity is not available",
-                    )
-                })?;
-            let mut params = params.as_object().cloned().ok_or_else(|| {
-                AppIpcError::new("invalid_request", "Claim params must be an object")
-            })?;
-            let claim = params
-                .get_mut("claim")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
-            claim.insert(
-                "execution_device_id".to_owned(),
-                Value::String(self.device_id.clone()),
-            );
-            claim.insert(
-                "runtime_instance_id".to_owned(),
-                Value::String(runtime_instance_id.clone()),
-            );
-            claim.insert("device_capacity".to_owned(), Value::from(limit));
-            claim.insert(
-                "runtime_active".to_owned(),
-                capacity.get("active").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active capacity is not available",
-                    )
-                })?,
-            );
-            claim.insert(
-                "runtime_active_task_ids".to_owned(),
-                capacity.get("active_task_ids").cloned().ok_or_else(|| {
-                    AppIpcError::new(
-                        "runtime_capacity_unavailable",
-                        "Runtime active task identities are not available",
-                    )
-                })?,
-            );
-            return handle_task_runtime_request(method, Value::Object(params)).await;
         }
 
         if method.starts_with("projects.")
@@ -2229,9 +2163,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.mark_read" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
+            let activity_sequence = params.get("activity_sequence").and_then(Value::as_i64);
             serialize_task_value(
                 runtime
-                    .mark_task_read(project_id, task_id)
+                    .mark_task_read(project_id, task_id, activity_sequence)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -2349,6 +2284,20 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .enqueue_execution(project_id, task_id, agent_id, payload, trigger_message_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "executions.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let agent_id = params.get("agent_id").and_then(Value::as_str);
+            let status = params.get("status").and_then(Value::as_str);
+            let include_terminal = params
+                .get("include_terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            serialize_task_value(
+                runtime
+                    .list_executions(project_id, agent_id, status, include_terminal)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -2485,74 +2434,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.automation.cancel" => runtime
-            .cancel_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.retry" => runtime
-            .retry_project_automation_run(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.run" => runtime
-            .run_project_automation(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "automation_id")?,
-                params.get("issue_id").and_then(Value::as_str),
-            )
-            .map_err(task_runtime_error),
-        "projects.automation.runs" => serialize_task_value(
-            runtime
-                .list_project_automation_runs(
-                    required_task_string(&params, "project_id")?,
-                    required_task_string(&params, "automation_id")?,
-                )
-                .map_err(task_runtime_error)?,
-        ),
-        "projects.manager.run" => runtime
-            .run_project_manager(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "instruction")?,
-                params.get("model_selection"),
-            )
-            .map_err(task_runtime_error),
-        "projects.manager.runs" => serialize_task_value(
-            runtime
-                .list_project_manager_runs(required_task_string(&params, "project_id")?)
-                .map_err(task_runtime_error)?,
-        ),
-        "projects.manager.decide" => runtime
-            .decide_project_manager_action(
-                required_task_string(&params, "project_id")?,
-                required_task_string(&params, "run_id")?,
-                required_task_string(&params, "action_id")?,
-                params
-                    .get("approve")
-                    .and_then(Value::as_bool)
-                    .ok_or_else(|| AppIpcError::new("bad_request", "approve is required"))?,
-                params
-                    .get("version")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?,
-            )
-            .map_err(task_runtime_error),
-        "executions.list" => {
-            let project_id = required_task_string(&params, "project_id")?;
-            let agent_id = params.get("agent_id").and_then(Value::as_str);
-            let status = params.get("status").and_then(Value::as_str);
-            let include_terminal = params
-                .get("include_terminal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            serialize_task_value(
-                runtime
-                    .list_executions(project_id, agent_id, status, include_terminal)
-                    .map_err(task_runtime_error)?,
-            )
-        }
         "executions.approve" | "executions.reject" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
             let reason = params
@@ -2575,14 +2456,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .cancel_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
-        }
-        "executions.claim_next" => {
-            let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
-            serialize_task_value(
-                runtime
-                    .claim_next_local_execution(input)
                     .map_err(task_runtime_error)?,
             )
         }

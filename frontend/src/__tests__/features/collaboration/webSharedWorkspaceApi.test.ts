@@ -50,46 +50,6 @@ describe('createWebSharedWorkspaceApi', () => {
     }
   )
 
-  it.each(['modelOptions', 'model_options'])(
-    'preserves opaque %s keys when configuring an issue workflow',
-    async optionsKey => {
-      const client = createClient()
-      const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
-      const modelOptions = {
-        weworkCloudModelNamespace: 'team',
-        weworkCloudModelResourceUserId: '7',
-        reasoning_effort: 'medium',
-      }
-      const executionConfig = {
-        executionDeviceId: 'cloud-device',
-        model: 'model',
-        modelType: 'group',
-        [optionsKey]: modelOptions,
-      }
-
-      await api.issues.create('project/1', { title: 'Issue', executionConfig })
-      await api.issues.update('issue/1', {
-        version: 2,
-        workflow: { execution_config: executionConfig },
-      })
-
-      const wireConfig = {
-        execution_device_id: 'cloud-device',
-        model: 'model',
-        model_type: 'group',
-        model_options: modelOptions,
-      }
-      expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/loop-items', {
-        title: 'Issue',
-        execution_config: wireConfig,
-      })
-      expect(client.patch).toHaveBeenCalledWith('/v1/loop-items/issue%2F1', {
-        version: 2,
-        workflow: { execution_config: wireConfig },
-      })
-    }
-  )
-
   it('requests terminal execution history only when explicitly required', async () => {
     const client = createClient()
     client.get.mockResolvedValue({ items: [] })
@@ -127,7 +87,6 @@ describe('createWebSharedWorkspaceApi', () => {
       title: 'Ship it',
       dueAt: '2026-09-12T00:00:00Z',
       parentId: 'parent-1',
-      executionConfig: { runtimeProfileId: 'profile-1' },
     })
 
     expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', {
@@ -149,43 +108,30 @@ describe('createWebSharedWorkspaceApi', () => {
       title: 'Ship it',
       due_at: '2026-09-12T00:00:00Z',
       parent_id: 'parent-1',
-      execution_config: { runtime_profile_id: 'profile-1' },
     })
   })
 
-  it('maps paged task bindings and workflow plans at the adapter boundary', async () => {
+  it('maps paged task bindings at the adapter boundary', async () => {
     const client = createClient()
-    client.get
-      .mockResolvedValueOnce({
-        items: [],
-        next_cursor: 'cursor-2',
-        task_bindings: [
-          {
-            id: '42',
-            cloud_project_id: '11',
-            loop_item_id: 'issue-1',
-            task_user_id: 7,
-            device_id: 'device-1',
-            task_id: 'task-1',
-            task_title: 'Task',
-            backend_task_id: 99,
-            modelSelection: { model: 'gpt' },
-            workflow_node_id: 'node-1',
-            linked_at: '2026-09-10T00:00:00Z',
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        run_id: 'run-1',
-        issue_id: 'issue-1',
-        stage_id: 'stage-1',
-        plan_version: 2,
-        approval_policy: 'required',
-        status: 'awaiting_approval',
-        summary: 'Plan',
-        items: [{ title: 'Child' }],
-        manager_run: { id: 'manager-1' },
-      })
+    client.get.mockResolvedValue({
+      items: [],
+      next_cursor: 'cursor-2',
+      task_bindings: [
+        {
+          id: '42',
+          cloud_project_id: '11',
+          loop_item_id: 'issue-1',
+          task_user_id: 7,
+          device_id: 'device-1',
+          task_id: 'task-1',
+          task_title: 'Task',
+          backend_task_id: 99,
+          modelSelection: { model: 'gpt' },
+          workflow_node_id: null,
+          linked_at: '2026-09-10T00:00:00Z',
+        },
+      ],
+    })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
     await expect(
@@ -195,43 +141,23 @@ describe('createWebSharedWorkspaceApi', () => {
       nextCursor: 'cursor-2',
       taskBindings: [
         {
+          assignmentId: null,
           id: '42',
           projectId: '11',
           issueId: 'issue-1',
           taskUserId: 7,
           deviceId: 'device-1',
+          dispatchId: null,
+          dispatchRoundId: null,
+          humanAssignmentId: null,
           taskId: 'task-1',
           taskTitle: 'Task',
           backendTaskId: 99,
           modelSelection: { model: 'gpt' },
-          workflowNodeId: 'node-1',
           linkedAt: '2026-09-10T00:00:00Z',
         },
       ],
     })
-    await expect(api.workflowPlans.get!('issue-1')).resolves.toMatchObject({
-      runId: 'run-1',
-      issueId: 'issue-1',
-      planVersion: 2,
-      status: 'awaiting_approval',
-    })
-  })
-
-  it('maps workflow stage context with the shared DTO contract', async () => {
-    const client = createClient()
-    client.get.mockResolvedValue({
-      compiled_task_instruction: 'Run the deployment',
-      source: 'delivery',
-    })
-    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
-
-    await expect(api.workflowPlans.getStageContext('issue-1', 'node-1')).resolves.toEqual({
-      compiledTaskInstruction: 'Run the deployment',
-      source: 'delivery',
-    })
-    expect(client.get).toHaveBeenCalledWith(
-      '/v1/loop-items/issue-1/workflow-nodes/node-1/input-context'
-    )
   })
 
   it('uses multipart transport and the authenticated binary transport', async () => {
@@ -480,8 +406,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
     expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(98)
-    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(98)
+    expect(supported).toHaveLength(89)
+    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(89)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.some(
         capability =>

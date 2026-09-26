@@ -32,6 +32,7 @@ import {
 } from "./activityMessageUtils";
 import { IssueActivityContent } from "./IssueActivityContent";
 import { formatIssueTimestamp } from "./issueTimestamp";
+import { managerActivityPresentation } from "./managerActivity";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -220,12 +221,16 @@ export function IssueChatMessage({
   mine,
   compact = false,
   plain = false,
+  showInlineExecutionStatus = false,
+  agentRole,
   eventOnly = false,
   taskAiState,
   executionStatus,
   executionDeviceName,
   taskSummary,
+  hideTime = false,
   onOpenExecution,
+  allowBackendExecutionFallback = true,
   onStopExecution,
   stopping = false,
   flash = false,
@@ -240,6 +245,8 @@ export function IssueChatMessage({
   compact?: boolean;
   /** Render inside a parent comment card without the outer card border. */
   plain?: boolean;
+  showInlineExecutionStatus?: boolean;
+  agentRole?: "manager" | "member";
   eventOnly?: boolean;
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
@@ -247,7 +254,9 @@ export function IssueChatMessage({
   /** Human-readable device name for this execution. */
   executionDeviceName?: string | null;
   taskSummary?: ExecutionTaskSummary;
+  hideTime?: boolean;
   onOpenExecution?: () => void;
+  allowBackendExecutionFallback?: boolean;
   onStopExecution?: () => void;
   stopping?: boolean;
   /** Momentarily highlight this comment, e.g. after a notification opened it. */
@@ -259,6 +268,10 @@ export function IssueChatMessage({
   };
   const text = activityDisplayBody(message.content, "");
   const isAgent = message.sender.type === "agent";
+  const isManager = agentRole === "manager";
+  const isManagerStatusComment =
+    isManager && message.metadata.activity_type === "manager_status_comment";
+  const activityAuthor = message.sender.name;
   const isSubagent = message.metadata.kind === "task_ai_subagent";
   const runId =
     typeof message.metadata.run_id === "string"
@@ -284,7 +297,80 @@ export function IssueChatMessage({
         onOpenUrl(backendExecution.executionUrl);
       }
     : undefined;
-  const openExecution = onOpenExecution ?? openBackendExecution;
+  const openExecution =
+    onOpenExecution ??
+    (allowBackendExecutionFallback ? openBackendExecution : undefined);
+  if (compact && plain && isManager && !isManagerStatusComment) {
+    const failed = displayStatus === "failed";
+    const completed = displayStatus === "succeeded";
+    const presentation = managerActivityPresentation(
+      t,
+      message.metadata,
+      failed ? "failed" : completed ? "completed" : "running",
+    );
+    return (
+      <div
+        {...focusAttributes}
+        data-testid={testId ?? `cloud-task-manager-event-${message.messageId}`}
+        data-activity-sequence={message.sequenceNumber}
+        className="flex gap-3 px-3 py-3"
+      >
+        {presentation.planning ? (
+          <LoaderCircle
+            aria-hidden="true"
+            className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-text-muted"
+          />
+        ) : (
+          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <span className="font-medium">{message.sender.name}</span>{" "}
+              <span className="text-xs text-text-muted">
+                {t("activity.task_activity_manager_role")}
+              </span>
+              {" · "}
+              {presentation.label}
+            </div>
+            {openExecution || onStopExecution ? (
+              <div className="flex shrink-0 items-center gap-3">
+                {openExecution ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-manager-execution-${message.messageId}`}
+                    className="text-xs text-text-muted hover:text-text-primary"
+                    onClick={openExecution}
+                  >
+                    {t("activity.task_activity_view_execution")}
+                  </button>
+                ) : null}
+                {onStopExecution ? (
+                  <button
+                    type="button"
+                    data-testid={`cloud-task-manager-cancel-${message.messageId}`}
+                    disabled={stopping}
+                    className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={onStopExecution}
+                  >
+                    {stopping
+                      ? t("activity.task_activity_stopping_workflow")
+                      : t("activity.task_activity_stop_workflow")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <time
+            dateTime={message.createdAt}
+            className="text-xs text-text-muted"
+          >
+            {formatIssueTimestamp(message.createdAt)}
+          </time>
+        </div>
+      </div>
+    );
+  }
   if (eventOnly) {
     return (
       <div
@@ -392,6 +478,16 @@ export function IssueChatMessage({
         <span className="text-sm text-text-muted">
           {t("activity.project_chat_processing_ellipsis")}
         </span>
+      ) : null}
+      {isAgent && isStreaming ? (
+        <div
+          role="status"
+          data-testid={`task-activity-working-${message.messageId}`}
+          className="mt-2 flex items-center gap-2 text-xs text-text-muted"
+        >
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+          {t("activity.project_chat_processing_ellipsis")}
+        </div>
       ) : null}
       {isAgent && !compact && isSucceeded ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
@@ -532,11 +628,39 @@ export function IssueChatMessage({
     return (
       <IssueActivityMessage
         {...focusAttributes}
-        author={message.sender.name}
+        author={activityAuthor}
         createdAt={message.createdAt}
         avatar={avatar}
+        hideTime={hideTime}
         metadata={
-          isSubagent ? (
+          isAgent && showInlineExecutionStatus ? (
+            <>
+              {isManager ? (
+                <span
+                  className="text-xs text-text-muted"
+                  data-testid={`cloud-task-activity-role-${message.messageId}`}
+                >
+                  {t("activity.task_activity_manager_role")}
+                </span>
+              ) : taskSummary?.title ? (
+                <span
+                  className="text-xs text-text-muted"
+                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+                >
+                  {taskSummary.title}
+                </span>
+              ) : null}
+              <ExecutionStatusBadge
+                translate={t}
+                testId={executionTestId}
+                messageId={message.messageId}
+                status={runStatus}
+                onOpenExecution={openExecution}
+                onStopExecution={onStopExecution}
+                stopping={stopping}
+              />
+            </>
+          ) : isSubagent ? (
             <span className="text-xs text-text-muted">
               {t("activity.task_activity_subagent_execution")}
             </span>
@@ -545,6 +669,7 @@ export function IssueChatMessage({
         data-testid={
           testId ?? `cloud-task-activity-message-${message.messageId}`
         }
+        data-activity-sequence={message.sequenceNumber}
         data-side={mine ? "right" : "left"}
         className="task-detail-thread-message"
       >
@@ -557,7 +682,7 @@ export function IssueChatMessage({
         >
           {body}
         </div>
-        {taskSummary ? (
+        {taskSummary && !showInlineExecutionStatus ? (
           <div className="task-detail-thread-task-link">
             {taskSummary.onOpen ? (
               <button
@@ -585,6 +710,7 @@ export function IssueChatMessage({
     <article
       {...focusAttributes}
       data-testid={testId ?? `cloud-task-activity-message-${message.messageId}`}
+      data-activity-sequence={message.sequenceNumber}
       data-side={mine ? "right" : "left"}
       className="overflow-hidden rounded-xl border border-border bg-background shadow-sm"
     >
