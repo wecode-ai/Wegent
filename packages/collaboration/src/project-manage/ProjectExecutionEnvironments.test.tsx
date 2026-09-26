@@ -449,6 +449,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(element("-21").textContent).toContain("环境已就绪");
     expect(element("-readiness").textContent).toBe("已完成");
     expect(element("-completion-status").textContent).toBe("环境已初始化");
+    expect(element("-completion-status").dataset.state).toBe("ready");
     expect(initializeButton.classList).toContain(
       "collaboration-secondary-button",
     );

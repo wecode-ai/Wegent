@@ -1915,6 +1915,107 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it('applies a completed preload while a newer task signature refresh is still pending', async () => {
+    const workbenchServices = services()
+    const address = { deviceId: 'local-device', taskId: 'runtime-terminal-preload' }
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 2,
+        loop_item_id: item.id,
+        task_user_id: 1,
+        device_id: address.deviceId,
+        task_id: address.taskId,
+        task_title: '终态会话预加载',
+        backend_task_id: null,
+        linked_at: '2026-08-23T00:01:00Z',
+      },
+    ])
+    let resolveCompletedTranscript!: (response: RuntimeTranscriptResponse) => void
+    const completedTranscriptPromise = new Promise<RuntimeTranscriptResponse>(resolve => {
+      resolveCompletedTranscript = resolve
+    })
+    const pendingRefresh = new Promise<RuntimeTranscriptResponse>(() => undefined)
+    const getRuntimeTranscript = vi
+      .fn()
+      .mockReturnValueOnce(completedTranscriptPromise)
+      .mockReturnValueOnce(pendingRefresh)
+    workbenchServices.runtimeWorkApi = {
+      ...workbenchServices.runtimeWorkApi,
+      getRuntimeTranscript,
+    } as WorkbenchServices['runtimeWorkApi']
+    const runtimeWork = (updatedAt: number, status?: string) => ({
+      projects: [
+        {
+          project: { id: project.id, name: project.name },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              available: true,
+              workspacePath: '/tmp/wegent',
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: '/tmp/wegent',
+                  title: '终态会话预加载',
+                  runtime: 'codex' as const,
+                  running: status !== 'completed',
+                  updatedAt,
+                  status,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      workspaceActive: true,
+    }
+    const view = render(<CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_000)} />)
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <CloudTodoWorkspace {...props} runtimeWork={runtimeWork(1_700_000_001, 'completed')} />
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    resolveCompletedTranscript({
+      taskId: address.taskId,
+      workspacePath: '/tmp/wegent',
+      runtime: 'codex',
+      running: false,
+      fullContent: true,
+      messages: [],
+      turns: [
+        {
+          id: 'completed-turn',
+          status: 'done',
+          items: [
+            {
+              id: 'completed-assistant',
+              type: 'assistant_text',
+              content: 'completed response',
+              createdAt: '2026-08-23T00:02:00Z',
+            },
+          ],
+        },
+      ],
+    })
+
+    await act(async () => {
+      await completedTranscriptPromise
+    })
+    await waitFor(() =>
+      expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual(['completed-turn'])
+    )
+  })
+
   it('preserves older cached turns when the board preload transcript is bounded', async () => {
     const workbenchServices = services()
     const address = { deviceId: 'local-device', taskId: 'runtime-bounded' }

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectChatClient, ProjectChatMessage } from "@wegent/chat-core";
-import { cardSessionAddress, dispatchTaskCardReply } from "./taskCardReply";
+import {
+  cardSessionActive,
+  cardSessionAddress,
+  dispatchTaskCardReply,
+} from "./taskCardReply";
 
 const address = {
   deviceId: "device-1",
@@ -61,6 +65,28 @@ function setup() {
   return { input, client, runtime };
 }
 describe("shared PC card reply dispatch", () => {
+  it("treats a persisted terminal execution as idle even while liveness is stale", () => {
+    expect(
+      cardSessionActive(
+        {
+          root,
+          replies: [{ ...run, status: "completed" }],
+        },
+        () => true,
+      ),
+    ).toBe(false);
+  });
+  it("keeps a newly persisted active execution busy", () => {
+    expect(
+      cardSessionActive(
+        {
+          root,
+          replies: [{ ...run, status: "streaming" }],
+        },
+        () => true,
+      ),
+    ).toBe(true);
+  });
   it("continues the activity-owned session even when no runtime-work snapshot is available", async () => {
     const { input, client, runtime } = setup();
     expect(cardSessionAddress(input.card)).toEqual(address);

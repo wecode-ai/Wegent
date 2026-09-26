@@ -53,6 +53,12 @@ export function cardSessionActive(
 ): boolean {
   return [card.root, ...card.replies].some((message) => {
     if (message.sender.type !== "agent") return false;
+    const recordedStatus = message.status.toLowerCase();
+    if (
+      ["completed", "failed", "cancelled", "canceled"].includes(recordedStatus)
+    ) {
+      return false;
+    }
     const running = message.runtimeAddress
       ? busy(message.runtimeAddress)
       : undefined;

@@ -170,7 +170,7 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
   await initialize.first().click()
   await expect(
     page.getByTestId('collaboration-project-execution-environment-completion-status')
-  ).toContainText('环境已初始化')
+  ).toHaveAttribute('data-state', 'ready')
   await page.getByTestId('collaboration-tab-board').click()
 }
 

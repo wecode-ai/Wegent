@@ -1006,6 +1006,8 @@ export function CloudTodoWorkspace({
     Record<string, RuntimeGoal | null>
   >({})
   const runtimeConversationAttemptedSignaturesRef = useRef(new Map<string, string>())
+  const runtimeConversationRequestSequencesRef = useRef(new Map<string, number>())
+  const runtimeConversationAppliedSequencesRef = useRef(new Map<string, number>())
   const runtimeGoalRequestsRef = useRef(new Set<string>())
   // Applies a freshly fetched board snapshot. `boardError` distinguishes a
   // loaded-but-empty project (renders empty columns) from a failed fetch
@@ -3004,6 +3006,9 @@ export function CloudTodoWorkspace({
           continue
         }
         runtimeConversationAttemptedSignaturesRef.current.set(addressKey, taskSignature)
+        const requestSequence =
+          (runtimeConversationRequestSequencesRef.current.get(addressKey) ?? 0) + 1
+        runtimeConversationRequestSequencesRef.current.set(addressKey, requestSequence)
         void runtimeWorkApi
           .getRuntimeTranscript({
             deviceId: binding.device_id,
@@ -3016,10 +3021,12 @@ export function CloudTodoWorkspace({
           })
           .then(transcript => {
             if (
-              runtimeConversationAttemptedSignaturesRef.current.get(addressKey) !== taskSignature
+              requestSequence <
+              (runtimeConversationAppliedSequencesRef.current.get(addressKey) ?? 0)
             ) {
               return
             }
+            runtimeConversationAppliedSequencesRef.current.set(addressKey, requestSequence)
             const projectedTranscript = projectRuntimePaneTranscript(transcript)
             const address = {
               deviceId: binding.device_id,

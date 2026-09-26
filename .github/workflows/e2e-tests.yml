@@ -683,7 +683,7 @@ jobs:
           DEVICE_ID: e2e-platform-device-${{ matrix.shardIndex }}
           DEVICE_NAME: E2E Platform Device ${{ matrix.shardIndex }}
           DEVICE_TYPE: app
-          BIND_SHELL: codex
+          BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: /tmp/wegent-platform-executor-${{ matrix.shardIndex }}
           LOCAL_WORKSPACE_ROOT: /tmp/wegent-platform-workspace-${{ matrix.shardIndex }}
           WORKSPACE_ROOT: /tmp/wegent-platform-workspace-${{ matrix.shardIndex }}

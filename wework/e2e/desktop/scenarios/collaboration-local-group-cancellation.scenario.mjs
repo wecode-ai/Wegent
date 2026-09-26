@@ -287,6 +287,12 @@ export async function createDesktopScenario({
       await control.command('waitFor', `[data-testid="${managerExecutionTestId}"]`, {
         timeoutMs: modelResponseTimeoutMs,
       })
+      await waitForCondition(
+        () => managerRequests,
+        count => count === 1,
+        modelResponseTimeoutMs,
+        '协作小组负责人没有启动唯一的一轮规划执行'
+      )
       assert.equal(managerRequests, 1, '协作小组负责人没有启动唯一的一轮规划执行')
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
