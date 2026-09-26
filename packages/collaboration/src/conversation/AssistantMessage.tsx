@@ -26,6 +26,7 @@ import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
 import { ProcessingDurationLabel } from "./ProcessingDurationLabel";
 import {
   collapsePersistentProcessingExpansions,
+  getProcessingDetailStateKey,
   useAnyPersistentProcessingExpansion,
   usePersistentProcessingExpansion,
 } from "./blocks/processingExpansionState";
@@ -190,23 +191,9 @@ export function AssistantMessage({
         .slice(index + 1)
         .some((candidate) => candidate.kind === "processing"),
   );
-  const expandedToolDetailStateKeys = hasProcessingAfterContent
-    ? orderedRuntimeSegments.flatMap((segment, segmentIndex) =>
-        segment.kind === "processing"
-          ? splitProcessingBlocks(segment.blocks).flatMap(
-              (processingSegment, processingIndex) =>
-                processingSegment.blocks.map(
-                  (block) =>
-                    `${processingStateKey}:ordered:${segmentIndex}:${processingIndex}:${block.id}`,
-                ),
-            )
-          : [],
-      )
-    : processingSegments.flatMap((segment, index) =>
-        segment.blocks.map(
-          (block) => `${processingStateKey}:${index}:${block.id}`,
-        ),
-      );
+  const expandedToolDetailStateKeys = displayBlocks.map((block) =>
+    getProcessingDetailStateKey(processingStateKey, block.id),
+  );
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(
     expandedToolDetailStateKeys,
   );
@@ -302,6 +289,7 @@ export function AssistantMessage({
           thinkingContent={activeThinkingContent}
           showSummary={segment.kind === "tool"}
           stateKey={`${processingStateKey}:${index}`}
+          detailStateScopeKey={processingStateKey}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -360,6 +348,7 @@ export function AssistantMessage({
                 thinkingContent={activeThinkingContent}
                 showSummary={processingSegment.kind === "tool"}
                 stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                detailStateScopeKey={processingStateKey}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}

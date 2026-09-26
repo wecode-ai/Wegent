@@ -6124,6 +6124,106 @@ describe('MessageList', () => {
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
+  test('keeps an expanded file change open when runtime ordering moves it after text', () => {
+    const fileChangesBlock: ProcessingBlock = {
+      id: 'file-changes-ordered-persistence',
+      subtaskId: 1,
+      type: 'file_changes',
+      status: 'done',
+      createdAt: 1770000000000,
+      fileChanges: {
+        version: 1,
+        status: 'active',
+        artifact_id: 'artifact-file-changes-ordered-persistence',
+        device_id: 'device-1',
+        workspace_path: '/workspace/project',
+        file_count: 1,
+        additions: 1,
+        deletions: 1,
+        files: [
+          {
+            path: 'scripts/env',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 1,
+            binary: false,
+          },
+        ],
+        reverted_at: null,
+        revertible: false,
+        diff: [
+          'diff --git a/scripts/env b/scripts/env',
+          '--- a/scripts/env',
+          '+++ b/scripts/env',
+          '@@ -1 +1 @@',
+          '-OLD_ENV=remote',
+          '+OLD_ENV=local',
+        ].join('\n'),
+      },
+    }
+    const message = {
+      id: 'assistant-file-changes-ordered-persistence',
+      role: 'assistant' as const,
+      content: '',
+      status: 'streaming' as const,
+      createdAt: '2026-05-25T18:46:00.000+08:00',
+      blocks: [fileChangesBlock],
+      runtimeDisplayItems: [
+        {
+          id: fileChangesBlock.id,
+          type: 'block' as const,
+        },
+      ],
+    }
+    const { rerender } = render(<MessageList messages={[message]} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    const finalContent = 'Updated the environment configuration.'
+    const orderedRuntimeDisplayItems = [
+      {
+        id: 'assistant-text',
+        type: 'assistant_text' as const,
+        content: finalContent,
+      },
+      {
+        id: fileChangesBlock.id,
+        type: 'block' as const,
+      },
+    ]
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...message,
+            content: finalContent,
+            runtimeDisplayItems: orderedRuntimeDisplayItems,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...message,
+            content: finalContent,
+            status: 'done',
+            runtimeDisplayItems: orderedRuntimeDisplayItems,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+  })
+
   test('renders process text inside the processing timeline before the following tool', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',

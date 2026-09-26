@@ -19,6 +19,7 @@ import {
 } from "./toolBlockActivity";
 import { SubagentActivityGroup } from "./SubagentBlockItem";
 import { type ToolActivityLabels } from "./processingDisplayTypes";
+import { getProcessingDetailStateKey } from "./processingExpansionState";
 import {
   countProcessingActivityKinds,
   ToolActivityGroup,
@@ -146,7 +147,7 @@ export function LiveProcessingPreview({
   thinkingContent,
   onOpenWorkspaceFile,
   fileEditDurations,
-  stateKey,
+  detailStateScopeKey,
   onExpandedDetailChange,
   onOpenSubagent,
 }: {
@@ -155,7 +156,7 @@ export function LiveProcessingPreview({
   thinkingContent: string;
   onOpenWorkspaceFile?: (path: string) => void;
   fileEditDurations: FileEditDurationsByBlock;
-  stateKey?: string;
+  detailStateScopeKey?: string;
   onExpandedDetailChange?: (expanded: boolean) => void;
   onOpenSubagent?: (block: SubagentBlock) => void;
 }) {
@@ -211,7 +212,11 @@ export function LiveProcessingPreview({
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
-            stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+            stateKey={
+              detailStateScopeKey
+                ? getProcessingDetailStateKey(detailStateScopeKey, row.id)
+                : undefined
+            }
             onOpenSubagent={onOpenSubagent}
           />
         ))}

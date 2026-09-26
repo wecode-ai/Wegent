@@ -10,6 +10,13 @@ type SelectionUpdate =
   | null
   | ((value: string | null) => string | null);
 
+export function getProcessingDetailStateKey(
+  scopeKey: string,
+  blockId: string,
+): string {
+  return `${scopeKey}:detail:${blockId}`;
+}
+
 export function usePersistentProcessingExpansion(
   key: string | undefined,
   initialValue = false,

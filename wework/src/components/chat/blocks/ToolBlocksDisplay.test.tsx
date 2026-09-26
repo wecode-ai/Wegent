@@ -1288,12 +1288,13 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
   })
 
-  test('persists the expanded file detail with the processing state', () => {
+  test('persists the expanded file detail when the summary state key changes', () => {
     const { unmount } = render(
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        stateKey="file-changes-live-summary"
+        detailStateScopeKey="file-changes-message"
       />
     )
 
@@ -1307,7 +1308,8 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
         isStreaming={false}
-        stateKey="file-changes-local-expansion"
+        stateKey="file-changes-ordered-summary"
+        detailStateScopeKey="file-changes-message"
       />
     )
 

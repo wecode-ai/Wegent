@@ -22,6 +22,7 @@ import {
 } from './toolBlockActivity'
 import {
   collapsePersistentProcessingExpansions,
+  getProcessingDetailStateKey,
   useAnyPersistentProcessingExpansion,
   usePersistentProcessingExpansion,
 } from './processingExpansionState'
@@ -67,6 +68,7 @@ interface ToolBlocksDisplayProps {
   thinkingContent?: string
   showSummary?: boolean
   stateKey?: string
+  detailStateScopeKey?: string
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -87,6 +89,7 @@ export function ToolBlocksDisplay({
   thinkingContent = '',
   showSummary = true,
   stateKey,
+  detailStateScopeKey,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -199,9 +202,13 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const effectiveDetailStateScopeKey = detailStateScopeKey ?? stateKey
   const previewDetailStateKeys = useMemo(
-    () => rows.map(row => (stateKey ? `${stateKey}:${row.id}` : row.id)),
-    [rows, stateKey]
+    () =>
+      effectiveDetailStateScopeKey
+        ? rows.map(row => getProcessingDetailStateKey(effectiveDetailStateScopeKey, row.id))
+        : [],
+    [effectiveDetailStateScopeKey, rows]
   )
   const hasExpandedPreviewDetail =
     useAnyPersistentProcessingExpansion(previewDetailStateKeys) ||
@@ -349,7 +356,11 @@ export function ToolBlocksDisplay({
               <ToolBlockItem
                 key={item.id}
                 block={item.block}
-                stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
+                stateKey={
+                  effectiveDetailStateScopeKey
+                    ? getProcessingDetailStateKey(effectiveDetailStateScopeKey, item.id)
+                    : undefined
+                }
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 fileEditDurations={fileEditDurations}
@@ -366,7 +377,7 @@ export function ToolBlocksDisplay({
       fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
-      stateKey,
+      effectiveDetailStateScopeKey,
       onOpenSubagent,
     ]
   )
@@ -408,7 +419,7 @@ export function ToolBlocksDisplay({
           thinkingContent={thinkingContent}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
-          stateKey={stateKey}
+          detailStateScopeKey={effectiveDetailStateScopeKey}
           onExpandedDetailChange={setHasLocallyExpandedPreviewDetail}
           onOpenSubagent={onOpenSubagent}
         />
