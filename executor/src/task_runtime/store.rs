@@ -4768,6 +4768,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         payload_object.insert("standaloneChatWorkspace".to_owned(), json!(true));
     }
     payload_object.insert("origin".to_owned(), origin.clone());
+    if dispatch_id.is_some() {
+        payload_object.insert("collaboration_model".to_owned(), json!("single"));
+    }
 
     if let Some(member_profiles) = stored
         .get("memberRuntimeProfiles")
@@ -6060,6 +6063,7 @@ mod tests {
         assert_eq!(payload["executionRequest"]["bot"][0]["id"], leader.id);
         assert_eq!(payload["origin"]["dispatchRole"], "manager");
         assert_eq!(payload["origin"]["dispatchId"], issue.id);
+        assert_eq!(payload["collaboration_model"], "single");
         assert_eq!(
             payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"]
                 .as_array()
@@ -6221,6 +6225,10 @@ mod tests {
             first_member_execution.execution_payload.as_ref().unwrap()["message"],
             "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
         );
+        assert_eq!(
+            first_member_execution.execution_payload.as_ref().unwrap()["collaboration_model"],
+            "single"
+        );
         let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
             ["executionRequest"]["system_prompt"]
             .as_str()
@@ -6345,6 +6353,10 @@ mod tests {
         assert_eq!(
             resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
             "manager"
+        );
+        assert_eq!(
+            resumed_manager.execution_payload.as_ref().unwrap()["collaboration_model"],
+            "single"
         );
         assert!(
             resumed_manager.execution_payload.as_ref().unwrap()["message"]
