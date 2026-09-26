@@ -102,6 +102,7 @@ export function ToolBlockItem({
         block={block}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
+        stateKey={stateKey}
       />
     );
   }

@@ -778,9 +778,16 @@ test.describe('Task runtime consistency', () => {
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
-            headers: authHeaders(),
-          })
+          let response
+          try {
+            response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
+              headers: authHeaders(),
+            })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!/socket hang up|ECONNRESET/i.test(message)) throw error
+            return `TRANSPORT_ERROR_${message}`
+          }
           if (response.status() !== 200) {
             return `HTTP_${response.status()}`
           }
