@@ -152,6 +152,12 @@ describe("shared Issue threads", () => {
     expect(event?.textContent).toContain("采集运行证据 → 诊断智能体");
     expect(event?.textContent).toContain("独立复核结论 → 复核成员");
     expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).toBeNull();
   });
 
   it("renders an optional manager status comment as comment content", () => {

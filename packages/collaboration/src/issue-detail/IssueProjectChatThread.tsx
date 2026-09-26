@@ -90,6 +90,9 @@ export function IssueProjectChatThread({
     translate,
   );
   const rootId = thread.root.messageId;
+  const isExecutionTaskThread =
+    thread.root.sender.type === "agent" &&
+    thread.root.metadata.dispatch_role !== "manager";
   const runs = [thread.root, ...thread.replies].filter(
     (message) => message.sender.type === "agent",
   );
@@ -143,72 +146,78 @@ export function IssueProjectChatThread({
       />
     );
   }
+  const activityThread = (
+    <IssueActivityThread
+      cardAttributes={{
+        "data-testid": `collaboration-chat-card-${rootId}`,
+      }}
+      message={renderMessage(thread.root)}
+      replies={
+        thread.replies.length
+          ? thread.replies.map((message) => renderMessage(message))
+          : null
+      }
+      repliesTestId={`collaboration-chat-replies-${rootId}`}
+      composer={
+        canComment && runtimeReplies ? (
+          <BrowserIssueReplyComposer
+            rootId={rootId}
+            disabled={!canComment}
+            canAttach={Boolean(upload)}
+            translate={translate}
+            mentionCandidates={mentionCandidates}
+          />
+        ) : canComment ? (
+          <IssueThreadReplyComposer
+            rootId={rootId}
+            disabled={!canComment}
+            attachments={upload ? attachments : undefined}
+            mentionCandidates={mentionCandidates}
+            translate={translate}
+            onSend={async (text, mentions) => {
+              await send(
+                issueCommentBody(text, attachments.attachments),
+                rootId,
+                ...(mentions.length ? [mentions] : []),
+              );
+              return { ok: true };
+            }}
+            labels={{
+              placeholder: translate("todo.reply_placeholder"),
+              send: translate("todo.send_message"),
+              attach: translate("todo.attach_file"),
+              removeAttachment: translate("todo.remove_attachment"),
+              uploading: translate("todo.attachments_uploading"),
+              sendFailed: translate("todo.send_failed"),
+            }}
+            testIds={{
+              composer: `collaboration-chat-reply-${rootId}`,
+              input: `collaboration-chat-reply-input-${rootId}`,
+              send: `collaboration-chat-reply-send-${rootId}`,
+              attach: `collaboration-chat-attach-${rootId}`,
+              file: `collaboration-chat-attach-${rootId}-input`,
+              error: `collaboration-chat-reply-error-${rootId}`,
+            }}
+          />
+        ) : null
+      }
+      eventLabel={translate("todo.execution_count", "{{count}} 条运行动态", {
+        count: runs.length,
+      })}
+      eventTestId={`collaboration-chat-events-${rootId}`}
+      events={
+        runs.length ? runs.map((message) => renderMessage(message, true)) : null
+      }
+    />
+  );
+
+  if (!isExecutionTaskThread) {
+    return activityThread;
+  }
+
   return (
     <div data-testid={`cloud-task-activity-card-${rootId}`}>
-      <IssueActivityThread
-        cardAttributes={{
-          "data-testid": `collaboration-chat-card-${rootId}`,
-        }}
-        message={renderMessage(thread.root)}
-        replies={
-          thread.replies.length
-            ? thread.replies.map((message) => renderMessage(message))
-            : null
-        }
-        repliesTestId={`collaboration-chat-replies-${rootId}`}
-        composer={
-          canComment && runtimeReplies ? (
-            <BrowserIssueReplyComposer
-              rootId={rootId}
-              disabled={!canComment}
-              canAttach={Boolean(upload)}
-              translate={translate}
-              mentionCandidates={mentionCandidates}
-            />
-          ) : canComment ? (
-            <IssueThreadReplyComposer
-              rootId={rootId}
-              disabled={!canComment}
-              attachments={upload ? attachments : undefined}
-              mentionCandidates={mentionCandidates}
-              translate={translate}
-              onSend={async (text, mentions) => {
-                await send(
-                  issueCommentBody(text, attachments.attachments),
-                  rootId,
-                  ...(mentions.length ? [mentions] : []),
-                );
-                return { ok: true };
-              }}
-              labels={{
-                placeholder: translate("todo.reply_placeholder"),
-                send: translate("todo.send_message"),
-                attach: translate("todo.attach_file"),
-                removeAttachment: translate("todo.remove_attachment"),
-                uploading: translate("todo.attachments_uploading"),
-                sendFailed: translate("todo.send_failed"),
-              }}
-              testIds={{
-                composer: `collaboration-chat-reply-${rootId}`,
-                input: `collaboration-chat-reply-input-${rootId}`,
-                send: `collaboration-chat-reply-send-${rootId}`,
-                attach: `collaboration-chat-attach-${rootId}`,
-                file: `collaboration-chat-attach-${rootId}-input`,
-                error: `collaboration-chat-reply-error-${rootId}`,
-              }}
-            />
-          ) : null
-        }
-        eventLabel={translate("todo.execution_count", "{{count}} 条运行动态", {
-          count: runs.length,
-        })}
-        eventTestId={`collaboration-chat-events-${rootId}`}
-        events={
-          runs.length
-            ? runs.map((message) => renderMessage(message, true))
-            : null
-        }
-      />
+      {activityThread}
     </div>
   );
 }
