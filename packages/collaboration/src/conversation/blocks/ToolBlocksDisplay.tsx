@@ -282,7 +282,13 @@ export function ToolBlocksDisplay({
       setLivePreviewCollapsed(value => !value)
       return
     }
-    setUserExpanded(value => !value)
+    if (summaryExpanded) {
+      setHasLocallyExpandedPreviewDetail(false)
+      collapsePersistentProcessingExpansions(previewDetailStateKeys)
+      setUserExpanded(false)
+      return
+    }
+    setUserExpanded(true)
   }
   const hasToolActivity = rows.some(
     row =>

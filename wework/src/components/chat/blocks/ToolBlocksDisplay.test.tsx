@@ -1288,7 +1288,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
   })
 
-  test('persists the expanded file detail when the summary state key changes', () => {
+  test('persists file detail across summary keys and clears it when the summary closes', () => {
     const { unmount } = render(
       <ToolBlocksDisplay
         blocks={[completedFileChangesBlock]}
@@ -1317,6 +1317,22 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('编辑 env')
     expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByTestId('processing-summary-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByRole('button', { name: /编辑 env/ })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
   })
 
   test('uses the same tool list for completed and streaming processing', () => {
