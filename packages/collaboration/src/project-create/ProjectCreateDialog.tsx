@@ -43,6 +43,7 @@ import {
 import { ModelSelector } from "../controls/ModelSelector";
 import { createCollaborationTranslator } from "../i18n";
 import { CollaborationGroupRoster } from "../platform/CollaborationGroupRoster";
+import { changeCollaborationGroupLeader } from "./collaborationGroupDraft";
 import { useCollaborationPortalTheme } from "../theme";
 import type {
   ProjectCreateCollaborationGroupDraft,
@@ -796,31 +797,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   }) => {
     setGroupEditorDraft((current) => {
       if (!current) return current;
-      const selected = [current.leader, ...current.members].find(
-        (candidate) =>
-          candidate.kind === participant.kind &&
-          candidate.id === participant.id,
-      );
-      if (!selected) return current;
-      const previousLeader = current.leader;
-      return {
-        ...current,
-        leader: selected,
-        members: [
-          previousLeader,
-          ...current.members.filter(
-            (candidate) =>
-              candidate.kind !== participant.kind ||
-              candidate.id !== participant.id,
-          ),
-        ].filter(
-          (candidate, index, candidates) =>
-            candidates.findIndex(
-              (item) =>
-                item.kind === candidate.kind && item.id === candidate.id,
-            ) === index,
-        ),
-      };
+      return changeCollaborationGroupLeader(current, participant);
     });
   };
   const groupedParticipants = state.collaborationGroupDraft

@@ -30,6 +30,33 @@ import {
 import { sha256Hex } from '@/api/fileHash'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
+function assertValidCollaborationGroup(
+  leader: CollaborationGroup['leader'],
+  members: CollaborationGroup['members'],
+  stages: CollaborationGroup['stages']
+) {
+  const identity = (member: CollaborationGroup['leader']) => `${member.kind}:${member.id}`
+  const leaderIdentity = identity(leader)
+  const memberIdentities = members.map(identity)
+  const uniqueMemberIdentities = new Set(memberIdentities)
+  if (uniqueMemberIdentities.size !== memberIdentities.length) {
+    throw new Error('Collaboration group members must be unique')
+  }
+  if (!uniqueMemberIdentities.has(leaderIdentity)) {
+    throw new Error('Leader must be a member of the collaboration group')
+  }
+  stages.forEach(stage => {
+    if (!stage.assignee) return
+    const assigneeIdentity = identity(stage.assignee)
+    if (!uniqueMemberIdentities.has(assigneeIdentity)) {
+      throw new Error('Collaboration group stage assignee must be a group member')
+    }
+    if (assigneeIdentity === leaderIdentity) {
+      throw new Error('Collaboration group leader cannot execute a stage')
+    }
+  })
+}
+
 export function createLocalWorkspaceApi(
   deliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
@@ -735,6 +762,7 @@ export function createLocalWorkspaceApi(
       created_at: now,
       updated_at: now,
     }
+    assertValidCollaborationGroup(group.leader, group.members, group.stages)
     await persistProjectCollaborationGroups(projectId, [...groups, group])
     return group
   }
@@ -796,6 +824,7 @@ export function createLocalWorkspaceApi(
       version: current.version + 1,
       updated_at: new Date().toISOString(),
     }
+    assertValidCollaborationGroup(updated.leader, updated.members, updated.stages)
     await persistProjectCollaborationGroups(
       projectId,
       groups.map(group => (group.id === groupId ? updated : group))

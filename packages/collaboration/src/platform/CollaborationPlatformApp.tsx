@@ -54,7 +54,11 @@ import {
   createResourceAgentBindingInput,
   ProjectAgentConfiguration,
 } from "../project-agent-config";
-import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
+import {
+  normalizeCollaborationGroupDraftForPersistence,
+  ProjectCreateDialog,
+  projectCreateLabels,
+} from "../project-create";
 import {
   CollaborationParticipantsTabs,
   ProjectExecutionEnvironments,
@@ -4578,8 +4582,12 @@ export function CollaborationPlatformApp({
                           })),
                       )),
                     ];
-                    const groupDraft = selection.collaborationGroupDraft;
-                    if (!groupDraft) return;
+                    const rawGroupDraft = selection.collaborationGroupDraft;
+                    if (!rawGroupDraft) return;
+                    const groupDraft =
+                      normalizeCollaborationGroupDraftForPersistence(
+                        rawGroupDraft,
+                      );
                     if (!api.projects.createCollaborationGroup) {
                       throw new Error(
                         locale === "zh-CN"

@@ -2703,6 +2703,24 @@ describe('Wework collaboration workspace API', () => {
       leader: { kind: 'human', id: '1' },
       members: [{ kind: 'human', id: '1' }],
     })
+    await expect(
+      api.workspaces!.createCollaborationGroup('wework-local-workspace', {
+        name: '负责人不执行',
+        coordinationMode: 'manager',
+        leader: { kind: 'human', id: '1' },
+        members: [
+          { kind: 'human', id: '1' },
+          { kind: 'agent', id: 'worker' },
+        ],
+        stages: [
+          {
+            id: 'implementation',
+            name: '实现',
+            assignee: { kind: 'human', id: '1' },
+          },
+        ],
+      })
+    ).rejects.toThrow('Collaboration group leader cannot execute a stage')
     update.mockClear()
     await expect(api.projects.addCollaborationGroup!('local-project', group.id)).resolves.toEqual(
       group
