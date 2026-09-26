@@ -91,7 +91,8 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
             "collaboration_group": {
                 "id": "group-1",
                 "name": "Managed group",
-            }
+            },
+            "collaboration_group_assignment_key": "assignment-1",
         },
     )
     dispatch = LoopItemExecution(
@@ -105,8 +106,17 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
                     "executor_kind": "collaboration_group_dispatch",
                 },
                 "origin_context": {
+                    "dispatch_kind": "collaboration_group",
                     "dispatch_id": "dispatch-1",
                     "manager_agent_id": manager.id,
+                    "run_id": "collaboration-group:assignment-1",
+                    "collaboration_group_id": "group-1",
+                    "collaboration_group": {
+                        "id": "group-1",
+                        "name": "Managed group",
+                        "leader": {"kind": "agent", "id": manager.id},
+                        "members": [],
+                    },
                 },
             }
         ),
@@ -122,15 +132,6 @@ def test_update_issue_status_is_scoped_to_manager_board_task(
         "dispatchRole": "manager",
         "managerAgentId": manager.id,
     }
-    monkeypatch.setattr(
-        collaboration_manager_decisions,
-        "collaboration_group_for_item",
-        lambda *_args, **_kwargs: {
-            "id": "group-1",
-            "leader": {"kind": "agent", "id": manager.id},
-            "members": [],
-        },
-    )
     monkeypatch.setattr(
         collaboration_manager_decisions,
         "push_project_chat_message",

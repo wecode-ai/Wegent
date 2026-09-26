@@ -14,7 +14,10 @@ import {
   selectMcpTool,
 } from '../modules/response-protocol.mjs'
 import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
-import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import {
+  initializeFirstProjectExecutionEnvironment,
+  selectCollaborationDomain,
+} from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -188,37 +191,6 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs) {
   )
 }
 
-async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-environments"]')
-  )
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-execution-environment-add"]')
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped(
-      `[data-testid="collaboration-project-execution-environment-candidate-${remoteDevice.id}"]`
-    ),
-    { timeoutMs }
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped(
-      `[data-testid="collaboration-project-execution-environment-initialize-${remoteDevice.id}"]`
-    ),
-    { timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-project-execution-environment-completion-status"]'),
-    { text: '环境已初始化', timeoutMs }
-  )
-}
-
 export function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -338,7 +310,12 @@ export function createDesktopScenario({
         'remote'
       )
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
-      await initializeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        CONTENT,
+        modelResponseTimeoutMs,
+        remoteDevice.id
+      )
       issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
       assert.equal(String(issue.assignee_user_id), String(owner.id))
       notification = await waitForValue(

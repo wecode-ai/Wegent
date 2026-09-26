@@ -4801,6 +4801,8 @@ mod tests {
                     parent_id: None,
                     tags: Vec::new(),
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -4971,6 +4973,8 @@ mod tests {
                     parent_id: None,
                     tags: vec!["bug".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -4986,6 +4990,8 @@ mod tests {
                     parent_id: None,
                     tags: vec!["docs".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5047,6 +5053,8 @@ mod tests {
                         parent_id: None,
                         tags: vec!["feedback".to_owned()],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -5091,6 +5099,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )

@@ -206,6 +206,7 @@ fn local_backend_config() -> LocalBackendConfig {
         runtime_transfer_host: "192.0.2.10".to_owned(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
+        runtime_work_poll_interval: Duration::from_secs(2),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),

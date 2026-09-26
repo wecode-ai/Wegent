@@ -4371,7 +4371,7 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert model_config["upstream_api_format"] == "anthropic-messages"
     assert model_config["codex_catalog_model_id"] == "wework-kimi-k2-7"
     assert model_config["codex_responses_compat_proxy"] is True
-    assert model_config["tool_profile"] == "function"
+    assert model_config["tool_profile"] == "custom"
     assert payload["modelId"] == "public-cloud-model"
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 

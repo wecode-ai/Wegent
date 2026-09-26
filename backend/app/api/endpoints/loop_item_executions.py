@@ -44,7 +44,7 @@ from app.schemas.runtime_profile import ExecutionRuntimeSelect
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
-    collaboration_group_for_item,
+    collaboration_group_snapshot_for_dispatch,
     resolve_collaboration_group_agent,
 )
 from app.services.collaboration_human_assignments import (
@@ -379,27 +379,11 @@ def enqueue_execution_batch(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    group = collaboration_group_for_item(
-        db,
-        item=item,
-        user_id=current_user.id,
-    )
-    if group is None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Issue is not assigned to a collaboration group",
-        )
-    allowed_members = _collaboration_group_members(group)
     manager = _require_project_agent(
         db,
         project_id=project_id,
         agent_id=values.manager_agent_id,
     )
-    if not collaboration_group_agent_matches(group.get("leader"), manager):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Manager is not the collaboration group leader",
-        )
     project = db.get(CloudProject, project_id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
@@ -416,11 +400,8 @@ def enqueue_execution_batch(
                 .with_for_update()
                 .all()
             )
-            if execution.executor_type == "collaboration_group_dispatch"
-            and str(execution.runtime_origin_context.get("dispatch_id") or "")
+            if str(execution.runtime_origin_context.get("dispatch_id") or "")
             == values.dispatch_id
-            and str(execution.runtime_origin_context.get("manager_agent_id") or "")
-            == manager.id
         ),
         None,
     )
@@ -429,6 +410,20 @@ def enqueue_execution_batch(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
+    group = collaboration_group_snapshot_for_dispatch(
+        item=item,
+        execution=manager_execution,
+    )
+    if str(
+        manager_execution.runtime_origin_context.get("manager_agent_id") or ""
+    ) != manager.id or not collaboration_group_agent_matches(
+        group.get("leader"), manager
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Manager is not the collaboration group leader",
+        )
+    allowed_members = _collaboration_group_members(group)
     human_assignments: list[dict[str, object]] = []
     assignment_activity: list[dict[str, object]] = []
     for command in values.items:

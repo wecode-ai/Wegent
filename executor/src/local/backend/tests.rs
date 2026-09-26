@@ -18,6 +18,7 @@ use std::{
 struct RuntimeWorkPollTransport {
     pull_calls: Arc<AtomicUsize>,
     accepted_tasks: Arc<AtomicUsize>,
+    fail_first_pull: Arc<AtomicBool>,
     cleanup_enabled: Arc<AtomicBool>,
     claimed_cleanups: Arc<AtomicUsize>,
     accepted_cleanups: Arc<AtomicUsize>,
@@ -42,6 +43,9 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
             match event {
                 "runtime.tasks.pull" => {
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    if pull_index == 0 && self.fail_first_pull.swap(false, AtomicOrdering::AcqRel) {
+                        return Err("first queued execution failed preflight".to_owned());
+                    }
                     let task = if pull_index == 1 {
                         json!({
                             "execution_id": "execution-1",
@@ -171,6 +175,7 @@ fn backend_config(device_id: &str) -> LocalBackendConfig {
         runtime_transfer_host: "127.0.0.1".to_string(),
         heartbeat_interval: Duration::from_secs(30),
         heartbeat_timeout: Duration::from_secs(10),
+        runtime_work_poll_interval: Duration::from_secs(2),
         registration_timeout: Duration::from_secs(10),
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
@@ -328,6 +333,23 @@ async fn runtime_work_poll_coalesces_notification_received_while_locked() {
     assert_eq!(handler.capacity_calls.load(AtomicOrdering::Acquire), 2);
     assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
     assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
+    assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn runtime_work_poll_continues_after_one_pull_preflight_failure() {
+    let transport = RuntimeWorkPollTransport::default();
+    transport
+        .fail_first_pull
+        .store(true, AtomicOrdering::Release);
+    let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
+    let handler = Arc::new(BlockingCapacityRuntimeWorkHandler::new());
+    handler.release_first_capacity.notify_one();
+
+    drain_available_runtime_work(&client, &(handler.clone() as Arc<dyn RuntimeWorkHandler>)).await;
+
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 2);
+    assert_eq!(handler.create_calls.load(AtomicOrdering::Acquire), 1);
     assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
 }
 

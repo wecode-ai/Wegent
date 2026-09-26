@@ -502,7 +502,7 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
     assert config["native_tool_search"] is (expected == "openai-responses")
     assert config["native_namespace_tools"] is (expected == "openai-responses")
-    assert config["tool_profile"] == "function"
+    assert config["tool_profile"] == "custom"
 
 
 def test_cloud_runtime_can_bridge_standard_responses_tools(

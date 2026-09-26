@@ -142,7 +142,7 @@ export interface CloudLoopItem {
   can_approve?: boolean
   assignment_history?: Array<{
     by_user_id: number
-    to_type: 'user' | 'agent' | 'team' | null
+    to_type: 'user' | 'agent' | 'team' | 'group' | null
     to_id: string | null
     to_name?: string | null
     action: 'assign' | 'reassign' | 'unassign'
@@ -886,6 +886,8 @@ export function createDeliveryApi(client: HttpClient) {
         local_project_name?: string | null
         automation_rule_id?: string | null
         assignee_user_id?: number | null
+        assignee_group_id?: string | null
+        assignee_agent_id?: string | null
         notify_assignee?: boolean
       }
     ): Promise<CloudLoopItem> {

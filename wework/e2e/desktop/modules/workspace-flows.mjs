@@ -126,13 +126,29 @@ export async function openProjectAgentCreator(control, addSelector, timeoutMs) {
 export async function initializeFirstProjectExecutionEnvironment(
   control,
   contentSelector,
-  timeoutMs
+  timeoutMs,
+  deviceId = null
 ) {
+  await control.command('waitFor', `${contentSelector} [data-testid="collaboration-tab-manage"]`, {
+    visible: true,
+    timeoutMs,
+  })
   await control.command('click', `${contentSelector} [data-testid="collaboration-tab-manage"]`)
   await control.command(
     'click',
     `${contentSelector} [data-testid="collaboration-project-settings-environments"]`
   )
+  if (deviceId) {
+    await control.command(
+      'click',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-add"]`
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${contentSelector} [data-testid="collaboration-project-execution-environment-candidate-${deviceId}"]`,
+      { timeoutMs }
+    )
+  }
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid^="collaboration-project-execution-environment-initialize-"]`,
@@ -665,6 +681,12 @@ async function verifyWorkspaceIssueCreation(control) {
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
   const twoLineIssueDescription = '折叠描述第一行\n折叠描述第二行'
   await createLocalCollaborationProject(control, boardContentSelector, projectName)
+  await initializeFirstProjectExecutionEnvironment(
+    control,
+    boardContentSelector,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command('click', `${boardContentSelector} [data-testid="collaboration-tab-board"]`)
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`

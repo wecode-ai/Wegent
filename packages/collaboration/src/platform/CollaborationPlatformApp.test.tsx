@@ -2695,10 +2695,11 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await click(byTestId("collaboration-issue-guide-2"));
     await click(byTestId("collaboration-home-create-issue"));
-    expect(api.issues.update).toHaveBeenCalledWith(
-      issue.id,
+    expect(api.issues.create).toHaveBeenCalledWith(
+      project.id,
       expect.objectContaining({ assigneeGroupId: "squad-1" }),
     );
+    expect(api.issues.update).not.toHaveBeenCalled();
   });
 
   it("saves a selected project agent as the Issue owner", async () => {
@@ -2715,10 +2716,11 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await click(byTestId("collaboration-issue-guide-2"));
     await click(byTestId("collaboration-home-create-issue"));
-    expect(api.issues.update).toHaveBeenCalledWith(
-      issue.id,
+    expect(api.issues.create).toHaveBeenCalledWith(
+      project.id,
       expect.objectContaining({ assigneeAgentId: agent.id }),
     );
+    expect(api.issues.update).not.toHaveBeenCalled();
   });
 
   it("shows local and cloud backed workspaces in one navigation tree", async () => {

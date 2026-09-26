@@ -98,6 +98,16 @@ describe('createLocalAppServices', () => {
       created_at: '2026-09-26T00:00:00Z',
       updated_at: '2026-09-26T00:00:00Z',
     }
+    const humanLedGroup = {
+      ...group,
+      id: 'human-group-1',
+      name: 'Human coordinated diagnostics',
+      leader: {
+        kind: 'human' as const,
+        id: String(AUTHENTICATED_CLOUD_USER.id),
+        responsibility: 'Coordinate and accept the work',
+      },
+    }
     const project = {
       id: 'project-1',
       resource_type: 'project',
@@ -117,7 +127,7 @@ describe('createLocalAppServices', () => {
       metadata: {
         task_provider: 'local',
         tags: [],
-        collaboration_groups: [group],
+        collaboration_groups: [group, humanLedGroup],
         workflow_definition: { stages: [{ id: 'verify', name: 'Verify' }] },
         execution_environment: {
           repositories: [],
@@ -216,8 +226,15 @@ describe('createLocalAppServices', () => {
       assigneeType: 'group',
       assigneeId: 'group-1',
     })
+    await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'group',
+      assigneeId: 'human-group-1',
+    })
 
     expect(request.mock.calls.filter(([method]) => method === 'chat_agents.list')).toEqual([
+      ['chat_agents.list', { project_id: 'project-1' }],
+      ['chat_agents.list', { project_id: DEFAULT_WORK_ITEM_PROJECT_ID }],
       ['chat_agents.list', { project_id: 'project-1' }],
       ['chat_agents.list', { project_id: DEFAULT_WORK_ITEM_PROJECT_ID }],
       ['chat_agents.list', { project_id: 'project-1' }],
@@ -291,6 +308,22 @@ describe('createLocalAppServices', () => {
         },
       },
     })
+    expect(updates[2]).toMatchObject({
+      assignee_group_id: 'human-group-1',
+      execution_payload: {
+        dispatchKind: 'collaboration_group',
+        dispatchTaskId: 'LOCAL-1',
+        memberRuntimeProfiles: [
+          expect.objectContaining({
+            memberIds: ['worker'],
+            agentId: 'worker',
+          }),
+        ],
+      },
+    })
+    expect(
+      (updates[2].execution_payload as Record<string, unknown>).managerRuntimeRequest
+    ).toBeUndefined()
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
@@ -4337,7 +4370,7 @@ describe('createLocalAppServices', () => {
         model: 'openai',
         model_id: 'shared-model',
         api_format: 'responses',
-        tool_profile: 'function',
+        tool_profile: 'custom',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -4583,7 +4616,7 @@ describe('createLocalAppServices', () => {
         upstream_api_format: 'openai-chat-completions',
         native_tool_search: false,
         native_namespace_tools: false,
-        tool_profile: 'function',
+        tool_profile: 'custom',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',

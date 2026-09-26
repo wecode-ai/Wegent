@@ -282,7 +282,7 @@ export type BackendCollaborationIssue = CollaborationIssue & {
 
 export interface SharedIssueAssignmentHistoryEntry {
   by_user_id: number;
-  to_type: "user" | "agent" | "team" | null;
+  to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
   action: "assign" | "reassign" | "unassign";

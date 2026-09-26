@@ -723,10 +723,10 @@ class LoopItemService:
         db.flush()
         if collaboration_group is not None:
             from app.services.collaboration_group_execution import (
-                ensure_collaboration_group_execution,
+                dispatch_collaboration_group_assignment,
             )
 
-            ensure_collaboration_group_execution(
+            dispatch_collaboration_group_assignment(
                 db,
                 item=item,
                 user_id=user_id,
@@ -1747,10 +1747,10 @@ class LoopItemService:
             db.flush()
             db.refresh(item)
             from app.services.collaboration_group_execution import (
-                ensure_collaboration_group_execution,
+                dispatch_collaboration_group_assignment,
             )
 
-            ensure_collaboration_group_execution(
+            dispatch_collaboration_group_assignment(
                 db,
                 item=item,
                 user_id=user_id,

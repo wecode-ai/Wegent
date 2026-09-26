@@ -195,6 +195,41 @@ def _collaboration_group(
     )
 
 
+def _human_led_collaboration_group(
+    user: User,
+    *,
+    group_id: str = "human-group-1",
+) -> dict[str, object]:
+    return {
+        "id": group_id,
+        "name": "Human-led delivery team",
+        "description": "Coordinate delivery.",
+        "instructions": "Assign verifiable work and review the evidence.",
+        "leader": {
+            "kind": "human",
+            "id": str(user.id),
+            "name": user.user_name,
+        },
+        "members": [
+            {
+                "kind": "human",
+                "id": str(user.id),
+                "name": user.user_name,
+            }
+        ],
+        "coordination_mode": "manager",
+        "stages": [
+            {
+                "id": "implementation",
+                "name": "Implementation",
+                "description": "Produce the implementation evidence.",
+            }
+        ],
+        "created_at": datetime.now(),
+        "version": 1,
+    }
+
+
 def _active_execution(db: Session, item: LoopItem) -> LoopItemExecution | None:
     return (
         db.query(LoopItemExecution)
@@ -295,6 +330,47 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     values = loop_item_service.response_values(test_db, item, test_user.id)
     assert values["assignee_group_id"] == "group-1"
     assert values["assignee_group_name"] == "Delivery team"
+
+
+def test_create_with_human_led_group_notifies_leader_without_executor_dispatch(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    group = _human_led_collaboration_group(test_user)
+
+    with (
+        patch(
+            "app.services.workspaces.workspace_service."
+            "list_project_collaboration_groups",
+            return_value=[group],
+        ),
+        patch(
+            "app.services.collaboration_group_execution.create_notification"
+        ) as notify,
+    ):
+        item = loop_item_service.create(
+            test_db,
+            project.id,
+            test_user.id,
+            LoopItemCreate(
+                title="Human-coordinated task",
+                description="Coordinate this work.",
+                assignee_group_id=str(group["id"]),
+            ),
+        )
+
+    notify.assert_called_once()
+    assert notify.call_args.kwargs["user_id"] == test_user.id
+    assert notify.call_args.kwargs["item_id"] == item.id
+    payload = notify.call_args.kwargs["payload"]
+    assert payload["action"] == "coordinate_collaboration_group"
+    assert payload["collaborationGroupAssignmentKey"].startswith(
+        f"group:{group['id']}:"
+    )
+    assert "Assign verifiable work" in payload["instructions"]
+    assert payload.get("humanAssignmentId") is None
+    assert item.status == "in_progress"
+    assert _active_execution(test_db, item) is None
 
 
 @pytest.mark.parametrize("runtime", ["codex", "claude_code"])

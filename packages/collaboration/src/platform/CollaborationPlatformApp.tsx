@@ -3603,9 +3603,12 @@ export function CollaborationPlatformApp({
               assigneeUserId: Number(owner.id),
               notifyAssignee: true,
             }
-          : {}),
+          : owner?.kind === "agent"
+            ? { assigneeAgentId: owner.id }
+            : owner?.kind === "group"
+              ? { assigneeGroupId: owner.id }
+              : {}),
       });
-      let assignmentFailed = false;
       for (const file of files) {
         try {
           await api.attachments.upload(created.id, file);
@@ -3616,21 +3619,6 @@ export function CollaborationPlatformApp({
           );
         }
       }
-      if (owner && owner.kind !== "user") {
-        try {
-          const current = await api.issues.get(created.id);
-          await api.issues.update(created.id, {
-            version: current.version,
-            ...(owner.kind === "agent"
-              ? { assigneeAgentId: owner.id }
-              : { assigneeGroupId: owner.id }),
-          });
-        } catch {
-          assignmentFailed = true;
-        }
-      }
-      if (assignmentFailed)
-        host.notify?.(messages.issueHomeAssignmentFailed, "error");
       navigateWithin(host, {
         workspaceId: rootIssueProject.workspace_id,
         workspaceView: "projects",

@@ -440,7 +440,7 @@ export async function generateCollaborationGroupDraft(options: {
     '每条 principle 只表达一个规则；只保留负责人如何分派、成员如何反馈、阻塞如何升级，不要重复项目背景、职责或执行流程。',
     preferredLeaderId
       ? `优先让 agent:${preferredLeaderId} 担任 leader，因为它是当前设备智能体且具备通用执行能力。`
-      : '从现有智能体中选择最适合拆解、分派和验收工作的 leader。',
+      : '从现有协作者中选择最适合拆解、分派和验收工作的 leader；人类和智能体都可以担任 leader。',
     '每个协作者都必须输出一次 participant_started，并紧接着输出其全部 participant_delta。',
     '生成 2 到 4 个阶段。',
     '所有 name、delta、text 字段必须使用与“用户补充要求”相同的语言书写（Use the language of the user request for all generated text）。',

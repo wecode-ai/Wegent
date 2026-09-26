@@ -85,6 +85,10 @@ pub struct TaskCreate {
     #[serde(default)]
     pub assignee_user_id: Option<i64>,
     #[serde(default)]
+    pub assignee_agent_id: Option<String>,
+    #[serde(default)]
+    pub assignee_group_id: Option<String>,
+    #[serde(default)]
     pub workflow: Option<Value>,
 }
 

@@ -480,6 +480,24 @@ impl LocalTaskStore {
         if task_provider(&project)? != TaskProviderKind::Local {
             return Err(TaskRuntimeError::UnsupportedProvider("external".to_owned()));
         }
+        let assignee_count = usize::from(input.assignee_user_id.is_some())
+            + usize::from(input.assignee_agent_id.is_some())
+            + usize::from(input.assignee_group_id.is_some());
+        if assignee_count > 1 {
+            return Err(TaskRuntimeError::Invalid(
+                "Issue can only be assigned to one target".to_owned(),
+            ));
+        }
+        let assigned_agent = input
+            .assignee_agent_id
+            .as_deref()
+            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .transpose()?;
+        let assigned_group = input
+            .assignee_group_id
+            .as_deref()
+            .map(|group_id| collaboration_group(&project, group_id))
+            .transpose()?;
         if let Some(parent_id) = input.parent_id.as_deref() {
             require_parent(&transaction, project_id, parent_id, None)?;
         }
@@ -491,10 +509,46 @@ impl LocalTaskStore {
         let id = format!("{project_key}-{sequence}");
         let now = now();
         let parent_id = input.parent_id.clone();
-        let completed_at = (input.status == "completed").then(|| now.clone());
+        let status = if (assigned_agent.is_some() || assigned_group.is_some())
+            && input.status != "completed"
+        {
+            "in_progress".to_owned()
+        } else {
+            input.status
+        };
+        let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow;
+        }
+        if let Some(group) = assigned_group.as_ref() {
+            metadata["collaboration_group"] = group.clone();
+        }
+        if let Some(group) = assigned_group.as_ref() {
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("group"),
+                input.assignee_group_id.as_deref(),
+                group.get("name").and_then(Value::as_str),
+            );
+        } else if let Some(agent) = assigned_agent.as_ref() {
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("agent"),
+                Some(&agent.id),
+                agent.title.as_deref().or(agent.name.as_deref()),
+            );
+        } else if let Some(user_id) = input.assignee_user_id {
+            let user_id = user_id.to_string();
+            record_assignment_change(
+                &mut metadata,
+                project.created_by_user_id,
+                Some("user"),
+                Some(&user_id),
+                None,
+            );
         }
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
@@ -516,15 +570,40 @@ impl LocalTaskStore {
                 input.title,
                 input.description,
                 sequence,
-                input.status,
+                status,
                 input.priority,
                 metadata.to_string(),
                 now,
                 completed_at,
-                None::<String>,
+                assigned_agent.as_ref().map(|agent| agent.id.as_str()),
                 input.assignee_user_id,
             ],
         )?;
+        if let Some(group) = assigned_group.as_ref() {
+            dispatch_collaboration_group_assignment(
+                &transaction,
+                CollaborationGroupExecutionInput {
+                    item_id: &id,
+                    project_id,
+                    group,
+                    issue_title: &input.title,
+                    issue_description: &input.description,
+                    issue_status: Some(&status),
+                    priority: &input.priority,
+                    payload: Value::Null,
+                },
+            )?;
+        } else if let Some(agent) = assigned_agent.as_ref() {
+            create_local_execution(
+                &transaction,
+                &id,
+                project_id,
+                &agent.id,
+                agent,
+                &input.priority,
+                Value::Null,
+            )?;
+        }
         if let Some(parent_id) = parent_id.as_deref() {
             refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
@@ -559,16 +638,12 @@ impl LocalTaskStore {
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
         }
-        if let Some(Some(agent_id)) = input.assignee_agent_id.as_ref() {
-            let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-            })?;
-            if agent.cloud_project_id.as_deref() != Some(project_id) {
-                return Err(TaskRuntimeError::Invalid(
-                    "Robot is not in this project".to_owned(),
-                ));
-            }
-        }
+        let selected_agent = input
+            .assignee_agent_id
+            .as_ref()
+            .and_then(|agent_id| agent_id.as_deref())
+            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .transpose()?;
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
         }
@@ -604,21 +679,7 @@ impl LocalTaskStore {
             if let Some(Some(group_id)) = input.assignee_group_id.as_ref() {
                 let project = get_item_from(&transaction, project_id, "project")?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
-                Some(
-                    project
-                        .metadata
-                        .get("collaboration_groups")
-                        .and_then(Value::as_array)
-                        .and_then(|groups| {
-                            groups.iter().find(|group| {
-                                group.get("id").and_then(Value::as_str) == Some(group_id)
-                            })
-                        })
-                        .cloned()
-                        .ok_or_else(|| {
-                            TaskRuntimeError::Invalid("Team is not in this project".to_owned())
-                        })?,
-                )
+                Some(collaboration_group(&project, group_id)?)
             } else {
                 None
             };
@@ -646,8 +707,70 @@ impl LocalTaskStore {
         if let Some(workflow) = input.workflow {
             metadata["workflow"] = workflow.unwrap_or(Value::Null);
         }
+        if collaboration_group_changed {
+            if let (Some(group_id), Some(group)) = (
+                requested_group_id.as_deref(),
+                selected_collaboration_group.as_ref(),
+            ) {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("group"),
+                    Some(group_id),
+                    group.get("name").and_then(Value::as_str),
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if let Some(agent_id) = input.assignee_agent_id.as_ref() {
+            if agent_id.is_some() {
+                let agent = selected_agent
+                    .as_ref()
+                    .expect("selected agent was validated");
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("agent"),
+                    Some(&agent.id),
+                    agent.title.as_deref().or(agent.name.as_deref()),
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        } else if let Some(user_id) = input.assignee_user_id {
+            if let Some(user_id) = user_id {
+                let user_id = user_id.to_string();
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    Some("user"),
+                    Some(&user_id),
+                    None,
+                );
+            } else {
+                record_assignment_change(
+                    &mut metadata,
+                    current.created_by_user_id,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        }
         let assignee_agent_id = match input.assignee_agent_id.as_ref() {
-            Some(Some(agent_id)) => Some(agent_id.as_str()),
+            Some(Some(_)) => selected_agent.as_ref().map(|agent| agent.id.as_str()),
             Some(None) => None,
             None if input.assignee_user_id.flatten().is_some()
                 || input
@@ -722,7 +845,7 @@ impl LocalTaskStore {
         if assignee_changed || collaboration_group_changed {
             cancel_active_executions(&transaction, task_id)?;
             if let Some(group) = selected_collaboration_group.as_ref() {
-                create_collaboration_group_execution(
+                dispatch_collaboration_group_assignment(
                     &transaction,
                     CollaborationGroupExecutionInput {
                         item_id: task_id,
@@ -736,19 +859,13 @@ impl LocalTaskStore {
                     },
                 )?;
             } else if requested_group_id.is_none() {
-                if let Some(agent_id) = assignee_agent_id {
-                    let agent =
-                        get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-                            TaskRuntimeError::Invalid(
-                                "Robot is not active in this project".to_owned(),
-                            )
-                        })?;
+                if let Some(agent) = selected_agent.as_ref() {
                     create_local_execution(
                         &transaction,
                         task_id,
                         project_id,
-                        agent_id,
-                        &agent,
+                        &agent.id,
+                        agent,
                         current.priority.as_deref().unwrap_or("none"),
                         input.execution_payload.unwrap_or(Value::Null),
                     )?;
@@ -2371,6 +2488,116 @@ impl LocalTaskStore {
         self.get_binding(&binding_id)
     }
 
+    pub fn project_bound_task_status(
+        &self,
+        device_id: &str,
+        task_id: &str,
+        execution_status: &str,
+        observed_at_ms: i64,
+    ) -> Result<usize, TaskRuntimeError> {
+        if observed_at_ms <= 0 {
+            return Err(TaskRuntimeError::Invalid(
+                "runtime task status observation requires a positive timestamp".to_owned(),
+            ));
+        }
+        let next_status = match execution_status {
+            "queued" | "pending" => "pending",
+            "running" => "in_progress",
+            "done" | "completed" | "succeeded" | "failed" | "cancelled" | "canceled"
+            | "interrupted" | "error" => "in_review",
+            "archived" => "completed",
+            _ => {
+                return Err(TaskRuntimeError::Invalid(format!(
+                    "unsupported runtime task status '{execution_status}'"
+                )));
+            }
+        };
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let timestamp = now();
+        let preserve_reviewed = matches!(
+            execution_status,
+            "done"
+                | "completed"
+                | "succeeded"
+                | "failed"
+                | "cancelled"
+                | "canceled"
+                | "interrupted"
+                | "error"
+        );
+        let changed = transaction.execute(
+            "UPDATE loop_items
+             SET status = ?1,
+                 completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
+                 metadata = CASE
+                     WHEN ?5 AND cloud_project_id != ?7
+                         THEN json_set(metadata, '$.is_unread', json('true'))
+                     ELSE metadata
+                 END,
+                 sort_order = 0, version = version + 1, updated_at = ?2
+             WHERE resource_type = 'task'
+               AND id IN (
+                   SELECT loop_item_id
+                   FROM loop_items
+                   WHERE resource_type = 'execution'
+                     AND device_id = ?3 AND task_id = ?4
+                     AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
+                     AND json_extract(metadata, '$.workflow_node_id') IS NULL
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM loop_item_executions dispatch_execution
+                         WHERE dispatch_execution.id = CAST(
+                             json_extract(loop_items.metadata, '$.execution_id') AS INTEGER
+                         )
+                     )
+                     AND CAST(COALESCE(
+                         json_extract(metadata, '$.runtime_status_observed_at_ms'),
+                         0
+                     ) AS INTEGER) < ?6
+               )
+               AND status != ?1
+               AND (NOT ?5 OR status NOT IN ('completed', 'in_review'))",
+            params![
+                next_status,
+                timestamp,
+                device_id,
+                task_id,
+                preserve_reviewed,
+                observed_at_ms,
+                DEFAULT_WORK_ITEM_PROJECT_ID
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE loop_items
+             SET metadata = json_set(
+                     COALESCE(metadata, '{}'),
+                     '$.runtime_status_observed_at_ms',
+                     ?1
+                 ),
+                 version = version + 1,
+                 updated_at = ?2
+             WHERE resource_type = 'execution'
+               AND device_id = ?3 AND task_id = ?4
+               AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
+               AND json_extract(metadata, '$.workflow_node_id') IS NULL
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM loop_item_executions dispatch_execution
+                   WHERE dispatch_execution.id = CAST(
+                       json_extract(loop_items.metadata, '$.execution_id') AS INTEGER
+                   )
+               )
+               AND CAST(COALESCE(
+                   json_extract(metadata, '$.runtime_status_observed_at_ms'),
+                   0
+               ) AS INTEGER) < ?1",
+            params![observed_at_ms, timestamp, device_id, task_id],
+        )?;
+        transaction.commit()?;
+        Ok(changed)
+    }
+
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         self.list_task_bindings_batch(&[item_id.to_owned()])
     }
@@ -2601,7 +2828,7 @@ fn insert_chat_agent(
             input.name,
             metadata.to_string(),
             timestamp,
-            input.created_by_user_id.unwrap_or(0),
+            input.created_by_user_id,
         ],
     )?;
     Ok(id)
@@ -4175,21 +4402,28 @@ struct CollaborationGroupExecutionInput<'a> {
     payload: Value,
 }
 
-fn create_collaboration_group_execution(
+const COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS: &str =
+    "You are the manager for one project Issue. Coordinate the collaboration \
+group through the project-space management tools. Assign one concurrent batch \
+of concrete tasks at a time. Each task must identify its assignee and, when \
+configured, its workflow stage. Do not execute member work yourself. After \
+every batch finishes, evaluate the evidence and either assign the next batch \
+or explicitly update the Issue status. When updating the Issue status, use the \
+optional comment field when collaborators need an explanation. The Executor \
+already records manager and member runs in the Issue activity.";
+
+fn dispatch_collaboration_group_assignment(
     connection: &Connection,
     input: CollaborationGroupExecutionInput<'_>,
-) -> Result<i64, TaskRuntimeError> {
+) -> Result<Option<i64>, TaskRuntimeError> {
     let project = get_item_from(connection, input.project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
-    let leader = input
-        .group
-        .get("leader")
-        .filter(|leader| leader.get("kind").and_then(Value::as_str) == Some("agent"))
-        .ok_or_else(|| {
-            TaskRuntimeError::Invalid(
-                "Collaboration team leader must be an active robot".to_owned(),
-            )
-        })?;
+    let leader = input.group.get("leader").ok_or_else(|| {
+        TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
+    })?;
+    let leader_kind = leader.get("kind").and_then(Value::as_str).ok_or_else(|| {
+        TaskRuntimeError::Invalid("Collaboration team leader kind is missing".to_owned())
+    })?;
     let leader_id = leader
         .get("id")
         .and_then(Value::as_str)
@@ -4197,6 +4431,14 @@ fn create_collaboration_group_execution(
         .ok_or_else(|| {
             TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
         })?;
+    if leader_kind == "human" {
+        return Ok(None);
+    }
+    if leader_kind != "agent" {
+        return Err(TaskRuntimeError::Invalid(
+            "Collaboration team leader kind is invalid".to_owned(),
+        ));
+    }
     let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
     let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
     let manager_context = collaboration_manager_message(
@@ -4213,6 +4455,10 @@ fn create_collaboration_group_execution(
     execution_payload.insert(
         "collaboration_manager_context".to_owned(),
         Value::String(manager_context),
+    );
+    execution_payload.insert(
+        "projectInstructions".to_owned(),
+        json!(COLLABORATION_MANAGER_SYSTEM_INSTRUCTIONS),
     );
     execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
@@ -4231,11 +4477,60 @@ fn create_collaboration_group_execution(
         connection,
         input.item_id,
         input.project_id,
-        leader_id,
+        &leader_agent.id,
         &leader_agent,
         input.priority,
         Value::Object(execution_payload),
     )
+    .map(Some)
+}
+
+fn collaboration_group(project: &LoopItem, group_id: &str) -> Result<Value, TaskRuntimeError> {
+    project
+        .metadata
+        .get("collaboration_groups")
+        .and_then(Value::as_array)
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group.get("id").and_then(Value::as_str) == Some(group_id))
+        })
+        .cloned()
+        .ok_or_else(|| TaskRuntimeError::Invalid("Team is not in this project".to_owned()))
+}
+
+fn record_assignment_change(
+    metadata: &mut Value,
+    by_user_id: i64,
+    to_type: Option<&str>,
+    to_id: Option<&str>,
+    to_name: Option<&str>,
+) {
+    let history = metadata
+        .as_object_mut()
+        .expect("task metadata must be an object")
+        .entry("assignment_history")
+        .or_insert_with(|| json!([]));
+    if !history.is_array() {
+        *history = json!([]);
+    }
+    let entries = history
+        .as_array_mut()
+        .expect("assignment history must be an array");
+    entries.push(json!({
+        "by_user_id": by_user_id,
+        "to_type": to_type,
+        "to_id": to_id,
+        "to_name": to_name,
+        "action": if to_id.is_none() {
+            "unassign"
+        } else if entries.is_empty() {
+            "assign"
+        } else {
+            "reassign"
+        },
+        "at": now(),
+    }));
 }
 
 fn collaboration_agent(
@@ -4243,9 +4538,32 @@ fn collaboration_agent(
     project_id: &str,
     agent_id: &str,
 ) -> Result<LoopItem, TaskRuntimeError> {
-    let agent = get_item_from(connection, agent_id, "chat_agent")?.ok_or_else(|| {
-        TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
-    })?;
+    let mut statement = connection.prepare(
+        "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
+                public_id, project_key, name, title, description, sequence_number,
+                next_item_number, status, priority, sort_order, current_delivery_id,
+                metadata, version, created_at, updated_at, completed_at,
+                assignee_agent_id, created_by_user_id, assignee_user_id
+         FROM loop_items
+         WHERE resource_type = 'chat_agent'
+           AND deleted_at IS NULL
+           AND (cloud_project_id = ?1 OR cloud_project_id = ?2)
+           AND (
+               id = ?3
+               OR CAST(json_extract(metadata, '$.wegent_team_id') AS TEXT) = ?3
+           )
+         ORDER BY CASE WHEN id = ?3 THEN 0 ELSE 1 END
+         LIMIT 1",
+    )?;
+    let agent = statement
+        .query_row(
+            params![project_id, DEFAULT_WORK_ITEM_PROJECT_ID, agent_id],
+            map_loop_item,
+        )
+        .optional()?
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Collaboration team robot is not active".to_owned())
+        })?;
     let agent_project_id = agent.cloud_project_id.as_deref();
     if !matches!(
         agent_project_id,
@@ -4433,6 +4751,9 @@ fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
         .as_object_mut()
         .expect("materialized Runtime payload must be an object");
     apply_execution_agent_profile(payload_object, execution);
+    if let Some(project_instructions) = stored.get("projectInstructions").cloned() {
+        payload_object.insert("projectInstructions".to_owned(), project_instructions);
+    }
     payload_object.insert("taskId".to_owned(), json!(runtime_task_id));
     payload_object.insert("title".to_owned(), json!(title));
     payload_object.insert("message".to_owned(), json!(message));
@@ -4703,6 +5024,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -4753,6 +5076,175 @@ mod tests {
             comments[0].metadata["execution_id"],
             json!(executions[0].id)
         );
+    }
+
+    #[test]
+    fn task_create_atomically_dispatches_to_agent() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "auto");
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Run immediately".to_owned(),
+                    description: "Do not require a second assignment update.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "high".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: Some(agent.id.clone()),
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(task.status.as_deref(), Some("in_progress"));
+        assert_eq!(task.assignee_agent_id.as_deref(), Some(agent.id.as_str()));
+        assert_eq!(task.metadata["assignment_history"][0]["to_type"], "agent");
+        assert_eq!(
+            task.metadata["assignment_history"][0]["to_id"],
+            agent.id.as_str()
+        );
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].loop_item_id, task.id);
+        assert_eq!(executions[0].agent_id, agent.id);
+    }
+
+    #[test]
+    fn task_create_accepts_human_led_group_without_starting_manager_agent() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "human-led",
+                        "name": "Human-led team",
+                        "instructions": "The human leader coordinates the work.",
+                        "leader": {
+                            "kind": "human",
+                            "id": "7",
+                            "name": "Project owner"
+                        },
+                        "members": [{
+                            "kind": "human",
+                            "id": "7",
+                            "name": "Project owner"
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Coordinate manually".to_owned(),
+                    description: "The human leader decides the next dispatch.".to_owned(),
+                    status: "inbox".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: Some("human-led".to_owned()),
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(task.status.as_deref(), Some("in_progress"));
+        assert_eq!(
+            task.metadata["collaboration_group"]["leader"]["kind"],
+            "human"
+        );
+        assert_eq!(task.metadata["assignment_history"][0]["to_type"], "group");
+        assert_eq!(task.metadata["assignment_history"][0]["to_id"], "human-led");
+        assert_eq!(
+            task.metadata["assignment_history"][0]["to_name"],
+            "Human-led team"
+        );
+        assert!(store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn collaboration_group_resolves_agents_by_wegent_team_id() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let leader = make_local_agent(&store, DEFAULT_WORK_ITEM_PROJECT_ID, "auto");
+        let connection = store.connection().unwrap();
+        let mut metadata = get_item_from(&connection, &leader.id, "chat_agent")
+            .unwrap()
+            .unwrap()
+            .metadata;
+        metadata["wegent_team_id"] = json!(42);
+        connection
+            .execute(
+                "UPDATE loop_items SET metadata = ?1 WHERE id = ?2",
+                params![metadata.to_string(), leader.id],
+            )
+            .unwrap();
+        drop(connection);
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    collaboration_groups: Some(json!([{
+                        "id": "team-id-group",
+                        "name": "Team ID group",
+                        "leader": {
+                            "kind": "agent",
+                            "id": "42"
+                        },
+                        "members": [{
+                            "kind": "agent",
+                            "id": "42"
+                        }]
+                    }])),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Resolve manager".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: Some("team-id-group".to_owned()),
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        let executions = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].loop_item_id, task.id);
+        assert_eq!(executions[0].agent_id, leader.id);
     }
 
     #[test]
@@ -4856,6 +5348,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -4983,6 +5477,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5044,6 +5540,25 @@ mod tests {
             streaming_comments[0].metadata["runtime_address"],
             json!({"deviceId": "local-device", "taskId": running.runtime_task_id.unwrap()})
         );
+        assert_eq!(
+            store
+                .project_bound_task_status(
+                    "local-device",
+                    claimed.runtime_task_id.as_deref().unwrap(),
+                    "succeeded",
+                    100,
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
         store.complete_execution(execution.id, None).unwrap();
 
         let updated = store
@@ -5082,6 +5597,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5166,6 +5683,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5195,6 +5714,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5257,6 +5778,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5383,6 +5906,8 @@ mod tests {
                     parent_id: None,
                     tags: Vec::new(),
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5507,10 +6032,29 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Reproducible observations"));
+        assert!(payload["projectInstructions"]
+            .as_str()
+            .unwrap()
+            .contains("Do not execute member work yourself"));
         let runtime_task_id = claimed
             .runtime_task_id
             .as_deref()
             .expect("manager execution must have a Runtime task id");
+        accept_and_start(&store, &claimed);
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", runtime_task_id, "succeeded", 100,)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(&project.id, &issue.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
         let round = store
             .submit_collaboration_round(
                 runtime_task_id,
@@ -5782,6 +6326,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5851,6 +6397,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -5999,6 +6547,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6235,6 +6785,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -6347,6 +6899,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -6431,6 +6985,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6494,6 +7050,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6572,6 +7130,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6643,6 +7203,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6694,6 +7256,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6758,6 +7322,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6837,6 +7403,8 @@ mod tests {
                         parent_id: None,
                         tags: vec![],
                         assignee_user_id: None,
+                        assignee_agent_id: None,
+                        assignee_group_id: None,
                         workflow: None,
                     },
                 )
@@ -6923,6 +7491,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -6947,6 +7517,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7033,6 +7605,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7118,6 +7692,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7336,6 +7912,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7400,6 +7978,8 @@ mod tests {
                     parent_id: None,
                     tags: Vec::new(),
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7467,6 +8047,8 @@ mod tests {
                     parent_id: None,
                     tags: Vec::new(),
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: Some(json!({ "nodes": [] })),
                 },
             )
@@ -7980,6 +8562,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -7995,6 +8579,8 @@ mod tests {
                     parent_id: Some(parent.id.clone()),
                     tags: vec!["nested".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8032,6 +8618,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8047,6 +8635,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8089,6 +8679,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8139,6 +8731,109 @@ mod tests {
             store.find_task_binding("local-device", "runtime-1"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
+    }
+
+    #[test]
+    fn projects_runtime_status_to_bound_issue_without_renderer_writeback() {
+        let (_directory, store) = store();
+        let task = store
+            .create_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                TaskCreate {
+                    title: "Runtime-owned status".to_owned(),
+                    description: String::new(),
+                    status: "in_review".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .bind_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                Some(&task.id),
+                None,
+                RuntimeTaskAddress {
+                    device_id: "local-device".to_owned(),
+                    task_id: "runtime-status-1".to_owned(),
+                    task_title: task.title.clone(),
+                    backend_task_id: None,
+                    model_selection: None,
+                    workflow_node_id: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 100)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "succeeded", 200)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 150)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 300)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "archived", 400)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("completed")
+        );
     }
 
     #[test]
@@ -8310,6 +9005,8 @@ mod tests {
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8349,6 +9046,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8364,6 +9063,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8419,6 +9120,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8434,6 +9137,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8520,6 +9225,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -8691,6 +9398,8 @@ mod tests {
                     parent_id: None,
                     tags: vec![],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: Some(json!({
                         "version": 1,
                         "nodes": [{

@@ -1085,6 +1085,8 @@ export function createLocalDeliveryApi(
         local_project_name?: string | null
         automation_rule_id?: string | null
         assignee_user_id?: number | null
+        assignee_group_id?: string | null
+        assignee_agent_id?: string | null
         notify_assignee?: boolean
       }
     ) {
@@ -1108,6 +1110,12 @@ export function createLocalDeliveryApi(
           tags: [...(data.tags ?? []), ...localProjectLabel],
           ...(data.assignee_user_id !== undefined
             ? { assignee_user_id: data.assignee_user_id }
+            : {}),
+          ...(data.assignee_group_id !== undefined
+            ? { assignee_group_id: data.assignee_group_id }
+            : {}),
+          ...(data.assignee_agent_id !== undefined
+            ? { assignee_agent_id: data.assignee_agent_id }
             : {}),
         },
       })

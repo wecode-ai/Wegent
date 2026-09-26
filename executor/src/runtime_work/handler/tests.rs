@@ -4411,6 +4411,55 @@ async fn transcript_without_session_preserves_known_terminal_state() {
 }
 
 #[tokio::test]
+async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_not_ready() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-provider-not-ready");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "completed-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Completed task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    link.status = "done".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Persisted final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "completed-task",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("completed transcript should remain readable before the provider session is ready");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"][0]["content"], "Persisted final answer");
+    assert_eq!(
+        result["turns"][0]["items"][0]["content"],
+        "Persisted final answer"
+    );
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
 async fn unmaterialized_provider_transcript_returns_local_presentation() {
     let index_path = temp_runtime_work_index_path("unmaterialized-provider-transcript");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

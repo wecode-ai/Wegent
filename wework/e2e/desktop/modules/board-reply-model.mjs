@@ -272,6 +272,18 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           environment.device_key,
           'The project execution environment must have a device key'
         )
+        const currentProject = await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`)
+        await requestJson(
+          cloud,
+          `/api/v1/cloud-projects/${cloud.projectId}/execution-environment/initialize`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              device_id: device.id,
+              version: currentProject.version,
+            }),
+          }
+        )
         const configured = await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
@@ -353,7 +365,9 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           'click',
           `${activity} [data-testid="cloud-task-activity-reply-toggle-${rootId}"]`
         )
-        const reply = `${activity} [data-testid="cloud-task-activity-card-composer-${rootId}"]`
+        const reply = scope(
+          '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+        )
         await control.command('fill', reply, { value: REPLY })
         await control.command('press', reply, { key: 'Enter' })
         const [replyRun] = await readPersistedExecutions(cloud, issue.id, [REPLY], uiTimeoutMs)

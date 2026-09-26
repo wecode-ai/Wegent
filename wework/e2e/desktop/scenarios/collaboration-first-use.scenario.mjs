@@ -4,6 +4,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import {
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  initializeFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -63,6 +64,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await capture(control, 'collaboration-first-use-04-project.png')
 
+      await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-settings-environments"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
       await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,

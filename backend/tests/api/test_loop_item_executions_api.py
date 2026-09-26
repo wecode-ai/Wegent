@@ -4,6 +4,7 @@
 
 """Focused API tests for LoopItem execution ownership."""
 
+import json
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -111,6 +112,15 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         created_by_user_id=test_user.id,
         metadata_json={"wegent_team_id": 1002},
     )
+    group = {
+        "id": "group-1",
+        "leader": {"kind": "agent", "id": "1001"},
+        "members": [
+            {"kind": "agent", "id": "1001"},
+            {"kind": "agent", "id": "1002"},
+            {"kind": "human", "id": str(test_user.id)},
+        ],
+    }
     parent = LoopItem(
         id=f"{project.project_key}-1",
         cloud_project_id=project.id,
@@ -120,7 +130,10 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         status="in_progress",
         priority="none",
         created_by_user_id=test_user.id,
-        metadata_json={"collaboration_group": {"id": "group-1", "name": "Mixed team"}},
+        metadata_json={
+            "collaboration_group": {"id": "group-1", "name": "Mixed team"},
+            "collaboration_group_assignment_key": "assignment-1",
+        },
     )
     manager_execution = LoopItemExecution(
         loop_item_id=parent.id,
@@ -132,32 +145,26 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         runtime_instance_id="manager-instance",
         runtime_task_id="manager-runtime-1",
         execution_environment="cloud",
-        execution_payload=(
-            '{"runtime_selection":{"executor_kind":'
-            '"collaboration_group_dispatch"},'
-            '"origin_context":{"dispatch_role":"manager",'
-            f'"manager_agent_id":"{manager.id}",'
-            '"dispatch_id":"dispatch-1"}}'
+        execution_payload=json.dumps(
+            {
+                "runtime_selection": {
+                    "executor_kind": "collaboration_group_dispatch",
+                },
+                "origin_context": {
+                    "dispatch_kind": "collaboration_group",
+                    "dispatch_role": "manager",
+                    "manager_agent_id": manager.id,
+                    "dispatch_id": "dispatch-1",
+                    "run_id": "collaboration-group:assignment-1",
+                    "collaboration_group_id": "group-1",
+                    "collaboration_group": group,
+                },
+            }
         ),
         status="running",
     )
     test_db.add_all([manager, worker, parent, manager_execution])
     test_db.commit()
-
-    group = {
-        "id": "group-1",
-        "leader": {"kind": "agent", "id": "1001"},
-        "members": [
-            {"kind": "agent", "id": "1001"},
-            {"kind": "agent", "id": "1002"},
-            {"kind": "human", "id": str(test_user.id)},
-        ],
-    }
-    monkeypatch.setattr(
-        loop_item_executions,
-        "collaboration_group_for_item",
-        lambda *_args, **_kwargs: group,
-    )
 
     values = LoopItemExecutionBatchCreate(
         loop_item_id=parent.id,
@@ -276,6 +283,8 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     assert completed["message"]["content"] == "Agent evidence delivered."
     assert completed["message"]["metadata"]["run_status"] == "completed"
     push.assert_called_once()
+    test_db.refresh(parent)
+    assert parent.status == "in_progress"
 
     push.reset_mock()
     duplicate = loop_item_executions.report_collaboration_assignment_status(

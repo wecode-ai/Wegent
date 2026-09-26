@@ -140,6 +140,7 @@ export async function createProjectFixture(
     projectId
   )}`
 
+  await initializeProjectExecutionEnvironment(page)
   await page.getByTestId('collaboration-issue-create').click()
   await page.getByTestId('cloud-todo-title').fill(issueTitle)
   await page.getByTestId('cloud-todo-detail-description').fill(ISSUE_DESCRIPTION)
@@ -149,6 +150,20 @@ export async function createProjectFixture(
   expect(issueId).not.toBe('')
   await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
   return { issueId, projectId, projectPath, workspaceId }
+}
+
+export async function initializeProjectExecutionEnvironment(page: Page): Promise<void> {
+  await page.getByTestId('collaboration-tab-manage').click()
+  await page.getByTestId('collaboration-project-settings-environments').click()
+  const initialize = page.locator(
+    '[data-testid^="collaboration-project-execution-environment-initialize-"]'
+  )
+  await expect(initialize.first()).toBeVisible()
+  await initialize.first().click()
+  await expect(
+    page.getByTestId('collaboration-project-execution-environment-completion-status')
+  ).toContainText('环境已初始化')
+  await page.getByTestId('collaboration-tab-board').click()
 }
 
 export async function addProjectMember(page: Page, userName: string): Promise<string> {

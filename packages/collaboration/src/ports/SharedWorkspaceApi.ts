@@ -137,6 +137,8 @@ export interface WorkspaceIssueCreateInput {
   localProjectId?: number | null;
   localProjectName?: string | null;
   assigneeUserId?: number | null;
+  assigneeGroupId?: string | null;
+  assigneeAgentId?: string | null;
   notifyAssignee?: boolean;
 }
 

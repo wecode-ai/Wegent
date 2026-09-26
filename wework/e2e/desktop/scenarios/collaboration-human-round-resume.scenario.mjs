@@ -788,7 +788,12 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       assert.equal(managerRuns, 2, '整轮完成后没有且仅有一个新的负责人运行')
-      assert.equal(managerStage, 'complete')
+      await waitForValue(
+        () => managerStage,
+        value => value === 'complete',
+        '负责人更新 Issue 后没有完成当前模型轮次',
+        modelResponseTimeoutMs
+      )
       await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
         text: '负责人已综合智能体证据和人工交付，将 Issue 提交待确认。',
         timeoutMs: modelResponseTimeoutMs,

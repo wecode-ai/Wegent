@@ -11,7 +11,11 @@ import {
   requestContainsToolOutput,
 } from '../modules/response-protocol.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectCollaborationDomain, waitForTestIdByText } from '../modules/workspace-flows.mjs'
+import {
+  initializeFirstProjectExecutionEnvironment,
+  selectCollaborationDomain,
+  waitForTestIdByText,
+} from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -203,37 +207,6 @@ async function createWorkspaceAndProject(control, request, timeoutMs) {
     items => items?.find(item => item.name === PROJECT),
     'Wework UI did not persist the remote collaboration project',
     timeoutMs
-  )
-}
-
-async function initializeRemoteEnvironment(control, remoteDevice, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-settings-environments"]')
-  )
-  await control.command(
-    'click',
-    scoped('[data-testid="collaboration-project-execution-environment-add"]')
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped(
-      `[data-testid="collaboration-project-execution-environment-candidate-${remoteDevice.id}"]`
-    ),
-    { timeoutMs }
-  )
-  await control.command(
-    'clickWhenEnabled',
-    scoped(
-      `[data-testid="collaboration-project-execution-environment-initialize-${remoteDevice.id}"]`
-    ),
-    { timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-project-execution-environment-completion-status"]'),
-    { text: '环境已初始化', timeoutMs }
   )
 }
 
@@ -721,7 +694,12 @@ export async function createDesktopScenario({
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
       project = await createWorkspaceAndProject(control, request, uiTimeoutMs)
-      await initializeRemoteEnvironment(control, remoteDevice, modelResponseTimeoutMs)
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        CONTENT,
+        modelResponseTimeoutMs,
+        remoteDevice.id
+      )
 
       const leader = await addAgent(
         control,

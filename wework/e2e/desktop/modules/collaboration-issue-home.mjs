@@ -58,24 +58,15 @@ export async function verifyCollaborationIssueHome(
   )
 
   await openComposer()
-  const environmentNotice = scoped('[data-testid="issue-execution-environment-notice"]')
-  await control.command('waitFor', environmentNotice, { text: 'Issue 仍可创建' })
-  await control.command(
-    'click',
-    scoped('[data-testid="issue-execution-environment-notice-action"]')
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-project-settings-environments"]')
-  )
   assert.equal(
-    await control.command(
-      'getAttribute',
-      scoped('[data-testid="collaboration-project-settings-environments"]'),
-      { value: 'aria-current' }
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid="issue-execution-environment-notice"]')
+      )
     ),
-    'page',
-    'The environment notice action did not open project execution environment settings'
+    0,
+    'The initialized project still showed an execution environment warning'
   )
 
   const cases = [

@@ -33,6 +33,7 @@ export function AssignmentChainPopover({
         labels={{
           team: t('todo.assignment_chain_team', 'Wegent 智能体'),
           agent: t('todo.assignment_chain_agent', '机器人'),
+          group: t('todo.assignment_chain_group', '协作小组'),
           unassigned: t('todo.assignment_chain_unassigned', '未指派'),
           actions: {
             assign: t('todo.assignment_action_assign', '指派'),

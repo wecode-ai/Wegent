@@ -20,7 +20,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.delivery import LoopItemUpdate
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
-    collaboration_group_for_item,
+    collaboration_group_snapshot_for_dispatch,
 )
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.push import push_project_chat_message
@@ -46,27 +46,9 @@ def _require_manager_dispatch(
     *,
     project_id: int,
     item: LoopItem,
-    user_id: int,
     dispatch_id: str,
     manager_agent_id: str,
 ) -> tuple[ProjectChatAgent, LoopItemExecution]:
-    group = collaboration_group_for_item(db, item=item, user_id=user_id)
-    if group is None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Issue is not assigned to a collaboration group",
-        )
-    manager = db.get(ProjectChatAgent, manager_agent_id)
-    if (
-        manager is None
-        or str(manager.cloud_project_id) != str(project_id)
-        or manager.status != "active"
-        or not collaboration_group_agent_matches(group.get("leader"), manager)
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Dispatch manager is not the collaboration group leader",
-        )
     dispatches = (
         db.query(LoopItemExecution)
         .filter(
@@ -79,11 +61,7 @@ def _require_manager_dispatch(
         (
             execution
             for execution in dispatches
-            if execution.executor_type == "collaboration_group_dispatch"
-            and str(_dispatch_context(execution).get("dispatch_id") or "")
-            == dispatch_id
-            and str(_dispatch_context(execution).get("manager_agent_id") or "")
-            == manager.id
+            if str(_dispatch_context(execution).get("dispatch_id") or "") == dispatch_id
         ),
         None,
     )
@@ -91,6 +69,19 @@ def _require_manager_dispatch(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
+        )
+    group = collaboration_group_snapshot_for_dispatch(item=item, execution=dispatch)
+    manager = db.get(ProjectChatAgent, manager_agent_id)
+    if (
+        manager is None
+        or str(manager.cloud_project_id) != str(project_id)
+        or manager.status != "active"
+        or str(_dispatch_context(dispatch).get("manager_agent_id") or "") != manager.id
+        or not collaboration_group_agent_matches(group.get("leader"), manager)
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Dispatch manager is not the collaboration group leader",
         )
     return manager, dispatch
 
@@ -133,7 +124,6 @@ def apply_collaboration_manager_decision(
         db,
         project_id=project_id,
         item=item,
-        user_id=user_id,
         dispatch_id=dispatch_id,
         manager_agent_id=manager_agent_id,
     )

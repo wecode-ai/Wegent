@@ -449,6 +449,43 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    fn journal_active_goal_turn(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        active_turn: Option<&ActiveCodexTurn>,
+    ) {
+        let thread_id = active_turn.map(|turn| turn.thread_id.clone()).or_else(|| {
+            self.local_task_link(local_task_id)
+                .and_then(|link| link.thread_id)
+        });
+        let persisted_turn = SpawnTurnRequest {
+            local_task_id: local_task_id.to_owned(),
+            runtime: "codex".to_owned(),
+            request: request.clone(),
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: thread_id,
+            initial_thread_goal: None,
+        };
+        self.active_goal_turns
+            .lock()
+            .expect("active Goal turn map lock should not be poisoned")
+            .insert(local_task_id.to_owned(), persisted_turn);
+        self.set_goal_execution_status(local_task_id, Some("running"));
+        let handler = self.clone();
+        let local_task_id = local_task_id.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = handler.persist_current_turn_state().await {
+                log_executor_event(
+                    "active Goal notification persistence failed",
+                    &[("local_task_id", local_task_id), ("error", error.message)],
+                );
+            }
+        });
+    }
+
     pub(super) fn clear_active_goal_turn(&self, local_task_id: &str) {
         let removed = self
             .active_goal_turns
@@ -847,7 +884,9 @@ impl RuntimeWorkRpcHandler {
         if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
-        self.sync_runtime_task_goal_from_notification(local_task_id, &message);
+        if self.sync_runtime_task_goal_from_notification(local_task_id, &message) {
+            self.journal_active_goal_turn(local_task_id, request, active_turn.as_ref());
+        }
         self.persist_completed_codex_turn_from_notification(local_task_id, &message);
 
         if let (Some(active_turn), Some(notification_turn_id)) =
@@ -1203,8 +1242,9 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
+            let interrupted_by_shutdown = interrupted_by_executor_shutdown(&result);
             let goal_execution_needs_attention = match result.as_ref() {
-                Err(_) if interrupted_by_executor_shutdown(&result) => false,
+                Err(_) if interrupted_by_shutdown => false,
                 Err(_) => true,
                 Ok(turn) => matches!(
                     turn.outcome,
@@ -1297,6 +1337,9 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+            if interrupted_by_shutdown {
+                return;
+            }
             if goal_execution_needs_attention
                 && handler
                     .local_task_link(&turn_local_task_id)

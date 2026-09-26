@@ -83,7 +83,7 @@ function cn(...values: Array<string | false | null | undefined>): string {
 export interface SharedEditorIssue extends CollaborationIssue {
   assignment_history?: Array<{
     by_user_id: number;
-    to_type: "user" | "agent" | "team" | null;
+    to_type: "user" | "agent" | "team" | "group" | null;
     to_id: string | null;
     to_name?: string | null;
     action: "assign" | "reassign" | "unassign";

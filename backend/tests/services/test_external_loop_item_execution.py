@@ -24,6 +24,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemResponse, LoopItemUpdate
 from app.schemas.project_chat import (
@@ -43,7 +44,6 @@ from app.services.loop_items.external_provider import (
 )
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
-from app.services.notification_copy import NotificationTarget
 from app.services.project_chat.service import project_chat_service
 from tests.utils.agent_resources import create_runnable_wegent_team
 
@@ -651,7 +651,19 @@ def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
     group = {
         "id": "group-1",
         "name": "Delivery team",
-        "members": [],
+        "instructions": "Coordinate delivery.",
+        "leader": {
+            "kind": "human",
+            "id": str(test_user.id),
+            "name": test_user.user_name,
+        },
+        "members": [
+            {
+                "kind": "human",
+                "id": str(test_user.id),
+                "name": test_user.user_name,
+            }
+        ],
         "stages": [],
         "created_at": datetime.now(),
     }
@@ -676,11 +688,76 @@ def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
     assert created.internal_item.assignee_user_id in {None, 0}
     assert created.internal_item.assignee_agent_id == ""
     assert created.internal_item.assignee_team_id is None
-    assert created.internal_item.metadata_json["collaboration_group"] == {
+    stored_group = created.internal_item.metadata_json["collaboration_group"]
+    assert stored_group["id"] == "group-1"
+    assert stored_group["name"] == "Delivery team"
+    assert stored_group["leader"]["kind"] == "human"
+    assert _active_execution(test_db, str(created.values["id"])) is None
+    notification = (
+        test_db.query(WeworkNotification)
+        .filter(WeworkNotification.user_id == test_user.id)
+        .one()
+    )
+    assert notification.payload["action"] == "coordinate_collaboration_group"
+    assert notification.payload["itemId"] == created.values["id"]
+
+
+def test_reassigning_same_external_collaboration_group_dispatches_once(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    manager = _make_bot(test_db, project, test_user)
+    _mock_issue(monkeypatch)
+    group = {
         "id": "group-1",
         "name": "Delivery team",
+        "instructions": "Coordinate delivery.",
+        "leader": {
+            "kind": "agent",
+            "id": manager.id,
+            "name": manager.title,
+        },
+        "members": [
+            {
+                "kind": "agent",
+                "id": manager.id,
+                "name": manager.title,
+            }
+        ],
+        "stages": [],
+        "created_at": datetime.now(),
     }
-    assert _active_execution(test_db, str(created.values["id"])) is None
+    monkeypatch.setattr(
+        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        lambda _db, _project_id, _user_id: [group],
+    )
+    assignment = LoopItemAssign(
+        version=1,
+        assignee_type="group",
+        assignee_id="group-1",
+    )
+
+    external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        assignment,
+    )
+    external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        assignment,
+    )
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == _item_id(project))
+        .all()
+    )
+    assert len(executions) == 1
+    assert executions[0].executor_type == "collaboration_group_dispatch"
+    assert executions[0].status == "queued"
 
 
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
@@ -713,7 +790,7 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     _mock_issue(monkeypatch)
 
     with patch(
-        "app.services.loop_items.external_provider.notify_project_task_assignee"
+        "app.services.collaboration_human_assignments." "notify_direct_human_assignment"
     ) as notify:
         response = external_loop_item_provider.assign(
             test_db,
@@ -727,22 +804,17 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
         )
 
     assert response["assignee_user_id"] == member.id
-    notify.assert_called_once_with(
-        test_db,
-        actor_user_id=test_user.id,
-        user_id=member.id,
-        target=NotificationTarget(
-            project_id=str(project.id),
-            project_name=project.name,
-            item_id=_item_id(project),
-            item_key=_item_id(project),
-            item_title="External task 1",
-            item_status="pending",
-        ),
-        assigner_name=test_user.user_name,
-    )
+    notify.assert_called_once()
+    assert notify.call_args.args == (test_db,)
+    assert notify.call_args.kwargs["project"] == project
+    assert notify.call_args.kwargs["human"] == member
+    assert notify.call_args.kwargs["actor_user_id"] == test_user.id
+    assert notify.call_args.kwargs["task_title"] == "External task 1"
+    assert notify.call_args.kwargs["instructions"] == "Do the thing"
+    assert notify.call_args.kwargs["assignment_id"]
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
+    assert notify.call_args.kwargs["issue"] == row
     assert row.assignee_user_id == member.id
     assert row.assignee_agent_id == ""
     assert _active_execution(test_db, _item_id(project)) is None

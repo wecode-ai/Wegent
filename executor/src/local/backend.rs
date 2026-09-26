@@ -642,9 +642,16 @@ where
     }
 
     async fn heartbeat_until_reconnect(&self) -> bool {
+        enum RunnerTick {
+            Heartbeat,
+            RuntimeWork,
+        }
+
         let mut consecutive_failures = 0_u32;
         let mut observed_successful_heartbeat = false;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+        let mut next_runtime_work_poll_at =
+            Instant::now() + self.client.config.runtime_work_poll_interval;
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
                 .lock()
@@ -654,8 +661,9 @@ where
         let terminal_relay = self.relay_terminal_events_until_error(terminal_event_notifier);
         tokio::pin!(terminal_relay);
         loop {
-            tokio::select! {
-                _ = sleep_until(next_heartbeat_at) => {},
+            let tick = tokio::select! {
+                _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
+                _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
                 result = &mut terminal_relay => {
                     let error = result.expect_err("terminal relay only stops on error");
                     write_executor_error_line(&format_executor_log(
@@ -665,6 +673,12 @@ where
                     let _ = self.client.disconnect().await;
                     return observed_successful_heartbeat;
                 }
+            };
+            if matches!(tick, RunnerTick::RuntimeWork) {
+                self.trigger_runtime_work_poll();
+                next_runtime_work_poll_at =
+                    Instant::now() + self.client.config.runtime_work_poll_interval;
+                continue;
             }
             if let Some(handler) = &self.session_handler {
                 handler
@@ -678,6 +692,8 @@ where
                     observed_successful_heartbeat = true;
                     self.trigger_runtime_work_poll();
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+                    next_runtime_work_poll_at =
+                        Instant::now() + self.client.config.runtime_work_poll_interval;
                     continue;
                 }
                 Err(error) => error,
@@ -781,17 +797,23 @@ async fn drain_available_runtime_work<T>(
         .unwrap_or(limit);
     let available = limit.saturating_sub(active.saturating_add(queued));
     for _ in 0..available {
-        let work = match client
-            .pull_runtime_work(client.config.heartbeat_timeout)
-            .await
-        {
-            Ok(work) => work,
-            Err(error) => {
-                write_executor_error_line(&format_executor_log(
-                    "runtime task pull failed",
-                    &[("error", error)],
-                ));
-                return;
+        let mut retried_failed_execution = false;
+        let work = loop {
+            match client
+                .pull_runtime_work(client.config.heartbeat_timeout)
+                .await
+            {
+                Ok(work) => break work,
+                Err(error) => {
+                    write_executor_error_line(&format_executor_log(
+                        "runtime task pull failed",
+                        &[("error", error)],
+                    ));
+                    if retried_failed_execution {
+                        return;
+                    }
+                    retried_failed_execution = true;
+                }
             }
         };
         for intent in work.workspace_cleanup_intents {

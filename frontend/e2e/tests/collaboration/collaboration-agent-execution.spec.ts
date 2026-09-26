@@ -247,7 +247,7 @@ test.describe('Collaboration agent execution', () => {
     expect(execution.syncState).toBe('in_sync')
     expect(execution.teamId).toBeNull()
     expect(execution.backendTaskId).toBeNull()
-    expect(execution.executionEnvironment).toBe('cloud')
+    expect(execution.executionEnvironment).toBe('local')
     expect(execution.executionDeviceId).toBeTruthy()
     expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
     expect(execution.runtimeTaskId).toMatch(/^codex-queue-\d+$/)

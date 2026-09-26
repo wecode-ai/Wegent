@@ -1047,7 +1047,7 @@ function localRuntimeModelConfig(
       upstream_api_format: upstreamApiFormat,
       native_tool_search: nativeToolSearch,
       native_namespace_tools: nativeNamespaceTools,
-      tool_profile: 'function',
+      tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -3790,13 +3790,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         candidate => candidate.id === assigneeId
       )
       if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
-      if (group.leader.kind !== 'agent') {
-        throw new Error('Local collaboration group leader must be an agent')
-      }
-      const manager = agents.find(candidate => candidate.id === group.leader.id)
-      if (!manager || manager.status !== 'active') {
-        throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
-      }
       const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
       const memberRuntimeProfiles = await Promise.all(
         Array.from(new Set(references.map(member => member.id))).map(async memberId => {
@@ -3820,18 +3813,28 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           }
         })
       )
+      const managerRuntimeRequest =
+        group.leader.kind === 'agent'
+          ? await (async () => {
+              const manager = agents.find(candidate => candidate.id === group.leader.id)
+              if (!manager || manager.status !== 'active') {
+                throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
+              }
+              return assignmentRuntimePayload(
+                projectId,
+                itemId,
+                manager,
+                'manager',
+                project,
+                task,
+                group
+              )
+            })()
+          : null
       return {
         dispatchKind: 'collaboration_group',
         dispatchTaskId: itemId,
-        managerRuntimeRequest: await assignmentRuntimePayload(
-          projectId,
-          itemId,
-          manager,
-          'manager',
-          project,
-          task,
-          group
-        ),
+        ...(managerRuntimeRequest ? { managerRuntimeRequest } : {}),
         memberRuntimeProfiles,
       }
     },

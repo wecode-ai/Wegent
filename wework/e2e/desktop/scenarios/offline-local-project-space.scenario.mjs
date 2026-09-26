@@ -5,6 +5,7 @@ import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  initializeFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectWhenOptionAvailable,
 } from '../modules/workspace-flows.mjs'
@@ -241,6 +242,12 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       assertLocalIsolation()
 
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,

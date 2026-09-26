@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Enqueue one collaboration-group dispatch for an Executor.
+"""Dispatch one collaboration-group assignment to its configured leader.
 
-The backend persists the Issue assignment and supplies the immutable group
-snapshot needed to route the first dispatch. The Executor owns manager runs,
-member runs, round barriers, and every continuation after this handoff.
+AI leaders receive one immutable Executor handoff. Human leaders receive one
+notification linking to the Issue they coordinate. The backend does not own the
+collaboration loop after either handoff.
 """
 
 from __future__ import annotations
@@ -20,10 +20,12 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.services.loop_item_executions.profile import native_runtime_contract
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.service import bot_config, compiled_bot_config
-from app.services.workspaces import workspace_service
+from app.services.wework_notifications import create_notification
 
 MANAGER_SYSTEM_INSTRUCTIONS = """You are the manager for one project Issue.
 Coordinate the collaboration group through the project-space management tools.
@@ -36,19 +38,52 @@ explanation. Do not publish the same decision again with a separate comment tool
 the Executor already records manager and member runs in the Issue activity."""
 
 
-def ensure_collaboration_group_execution(
+def dispatch_collaboration_group_assignment(
     db: Session,
     *,
     item: LoopItem,
     user_id: int,
     group: dict[str, Any],
-) -> LoopItemExecution:
-    """Create exactly one Executor handoff for this group assignment."""
+) -> LoopItemExecution | None:
+    """Dispatch exactly once to the configured human or AI leader."""
 
     metadata = dict(item.metadata_json or {})
     assignment_key = str(metadata.get("collaboration_group_assignment_key") or "")
     if not assignment_key:
         raise RuntimeError("Collaboration group assignment key is unavailable")
+    leader = group.get("leader")
+    if not isinstance(leader, dict):
+        raise HTTPException(422, "Collaboration group has no leader")
+    leader_kind = str(leader.get("kind") or "")
+    if leader_kind == "human":
+        _notify_human_leader(
+            db,
+            item=item,
+            user_id=user_id,
+            group=group,
+            leader=leader,
+            assignment_key=assignment_key,
+        )
+        return None
+    if leader_kind != "agent":
+        raise HTTPException(422, "Collaboration group leader is invalid")
+    return _enqueue_ai_leader(
+        db,
+        item=item,
+        user_id=user_id,
+        group=group,
+        assignment_key=assignment_key,
+    )
+
+
+def _enqueue_ai_leader(
+    db: Session,
+    *,
+    item: LoopItem,
+    user_id: int,
+    group: dict[str, Any],
+    assignment_key: str,
+) -> LoopItemExecution:
     run_id = f"collaboration-group:{assignment_key}"
     existing = (
         db.query(LoopItemExecution)
@@ -127,27 +162,97 @@ def ensure_collaboration_group_execution(
     return dispatch
 
 
-def collaboration_group_for_item(
+def _notify_human_leader(
     db: Session,
     *,
     item: LoopItem,
     user_id: int,
-) -> dict[str, Any] | None:
-    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
-    reference = metadata.get("collaboration_group")
-    group_id = str(reference.get("id") or "") if isinstance(reference, dict) else ""
-    if not group_id:
-        return None
-    return next(
-        (
-            dict(group)
-            for group in workspace_service.list_project_collaboration_groups(
-                db, int(item.cloud_project_id), user_id
-            )
-            if str(group.get("id") or "") == group_id
-        ),
-        None,
+    group: dict[str, Any],
+    leader: dict[str, Any],
+    assignment_key: str,
+) -> None:
+    project = db.get(CloudProject, item.cloud_project_id)
+    if project is None:
+        raise RuntimeError("Collaboration group project is unavailable")
+    try:
+        leader_id = int(str(leader.get("id") or ""))
+    except ValueError as exc:
+        raise HTTPException(422, "Collaboration group human leader is invalid") from exc
+    human = db.get(User, leader_id)
+    if human is None:
+        raise HTTPException(422, "Collaboration group human leader does not exist")
+    notification_key = f"group:{group['id']}:{assignment_key}"
+    existing = (
+        db.query(WeworkNotification)
+        .filter(
+            WeworkNotification.user_id == human.id,
+            WeworkNotification.kind == "assignment",
+        )
+        .all()
     )
+    if any(
+        isinstance(notification.payload, dict)
+        and notification.payload.get("collaborationGroupAssignmentKey")
+        == notification_key
+        for notification in existing
+    ):
+        return
+    create_notification(
+        db,
+        user_id=human.id,
+        actor_user_id=user_id,
+        kind="assignment",
+        title=f"请协调：{item.title}",
+        body="你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",
+        project_id=str(project.id),
+        item_id=item.id,
+        payload={
+            "action": "coordinate_collaboration_group",
+            "projectId": str(project.id),
+            "itemId": item.id,
+            "issueId": item.id,
+            "collaborationGroupId": str(group["id"]),
+            "collaborationGroupAssignmentKey": notification_key,
+            "instructions": _human_leader_instructions(
+                project=project,
+                item=item,
+                group=group,
+            ),
+        },
+    )
+
+
+def collaboration_group_snapshot_for_dispatch(
+    *,
+    item: LoopItem,
+    execution: LoopItemExecution,
+) -> dict[str, Any]:
+    """Return the immutable group snapshot for the Issue's active dispatch."""
+
+    if execution.executor_type != "collaboration_group_dispatch":
+        raise HTTPException(409, "Collaboration dispatch is unavailable")
+    context = execution.runtime_origin_context
+    if str(context.get("dispatch_kind") or "") != "collaboration_group":
+        raise HTTPException(409, "Collaboration dispatch snapshot is unavailable")
+    snapshot = context.get("collaboration_group")
+    if not isinstance(snapshot, dict):
+        raise HTTPException(409, "Collaboration dispatch snapshot is unavailable")
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    assigned_group = metadata.get("collaboration_group")
+    assignment_key = str(metadata.get("collaboration_group_assignment_key") or "")
+    assigned_group_id = (
+        str(assigned_group.get("id") or "") if isinstance(assigned_group, dict) else ""
+    )
+    snapshot_group_id = str(snapshot.get("id") or "")
+    if (
+        not assignment_key
+        or not assigned_group_id
+        or snapshot_group_id != assigned_group_id
+        or str(context.get("collaboration_group_id") or "") != snapshot_group_id
+        or str(context.get("run_id") or "") != f"collaboration-group:{assignment_key}"
+    ):
+        raise HTTPException(409, "Collaboration dispatch is no longer active")
+    return dict(snapshot)
 
 
 def collaboration_group_agent_matches(
@@ -257,6 +362,37 @@ def _manager_user_message(
                 "Use the Issue status tool only after you have evaluated the "
                 "member results."
             ),
+        ]
+    )
+
+
+def _human_leader_instructions(
+    *,
+    project: CloudProject,
+    item: LoopItem,
+    group: dict[str, Any],
+) -> str:
+    project_metadata = (
+        project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    )
+    stages = group.get("stages")
+    return "\n\n".join(
+        [
+            item.description or item.title,
+            f"协作规则：{str(group.get('instructions') or '')}",
+            "参考阶段："
+            + json.dumps(
+                stages if isinstance(stages, list) else [],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "项目流程："
+            + json.dumps(
+                project_metadata.get("workflow_definition") or {},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "请协调小组成员完成工作，并在验收后更新 Issue 状态。",
         ]
     )
 

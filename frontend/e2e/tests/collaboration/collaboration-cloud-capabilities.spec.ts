@@ -9,6 +9,7 @@ import { webApi, writeSharedComposer } from '../../utils/collaboration-test-supp
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const appBaseUrl = process.env.E2E_BASE_URL || 'http://localhost:3000'
 const evidenceDir = process.env.COLLABORATION_EVIDENCE_DIR
@@ -354,14 +355,13 @@ async function openRegularUserProject(
 }
 
 test.describe('Collaboration cloud capabilities', () => {
-  test('aligns Web resource navigation and collaboration-group assignment with cloud collaboration', async ({
+  test('aligns Web resource navigation and requires a ready environment for group assignment', async ({
     page,
   }) => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     const workspaceGroupName = `Workspace group ${suffix}`
     const projectName = `Group project ${suffix}`
-    const issueTitle = `Group issue ${suffix}`
     let projectId = ''
     let workspaceId = ''
 
@@ -457,32 +457,8 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(projectGroup.members).toContainEqual(projectGroup.leader)
 
       await page.getByTestId('collaboration-issue-create').click()
-      await page.getByTestId('cloud-todo-title').fill(issueTitle)
-      await page.getByTestId('cloud-todo-create-assignee').click()
-      await page.getByTestId(`cloud-todo-create-assignee-option-group:${projectGroup.id}`).click()
-      await expect(page.getByTestId('cloud-todo-create-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
-      )
-      await page.getByTestId('cloud-todo-create-confirm').click()
-      await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
-      const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
-      await expect
-        .poll(async () => {
-          const created = await issue(page, issueId)
-          return {
-            groupId: created.assignee_group_id,
-            groupName: created.assignee_group_name,
-          }
-        })
-        .toEqual({
-          groupId: projectGroup.id,
-          groupName: projectGroup.name,
-        })
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        `group:${projectGroup.id}`
-      )
+      await expect(page.getByTestId('collaboration-project-settings-environments')).toBeVisible()
+      await expect(page.getByTestId('collaboration-issue-create-dialog')).toHaveCount(0)
       await captureEvidence(page, 'web-00-cloud-collaboration-group')
     } finally {
       if (projectId) await archiveProject(page, projectId)
@@ -545,6 +521,7 @@ test.describe('Collaboration cloud capabilities', () => {
         project.name
       )
 
+      await initializeProjectExecutionEnvironment(page)
       await page.getByTestId('collaboration-issue-create').click()
       await page.getByTestId('cloud-todo-title').fill(`Cloud Issue ${suffix}`)
       await page
