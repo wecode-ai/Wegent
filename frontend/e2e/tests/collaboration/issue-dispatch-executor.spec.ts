@@ -411,7 +411,7 @@ async function waitForCollaborationExecutions(
         const response = await apiRequest<{ items: CollaborationExecution[] }>(
           request,
           token,
-          `/api/v1/cloud-projects/${projectId}/executions`
+          `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
         )
         matching = response.items.filter(item => item.loopItemId === issueId)
         return {

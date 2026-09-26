@@ -458,6 +458,20 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
     store.turnStarted(address, 'provisional-turn')
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'optimistic-user',
+        role: 'user',
+        content: 'continue',
+        status: 'done',
+        createdAt: '2026-08-21T14:39:00.000Z',
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      subtaskId: 'provisional-turn',
+    })
     let streamHandlers: ChatStreamHandlers = {}
     const listRuntimeWork = vi.fn()
     const getRuntimeTranscript = vi.fn().mockResolvedValue({
@@ -465,6 +479,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       workspacePath: address.workspacePath,
       runtime: address.runtime,
       running: false,
+      fullContent: true,
       messages: [
         {
           id: 'assistant-1',
@@ -520,11 +535,15 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'fast completed answer',
+    ])
   })
 
   test('does not settle a newer turn from a repeated old terminal event', async () => {
@@ -590,6 +609,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     expect(store.getTask(address)?.turn.id).toBe('turn-2')
@@ -749,6 +769,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         ...address,
         limit: 50,
         refresh: true,
+        includeFullContent: true,
       })
     )
     await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))

@@ -8,6 +8,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
@@ -205,16 +206,22 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           ...address,
           limit: 50,
           refresh: true,
+          includeFullContent: true,
         })
         if (disposed) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
-        reconcileRuntimeConversationSnapshot(address, transcript.turns)
         const currentSnapshot = store.getTask(address)
-        if (
+        const lifecycleChanged =
           runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot) &&
           !canSettleRecoveredTerminalTurn(currentSnapshot, transcript, outcome, terminalTurnId)
-        ) {
+        if (lifecycleChanged) {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
           return
+        }
+        if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
+          replaceRuntimeConversationSnapshot(address, transcript.turns)
+        } else {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
         }
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {

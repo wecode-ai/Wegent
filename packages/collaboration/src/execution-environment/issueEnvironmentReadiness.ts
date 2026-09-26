@@ -104,6 +104,7 @@ export function useProjectExecutionEnvironmentReadiness({
   refreshIntervalMs?: number;
 }): ProjectExecutionEnvironmentReadiness & { refresh(): void } {
   const requestRevision = useRef(0);
+  const readinessProjectId = useRef(project?.id ?? null);
   const [readiness, setReadiness] =
     useState<ProjectExecutionEnvironmentReadiness>(() =>
       !project
@@ -137,10 +138,20 @@ export function useProjectExecutionEnvironmentReadiness({
 
   useEffect(() => {
     if (!project) {
+      readinessProjectId.current = null;
       refresh();
       return;
     }
-    setReadiness({ kind: "loading", environments: EMPTY_ENVIRONMENTS });
+    const sameProject = readinessProjectId.current === project.id;
+    readinessProjectId.current = project.id;
+    setReadiness((current) =>
+      sameProject && current.environments.length > 0
+        ? resolveProjectExecutionEnvironmentReadiness(
+            project,
+            current.environments,
+          )
+        : { kind: "loading", environments: EMPTY_ENVIRONMENTS },
+    );
     refresh();
     const refreshWhenVisible = () => {
       if (

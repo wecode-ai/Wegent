@@ -223,4 +223,35 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     await act(async () => first.resolve([]));
     expect(container?.textContent).toBe("ready");
   });
+
+  it("keeps assigned devices usable while an initialized project version refreshes", async () => {
+    const refreshed = deferred<CollaborationExecutionEnvironment[]>();
+    const api = {
+      projects: {
+        listExecutionEnvironments: vi
+          .fn()
+          .mockResolvedValueOnce([environment("online")])
+          .mockReturnValueOnce(refreshed.promise),
+      },
+    } as unknown as SharedWorkspaceApi;
+
+    await renderProbe(api, baseProject);
+    expect(container?.textContent).toBe("uninitialized");
+
+    await act(async () =>
+      root!.render(
+        <Probe
+          api={api}
+          project={{
+            ...projectWithDevice("ready", "/workspace"),
+            version: 2,
+          }}
+        />,
+      ),
+    );
+
+    expect(container?.textContent).toBe("ready");
+    await act(async () => refreshed.resolve([environment("online")]));
+    expect(container?.textContent).toBe("ready");
+  });
 });
