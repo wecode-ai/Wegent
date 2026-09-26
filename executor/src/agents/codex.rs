@@ -73,6 +73,8 @@ const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
 const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
+const CODEX_DISABLE_MULTI_AGENT_OVERRIDE: &str = "features.multi_agent=false";
+const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -3453,6 +3455,9 @@ fn build_codex_launch_config_with_route_scope(
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
+        .extend(codex_collaboration_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
     launch_config
         .config_overrides
@@ -3795,6 +3800,16 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
         ]))
     ));
     overrides
+}
+
+fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
+        return vec![
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE.to_owned(),
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
+        ];
+    }
+    Vec::new()
 }
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
@@ -5847,6 +5862,7 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
         .extra
         .get("collaborationMode")
         .or_else(|| request.extra.get("collaboration_mode"))
+        .or_else(|| request.extra.get("collaboration_model"))
         .and_then(Value::as_str)
 }
 

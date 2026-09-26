@@ -3174,6 +3174,28 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 }
 
 #[test]
+fn single_collaboration_mode_disables_codex_native_subagents() {
+    let mut request = ExecutionRequest {
+        model_config: json!({"model_id": "gpt-5.5-codex"}),
+        ..ExecutionRequest::default()
+    };
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2=false".to_owned()));
+    assert!(codex_collaboration_mode_payload(&request, &CodexLaunchConfig::default()).is_none());
+}
+
+#[test]
 fn turn_start_params_includes_client_user_message_id() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(

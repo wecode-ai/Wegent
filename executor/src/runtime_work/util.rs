@@ -159,6 +159,7 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
+        .or_else(|| payload.get("collaboration_model"))
         .or_else(|| {
             payload
                 .get("modelOptions")
@@ -167,6 +168,7 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
                     options
                         .get("collaborationMode")
                         .or_else(|| options.get("collaboration_mode"))
+                        .or_else(|| options.get("collaboration_model"))
                 })
         })
         .filter(|value| value.is_string())
@@ -922,6 +924,18 @@ mod tests {
         assert_eq!(
             request.extra.get("collaborationMode"),
             Some(&json!("coordinate"))
+        );
+    }
+
+    #[test]
+    fn copies_backend_collaboration_model_into_execution_request_extra() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"collaboration_model": "single"}));
+
+        assert_eq!(
+            request.extra.get("collaborationMode"),
+            Some(&json!("single"))
         );
     }
 
