@@ -403,9 +403,10 @@ type SelectedTaskBinding = Pick<
 > & {
   work_item_id: string
 }
+type TaskBindingAddressInput = Pick<LoopItemTaskBinding, 'device_id' | 'task_id' | 'modelSelection'>
 
 function selectedTaskBindingAddress(
-  binding: SelectedTaskBinding,
+  binding: TaskBindingAddressInput,
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   devices: DeviceInfo[]
 ): RuntimeTaskAddress {
