@@ -169,7 +169,12 @@ export async function verifyCollaborationIssueHome(
   await control.command('click', '[data-testid="collaboration-issue-owner-none"]')
   assert.equal((await control.command('getText', ownerButton)).trim(), '')
   await control.command('fill', input, { value: '' })
+  const issueCard = scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
   await control.command('click', projectRow)
-  await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+  await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+    text: project.name,
+  })
+  await control.command('waitFor', issueCard)
+  await control.command('click', issueCard)
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'))
 }

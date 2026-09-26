@@ -2565,15 +2565,25 @@ fn subagent_status(kind: &str) -> &'static str {
 fn subagent_thread_id(params: &Value) -> Option<String> {
     string_field(params, "agent_thread_id")
         .or_else(|| string_field(params, "agentThreadId"))
+        .or_else(|| {
+            params.get("item").and_then(|item| {
+                string_field(item, "agent_thread_id")
+                    .or_else(|| string_field(item, "agentThreadId"))
+            })
+        })
+        .or_else(|| {
+            params.get("turn").and_then(|turn| {
+                string_field(turn, "agent_thread_id")
+                    .or_else(|| string_field(turn, "agentThreadId"))
+            })
+        })
         .or_else(|| string_field(params, "thread_id"))
         .or_else(|| string_field(params, "threadId"))
         .or_else(|| string_field(params, "turn_id"))
         .or_else(|| string_field(params, "turnId"))
         .or_else(|| {
             params.get("item").and_then(|item| {
-                string_field(item, "agent_thread_id")
-                    .or_else(|| string_field(item, "agentThreadId"))
-                    .or_else(|| string_field(item, "thread_id"))
+                string_field(item, "thread_id")
                     .or_else(|| string_field(item, "threadId"))
                     .or_else(|| string_field(item, "turn_id"))
                     .or_else(|| string_field(item, "turnId"))
@@ -2581,9 +2591,7 @@ fn subagent_thread_id(params: &Value) -> Option<String> {
         })
         .or_else(|| {
             params.get("turn").and_then(|turn| {
-                string_field(turn, "agent_thread_id")
-                    .or_else(|| string_field(turn, "agentThreadId"))
-                    .or_else(|| string_field(turn, "thread_id"))
+                string_field(turn, "thread_id")
                     .or_else(|| string_field(turn, "threadId"))
                     .or_else(|| string_field(turn, "turn_id"))
                     .or_else(|| string_field(turn, "turnId"))
@@ -4730,6 +4738,7 @@ mod tests {
             json!({
                 "method": "item/completed",
                 "params": {
+                    "threadId": "thread-parent",
                     "item": {
                         "type": "subAgentActivity",
                         "agentPath": "/root/worker",
@@ -4747,6 +4756,17 @@ mod tests {
         assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
         assert_eq!(event["payload"]["data"]["kind"], "interacted");
         assert_eq!(event["payload"]["data"]["status"], "running");
+
+        let block = event_rx.try_recv().expect("block should be emitted");
+        assert_eq!(block["event"], "response.block.created");
+        assert_eq!(
+            block["payload"]["data"]["block"]["id"],
+            "subagent-thread-worker"
+        );
+        assert_eq!(
+            block["payload"]["data"]["block"]["agent_thread_id"],
+            "thread-worker"
+        );
     }
 
     #[test]

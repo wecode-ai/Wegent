@@ -1,4 +1,5 @@
 import { useImperativeHandle, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   Link2,
   ChevronDown,
@@ -55,6 +56,9 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
   const closePicker = () => {
     anchor?.focus()
     setAnchor(null)
+  }
+  const handleDraftChange = (draft: string) => {
+    flushSync(() => props.onDraftChange?.(draft))
   }
   return (
     <section
@@ -127,7 +131,7 @@ export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposer
             presentation="document"
             value={props.value}
             onChange={props.onChange}
-            onDraftEdit={props.onDraftChange}
+            onDraftEdit={handleDraftChange}
             onSubmit={value => props.onSubmit(value ?? props.value)}
             disabled={props.disabled}
             requireText

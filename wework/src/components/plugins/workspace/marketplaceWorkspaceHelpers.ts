@@ -58,7 +58,18 @@ export interface PluginShareState {
   access: PluginAccessResponse
 }
 
-export const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const DEFAULT_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const E2E_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 5_000
+
+export function resolveCloudMarketplaceRevalidateIntervalMs(isE2E: boolean): number {
+  return isE2E
+    ? E2E_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS
+    : DEFAULT_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS
+}
+
+export const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = resolveCloudMarketplaceRevalidateIntervalMs(
+  import.meta.env.VITE_WEWORK_E2E === 'true'
+)
 export const INSTALLED_STRIP_VISIBLE_COUNT = 12
 export const INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT = 4
 export const MARKETPLACE_SEARCH_RESULT_BATCH_SIZE = 40

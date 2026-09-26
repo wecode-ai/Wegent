@@ -1649,7 +1649,7 @@ describe('createLocalAppServices', () => {
       deviceId: 'local-device',
       executionDeviceId: 'app-record-1839',
       workspacePath: '/Users/me/project',
-      runtimeProjectKey: 'product',
+      runtimeProjectKey: 'wegent-remote:device-uuid:product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
       projectInstructions: 'Run focused project tests.',
@@ -2062,6 +2062,62 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('resolves a remote sidebar project identity on its cloud executor', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return {
+          success: true,
+          workspaces: [
+            {
+              workspacePath: '/srv/project',
+              label: 'Remote project',
+              workspaceSource: 'local',
+              projectKey: '/srv/project',
+              projectKind: 'local',
+              projectSource: 'local_project',
+              projectRoots: ['/srv/project'],
+              tasks: [],
+            },
+          ],
+        }
+      }
+      return {
+        accepted: true,
+        deviceId: 'cloud-device',
+        taskId: 'task-1',
+        workspacePath: '/srv/project',
+        runtime: 'codex',
+      }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
+    })
+
+    await runtimeApi.createRuntimeTask({
+      schemaVersion: 2,
+      deviceId: 'cloud-device',
+      runtimeProjectKey: 'wegent-remote:cloud-device:%2Fsrv%2Fproject',
+      runtimeProjectName: 'Remote project',
+      runtime: 'codex',
+      message: 'hello',
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        schemaVersion: 2,
+        deviceId: 'cloud-device',
+        runtimeProjectKey: '/srv/project',
+        runtimeProjectName: 'Remote project',
+        workspacePath: '/srv/project',
+        message: 'hello',
+      }),
+      'cloud-device'
+    )
+  })
+
   test('resolves a backend project binding inside the Local Compiler', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.list') {
@@ -2192,6 +2248,7 @@ describe('createLocalAppServices', () => {
         deviceId: 'device-uuid',
         taskId: 'source-task',
       },
+      runtimeProjectKey: 'wegent-remote:device-uuid:local-project',
       runtime: 'codex',
       message: 'continue',
     })
@@ -2206,6 +2263,10 @@ describe('createLocalAppServices', () => {
           deviceId: 'device-uuid',
           taskId: 'source-task',
         },
+        runtimeProjectKey: 'local-project',
+        executionRequest: expect.objectContaining({
+          runtime_project_key: 'local-project',
+        }),
       })
     )
   })
