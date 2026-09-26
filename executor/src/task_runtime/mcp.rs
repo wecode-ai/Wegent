@@ -73,9 +73,9 @@ impl fmt::Debug for CloudCollaborationRoundDispatcher {
 }
 
 #[derive(Clone)]
-pub(crate) struct CollaborationManagerTurnCompleter(
-    Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
-);
+pub(crate) struct CollaborationManagerTurnCompleter(Arc<ManagerTurnCompletionCallback>);
+
+type ManagerTurnCompletionCallback = dyn Fn(&str) -> Result<(), String> + Send + Sync;
 
 impl CollaborationManagerTurnCompleter {
     pub(crate) fn new(
@@ -919,17 +919,7 @@ async fn call_tool_with_context(
             true,
         );
     }
-    call_tool_with_runtime_context(
-        runtime,
-        name,
-        arguments,
-        context.grant.clone(),
-        context.backend_url.as_deref(),
-        context.auth_token.as_deref(),
-        context.cloud_collaboration_dispatcher.as_ref(),
-        context.collaboration_manager_turn_completer.as_ref(),
-    )
-    .await
+    call_tool_with_runtime_context(runtime, name, arguments, context).await
 }
 
 #[cfg(test)]
@@ -945,45 +935,38 @@ async fn call_tool_with_grant(
     arguments: Value,
     grant: Option<SpaceContextGrant>,
 ) -> Value {
-    let backend_url = non_empty_env("WEWORK_SPACE_BACKEND_URL");
-    let auth_token = non_empty_env("WEWORK_SPACE_AUTH_TOKEN");
-    call_tool_with_runtime_context(
-        runtime,
-        name,
-        arguments,
+    let context = SpaceMcpRequestContext::new(
         grant,
-        backend_url.as_deref(),
-        auth_token.as_deref(),
-        None,
-        None,
-    )
-    .await
+        non_empty_env("WEWORK_SPACE_BACKEND_URL"),
+        non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
+    );
+    call_tool_with_runtime_context(runtime, name, arguments, &context).await
 }
 
 async fn call_tool_with_runtime_context(
     runtime: &TaskRuntime,
     name: &str,
     mut arguments: Value,
-    grant: Option<SpaceContextGrant>,
-    backend_url: Option<&str>,
-    auth_token: Option<&str>,
-    collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
-    manager_turn_completer: Option<&CollaborationManagerTurnCompleter>,
+    context: &SpaceMcpRequestContext,
 ) -> Value {
-    if is_role_bound(grant.as_ref()) && board_tool_category(name).is_none() {
+    let grant = context.grant.as_ref();
+    let backend_url = context.backend_url.as_deref();
+    let auth_token = context.auth_token.as_deref();
+    let manager_turn_completer = context.collaboration_manager_turn_completer.as_ref();
+    if is_role_bound(grant) && board_tool_category(name).is_none() {
         return text_result(
             format!("The current dispatch role cannot call wework_space tool: {name}"),
             true,
         );
     }
     if let Some(category) = board_tool_category(name) {
-        if !grant_allows(grant.as_ref(), category) {
+        if !grant_allows(grant, category) {
             return text_result(
                 format!("The current dispatch role cannot call wework_space tool: {name}"),
                 true,
             );
         }
-    } else if is_role_bound(grant.as_ref()) {
+    } else if is_role_bound(grant) {
         return text_result(
             format!("The current dispatch role cannot call wework_space tool: {name}"),
             true,
@@ -1049,18 +1032,15 @@ async fn call_tool_with_runtime_context(
         let Some((backend_url, auth_token)) = backend_url.zip(auth_token) else {
             return text_result(Value::Array(local_projects).to_string(), false);
         };
-        return match call_backend_tool(
+        let backend_context = BackendToolContext {
             backend_url,
             auth_token,
-            "",
-            name,
-            &arguments,
-            grant.as_ref(),
-            collaboration_dispatcher,
-            manager_turn_completer,
-        )
-        .await
-        {
+            project_id: "",
+            grant,
+            collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
+            manager_turn_completer: context.collaboration_manager_turn_completer.as_ref(),
+        };
+        return match call_backend_tool(&backend_context, name, &arguments).await {
             Ok(Value::Array(mut cloud_projects)) => {
                 cloud_projects.extend(local_projects);
                 text_result(Value::Array(cloud_projects).to_string(), false)
@@ -1075,18 +1055,15 @@ async fn call_tool_with_runtime_context(
             || (requested_project_id.is_some() && !is_locally_routed));
     if should_use_backend {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
-        return match call_backend_tool(
-            backend_url.unwrap_or_default(),
-            auth_token.unwrap_or_default(),
+        let backend_context = BackendToolContext {
+            backend_url: backend_url.unwrap_or_default(),
+            auth_token: auth_token.unwrap_or_default(),
             project_id,
-            name,
-            &arguments,
-            grant.as_ref(),
-            collaboration_dispatcher,
-            manager_turn_completer,
-        )
-        .await
-        {
+            grant,
+            collaboration_dispatcher: context.cloud_collaboration_dispatcher.as_ref(),
+            manager_turn_completer: context.collaboration_manager_turn_completer.as_ref(),
+        };
+        return match call_backend_tool(&backend_context, name, &arguments).await {
             Ok(value) => text_result(value.to_string(), false),
             Err(error) => text_result(error, true),
         };
@@ -1106,11 +1083,9 @@ async fn call_tool_with_runtime_context(
     }
     let result = match name {
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
-        "update_issue_status" => {
-            local_update_issue_status(runtime, &arguments, grant.as_ref()).await
-        }
+        "update_issue_status" => local_update_issue_status(runtime, &arguments, grant).await,
         "submit_workflow_plan" => {
-            let manager_task_id = manager_runtime_task_id(grant.as_ref());
+            let manager_task_id = manager_runtime_task_id(grant);
             let plan = arguments.get("plan").ok_or_else(|| {
                 super::TaskRuntimeError::Invalid("workflow plan is required".to_owned())
             });
@@ -1414,7 +1389,7 @@ async fn call_tool_with_runtime_context(
         "get_delivery_requirements" => {
             let project_id = string_argument(&arguments, "space_id");
             let item_id = string_argument(&arguments, "item_id");
-            let address = delivery_address(grant.as_ref());
+            let address = delivery_address(grant);
             match (project_id, item_id, address) {
                 (Ok(project_id), Ok(item_id), Ok(address)) => {
                     match runtime.find_task_binding(&address.device_id, &address.task_id) {
@@ -1445,7 +1420,7 @@ async fn call_tool_with_runtime_context(
         "get_workflow_stage_context" => {
             let project_id = string_argument(&arguments, "space_id");
             let item_id = string_argument(&arguments, "item_id");
-            let address = delivery_address(grant.as_ref());
+            let address = delivery_address(grant);
             match (project_id, item_id, address) {
                 (Ok(project_id), Ok(item_id), Ok(address)) => {
                     match runtime.find_task_binding(&address.device_id, &address.task_id) {
@@ -1478,7 +1453,7 @@ async fn call_tool_with_runtime_context(
         "create_delivery" => {
             let project_id = string_argument(&arguments, "space_id");
             let item_id = string_argument(&arguments, "item_id");
-            let address = delivery_address(grant.as_ref());
+            let address = delivery_address(grant);
             match (project_id, item_id, address) {
                 (Ok(project_id), Ok(item_id), Ok(address)) => {
                     match selected_local_delivery_chat(runtime, project_id, item_id, &arguments) {
@@ -1508,7 +1483,7 @@ async fn call_tool_with_runtime_context(
             let item_id = string_argument(&arguments, "item_id");
             let delivery_id = string_argument(&arguments, "delivery_id");
             let file_path = string_argument(&arguments, "file_path");
-            let address = delivery_address(grant.as_ref());
+            let address = delivery_address(grant);
             match (item_id, delivery_id, file_path, address) {
                 (Ok(item_id), Ok(delivery_id), Ok(file_path), Ok(address)) => {
                     let relative_path = arguments
@@ -1600,7 +1575,7 @@ async fn call_tool_with_runtime_context(
         "finalize_delivery" | "discard_delivery_draft" => {
             let item_id = string_argument(&arguments, "item_id");
             let delivery_id = string_argument(&arguments, "delivery_id");
-            let address = delivery_address(grant.as_ref());
+            let address = delivery_address(grant);
             match (item_id, delivery_id, address) {
                 (Ok(item_id), Ok(delivery_id), Ok(address)) => {
                     runtime.delivery_detail(delivery_id).and_then(|delivery| {
@@ -1960,18 +1935,27 @@ fn normalize_issue_status_decision(
     }))
 }
 
+struct BackendToolContext<'a> {
+    backend_url: &'a str,
+    auth_token: &'a str,
+    project_id: &'a str,
+    grant: Option<&'a SpaceContextGrant>,
+    collaboration_dispatcher: Option<&'a CloudCollaborationRoundDispatcher>,
+    manager_turn_completer: Option<&'a CollaborationManagerTurnCompleter>,
+}
+
 async fn call_backend_tool(
-    backend_url: &str,
-    auth_token: &str,
-    project_id: &str,
+    context: &BackendToolContext<'_>,
     name: &str,
     arguments: &Value,
-    grant: Option<&SpaceContextGrant>,
-    collaboration_dispatcher: Option<&CloudCollaborationRoundDispatcher>,
-    manager_turn_completer: Option<&CollaborationManagerTurnCompleter>,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
+    let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
+    let project_id = context.project_id;
+    let grant = context.grant;
+    let auth_token = context.auth_token;
+    let collaboration_dispatcher = context.collaboration_dispatcher;
+    let manager_turn_completer = context.manager_turn_completer;
     if name == "update_issue_status" {
         let grant = grant.ok_or_else(|| "Collaboration manager context is required".to_owned())?;
         let dispatch_id = manager_dispatch_id(Some(grant))?;
@@ -1990,7 +1974,7 @@ async fn call_backend_tool(
             .post(format!(
                 "{base}/cloud-projects/{project_id}/executions/manager-decision"
             ))
-            .bearer_auth(auth_token)
+            .bearer_auth(context.auth_token)
             .json(&json!({
                 "loop_item_id": item_id,
                 "dispatch_id": dispatch_id,
@@ -2041,7 +2025,7 @@ async fn call_backend_tool(
                 .post(format!(
                     "{base}/cloud-projects/{project_id}/executions/batch"
                 ))
-                .bearer_auth(auth_token)
+                .bearer_auth(context.auth_token)
                 .json(&json!({
                     "loop_item_id": item_id,
                     "dispatch_id": dispatch_id,
@@ -4304,15 +4288,19 @@ mod tests {
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let backend_url = format!("http://{address}");
+        let context = BackendToolContext {
+            backend_url: &backend_url,
+            auth_token: "unit-token",
+            project_id: "12",
+            grant: None,
+            collaboration_dispatcher: None,
+            manager_turn_completer: None,
+        };
         let result = call_backend_tool(
-            &format!("http://{address}"),
-            "unit-token",
-            "12",
+            &context,
             "send_notification",
             &json!({"title": "Review", "body": "Review failed", "item_id": "ISSUE-1"}),
-            None,
-            None,
-            None,
         )
         .await
         .unwrap();
@@ -4356,19 +4344,18 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let app = Router::new().route("/api/v1/cloud-projects/12/{kind}", get(candidates));
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        let result = call_backend_tool(
-            &format!("http://{address}"),
-            "unit-token",
-            "12",
-            "get_assignment_candidates",
-            &json!({}),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let backend_url = format!("http://{address}");
+        let context = BackendToolContext {
+            backend_url: &backend_url,
+            auth_token: "unit-token",
+            project_id: "12",
+            grant: None,
+            collaboration_dispatcher: None,
+            manager_turn_completer: None,
+        };
+        let result = call_backend_tool(&context, "get_assignment_candidates", &json!({}))
+            .await
+            .unwrap();
 
         assert_eq!(result["members"][0]["id"], 7);
         assert_eq!(result["robots"][0]["id"], "agent-9");
@@ -4419,10 +4406,17 @@ mod tests {
             ..role_grant(SpaceContextRole::Manager)
         };
 
+        let backend_url = format!("http://{address}");
+        let context = BackendToolContext {
+            backend_url: &backend_url,
+            auth_token: "task-token",
+            project_id: "12",
+            grant: Some(&grant),
+            collaboration_dispatcher: None,
+            manager_turn_completer: None,
+        };
         let decision = call_backend_tool(
-            &format!("http://{address}"),
-            "task-token",
-            "12",
+            &context,
             "update_issue_status",
             &json!({
                 "status": "in_review",
@@ -4430,9 +4424,6 @@ mod tests {
                 "comment": "Please confirm the completed work",
                 "idempotency_key": "decision-1",
             }),
-            Some(&grant),
-            None,
-            None,
         )
         .await
         .unwrap();
@@ -4520,18 +4511,18 @@ mod tests {
             }
         });
 
-        let result = call_backend_tool(
-            &format!("http://{address}"),
-            "task-token",
-            "12",
-            "submit_workflow_plan",
-            &plan,
-            Some(&grant),
-            Some(&dispatcher),
-            Some(&completer),
-        )
-        .await
-        .unwrap();
+        let backend_url = format!("http://{address}");
+        let context = BackendToolContext {
+            backend_url: &backend_url,
+            auth_token: "task-token",
+            project_id: "12",
+            grant: Some(&grant),
+            collaboration_dispatcher: Some(&dispatcher),
+            manager_turn_completer: Some(&completer),
+        };
+        let result = call_backend_tool(&context, "submit_workflow_plan", &plan)
+            .await
+            .unwrap();
 
         assert_eq!(result["state"], "dispatched");
         let commands = dispatched.lock().unwrap();
@@ -4598,15 +4589,16 @@ mod tests {
                 categories: HashSet::new(),
                 expires_at_unix: Local::now().timestamp() + 60,
             });
+            let context = SpaceMcpRequestContext::new(
+                grant,
+                Some(url.clone()),
+                Some("unit-token".to_owned()),
+            );
             let result = call_tool_with_runtime_context(
                 &runtime,
                 "send_notification",
                 json!({"title": "Greeting", "body": "你好", "url": "wework://boards"}),
-                grant,
-                Some(&url),
-                Some("unit-token"),
-                None,
-                None,
+                &context,
             )
             .await;
             assert_eq!(result["isError"], false, "{result}");
@@ -4625,15 +4617,16 @@ mod tests {
             assert_eq!(sent["body"], "你好");
         }
         for (backend, token) in [(None, Some("unit-token")), (Some(url.as_str()), None)] {
+            let context = SpaceMcpRequestContext::new(
+                None,
+                backend.map(ToOwned::to_owned),
+                token.map(ToOwned::to_owned),
+            );
             let result = call_tool_with_runtime_context(
                 &runtime,
                 "send_notification",
                 json!({"title": "Greeting", "body": "Hello"}),
-                None,
-                backend,
-                token,
-                None,
-                None,
+                &context,
             )
             .await;
             assert_eq!(result["isError"], true);

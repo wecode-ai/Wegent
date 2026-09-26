@@ -449,35 +449,6 @@ fn active_manager_execution_id(
         .optional()?)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_member_payload_uses_canonical_member_instructions() {
-        let manager_payload = json!({
-            "memberRuntimeProfiles": [{
-                "memberIds": ["member-1"],
-                "runtimePayload": {
-                    "projectInstructions": "member system instructions",
-                    "executionRequest": {
-                        "system_prompt": "manager system instructions"
-                    }
-                }
-            }]
-        });
-
-        let payload = collaboration_member_runtime_payload(&manager_payload, "member-1").unwrap();
-        let system_prompt = payload["executionRequest"]["system_prompt"]
-            .as_str()
-            .expect("member system prompt");
-
-        assert!(system_prompt.starts_with("member system instructions"));
-        assert!(!system_prompt.contains("manager system instructions"));
-        assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-    }
-}
-
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, TaskRuntimeError> {
     value
         .get(key)
@@ -783,4 +754,33 @@ fn agent_display_name(agent: &LoopItem) -> String {
         .or(agent.name.as_deref())
         .unwrap_or("AI")
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_member_payload_uses_canonical_member_instructions() {
+        let manager_payload = json!({
+            "memberRuntimeProfiles": [{
+                "memberIds": ["member-1"],
+                "runtimePayload": {
+                    "projectInstructions": "member system instructions",
+                    "executionRequest": {
+                        "system_prompt": "manager system instructions"
+                    }
+                }
+            }]
+        });
+
+        let payload = collaboration_member_runtime_payload(&manager_payload, "member-1").unwrap();
+        let system_prompt = payload["executionRequest"]["system_prompt"]
+            .as_str()
+            .expect("member system prompt");
+
+        assert!(system_prompt.starts_with("member system instructions"));
+        assert!(!system_prompt.contains("manager system instructions"));
+        assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
+    }
 }

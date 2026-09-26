@@ -141,11 +141,15 @@ describe('createWebSharedWorkspaceApi', () => {
       nextCursor: 'cursor-2',
       taskBindings: [
         {
+          assignmentId: null,
           id: '42',
           projectId: '11',
           issueId: 'issue-1',
           taskUserId: 7,
           deviceId: 'device-1',
+          dispatchId: null,
+          dispatchRoundId: null,
+          humanAssignmentId: null,
           taskId: 'task-1',
           taskTitle: 'Task',
           backendTaskId: 99,
@@ -402,8 +406,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
     expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(98)
-    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(98)
+    expect(supported).toHaveLength(89)
+    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(89)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.some(
         capability =>

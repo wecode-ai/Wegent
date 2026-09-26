@@ -724,14 +724,16 @@ impl LocalTaskStore {
             if let Some(group) = selected_collaboration_group.as_ref() {
                 create_collaboration_group_execution(
                     &transaction,
-                    task_id,
-                    project_id,
-                    group,
-                    title.as_deref().unwrap_or(task_id),
-                    &description,
-                    status.as_deref(),
-                    priority.as_deref().unwrap_or("none"),
-                    input.execution_payload.unwrap_or(Value::Null),
+                    CollaborationGroupExecutionInput {
+                        item_id: task_id,
+                        project_id,
+                        group,
+                        issue_title: title.as_deref().unwrap_or(task_id),
+                        issue_description: &description,
+                        issue_status: status.as_deref(),
+                        priority: priority.as_deref().unwrap_or("none"),
+                        payload: input.execution_payload.unwrap_or(Value::Null),
+                    },
                 )?;
             } else if requested_group_id.is_none() {
                 if let Some(agent_id) = assignee_agent_id {
@@ -4162,20 +4164,25 @@ fn execution_row(
         .map_err(TaskRuntimeError::from)
 }
 
+struct CollaborationGroupExecutionInput<'a> {
+    item_id: &'a str,
+    project_id: &'a str,
+    group: &'a Value,
+    issue_title: &'a str,
+    issue_description: &'a str,
+    issue_status: Option<&'a str>,
+    priority: &'a str,
+    payload: Value,
+}
+
 fn create_collaboration_group_execution(
     connection: &Connection,
-    item_id: &str,
-    project_id: &str,
-    group: &Value,
-    issue_title: &str,
-    issue_description: &str,
-    issue_status: Option<&str>,
-    priority: &str,
-    payload: Value,
+    input: CollaborationGroupExecutionInput<'_>,
 ) -> Result<i64, TaskRuntimeError> {
-    let project = get_item_from(connection, project_id, "project")?
+    let project = get_item_from(connection, input.project_id, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
-    let leader = group
+    let leader = input
+        .group
         .get("leader")
         .filter(|leader| leader.get("kind").and_then(Value::as_str) == Some("agent"))
         .ok_or_else(|| {
@@ -4190,26 +4197,26 @@ fn create_collaboration_group_execution(
         .ok_or_else(|| {
             TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
         })?;
-    let leader_agent = collaboration_agent(connection, project_id, leader_id)?;
-    let mut execution_payload = payload.as_object().cloned().unwrap_or_default();
+    let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
+    let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
     let manager_context = collaboration_manager_message(
-        group,
+        input.group,
         project
             .metadata
             .get("workflow_definition")
             .unwrap_or(&Value::Null),
-        issue_title,
-        issue_description,
-        issue_status,
+        input.issue_title,
+        input.issue_description,
+        input.issue_status,
     );
     execution_payload.insert("message".to_owned(), Value::String(manager_context.clone()));
     execution_payload.insert(
         "collaboration_manager_context".to_owned(),
         Value::String(manager_context),
     );
-    execution_payload.insert("dispatch_id".to_owned(), json!(item_id));
+    execution_payload.insert("dispatch_id".to_owned(), json!(input.item_id));
     execution_payload.insert("dispatch_role".to_owned(), json!("manager"));
-    execution_payload.insert("collaboration_group".to_owned(), group.clone());
+    execution_payload.insert("collaboration_group".to_owned(), input.group.clone());
     if let Some(workspace_roots) = project
         .metadata
         .get("workspace_roots")
@@ -4222,11 +4229,11 @@ fn create_collaboration_group_execution(
     }
     create_local_execution(
         connection,
-        item_id,
-        project_id,
+        input.item_id,
+        input.project_id,
         leader_id,
         &leader_agent,
-        priority,
+        input.priority,
         Value::Object(execution_payload),
     )
 }
