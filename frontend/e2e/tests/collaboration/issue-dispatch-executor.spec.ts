@@ -73,7 +73,27 @@ test.describe('Collaboration group Executor coordination', () => {
     const result = `DIRECT_AGENT_RESULT_${suffix}`
     const fixture = await createProjectFixture(page, suffix, issueTitle)
     const agent = await createProjectAgent(page, `Direct Agent ${suffix}`, model.modelName)
-    const clearScenario = await configureIssueDispatchModelScenario(request, issueTitle, [
+    const scenarioMatch = `task_id: ${fixture.issueId}`
+    const clearScenario = await configureIssueDispatchModelScenario(request, scenarioMatch, [
+      {
+        toolCalls: [
+          {
+            toolName: 'wework_space__get_current_context',
+            arguments: {},
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: 'wework_space__get_board_item',
+            arguments: {
+              space_id: fixture.projectId,
+              item_id: fixture.issueId,
+            },
+          },
+        ],
+      },
       { responseContent: result },
     ])
 
@@ -107,8 +127,9 @@ test.describe('Collaboration group Executor coordination', () => {
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
 
-      const modelBodies = await getScenarioModelBodies(request, issueTitle)
-      expect(modelRequestText(modelBodies)).toContain(issueTitle)
+      const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
+      expect(modelBodies.length).toBeGreaterThan(2)
+      expect(modelRequestText(modelBodies.slice(1))).toContain(issueTitle)
       expect(modelToolNames(modelBodies).some(isSubmitWorkflowPlan)).toBe(false)
       expect(modelToolNames(modelBodies).some(isUpdateIssueStatus)).toBe(false)
       expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)

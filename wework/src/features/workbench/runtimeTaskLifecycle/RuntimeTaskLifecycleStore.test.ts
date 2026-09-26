@@ -273,6 +273,68 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect([...store.getSnapshot().tasks.keys()]).toEqual([getRuntimeTaskLifecycleKey(address)])
   })
 
+  test('uses one lifecycle machine for app devices and their runtime route aliases', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const runtimeAddress = {
+      ...address,
+      deviceId: 'electron-runtime-device',
+    }
+    const appAddress = {
+      ...address,
+      deviceId: 'app-record-65',
+    }
+
+    store.syncDevices([
+      {
+        id: 65,
+        device_id: runtimeAddress.deviceId,
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        socket_device_id: appAddress.deviceId,
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: appAddress.deviceId,
+            runtime_device_id: runtimeAddress.deviceId,
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    store.syncRuntimeWork({
+      projects: [
+        {
+          project: { key: 'project-1', id: 1, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: runtimeAddress.deviceId,
+              available: true,
+              workspacePath: address.workspacePath ?? '',
+              tasks: [task({ running: true, status: 'running' })],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    store.turnStarted(appAddress, 'turn-1')
+    store.turnSettled(appAddress, 'turn-1', 'succeeded')
+
+    expect(store.getTask(appAddress)?.key).toBe(getRuntimeTaskLifecycleKey(runtimeAddress))
+    expect(store.getTask(runtimeAddress)?.turn).toMatchObject({
+      id: null,
+      phase: 'idle',
+      outcome: 'succeeded',
+    })
+    expect([...store.getSnapshot().tasks.keys()]).toEqual([
+      getRuntimeTaskLifecycleKey(runtimeAddress),
+    ])
+  })
+
   test('preserves an alias streaming turn when the canonical machine already exists', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const remoteAddress = {

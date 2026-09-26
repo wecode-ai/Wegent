@@ -864,6 +864,91 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
+  test('reconciles an app binding into the canonical runtime conversation', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const runtimeAddress = {
+      ...runtimeTaskAddress(),
+      deviceId: 'electron-runtime-device',
+    }
+    const appAddress = {
+      ...runtimeAddress,
+      deviceId: 'app-record-65',
+    }
+    store.syncDevices([
+      {
+        id: 65,
+        device_id: runtimeAddress.deviceId,
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        socket_device_id: appAddress.deviceId,
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: appAddress.deviceId,
+            runtime_device_id: runtimeAddress.deviceId,
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    const canonicalRuntimeWork = runtimeWork(true)
+    canonicalRuntimeWork.chats[0]!.deviceId = runtimeAddress.deviceId
+    store.syncRuntimeWork(canonicalRuntimeWork)
+    store.turnStarted(appAddress, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    const completedTranscript = runtimeTranscript(false)
+    const getRuntimeTranscript = vi.fn().mockResolvedValue(completedTranscript)
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: runtimeAddress.taskId,
+        deviceId: runtimeAddress.deviceId,
+        subtaskId: 'turn-1',
+        result: { value: 'canonical app reply' },
+      } as never)
+    })
+
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ...runtimeAddress,
+          limit: 50,
+          refresh: true,
+          includeFullContent: true,
+        })
+      )
+    )
+    await waitFor(() =>
+      expect(getRuntimeConversationMessages(runtimeAddress)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            content: '已恢复的 AI 输出',
+          }),
+        ])
+      )
+    )
+    expect(getRuntimeConversationMessages(appAddress)).toEqual([])
+  })
+
   test('settles a matching cancellation without projecting executor execution as idle', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()

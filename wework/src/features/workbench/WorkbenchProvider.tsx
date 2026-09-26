@@ -327,8 +327,9 @@ export function WorkbenchProvider({
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
+    lifecycleStore.syncDevices(state.devices)
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork])
+  }, [lifecycleStore, state.devices, state.runtimeWork])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
