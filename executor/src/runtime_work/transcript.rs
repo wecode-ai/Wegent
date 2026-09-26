@@ -252,8 +252,13 @@ impl<'a> TurnTranscriptProjector<'a> {
         if is_internal_turn_abort_message(item) {
             return;
         }
-        let is_guidance = self.assistant_segment_index > 0 || self.assistant.has_non_file_output();
-        self.emit_assistant(false);
+        let context_compaction_before_prompt = self.assistant_segment_index == 0
+            && self.assistant.has_only_context_compaction_output();
+        let is_guidance = self.assistant_segment_index > 0
+            || (self.assistant.has_non_file_output() && !context_compaction_before_prompt);
+        if !context_compaction_before_prompt {
+            self.emit_assistant(false);
+        }
         let pushed_user = push_user_message_once(
             self.messages,
             item,

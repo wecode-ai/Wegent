@@ -112,7 +112,7 @@ import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { getRuntimeWorkDeviceNamesById } from '@/lib/workbench-device'
+import { getRuntimeWorkDeviceNamesById, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationSnapshot,
@@ -154,6 +154,7 @@ import {
   type AutomationSelectionCandidate,
 } from '@/features/todo/AutomationSelectionDialog'
 import type {
+  DeviceInfo,
   ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
@@ -403,14 +404,18 @@ type SelectedTaskBinding = Pick<
   work_item_id: string
 }
 
-function selectedTaskBindingAddress(binding: SelectedTaskBinding): RuntimeTaskAddress {
-  return {
-    deviceId: binding.device_id,
+function selectedTaskBindingAddress(
+  binding: SelectedTaskBinding,
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  devices: DeviceInfo[]
+): RuntimeTaskAddress {
+  return hydrateRuntimeTaskAddress(runtimeWork, {
+    deviceId: resolveWorkbenchDeviceId(devices, binding.device_id) ?? binding.device_id,
     taskId: binding.task_id,
     ...(binding.modelSelection
       ? { runtimeHandle: { modelSelection: binding.modelSelection } }
       : {}),
-  }
+  })
 }
 type TaskComposerRequest = {
   workItemId: string
@@ -607,6 +612,10 @@ export function CloudTodoWorkspace({
   const acceptedDispatchTaskActions = useRef(new Set<string>())
   const { t, i18n } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const workbenchDevices = useMemo(
+    () => workbench?.state?.devices ?? [],
+    [workbench?.state?.devices]
+  )
   const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
@@ -2983,10 +2992,8 @@ export function CloudTodoWorkspace({
     for (const item of activeBoardSourceItems) {
       if (item.status !== 'in_review' && !isLoopItemExecutionActive(item)) continue
       for (const binding of activeItemTaskBindings[item.id] ?? []) {
-        const addressKey = runtimeConversationKey({
-          deviceId: binding.device_id,
-          taskId: binding.task_id,
-        })
+        const address = selectedTaskBindingAddress(binding, runtimeWork, workbenchDevices)
+        const addressKey = runtimeConversationKey(address)
         const task = runtimeTasksByKey.get(addressKey)
         const taskSignature = JSON.stringify([
           item.status,
@@ -3011,8 +3018,7 @@ export function CloudTodoWorkspace({
         runtimeConversationRequestSequencesRef.current.set(addressKey, requestSequence)
         void runtimeWorkApi
           .getRuntimeTranscript({
-            deviceId: binding.device_id,
-            taskId: binding.task_id,
+            ...address,
             runtime: task?.runtime,
             threadId: task?.threadId,
             workspacePath: task?.workspacePath,
@@ -3029,9 +3035,8 @@ export function CloudTodoWorkspace({
             }
             runtimeConversationAppliedSequencesRef.current.set(addressKey, requestSequence)
             const projectedTranscript = projectRuntimePaneTranscript(transcript)
-            const address = {
-              deviceId: binding.device_id,
-              taskId: binding.task_id,
+            const transcriptAddress = {
+              ...address,
               runtime: task?.runtime,
               threadId: task?.threadId,
               workspacePath: task?.workspacePath,
@@ -3041,17 +3046,14 @@ export function CloudTodoWorkspace({
               projectedTranscript.fullContent === true &&
               isRuntimePaneTranscriptConfirmedIdle(projectedTranscript)
             ) {
-              replaceRuntimeConversationSnapshot(address, projectedTranscript.turns)
+              replaceRuntimeConversationSnapshot(transcriptAddress, projectedTranscript.turns)
             } else {
-              reconcileRuntimeConversationSnapshot(address, projectedTranscript.turns)
+              reconcileRuntimeConversationSnapshot(transcriptAddress, projectedTranscript.turns)
             }
           })
           .catch(error => {
             console.warn('[Wework project board] failed to preload task conversation', {
-              address: {
-                deviceId: binding.device_id,
-                taskId: binding.task_id,
-              },
+              address,
               error,
             })
           })
@@ -3062,9 +3064,11 @@ export function CloudTodoWorkspace({
     activeBoardSourceItems,
     itemTaskBindingsProjectKey,
     runtimeTasksByKey,
+    runtimeWork,
     selectedProjectKey,
     selectedProject?.location,
     services.runtimeWorkApi,
+    workbenchDevices,
     workspaceActive,
   ])
   useEffect(() => {
@@ -5466,7 +5470,11 @@ export function CloudTodoWorkspace({
                   }
                   initialAddress={
                     selectedTaskBinding?.work_item_id === selectedItem.id
-                      ? selectedTaskBindingAddress(selectedTaskBinding)
+                      ? selectedTaskBindingAddress(
+                          selectedTaskBinding,
+                          runtimeWork,
+                          workbenchDevices
+                        )
                       : null
                   }
                   taskTitle={

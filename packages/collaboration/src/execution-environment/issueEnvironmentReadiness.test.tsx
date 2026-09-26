@@ -130,9 +130,11 @@ function deferred<T>() {
 
 function Probe({
   api,
+  onRefresh,
   project,
 }: {
   api: SharedWorkspaceApi;
+  onRefresh?(readiness: string): void;
   project: CollaborationProject;
 }) {
   const readiness = useProjectExecutionEnvironmentReadiness({
@@ -140,7 +142,24 @@ function Probe({
     project,
     refreshIntervalMs: 0,
   });
-  return <output data-testid="readiness">{readiness.kind}</output>;
+  return (
+    <>
+      <output data-testid="readiness">{readiness.kind}</output>
+      {onRefresh ? (
+        <button
+          data-testid="refresh"
+          onClick={() => {
+            void readiness
+              .refresh()
+              .then((nextReadiness) => onRefresh(nextReadiness.kind));
+          }}
+          type="button"
+        >
+          Refresh
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 let root: Root | null = null;
@@ -253,5 +272,43 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     expect(container?.textContent).toBe("ready");
     await act(async () => refreshed.resolve([environment("online")]));
     expect(container?.textContent).toBe("ready");
+  });
+
+  it("returns the authoritative readiness to an action while the hook is still loading", async () => {
+    const initialLoad = deferred<CollaborationExecutionEnvironment[]>();
+    const api = {
+      projects: {
+        listExecutionEnvironments: vi
+          .fn()
+          .mockReturnValueOnce(initialLoad.promise)
+          .mockResolvedValueOnce([environment("online")]),
+      },
+    } as unknown as SharedWorkspaceApi;
+    const onRefresh = vi.fn();
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
+        <Probe
+          api={api}
+          onRefresh={onRefresh}
+          project={projectWithDevice("ready", "/workspace")}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("loading");
+
+    await act(async () => {
+      container
+        ?.querySelector<HTMLButtonElement>('[data-testid="refresh"]')
+        ?.click();
+    });
+
+    expect(onRefresh).toHaveBeenCalledWith("ready");
+    expect(container.textContent).toContain("ready");
+    await act(async () => initialLoad.resolve([]));
+    expect(container.textContent).toContain("ready");
   });
 });

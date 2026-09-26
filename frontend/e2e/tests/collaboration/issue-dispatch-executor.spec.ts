@@ -23,8 +23,6 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
-
 interface CollaborationIssue {
   id: string
   status: string
@@ -43,6 +41,11 @@ interface CollaborationExecution {
   executionEnvironment: string | null
   executionDeviceId: string | null
   runtimeDeviceId: string | null
+}
+
+function expectCanonicalAppRoute(execution: CollaborationExecution): void {
+  expect(execution.executionDeviceId).toMatch(/^app-record-\d+$/)
+  expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -99,8 +102,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
-      expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
-      expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
+      expectCanonicalAppRoute(executions[0])
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -295,8 +297,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
-      expect(executions[0].executionDeviceId).toBe(DEVICE_ID)
-      expect(executions[0].runtimeDeviceId).toBe(DEVICE_ID)
+      expectCanonicalAppRoute(executions[0])
       expect(executions[0].status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')

@@ -102,7 +102,9 @@ export function useProjectExecutionEnvironmentReadiness({
   api: SharedWorkspaceApi;
   project: CollaborationProject | null | undefined;
   refreshIntervalMs?: number;
-}): ProjectExecutionEnvironmentReadiness & { refresh(): void } {
+}): ProjectExecutionEnvironmentReadiness & {
+  refresh(): Promise<ProjectExecutionEnvironmentReadiness>;
+} {
   const requestRevision = useRef(0);
   const readinessProjectId = useRef(project?.id ?? null);
   const [readiness, setReadiness] =
@@ -112,34 +114,45 @@ export function useProjectExecutionEnvironmentReadiness({
         : { kind: "loading", environments: EMPTY_ENVIRONMENTS },
     );
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback(async () => {
     if (!project) {
       requestRevision.current += 1;
-      setReadiness({
+      const nextReadiness: ProjectExecutionEnvironmentReadiness = {
         kind: "not_applicable",
         environments: EMPTY_ENVIRONMENTS,
-      });
-      return;
+      };
+      setReadiness(nextReadiness);
+      return nextReadiness;
     }
     const revision = ++requestRevision.current;
-    void api.projects
-      .listExecutionEnvironments(project.id)
-      .then((environments) => {
-        if (revision !== requestRevision.current) return;
-        setReadiness(
-          resolveProjectExecutionEnvironmentReadiness(project, environments),
-        );
-      })
-      .catch(() => {
-        if (revision !== requestRevision.current) return;
-        setReadiness({ kind: "unknown", environments: EMPTY_ENVIRONMENTS });
-      });
+    try {
+      const environments = await api.projects.listExecutionEnvironments(
+        project.id,
+      );
+      const nextReadiness = resolveProjectExecutionEnvironmentReadiness(
+        project,
+        environments,
+      );
+      if (revision === requestRevision.current) {
+        setReadiness(nextReadiness);
+      }
+      return nextReadiness;
+    } catch {
+      const nextReadiness: ProjectExecutionEnvironmentReadiness = {
+        kind: "unknown",
+        environments: EMPTY_ENVIRONMENTS,
+      };
+      if (revision === requestRevision.current) {
+        setReadiness(nextReadiness);
+      }
+      return nextReadiness;
+    }
   }, [api, project]);
 
   useEffect(() => {
     if (!project) {
       readinessProjectId.current = null;
-      refresh();
+      void refresh();
       return;
     }
     const sameProject = readinessProjectId.current === project.id;
@@ -152,13 +165,13 @@ export function useProjectExecutionEnvironmentReadiness({
           )
         : { kind: "loading", environments: EMPTY_ENVIRONMENTS },
     );
-    refresh();
+    void refresh();
     const refreshWhenVisible = () => {
       if (
         typeof document === "undefined" ||
         document.visibilityState !== "hidden"
       ) {
-        refresh();
+        void refresh();
       }
     };
     const interval =

@@ -186,12 +186,13 @@ export function CollaborationApp({
     api,
     project,
   });
-  const requestIssueCreate = () => {
+  const requestIssueCreate = async () => {
     if (!project) return;
-    if (environmentReadiness.kind !== "ready") {
-      if (environmentReadiness.kind === "unknown") {
-        environmentReadiness.refresh();
-      }
+    const readiness =
+      environmentReadiness.kind === "ready"
+        ? environmentReadiness
+        : await environmentReadiness.refresh();
+    if (readiness.kind !== "ready") {
       host.notify?.(
         translate(
           "todo.issue_environment_create_blocked",
