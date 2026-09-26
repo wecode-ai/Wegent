@@ -79,7 +79,7 @@ describe("shared Issue threads", () => {
     ]);
   });
 
-  it("renders Markdown, bot avatar, reply row and separate execution events in the same thread", () => {
+  it("renders Markdown, bot avatar, reply row and one execution status in the thread", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -103,10 +103,14 @@ describe("shared Issue threads", () => {
     ).not.toBeNull();
     expect(card.querySelector(".task-detail-run-events")).toBeNull();
     expect(
-      container.querySelector(".task-detail-run-events")?.textContent,
-    ).toContain("1 条运行动态");
+      container.querySelectorAll(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).toHaveLength(1);
     expect(
-      container.querySelector(".task-detail-run-event")?.textContent,
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      )?.textContent,
     ).toContain("已完成");
   });
 

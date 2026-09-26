@@ -93,10 +93,7 @@ export function IssueProjectChatThread({
   const isExecutionTaskThread =
     thread.root.sender.type === "agent" &&
     thread.root.metadata.dispatch_role !== "manager";
-  const runs = [thread.root, ...thread.replies].filter(
-    (message) => message.sender.type === "agent",
-  );
-  function renderMessage(message: ProjectChatMessage, eventOnly = false) {
+  function renderMessage(message: ProjectChatMessage) {
     const execution = executions.find(
       (run) => run.id === Number(message.metadata.execution_id),
     );
@@ -118,9 +115,8 @@ export function IssueProjectChatThread({
         mine={false}
         compact
         plain
-        showInlineExecutionStatus={!eventOnly}
+        showInlineExecutionStatus
         agentRole={dispatchRole}
-        eventOnly={eventOnly}
         taskSummary={taskSummaryForMessage?.(message)}
         translate={translate}
         testId={`collaboration-chat-message-${message.messageId}`}
@@ -200,13 +196,6 @@ export function IssueProjectChatThread({
             }}
           />
         ) : null
-      }
-      eventLabel={translate("todo.execution_count", "{{count}} 条运行动态", {
-        count: runs.length,
-      })}
-      eventTestId={`collaboration-chat-events-${rootId}`}
-      events={
-        runs.length ? runs.map((message) => renderMessage(message, true)) : null
       }
     />
   );
