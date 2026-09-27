@@ -22,10 +22,11 @@ mod tools;
 
 use bridge_identity::{current_bridge_identity, BridgeIdentity};
 use payload::{
-    action_target_payload, collect_warnings, combined_action_payload, combined_inspect_payload,
-    evaluate_action_violation, evaluate_expression, inspect_payload, normalize_wait_result,
-    number_arg, optional_bool_arg, optional_number_arg, optional_string_arg, optional_u64_arg,
-    string_arg, wait_options, wait_payload, WaitConditionOptions,
+    action_target_payload, clear_data_payload, collect_warnings, combined_action_payload,
+    combined_inspect_payload, evaluate_action_violation, evaluate_expression, inspect_payload,
+    normalize_wait_result, number_arg, optional_bool_arg, optional_number_arg, optional_string_arg,
+    optional_u64_arg, string_arg, upload_file_payload, wait_options, wait_payload,
+    WaitConditionOptions,
 };
 use result_text::{text_result, text_result_with_options};
 
@@ -335,6 +336,8 @@ async fn execute_tool(
         }),
         "browser_select_option" => action_target_payload("select", arguments),
         "browser_set_checked" => action_target_payload("setChecked", arguments),
+        "browser_upload_file" => upload_file_payload(arguments),
+        "browser_clear_data" => clear_data_payload(arguments),
         _ => return text_result(format!("Unknown tool: {name}"), true),
     };
 
@@ -782,6 +785,8 @@ fn bridge_value_is_error(tool: &str, value: &Value) -> bool {
                 | "browser_scroll"
                 | "browser_select_option"
                 | "browser_set_checked"
+                | "browser_upload_file"
+                | "browser_clear_data"
         )
 }
 

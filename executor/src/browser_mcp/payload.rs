@@ -152,6 +152,38 @@ pub(crate) fn action_target_payload(action: &str, value: &Value) -> Value {
     Value::Object(payload)
 }
 
+pub(crate) fn upload_file_payload(value: &Value) -> Value {
+    let mut payload = Map::new();
+    payload.insert("action".to_owned(), Value::String("uploadFile".to_owned()));
+    payload.insert("path".to_owned(), Value::String(string_arg(value, "path")));
+    if let Some(selector) = optional_string_arg(value, "selector") {
+        payload.insert(
+            "selector".to_owned(),
+            Value::String(
+                selector
+                    .strip_prefix("css=")
+                    .unwrap_or(&selector)
+                    .to_owned(),
+            ),
+        );
+    }
+    if let Some(timeout_ms) = optional_u64_arg(value, "timeoutMs") {
+        payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
+    }
+    Value::Object(payload)
+}
+
+pub(crate) fn clear_data_payload(value: &Value) -> Value {
+    let mut options = Map::new();
+    if let Some(kinds) = value.get("kinds").filter(|kinds| kinds.is_array()) {
+        options.insert("kinds".to_owned(), kinds.clone());
+    }
+    json!({
+        "action": "clearData",
+        "options": options,
+    })
+}
+
 pub(crate) fn combined_action_payload(name: &str, arguments: &Value) -> Option<Value> {
     match name {
         "browser_open_and_inspect" => Some(json!({
