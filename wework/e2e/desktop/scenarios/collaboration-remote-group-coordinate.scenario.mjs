@@ -827,6 +827,12 @@ export async function createDesktopScenario({
         '负责人已核验两轮三个任务的执行证据，提交 Issue 待确认。',
         modelResponseTimeoutMs
       )
+      await waitForCondition(
+        () => parentStage,
+        value => value === 'complete',
+        modelResponseTimeoutMs,
+        '负责人未在成员完成后继续运行并完成显式决策'
+      )
       assert.equal(parentStage, 'complete', '负责人未在成员完成后继续运行并完成显式决策')
       assert.equal(managerRuns, 3, 'Executor 没有为两次 barrier 各启动一次新的负责人运行')
       assert.equal(childRequests, 3, '负责人没有按两轮启动三个子任务')
