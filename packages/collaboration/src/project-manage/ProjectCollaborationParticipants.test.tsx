@@ -126,36 +126,4 @@ describe("CollaborationParticipantsTabs", () => {
         ?.firstElementChild?.classList.contains("max-w-5xl"),
     ).toBe(true);
   });
-
-  it("shows project manager as a separate project participant tab", async () => {
-    await act(async () => {
-      root.render(
-        <ProjectCollaborationParticipants
-          agentsContent={<div>Agents content</div>}
-          managerContent={<div>Manager settings</div>}
-          groupsContent={<div>Groups content</div>}
-          membersContent={<div>Members content</div>}
-          translate={(_key, fallback) => fallback ?? ""}
-        />,
-      );
-    });
-
-    const managerTab = container.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-participants-tab-manager"]',
-    );
-    expect(managerTab).not.toBeNull();
-    expect(Array.from(container.querySelectorAll('[role="tab"]')).map(tab => tab.getAttribute('data-testid'))).toEqual([
-      'collaboration-participants-tab-agents',
-      'collaboration-participants-tab-members',
-      'collaboration-participants-tab-groups',
-      'collaboration-participants-tab-manager',
-    ]);
-    await act(async () => managerTab?.click());
-    expect(
-      container.querySelector(
-        '[data-testid="collaboration-participants-panel-manager"]',
-      )?.textContent,
-    ).toContain("Manager settings");
-    expect(container.textContent).not.toContain("Agents content");
-  });
 });

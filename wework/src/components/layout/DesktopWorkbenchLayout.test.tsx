@@ -82,12 +82,16 @@ const runtimeMocks = vi.hoisted(() => ({ electron: false }))
 const deviceExecuteCommandMock = vi.hoisted(() => vi.fn())
 const deliveryApiMock = vi.hoisted(() => ({
   available: false,
+  runtimePortAvailable: false,
   listCloudProjects: vi.fn(),
   listCloudFiles: vi.fn(),
   listLoopItems: vi.fn(),
   listDeliveries: vi.fn(),
+  listTaskBindings: vi.fn(),
   findCloudContextForTask: vi.fn(),
   trackProjectTask: vi.fn(),
+  findRuntimeContext: vi.fn(),
+  findRuntimeIssue: vi.fn(),
 }))
 const sharedWorkspaceApiMock = {
   workspaces: {
@@ -889,12 +893,16 @@ describe('DesktopWorkbenchLayout', () => {
     deviceExecuteCommandMock.mockReset()
     deviceExecuteCommandMock.mockRejectedValue(new Error('Device command is not configured'))
     deliveryApiMock.available = false
+    deliveryApiMock.runtimePortAvailable = false
     deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
     deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
     deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
+    deliveryApiMock.listTaskBindings.mockResolvedValue([])
     deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
     deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
+    deliveryApiMock.findRuntimeContext.mockRejectedValue(new Error('Context not found'))
+    deliveryApiMock.findRuntimeIssue.mockRejectedValue(new Error('Issue not found'))
     deviceSurfaceExtensionMock.available = false
     deviceSurfaceExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1461,10 +1469,19 @@ describe('DesktopWorkbenchLayout', () => {
                 listCloudFiles: deliveryApiMock.listCloudFiles,
                 listLoopItems: deliveryApiMock.listLoopItems,
                 listDeliveries: deliveryApiMock.listDeliveries,
+                listTaskBindings: deliveryApiMock.listTaskBindings,
                 findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
                 trackProjectTask: deliveryApiMock.trackProjectTask,
               },
               sharedWorkspaceApi: sharedWorkspaceApiMock,
+              ...(deliveryApiMock.runtimePortAvailable
+                ? {
+                    workspaceRuntimePort: {
+                      findCloudContextForTask: deliveryApiMock.findRuntimeContext,
+                      findIssueForTask: deliveryApiMock.findRuntimeIssue,
+                    },
+                  }
+                : {}),
             }
           : {}),
         attachmentApi: {
@@ -3182,6 +3199,82 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
+  test('restores delivery context when an opened runtime task is absent from runtime work', async () => {
+    experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.runtimePortAvailable = true
+    const project = {
+      id: 'project-1',
+      public_id: 'public-project-1',
+      project_key: 'PROJECT',
+      name: 'Dispatch project',
+      description: '',
+      project_store: 'backend',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-09-24T00:00:00Z',
+      updated_at: '2026-09-24T00:00:00Z',
+    }
+    const issue = {
+      id: 'PROJECT-2',
+      cloud_project_id: project.id,
+      sequence_number: 2,
+      parent_id: 'PROJECT-1',
+      root_item_id: 'PROJECT-1',
+      title: '汇总三条反馈',
+      description: '汇总三条反馈并提交可核验交付。',
+      status: 'in_progress',
+      priority: 'medium',
+      assignee_user_id: 1,
+      tags: [],
+      sort_order: 0,
+      version: 2,
+      created_at: '2026-09-24T00:00:00Z',
+      updated_at: '2026-09-24T00:00:00Z',
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    deliveryApiMock.findRuntimeContext.mockResolvedValue({
+      project,
+      issueId: issue.id,
+    })
+    deliveryApiMock.findRuntimeIssue.mockResolvedValue(issue)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+          currentRuntimeTask: runtimeTask,
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
+
+    await waitFor(() =>
+      expect(deliveryApiMock.findRuntimeContext).toHaveBeenCalledWith(runtimeTask)
+    )
+    expect(deliveryApiMock.findRuntimeIssue).toHaveBeenCalledWith(runtimeTask)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(await screen.findByTestId('environment-delivery-button')).toHaveTextContent('交付')
+  })
+
   test('shows the existing local task data in the board presentation', async () => {
     const titlebarActionsPortal = document.createElement('div')
     titlebarActionsPortal.id = TITLEBAR_ACTIONS_PORTAL_ID
@@ -3233,8 +3326,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('runtime-task-view-board'))
 
     expect(await screen.findByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
-    expect(screen.getByTestId('cloud-board-horizontal-scrollbar')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-scrollbar')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-scroll')).toHaveClass('overflow-x-auto')
+    expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-viewport')).toHaveClass(
+      'overflow-y-auto'
+    )
     expect(screen.getByTestId('task-view-board-transition')).toHaveClass('task-view-board-enter')
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent('本地看板任务')
     expect(

@@ -72,7 +72,7 @@ export const projectCreateLabels: Record<
     noAvailableCollaborators: "暂无其他可添加项",
     groupRecommendationTitle: "建议组织成协作小组",
     groupRecommendationDescription:
-      "多个智能体独立协作时需要你逐个分配任务。转为协作小组后，由一个负责人拆解、分派并汇总，负责人也可以直接执行工作。",
+      "多个智能体独立协作时需要你逐个分配任务。转为协作小组后，由一个负责人拆解、分派、验收并汇总，执行工作由小组成员完成。",
     keepDirectCollaboration: "保持独立协作",
     organizeAsGroup: "组织成协作小组",
     createCollaborationGroup: "新建协作小组",
@@ -80,7 +80,7 @@ export const projectCreateLabels: Record<
     groupDraftTitle: "AI 分工建议",
     groupName: "小组名称",
     groupLeader: "负责人",
-    leaderWorks: "负责人 · 协调并执行",
+    leaderWorks: "负责人 · 仅协调",
     specialistWorks: "专项执行",
     setAsLeader: "设为负责人",
     generatedWorkflow: "建议流程",
@@ -98,7 +98,7 @@ export const projectCreateLabels: Record<
     generationRequestPlaceholder:
       "补充你希望的协作方式、重点职责或交付要求（可选）",
     generationRequestDefault:
-      "请结合项目目标和每个智能体的能力，生成清晰的职责分工、分配原则和执行流程。负责人需要参与实际工作。",
+      "请结合项目目标和每个智能体的能力，生成清晰的职责分工、分配原则和执行流程。负责人只负责拆解、分派、验收和状态决策，不执行成员任务。",
     selectedGenerationAgents: "参与分工的智能体",
     agentAttachment: "智能体",
     memberAttachment: "成员",
@@ -200,7 +200,7 @@ export const projectCreateLabels: Record<
     groupDraftTitle: "AI responsibility draft",
     groupName: "Group name",
     groupLeader: "Lead",
-    leaderWorks: "Lead · coordinates and executes",
+    leaderWorks: "Lead · coordinates only",
     specialistWorks: "Specialist execution",
     setAsLeader: "Set as lead",
     generatedWorkflow: "Suggested workflow",
@@ -219,7 +219,7 @@ export const projectCreateLabels: Record<
     generationRequestPlaceholder:
       "Add preferred collaboration, responsibility, or delivery requirements (optional)",
     generationRequestDefault:
-      "Use the project goal and each agent's capabilities to generate clear responsibilities, allocation principles, and an execution workflow. The lead must also perform hands-on work.",
+      "Use the project goal and each agent's capabilities to generate clear responsibilities, allocation principles, and an execution workflow. The lead only decomposes, delegates, reviews, and decides status; members execute the assigned work.",
     selectedGenerationAgents: "Agents included in this division",
     agentAttachment: "Agent",
     memberAttachment: "Member",

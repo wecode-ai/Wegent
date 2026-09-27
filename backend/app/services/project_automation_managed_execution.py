@@ -5,7 +5,6 @@
 
 import asyncio
 import logging
-import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,15 +13,11 @@ from sqlalchemy.orm import Session, make_transient
 
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import get_db_session
-from app.models.delivery import ProjectChatAgent
 from app.models.kind import Kind
-from app.models.loop_item_execution import LoopItemExecution
-from app.models.project_chat_message import ProjectChatMessage
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Task, Team
-from app.services.chat.config.model_resolver import resolve_model_name_for_bot
+from app.schemas.kind import Task
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     create_chat_task,
@@ -32,14 +27,12 @@ from app.services.project_automation_completion import (
     mark_project_automation_dispatch_started,
     register_project_automation_task_completion_handler,
 )
-from app.services.readers import KindType, kindReader
 from app.stores.tasks import subtask_store, task_store
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
 _TERMINAL_TASK_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "DELETE"}
-_BOARD_TEAM_SOURCES = {"board_team_assignment", "board_team_continuation"}
 
 
 @dataclass(frozen=True)
@@ -48,8 +41,6 @@ class ManagedTeamExecutionHandle:
 
     task_id: int
     subtask_id: int
-    source: str = "project_automation"
-    execution_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -58,28 +49,6 @@ class _ExecutionObjects:
     assistant_subtask: Subtask
     team: Kind
     user: User
-
-
-def _resolve_primary_team_model_id(
-    db: Session,
-    *,
-    team: Kind,
-    user_id: int,
-) -> str | None:
-    """Resolve the primary Bot model that will execute a Team task."""
-
-    team_crd = Team.model_validate(team.json)
-    for member in team_crd.spec.members:
-        bot = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
-        if bot is not None:
-            return resolve_model_name_for_bot(db, bot, user_id)
-    return None
 
 
 class ProjectAutomationManagedExecutionService:
@@ -178,171 +147,6 @@ class ProjectAutomationManagedExecutionService:
             raise
         return handle
 
-    async def dispatch_board_team(
-        self,
-        *,
-        db: Session,
-        owner: User,
-        agent: ProjectChatAgent,
-        team: Kind,
-        prompt: str,
-        title: str,
-        project_id: str,
-        loop_item_id: str,
-        execution_id: int,
-    ) -> ManagedTeamExecutionHandle:
-        """Dispatch a Team-assigned board task through the ordinary Team pipeline."""
-
-        normalized_prompt = prompt.strip()
-        if not normalized_prompt:
-            raise ValueError("A Team-assigned board task requires an execution prompt")
-        if team.kind != "Team":
-            raise ValueError("Board Team execution requires a Team resource")
-        execution = db.get(LoopItemExecution, execution_id)
-        if (
-            execution is None
-            or execution.loop_item_id != loop_item_id
-            or execution.cloud_project_id != project_id
-            or execution.agent_id != agent.id
-            or execution.team_id != team.id
-            or execution.executor_owner_user_id != owner.id
-            or agent.cloud_project_id != project_id
-            or agent.status != "active"
-        ):
-            raise ValueError("Board Team execution does not match its assignment")
-
-        model_id = _resolve_primary_team_model_id(
-            db,
-            team=team,
-            user_id=owner.id,
-        )
-        params = TaskCreationParams(
-            message=normalized_prompt,
-            title=title.strip() or "Board task",
-            task_type="chat",
-            source="board_team_assignment",
-            auto_delete_executor="false",
-        )
-        result = await create_chat_task(
-            db=db,
-            user=owner,
-            team=team,
-            message=normalized_prompt,
-            params=params,
-            should_trigger_ai=True,
-            source="board_team_assignment",
-            commit=False,
-        )
-        if result.assistant_subtask is None:
-            raise RuntimeError(
-                "Board Team execution did not create an assistant subtask"
-            )
-
-        task_json = (
-            deepcopy(result.task.json) if isinstance(result.task.json, dict) else {}
-        )
-        metadata = task_json.setdefault("metadata", {})
-        labels = metadata.setdefault("labels", {})
-        labels.update(
-            {
-                "source": "board_team_assignment",
-                "boardTeamExecutionId": str(execution.id),
-                "boardTeamSubtaskId": str(result.assistant_subtask.id),
-                "boardTeamTeamId": str(team.id),
-                "weworkSpaceProjectId": project_id,
-                "weworkSpaceTaskId": loop_item_id,
-            }
-        )
-        if model_id:
-            labels["modelId"] = model_id
-        task_store.update_json(db, task=result.task, payload=task_json)
-        execution.backend_task_id = result.task.id
-        message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-        from app.services.loop_item_executions.service import (
-            loop_item_execution_service,
-        )
-
-        activity = loop_item_execution_service._linked_activity(db, execution)
-        if activity is None:
-            activity = ProjectChatMessage(
-                message_id=message_id,
-                client_message_id=message_id,
-                project_id=project_id,
-                task_id=loop_item_id,
-                sender_type="agent",
-                sender_id=agent.id,
-                sender_name=agent.title or agent.name or "AI",
-                message_type="agent_status",
-                content="",
-                metadata_json={},
-                agent_id=agent.id,
-                runtime_device_id="",
-                runtime_task_id="",
-                status="pending",
-            )
-            db.add(activity)
-        activity.metadata_json = {
-            **(activity.metadata_json or {}),
-            "execution_id": execution.id,
-            "executor_type": "wegent_team",
-            "executor_ref": str(team.id),
-            "backend_task_id": result.task.id,
-            "run_status": "queued",
-        }
-        activity.runtime_device_id = ""
-        activity.runtime_task_id = ""
-        comment_context = execution.runtime_origin_context
-        if comment_context.get("comment_attachment_ids"):
-            from app.services.chat.preprocessing import link_contexts_to_subtask
-
-            link_contexts_to_subtask(
-                db=db,
-                subtask_id=result.user_subtask.id,
-                user_id=int(comment_context["comment_user_id"]),
-                attachment_ids=comment_context["comment_attachment_ids"],
-                task=result.task,
-            )
-        db.commit()
-
-        handle = ManagedTeamExecutionHandle(
-            task_id=result.task.id,
-            subtask_id=result.assistant_subtask.id,
-            source="board_team_assignment",
-            execution_id=execution.id,
-        )
-        try:
-            from app.tasks.project_automation_tasks import (
-                execute_managed_project_automation,
-            )
-
-            execute_managed_project_automation.delay(
-                task_id=handle.task_id,
-                assistant_subtask_id=handle.subtask_id,
-                user_subtask_id=result.user_subtask.id,
-                team_id=team.id,
-                user_id=owner.id,
-                prompt=normalized_prompt,
-                source=handle.source,
-                execution_id=handle.execution_id,
-            )
-        except Exception as exc:
-            from app.services.loop_item_executions.service import (
-                loop_item_execution_service,
-            )
-
-            loop_item_execution_service.fail(
-                db,
-                execution_id=execution.id,
-                error=str(exc) or "Wegent Team task enqueue failed",
-            )
-            self.mark_dispatch_failed(
-                task_id=handle.task_id,
-                user_id=owner.id,
-                error=str(exc) or "Wegent Team task enqueue failed",
-            )
-            raise
-        return handle
-
     @staticmethod
     def _label_task(
         *,
@@ -388,8 +192,6 @@ class ProjectAutomationManagedExecutionService:
         user_id: int,
         prompt: str,
         developer_instruction: str = "",
-        source: str = "project_automation",
-        execution_id: int = 0,
     ) -> bool:
         """Build and dispatch the durable Task from a Celery worker."""
 
@@ -397,17 +199,8 @@ class ProjectAutomationManagedExecutionService:
         from app.services.execution import execution_dispatcher
         from app.services.execution.emitters import SSEResultEmitter
 
-        if source in _BOARD_TEAM_SOURCES:
-            from app.services.board_team_completion import (
-                register_board_team_completion_handler,
-            )
-
-            register_board_team_completion_handler()
-        else:
-            register_project_automation_task_completion_handler()
-        if not self._claim_pending_execution(
-            handle=handle, user_id=user_id, source=source
-        ):
+        register_project_automation_task_completion_handler()
+        if not self._claim_pending_execution(handle=handle, user_id=user_id):
             logger.info(
                 "Managed project automation dispatch skipped because the persisted "
                 "assistant subtask is no longer pending: task_id=%s subtask_id=%s",
@@ -416,50 +209,7 @@ class ProjectAutomationManagedExecutionService:
             )
             return False
 
-        if source == "board_team_assignment":
-            from app.services.loop_item_executions.service import (
-                loop_item_execution_service,
-            )
-
-            with get_db_session() as db:
-                execution_status = loop_item_execution_service.mark_managed_running(
-                    db,
-                    execution_id=execution_id,
-                    backend_task_id=handle.task_id,
-                ).status
-            if execution_status != "running":
-                self._mark_cancelled(
-                    task_id=handle.task_id,
-                    user_id=user_id,
-                    source=source,
-                )
-                await self._publish_cancelled(
-                    handle=handle,
-                    user_id=user_id,
-                    source=source,
-                )
-                logger.info(
-                    "Board Team dispatch stopped because its execution is no "
-                    "longer queued: task_id=%s execution_id=%s status=%s",
-                    handle.task_id,
-                    execution_id,
-                    execution_status,
-                )
-                return False
-        elif source == "project_automation":
-            mark_project_automation_dispatch_started(task_id=handle.task_id)
-        elif source == "board_team_continuation":
-            from app.services.board_team_continuation import (
-                mark_board_team_continuation_started,
-            )
-
-            mark_board_team_continuation_started(
-                task_id=handle.task_id,
-                subtask_id=handle.subtask_id,
-                user_id=user_id,
-            )
-        else:
-            raise ValueError(f"Unsupported managed execution source: {source}")
+        mark_project_automation_dispatch_started(task_id=handle.task_id)
         objects = self._load_detached_execution_objects(
             handle=handle,
             team_id=team_id,
@@ -489,11 +239,7 @@ class ProjectAutomationManagedExecutionService:
                 if part
             )
         request.device_id = None
-        if not self._execution_is_running(
-            handle=handle,
-            user_id=user_id,
-            source=source,
-        ):
+        if not self._execution_is_running(handle=handle, user_id=user_id):
             logger.info(
                 "Managed project automation dispatch stopped before routing because "
                 "the Task was cancelled: task_id=%s subtask_id=%s",
@@ -517,7 +263,6 @@ class ProjectAutomationManagedExecutionService:
         *,
         handle: ManagedTeamExecutionHandle,
         user_id: int,
-        source: str = "project_automation",
     ) -> bool:
         """Atomically claim the persisted assistant subtask for one worker."""
 
@@ -526,25 +271,10 @@ class ProjectAutomationManagedExecutionService:
             if task is None or task.user_id != user_id:
                 return False
             labels = ProjectAutomationManagedExecutionService._labels(task)
-            expected_task_source = (
-                "board_team_assignment" if source in _BOARD_TEAM_SOURCES else source
-            )
-            if labels.get("source") != expected_task_source:
+            if labels.get("source") != "project_automation":
                 return False
             try:
-                labelled_subtask_id = int(
-                    labels[
-                        (
-                            "boardTeamSubtaskId"
-                            if source == "board_team_assignment"
-                            else (
-                                "boardTeamActiveSubtaskId"
-                                if source == "board_team_continuation"
-                                else "projectAutomationSubtaskId"
-                            )
-                        )
-                    ]
-                )
+                labelled_subtask_id = int(labels["projectAutomationSubtaskId"])
             except (KeyError, TypeError, ValueError):
                 return False
             if labelled_subtask_id != handle.subtask_id:
@@ -585,7 +315,6 @@ class ProjectAutomationManagedExecutionService:
         *,
         handle: ManagedTeamExecutionHandle,
         user_id: int,
-        source: str = "project_automation",
     ) -> bool:
         with get_db_session() as db:
             task = task_store.get_by_id(db, task_id=handle.task_id)
@@ -593,15 +322,8 @@ class ProjectAutomationManagedExecutionService:
             if task is None or task.user_id != user_id or subtask is None:
                 return False
             labels = ProjectAutomationManagedExecutionService._labels(task)
-            subtask_label = {
-                "board_team_assignment": "boardTeamSubtaskId",
-                "board_team_continuation": "boardTeamActiveSubtaskId",
-            }.get(source, "projectAutomationSubtaskId")
-            expected_task_source = (
-                "board_team_assignment" if source in _BOARD_TEAM_SOURCES else source
-            )
-            if labels.get("source") != expected_task_source or labels.get(
-                subtask_label
+            if labels.get("source") != "project_automation" or labels.get(
+                "projectAutomationSubtaskId"
             ) != str(handle.subtask_id):
                 return False
             task_crd = Task.model_validate(task.json)
@@ -648,29 +370,19 @@ class ProjectAutomationManagedExecutionService:
         *,
         task_id: int,
         user_id: int,
-        source: str = "project_automation",
     ) -> bool:
         """Cancel one managed Task without dispatching a queued execution."""
 
         from app.services.chat.trigger.unified import build_execution_request
         from app.services.execution import execution_dispatcher
 
-        handle = (
-            self._managed_handle(task_id=task_id, user_id=user_id)
-            if source == "project_automation"
-            else self._managed_handle(
-                task_id=task_id,
-                user_id=user_id,
-                source=source,
-            )
-        )
+        handle = self._managed_handle(task_id=task_id, user_id=user_id)
         if handle is None:
             return False
         if self._cancel_pending(handle=handle, user_id=user_id):
             await self._publish_cancelled(
                 handle=handle,
                 user_id=user_id,
-                source=source,
             )
             return True
 
@@ -679,11 +391,7 @@ class ProjectAutomationManagedExecutionService:
             if task is None or task.user_id != user_id:
                 return False
             labels = self._labels(task)
-            team_id_value = labels.get(
-                "boardTeamTeamId"
-                if source == "board_team_assignment"
-                else "projectAutomationTeamId"
-            )
+            team_id_value = labels.get("projectAutomationTeamId")
             try:
                 team_id = int(team_id_value)
             except (TypeError, ValueError):
@@ -739,21 +447,15 @@ class ProjectAutomationManagedExecutionService:
                 handle.subtask_id,
             )
             return False
-        marked_cancelled = (
-            self._mark_cancelled(task_id=task_id, user_id=user_id)
-            if source == "project_automation"
-            else self._mark_cancelled(
-                task_id=task_id,
-                user_id=user_id,
-                source=source,
-            )
+        marked_cancelled = self._mark_cancelled(
+            task_id=task_id,
+            user_id=user_id,
         )
         if not marked_cancelled:
             return False
         await self._publish_cancelled(
             handle=handle,
             user_id=user_id,
-            source=source,
         )
         return True
 
@@ -763,34 +465,21 @@ class ProjectAutomationManagedExecutionService:
         *,
         task_id: int,
         user_id: int,
-        source: str = "project_automation",
     ) -> ManagedTeamExecutionHandle | None:
         with get_db_session() as db:
             task = task_store.get_by_id(db, task_id=task_id)
             if task is None or task.user_id != user_id:
                 return None
             labels = cls._labels(task)
-            if labels.get("source") != source:
+            if labels.get("source") != "project_automation":
                 return None
-            subtask_label = (
-                "boardTeamSubtaskId"
-                if source == "board_team_assignment"
-                else "projectAutomationSubtaskId"
-            )
             try:
-                subtask_id = int(labels[subtask_label])
-                execution_id = (
-                    int(labels["boardTeamExecutionId"])
-                    if source == "board_team_assignment"
-                    else 0
-                )
+                subtask_id = int(labels["projectAutomationSubtaskId"])
             except (KeyError, TypeError, ValueError):
                 return None
             return ManagedTeamExecutionHandle(
                 task_id=task_id,
                 subtask_id=subtask_id,
-                source=source,
-                execution_id=execution_id,
             )
 
     @staticmethod
@@ -839,7 +528,6 @@ class ProjectAutomationManagedExecutionService:
         *,
         handle: ManagedTeamExecutionHandle,
         user_id: int,
-        source: str = "project_automation",
     ) -> None:
         from app.services.chat.storage import session_manager
 
@@ -856,14 +544,7 @@ class ProjectAutomationManagedExecutionService:
                 handle.subtask_id,
                 exc_info=True,
             )
-        if source == "board_team_assignment":
-            from app.services.board_team_completion import (
-                register_board_team_completion_handler,
-            )
-
-            register_board_team_completion_handler()
-        else:
-            register_project_automation_task_completion_handler()
+        register_project_automation_task_completion_handler()
         await get_event_bus().publish(
             TaskCompletedEvent(
                 task_id=handle.task_id,
@@ -892,20 +573,14 @@ class ProjectAutomationManagedExecutionService:
         *,
         task_id: int,
         user_id: int,
-        source: str = "project_automation",
     ) -> bool:
         with get_db_session() as db:
             task = task_store.get_by_id(db, task_id=task_id)
             if task is None or task.user_id != user_id:
                 return False
             labels = ProjectAutomationManagedExecutionService._labels(task)
-            subtask_label = (
-                "boardTeamSubtaskId"
-                if source == "board_team_assignment"
-                else "projectAutomationSubtaskId"
-            )
             try:
-                subtask_id = int(labels[subtask_label])
+                subtask_id = int(labels["projectAutomationSubtaskId"])
             except (KeyError, TypeError, ValueError):
                 return False
             task_crd = Task.model_validate(task.json)

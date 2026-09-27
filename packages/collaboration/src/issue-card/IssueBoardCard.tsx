@@ -1,50 +1,58 @@
-import { useIssueBoardCardDrag } from './useIssueBoardCardDrag'
-import { useCollaborationPortalTheme } from '../theme'
-import * as Popover from '@radix-ui/react-popover'
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Archive, ArrowUpRight, Ellipsis, X } from 'lucide-react'
-import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
-import { IssueCardGoalSummary } from './IssueCardTaskSummary'
-import { IssueBoardWorkflowStage, IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
-import { Tooltip } from '../issue-detail/Tooltip'
-import type { SharedWorkflowNode } from '../issue-detail/workflowTypes'
-import type { CollaborationTranslate } from '../i18n'
-import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { useIssueBoardCardDrag } from "./useIssueBoardCardDrag";
+import { useCollaborationPortalTheme } from "../theme";
+import * as Popover from "@radix-ui/react-popover";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Archive, ArrowUpRight, Ellipsis, X } from "lucide-react";
+import {
+  CollaborationIssueCard,
+  type CollaborationIssueCardProps,
+} from "./CollaborationIssueCard";
+import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
+import { IssueExecutionConfigurationBadge } from "./IssueBoardCardContent";
+import { Tooltip } from "../issue-detail/Tooltip";
+import type { CollaborationTranslate } from "../i18n";
+import { activityClassNames as cn } from "../issue-detail/activityClassNames";
 
 export interface IssueBoardCardTask {
-  id: string | number
-  task_title: string | null
-  task_id: string
+  id: string | number;
+  task_title: string | null;
+  task_id: string;
 }
 export interface IssueBoardCardProps<T extends IssueBoardCardTask> extends Omit<
   CollaborationIssueCardProps,
-  | 'cardRef'
-  | 'menu'
-  | 'titleTrailing'
-  | 'afterContent'
-  | 'summary'
-  | 'detailFlushBottom'
-  | 'renderAssigneeTooltip'
-  | 'item'
+  | "cardRef"
+  | "menu"
+  | "titleTrailing"
+  | "afterContent"
+  | "summary"
+  | "detailFlushBottom"
+  | "renderAssigneeTooltip"
+  | "item"
 > {
-  item: CollaborationIssueCardProps['item'] & { can_view_detail?: boolean }
-  translate: CollaborationTranslate
-  workflowNode?: SharedWorkflowNode | null
-  needsExecutionConfiguration?: boolean
-  onConfigureExecution?: () => void
-  onArchive?: () => void
-  archiveLabel?: string
-  previewPinned?: boolean
-  onPreviewPinnedChange?: (pinned: boolean) => void
-  previewDisabled?: boolean
-  showOpenTaskAction?: boolean
-  dragEnabled?: boolean
-  unread?: boolean
-  onMarkRead?: () => void
-  progressTaskBindings?: T[]
-  goal?: { bindingId: string | number; objective: string } | null
+  item: CollaborationIssueCardProps["item"] & { can_view_detail?: boolean };
+  translate: CollaborationTranslate;
+  needsExecutionConfiguration?: boolean;
+  onConfigureExecution?: () => void;
+  onArchive?: () => void;
+  archiveLabel?: string;
+  previewPinned?: boolean;
+  onPreviewPinnedChange?: (pinned: boolean) => void;
+  previewDisabled?: boolean;
+  showOpenTaskAction?: boolean;
+  dragEnabled?: boolean;
+  unread?: boolean;
+  onMarkRead?: () => void;
+  progressTaskBindings?: T[];
+  goal?: { bindingId: string | number; objective: string } | null;
   /** Bind task data to IssueCardTaskSummary; card and popup markup stay shared. */
-  renderTaskSummary?: (binding: T, compact: boolean) => ReactNode
+  renderTaskSummary?: (binding: T, compact: boolean) => ReactNode;
 }
 
 export function IssueBoardCard<T extends IssueBoardCardTask>({
@@ -54,7 +62,6 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   labels,
   agentNames,
   translate: t,
-  workflowNode = null,
   needsExecutionConfiguration = false,
   onConfigureExecution,
   onArchive,
@@ -80,55 +87,59 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   onOpen,
   childrenAction,
 }: IssueBoardCardProps<T>) {
-  const drag = useIssueBoardCardDrag(item.id, dragEnabled)
-  const dragging = draggingOverride || drag.dragging
-  const portalTheme = useCollaborationPortalTheme()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuContainerRef = useRef<HTMLDivElement>(null)
+  const drag = useIssueBoardCardDrag(item.id, dragEnabled);
+  const dragging = draggingOverride || drag.dragging;
+  const portalTheme = useCollaborationPortalTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen) return;
     const closeMenu = (event: MouseEvent) => {
-      if (!menuContainerRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', closeMenu)
-    return () => document.removeEventListener('mousedown', closeMenu)
-  }, [menuOpen])
-  const [localPreviewOpen, setLocalPreviewOpen] = useState(false)
-  const requestedPreviewOpen = previewPinned ?? localPreviewOpen
+      if (!menuContainerRef.current?.contains(event.target as Node))
+        setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeMenu);
+    return () => document.removeEventListener("mousedown", closeMenu);
+  }, [menuOpen]);
+  const [localPreviewOpen, setLocalPreviewOpen] = useState(false);
+  const requestedPreviewOpen = previewPinned ?? localPreviewOpen;
   const setPreviewOpen = useCallback(
     (open: boolean) => {
-      setLocalPreviewOpen(open)
-      onPreviewPinnedChange?.(open)
+      setLocalPreviewOpen(open);
+      onPreviewPinnedChange?.(open);
     },
-    [onPreviewPinnedChange]
-  )
-  const popupRef = useRef<HTMLDivElement>(null)
-  const cardContainerRef = useRef<HTMLDivElement>(null)
-  const markReadRef = useRef(onMarkRead)
+    [onPreviewPinnedChange],
+  );
+  const popupRef = useRef<HTMLDivElement>(null);
+  const cardContainerRef = useRef<HTMLDivElement>(null);
+  const markReadRef = useRef(onMarkRead);
   useEffect(() => {
-    markReadRef.current = onMarkRead
-  }, [onMarkRead])
-  const showWorkflowRow = Boolean(
-    workflowNode || (needsExecutionConfiguration && onConfigureExecution)
-  )
+    markReadRef.current = onMarkRead;
+  }, [onMarkRead]);
+  const showConfigurationRow = Boolean(
+    needsExecutionConfiguration && onConfigureExecution,
+  );
   const hasProgress =
-    item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
-  const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
-  const previewOpen = previewAvailable && requestedPreviewOpen
-  const canOpenItem = item.can_view_detail !== false
-  const openItem = canOpenItem ? onOpen : undefined
-  const activateCard = previewAvailable ? () => setPreviewOpen(true) : openItem
-  if (!previewAvailable && localPreviewOpen) setLocalPreviewOpen(false)
+    item.can_view_detail !== false &&
+    progressTaskBindings.length > 0 &&
+    Boolean(renderTaskSummary);
+  const previewAvailable =
+    hasProgress && !previewDisabled && !drag.boardDragging && !dragging;
+  const previewOpen = previewAvailable && requestedPreviewOpen;
+  const canOpenItem = item.can_view_detail !== false;
+  const openItem = canOpenItem ? onOpen : undefined;
+  const activateCard = previewAvailable ? () => setPreviewOpen(true) : openItem;
+  if (!previewAvailable && localPreviewOpen) setLocalPreviewOpen(false);
   useEffect(() => {
-    if (!previewAvailable && previewPinned) onPreviewPinnedChange?.(false)
-  }, [previewAvailable, previewPinned, onPreviewPinnedChange])
-  const canMarkRead = Boolean(onMarkRead)
-  const isUnread = unread ?? Boolean(item.is_unread)
+    if (!previewAvailable && previewPinned) onPreviewPinnedChange?.(false);
+  }, [previewAvailable, previewPinned, onPreviewPinnedChange]);
+  const canMarkRead = Boolean(onMarkRead);
+  const isUnread = unread ?? Boolean(item.is_unread);
   useEffect(() => {
-    if (!previewOpen || !isUnread || !canMarkRead) return
-    const timer = window.setTimeout(() => markReadRef.current?.(), 3000)
-    return () => window.clearTimeout(timer)
-  }, [isUnread, canMarkRead, previewOpen])
+    if (!previewOpen || !isUnread || !canMarkRead) return;
+    const timer = window.setTimeout(() => markReadRef.current?.(), 3000);
+    return () => window.clearTimeout(timer);
+  }, [isUnread, canMarkRead, previewOpen]);
   const card = (
     <CollaborationIssueCard
       item={item}
@@ -160,18 +171,27 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       }
       summary={
         hasProgress ? (
-          <div data-testid={`cloud-todo-card-tasks-${item.id}`} className="min-w-0">
-            {progressTaskBindings.map(binding => (
-              <Fragment key={binding.id}>{renderTaskSummary?.(binding, true)}</Fragment>
+          <div
+            data-testid={`cloud-todo-card-tasks-${item.id}`}
+            className="min-w-0"
+          >
+            {progressTaskBindings.map((binding) => (
+              <Fragment key={binding.id}>
+                {renderTaskSummary?.(binding, true)}
+              </Fragment>
             ))}
           </div>
         ) : null
       }
       cardRef={drag.setNodeRef}
       cardStyle={dragEnabled ? { ...cardStyle, ...drag.style } : cardStyle}
-      cardClassName={[cardClassName, 'group/issue-board-card', dragEnabled && 'touch-none']
+      cardClassName={[
+        cardClassName,
+        "group/issue-board-card",
+        dragEnabled && "touch-none",
+      ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       dragging={dragging}
       dropTarget={dropTarget || drag.dropTarget}
       articleProps={articleProps}
@@ -179,16 +199,20 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       menu={
         onArchive ? (
           <div ref={menuContainerRef} className="absolute right-2 top-2 z-20">
-            <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
+            <Tooltip
+              label={t("todo.project_actions", "项目操作")}
+              side="bottom"
+              align="end"
+            >
               <button
                 type="button"
                 data-testid={`cloud-todo-card-more-${item.id}`}
-                onClick={event => {
-                  event.stopPropagation()
-                  setMenuOpen(current => !current)
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen((current) => !current);
                 }}
                 className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:pointer-events-auto focus:opacity-100 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100"
-                aria-label={t('todo.project_actions', '项目操作')}
+                aria-label={t("todo.project_actions", "项目操作")}
                 aria-expanded={menuOpen}
               >
                 <Ellipsis className="h-3.5 w-3.5" />
@@ -202,55 +226,43 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                 <button
                   type="button"
                   data-testid={`cloud-todo-card-archive-${item.id}`}
-                  onClick={event => {
-                    event.stopPropagation()
-                    setMenuOpen(false)
-                    onArchive?.()
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onArchive?.();
                   }}
                   className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
                 >
                   <Archive className="h-3.5 w-3.5" />
-                  {archiveLabel ?? t('board.card.archive', '归档任务')}
+                  {archiveLabel ?? t("board.card.archive", "归档任务")}
                 </button>
               </div>
             ) : null}
           </div>
         ) : null
       }
-      detailFlushBottom={showWorkflowRow}
+      detailFlushBottom={showConfigurationRow}
       detailButtonTestId={detailButtonTestId ?? `cloud-todo-card-${item.id}`}
       detailButtonClassName="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
       onOpen={canOpenItem ? activateCard : undefined}
       detailButtonProps={{
         ...detailButtonProps,
         ...drag.buttonProps,
-        'aria-controls': previewAvailable ? `cloud-todo-card-progress-popup-${item.id}` : undefined,
-        'aria-expanded': previewAvailable ? previewOpen : undefined,
-        'aria-haspopup': previewAvailable ? 'dialog' : undefined,
-        'aria-disabled': !canOpenItem || undefined,
+        "aria-controls": previewAvailable
+          ? `cloud-todo-card-progress-popup-${item.id}`
+          : undefined,
+        "aria-expanded": previewAvailable ? previewOpen : undefined,
+        "aria-haspopup": previewAvailable ? "dialog" : undefined,
+        "aria-disabled": !canOpenItem || undefined,
         disabled: !canOpenItem || detailButtonProps?.disabled,
       }}
       childrenAction={
         <>
           {childrenAction}
-          {showWorkflowRow ? (
-            <span className="block px-3.5 pb-3">
-              <IssueBoardWorkflowStage
-                itemId={item.id}
-                title={item.title}
-                node={workflowNode}
-                translate={t}
-                onOpen={item.can_view_detail === false ? undefined : onOpen}
-                onConfigureExecution={
-                  needsExecutionConfiguration ? onConfigureExecution : undefined
-                }
-              />
-            </span>
-          ) : null}
           {showOpenTaskAction && progressTaskBindings.length > 0 && openItem ? (
             <span className="absolute bottom-2 right-2 z-20">
               <Tooltip
-                label={t('todo.open_task_page_named', '打开任务页：{{title}}', {
+                label={t("todo.open_task_page_named", "打开任务页：{{title}}", {
                   title: item.title,
                 })}
                 side="bottom"
@@ -259,13 +271,17 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                 <button
                   type="button"
                   data-testid={`cloud-todo-card-open-task-${item.id}`}
-                  aria-label={t('todo.open_task_page_named', '打开任务页：{{title}}', {
-                    title: item.title,
-                  })}
-                  onClick={event => {
-                    event.stopPropagation()
-                    setPreviewOpen(false)
-                    openItem()
+                  aria-label={t(
+                    "todo.open_task_page_named",
+                    "打开任务页：{{title}}",
+                    {
+                      title: item.title,
+                    },
+                  )}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPreviewOpen(false);
+                    openItem();
                   }}
                   className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary hover:opacity-100 focus:pointer-events-auto focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100 max-md:pointer-events-auto max-md:min-h-11 max-md:min-w-11 max-md:opacity-60"
                 >
@@ -277,7 +293,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         </>
       }
     />
-  )
+  );
 
   return (
     <Popover.Root open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -290,25 +306,31 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
           id={`cloud-todo-card-progress-popup-${item.id}`}
           data-testid={`cloud-todo-card-progress-popup-${item.id}`}
           data-pinned="true"
-          aria-label={t('todo.view_task_progress_named', '查看进展：{{title}}', {
-            title: item.title,
-          })}
+          aria-label={t(
+            "todo.view_task_progress_named",
+            "查看进展：{{title}}",
+            {
+              title: item.title,
+            },
+          )}
           side="right"
           align="start"
           sideOffset={8}
           collisionPadding={8}
-          onOpenAutoFocus={event => {
-            event.preventDefault()
-            popupRef.current?.focus()
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            popupRef.current?.focus();
           }}
-          onInteractOutside={event => {
-            event.preventDefault()
+          onInteractOutside={(event) => {
+            event.preventDefault();
           }}
-          onCloseAutoFocus={event => {
-            event.preventDefault()
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
             cardContainerRef.current
-              ?.querySelector<HTMLButtonElement>(`[data-testid="cloud-todo-card-${item.id}"]`)
-              ?.focus()
+              ?.querySelector<HTMLButtonElement>(
+                `[data-testid="cloud-todo-card-${item.id}"]`,
+              )
+              ?.focus();
           }}
           ref={popupRef}
           tabIndex={-1}
@@ -318,7 +340,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
             <button
               type="button"
               data-testid={`cloud-todo-card-progress-popup-${item.id}-close`}
-              aria-label={t('common.close', '关闭')}
+              aria-label={t("common.close", "关闭")}
               className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
             >
               <X className="h-4 w-4" aria-hidden="true" />
@@ -335,7 +357,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-  )
+  );
 }
 
 function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
@@ -344,14 +366,17 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
   renderTaskSummary,
   translate: t,
 }: {
-  item: { id: string; title: string }
-  bindings: T[]
-  renderTaskSummary: (binding: T, compact: boolean) => ReactNode
-  translate: CollaborationTranslate
+  item: { id: string; title: string };
+  bindings: T[];
+  renderTaskSummary: (binding: T, compact: boolean) => ReactNode;
+  translate: CollaborationTranslate;
 }) {
-  const [selectedBindingId, setSelectedBindingId] = useState<string | number | null>(null)
-  const selectedBinding = bindings.find(binding => binding.id === selectedBindingId) ?? bindings[0]
-  const visibleBindings = selectedBinding ? [selectedBinding] : []
+  const [selectedBindingId, setSelectedBindingId] = useState<
+    string | number | null
+  >(null);
+  const selectedBinding =
+    bindings.find((binding) => binding.id === selectedBindingId) ?? bindings[0];
+  const visibleBindings = selectedBinding ? [selectedBinding] : [];
 
   return (
     <div
@@ -369,7 +394,7 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
           </div>
           {bindings.length > 1 ? (
             <div className="mt-0.5 text-xs leading-5 text-text-secondary">
-              {t('todo.task_progress_count', '{{count}} 个任务', {
+              {t("todo.task_progress_count", "{{count}} 个任务", {
                 count: bindings.length,
               })}
             </div>
@@ -378,7 +403,7 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
       </div>
       {bindings.length > 1 ? (
         <div className="flex flex-wrap gap-1">
-          {bindings.map(binding => (
+          {bindings.map((binding) => (
             <button
               key={binding.id}
               type="button"
@@ -386,8 +411,8 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
               aria-pressed={binding.id === selectedBinding?.id}
               onClick={() => setSelectedBindingId(binding.id)}
               className={cn(
-                'min-h-7 max-w-full truncate rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
-                binding.id === selectedBinding?.id && 'bg-muted'
+                "min-h-7 max-w-full truncate rounded-md px-2 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
+                binding.id === selectedBinding?.id && "bg-muted",
               )}
             >
               {binding.task_title || binding.task_id}
@@ -396,8 +421,11 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
         </div>
       ) : null}
       {visibleBindings.length > 0 ? (
-        <div data-testid={`cloud-todo-card-progress-list-${item.id}`} className="space-y-1">
-          {visibleBindings.map(binding => (
+        <div
+          data-testid={`cloud-todo-card-progress-list-${item.id}`}
+          className="space-y-1"
+        >
+          {visibleBindings.map((binding) => (
             <div
               key={binding.id}
               data-testid={`cloud-todo-card-progress-task-${item.id}-${binding.id}`}
@@ -412,9 +440,9 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
           data-testid={`cloud-todo-card-progress-empty-${item.id}`}
           className="text-xs leading-5 text-text-muted"
         >
-          {t('todo.task_progress_empty', '暂无任务进展详情')}
+          {t("todo.task_progress_empty", "暂无任务进展详情")}
         </p>
       )}
     </div>
-  )
+  );
 }

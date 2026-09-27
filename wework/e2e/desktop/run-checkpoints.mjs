@@ -23,7 +23,15 @@ const CHECKPOINT_RESOURCES = new Map([
   ['workspace-attachments', ['desktop-runtime-intensive']],
   ['automation-lifecycle', ['desktop-runtime-intensive']],
   ['collaboration-shared-core', ['collaboration-runtime', 'desktop-runtime-intensive']],
-  ['collaboration-settings-matrix', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-local-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-remote-agent-dispatch', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-local-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-remote-group-coordinate', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  ['collaboration-human-round-resume', ['collaboration-runtime', 'desktop-runtime-intensive']],
+  [
+    'collaboration-local-group-cancellation',
+    ['collaboration-runtime', 'desktop-runtime-intensive'],
+  ],
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
@@ -63,24 +71,24 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
-  'project-event-sources': './scenarios/project-event-sources.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
-  'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
-  'board-transcript-preload': './scenarios/board-transcript-preload.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
-  'collaboration-settings-matrix': './scenarios/collaboration-settings-matrix.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
-  'collaboration-local-agent-capabilities':
-    './scenarios/collaboration-local-agent-capabilities.scenario.mjs',
-  'collaboration-local-executor-issue-tools':
-    './scenarios/collaboration-local-executor-issue-tools.scenario.mjs',
-  'collaboration-agent-automation-chain':
-    './scenarios/collaboration-agent-automation-chain.scenario.mjs',
-  'project-space-ai-manager': './scenarios/project-space-ai-manager.scenario.mjs',
+  'collaboration-local-agent-dispatch':
+    './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'collaboration-remote-agent-dispatch':
+    './scenarios/collaboration-remote-agent-dispatch.scenario.mjs',
+  'collaboration-local-group-coordinate':
+    './scenarios/collaboration-local-group-coordinate.scenario.mjs',
+  'collaboration-remote-group-coordinate':
+    './scenarios/collaboration-remote-group-coordinate.scenario.mjs',
+  'collaboration-human-round-resume': './scenarios/collaboration-human-round-resume.scenario.mjs',
+  'collaboration-local-group-cancellation':
+    './scenarios/collaboration-local-group-cancellation.scenario.mjs',
   'collaboration-issue-comment-mention':
     './scenarios/collaboration-issue-comment-mention.scenario.mjs',
   'collaboration-issue-comment-notification':
@@ -105,18 +113,17 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-apps',
   'offline-local-project-space',
-  'board-focus-view',
-  'board-transcript-preload',
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
-  'collaboration-settings-matrix',
   'collaboration-first-use',
   'collaboration-group-onboarding',
-  'collaboration-local-agent-capabilities',
-  'collaboration-local-executor-issue-tools',
-  'collaboration-agent-automation-chain',
-  'project-space-ai-manager',
+  'collaboration-local-agent-dispatch',
+  'collaboration-remote-agent-dispatch',
+  'collaboration-local-group-coordinate',
+  'collaboration-remote-group-coordinate',
+  'collaboration-human-round-resume',
+  'collaboration-local-group-cancellation',
   'collaboration-issue-comment-mention',
   'collaboration-issue-comment-notification',
   'plugin-development',
@@ -141,7 +148,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
-  'project-event-sources',
   'browser-annotation-core',
   'browser-annotation-anchors',
   'browser-annotation-design',

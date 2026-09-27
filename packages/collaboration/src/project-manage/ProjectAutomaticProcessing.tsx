@@ -20,12 +20,13 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { AutomationEventType } from "../automation/types";
 import type { CollaborationTranslate } from "../i18n";
 import type {
   SharedWorkspaceApi,
+  WorkspaceAutomationInput,
   WorkspaceAutomationRule,
   WorkspaceIncomingHook,
-  WorkspaceProjectManagerTrigger,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAgent,
@@ -35,11 +36,6 @@ import type {
 } from "../types";
 import { useAutomaticProcessingRules } from "./useAutomaticProcessingRules";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
-import {
-  ProjectManagerTriggerEditor,
-  projectManagerTriggerLabel,
-} from "./ProjectManagerTriggerEditor";
-import { useProjectManagerAutomation } from "./useProjectManagerAutomation";
 
 type TriggerKind = "created" | "tag_added" | "external" | "schedule";
 type TargetKind = "human" | "agent" | "collaboration_group";
@@ -101,7 +97,7 @@ interface AutomaticProcessingDraft {
   tag: string;
   cronExpression: string;
   hookId: string;
-  eventType: string;
+  eventType: AutomationEventType | "";
   targetKind: TargetKind;
   targetId: string;
   enabled: boolean;
@@ -165,10 +161,6 @@ function text(rule: Record<string, unknown>, camel: string, snake: string) {
   return typeof value === "string" ? value : "";
 }
 
-function bool(rule: WorkspaceAutomationRule, key: string, fallback: boolean) {
-  return typeof rule[key] === "boolean" ? Boolean(rule[key]) : fallback;
-}
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -183,7 +175,7 @@ function sourceType(hook: WorkspaceIncomingHook) {
   );
 }
 
-function eventTypesForHook(hook: WorkspaceIncomingHook): string[] {
+function eventTypesForHook(hook: WorkspaceIncomingHook): AutomationEventType[] {
   const source = sourceType(hook);
   if (source === "github") {
     return [
@@ -283,17 +275,14 @@ function scheduleLabel(cronExpression: string, locale: "zh-CN" | "en"): string {
 function draftFromRule(
   rule: WorkspaceAutomationRule,
 ): AutomaticProcessingDraft {
-  const values = rule as Record<string, unknown>;
-  const triggerType = text(values, "triggerType", "trigger_type");
-  const eventType = text(values, "eventType", "event_type");
-  const eventConfig = record(rule.eventConfig ?? rule.event_config);
+  const eventConfig = record(rule.eventConfig);
   const tags = Array.isArray(eventConfig.tags) ? eventConfig.tags : [];
   const trigger: TriggerKind =
-    triggerType === "schedule"
+    rule.triggerType === "schedule"
       ? "schedule"
-      : eventType === "task.tag_added"
+      : rule.eventType === "task.tag_added"
         ? "tag_added"
-        : eventType === "task.created"
+        : rule.eventType === "task.created"
           ? "created"
           : "external";
   return {
@@ -302,15 +291,14 @@ function draftFromRule(
     name: rule.name,
     trigger,
     tag: typeof tags[0] === "string" ? tags[0] : "",
-    cronExpression: text(values, "cronExpression", "cron_expression"),
+    cronExpression: rule.cronExpression ?? "",
     hookId: String(
       eventConfig.subscriptionId ?? eventConfig.subscription_id ?? "",
     ),
-    eventType: trigger === "external" ? eventType : "",
-    targetKind: (text(values, "targetKind", "target_kind") ||
-      "agent") as TargetKind,
-    targetId: text(values, "targetId", "target_id"),
-    enabled: bool(rule, "enabled", true),
+    eventType: trigger === "external" ? (rule.eventType ?? "") : "",
+    targetKind: rule.targetKind,
+    targetId: rule.targetId,
+    enabled: rule.enabled,
   };
 }
 
@@ -348,18 +336,11 @@ export function ProjectAutomaticProcessing({
   const [actionError, setError] = useState("");
   const [optionsError, setOptionsError] = useState("");
   const [hooksError, setHooksError] = useState("");
-  const managerAutomation = useProjectManagerAutomation(
-    api.projectManager,
-    project.id,
-  );
-  const [managerDraft, setManagerDraft] =
-    useState<WorkspaceProjectManagerTrigger | null>(null);
   const translateRef = useRef(translate);
   translateRef.current = translate;
   const needsHooks = editing && draft.trigger === "external";
   const error =
     actionError ||
-    managerAutomation.error ||
     optionsError ||
     (needsHooks && hooksError) ||
     (rulesError
@@ -378,7 +359,6 @@ export function ProjectAutomaticProcessing({
   useEffect(() => {
     setDraft(EMPTY_DRAFT);
     setEditing(false);
-    setManagerDraft(null);
     setHooks([]);
     setHooksError("");
     setError("");
@@ -577,30 +557,6 @@ export function ProjectAutomaticProcessing({
     setError("");
   }
 
-  function openManagerCreate() {
-    setManagerDraft({
-      id: crypto.randomUUID(),
-      kind: "event",
-      eventType: "task.created",
-      tags: [],
-      timezone: "Asia/Shanghai",
-      enabled: true,
-    });
-  }
-
-  async function saveManagerDraft() {
-    if (!managerDraft || !managerAutomation.config) return;
-    const existing = managerAutomation.config.triggers.some(
-      (item) => item.id === managerDraft.id,
-    );
-    const triggers = existing
-      ? managerAutomation.config.triggers.map((item) =>
-          item.id === managerDraft.id ? managerDraft : item,
-        )
-      : [...managerAutomation.config.triggers, managerDraft];
-    if (await managerAutomation.saveTriggers(triggers)) setManagerDraft(null);
-  }
-
   function selectTrigger(trigger: TriggerKind) {
     const hook = hooks[0];
     const eventType = hook ? (eventTypesForHook(hook)[0] ?? "") : "";
@@ -615,7 +571,9 @@ export function ProjectAutomaticProcessing({
     });
   }
 
-  function inputFromDraft(value: AutomaticProcessingDraft) {
+  function inputFromDraft(
+    value: AutomaticProcessingDraft,
+  ): WorkspaceAutomationInput {
     const isSchedule = value.trigger === "schedule";
     const eventType =
       value.trigger === "created"
@@ -623,7 +581,7 @@ export function ProjectAutomaticProcessing({
         : value.trigger === "tag_added"
           ? "task.tag_added"
           : value.trigger === "external"
-            ? value.eventType
+            ? value.eventType || null
             : null;
     const eventConfig =
       value.trigger === "tag_added"
@@ -659,19 +617,7 @@ export function ProjectAutomaticProcessing({
       timezone: "Asia/Shanghai",
       targetKind: value.targetKind,
       targetId: value.targetId,
-      assignmentMode: "manual",
-      managerType: null,
-      agentId: value.targetKind === "agent" ? value.targetId : null,
-      wegentTeamId: null,
-      model: null,
-      executionEnvironment: null,
       executionDeviceId: null,
-      roleSource: value.targetKind === "agent" ? "agent" : "generic",
-      runtimeSource:
-        value.targetKind === "agent" ? "agent_default" : "runtime_user",
-      runtimeProfileId: null,
-      runtimeUserId:
-        value.targetKind === "human" ? Number(value.targetId) : null,
       enabled: value.enabled,
     };
   }
@@ -771,21 +717,6 @@ export function ProjectAutomaticProcessing({
               <Plus aria-hidden="true" className="h-4 w-4" />
               {translate("todo.create_automatic_processing", "新建规则")}
             </button>
-            {api.projectManager && (
-              <button
-                className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary hover:bg-muted"
-                data-testid="project-ai-add-trigger"
-                disabled={
-                  !managerAutomation.config || managerAutomation.loading
-                }
-                onClick={openManagerCreate}
-                type="button"
-              >
-                {locale === "zh-CN"
-                  ? "项目管理者触发"
-                  : "Project manager trigger"}
-              </button>
-            )}
           </div>
         ) : undefined
       }
@@ -797,7 +728,7 @@ export function ProjectAutomaticProcessing({
       title={translate("todo.automatic_processing", "自动处理")}
     >
       <div className="space-y-4" data-testid="automatic-processing">
-        {loading || managerAutomation.loading ? (
+        {loading ? (
           <p
             className="py-8 text-center text-sm text-text-muted"
             data-testid="automatic-processing-loading"
@@ -812,7 +743,7 @@ export function ProjectAutomaticProcessing({
               </div>
             ) : null}
 
-            {rules.length || managerAutomation.config?.triggers.length ? (
+            {rules.length ? (
               <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-background">
                 {rules.map((rule) => {
                   const ruleDraft = draftFromRule(rule);
@@ -824,16 +755,7 @@ export function ProjectAutomaticProcessing({
                         : ruleDraft.trigger === "schedule"
                           ? `${translate("todo.trigger_schedule", "按时间定期处理")} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
                           : eventLabel(ruleDraft.eventType, locale);
-                  const targetName =
-                    text(
-                      rule as Record<string, unknown>,
-                      "targetName",
-                      "target_name",
-                    ) ||
-                    targetOptions[ruleDraft.targetKind].find(
-                      (option) => option.id === ruleDraft.targetId,
-                    )?.name ||
-                    translate("todo.unavailable_target", "目标不可用");
+                  const targetName = rule.targetName;
                   return (
                     <article
                       className="flex min-h-14 items-center gap-4 px-4 py-3"
@@ -893,72 +815,6 @@ export function ProjectAutomaticProcessing({
                     </article>
                   );
                 })}
-                {managerAutomation.config?.triggers.map((trigger) => (
-                  <article
-                    className="flex min-h-14 items-center gap-4 px-4 py-3"
-                    data-testid={`project-ai-trigger-${trigger.id}`}
-                    key={trigger.id}
-                  >
-                    <button
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => setManagerDraft(trigger)}
-                      type="button"
-                    >
-                      <strong className="block truncate text-sm font-medium text-text-primary">
-                        {locale === "zh-CN" ? "项目管理者" : "Project manager"}
-                      </strong>
-                      <span className="mt-0.5 block truncate text-xs text-text-secondary">
-                        {projectManagerTriggerLabel(trigger, locale)} →{" "}
-                        {locale === "zh-CN"
-                          ? "项目管理者 AI"
-                          : "Project manager AI"}
-                      </span>
-                    </button>
-                    {canManage && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        <AutomaticProcessingSwitch
-                          checked={trigger.enabled}
-                          disabled={managerAutomation.saving}
-                          label={translate("todo.enable_rule", "启用规则")}
-                          onChange={() =>
-                            void managerAutomation.saveTriggers(
-                              managerAutomation.config!.triggers.map((item) =>
-                                item.id === trigger.id
-                                  ? { ...item, enabled: !item.enabled }
-                                  : item,
-                              ),
-                            )
-                          }
-                          testId={`project-ai-trigger-row-enabled-${trigger.id}`}
-                        />
-                        <button
-                          aria-label={translate("common.edit", "编辑")}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
-                          data-testid={`project-ai-trigger-edit-${trigger.id}`}
-                          onClick={() => setManagerDraft(trigger)}
-                          type="button"
-                        >
-                          <Pencil aria-hidden="true" className="h-4 w-4" />
-                        </button>
-                        <button
-                          aria-label={translate("common.delete", "删除")}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10"
-                          data-testid={`project-ai-trigger-remove-${trigger.id}`}
-                          onClick={() =>
-                            void managerAutomation.saveTriggers(
-                              managerAutomation.config!.triggers.filter(
-                                (item) => item.id !== trigger.id,
-                              ),
-                            )
-                          }
-                          type="button"
-                        >
-                          <Trash2 aria-hidden="true" className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
-                  </article>
-                ))}
               </div>
             ) : !editing && !error ? (
               <div className="py-12 text-center text-sm text-text-secondary">
@@ -969,16 +825,6 @@ export function ProjectAutomaticProcessing({
         )}
       </div>
 
-      {managerDraft && (
-        <ProjectManagerTriggerEditor
-          trigger={managerDraft}
-          locale={locale}
-          saving={managerAutomation.saving}
-          onChange={setManagerDraft}
-          onClose={() => setManagerDraft(null)}
-          onSave={() => void saveManagerDraft()}
-        />
-      )}
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
           <form
@@ -1348,7 +1194,10 @@ export function ProjectAutomaticProcessing({
                           disabled={hooksLoading}
                           value={draft.eventType}
                           onChange={(event) =>
-                            updateDraft({ eventType: event.target.value })
+                            updateDraft({
+                              eventType: event.target
+                                .value as AutomationEventType,
+                            })
                           }
                         >
                           <option value="">

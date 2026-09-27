@@ -67,7 +67,6 @@ pub struct ProjectUpdate {
     pub workflow_definition: Option<Value>,
     pub collaboration_groups: Option<Value>,
     pub automatic_processing_rules: Option<Value>,
-    pub project_manager: Option<Value>,
     pub execution_environment: Option<Value>,
 }
 
@@ -85,6 +84,10 @@ pub struct TaskCreate {
     pub tags: Vec<String>,
     #[serde(default)]
     pub assignee_user_id: Option<i64>,
+    #[serde(default)]
+    pub assignee_agent_id: Option<String>,
+    #[serde(default)]
+    pub assignee_group_id: Option<String>,
     #[serde(default)]
     pub workflow: Option<Value>,
 }

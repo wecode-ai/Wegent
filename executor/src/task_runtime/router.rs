@@ -481,30 +481,6 @@ impl TaskRuntime {
         }
     }
 
-    pub async fn create_project_manager_task(
-        &self,
-        project_id: &str,
-        run_id: &str,
-        input: TaskCreate,
-    ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
-        if task_provider(&project)? == TaskProviderKind::Local {
-            return self
-                .local_store
-                .create_project_manager_task(project_id, run_id, input);
-        }
-        let item = self.create_task(project_id, input).await?;
-        self.record_project_manager_action(
-            project_id,
-            run_id,
-            "create",
-            &item.id,
-            Value::Null,
-            false,
-        )?;
-        Ok(item)
-    }
-
     pub async fn update_task(
         &self,
         project_id: &str,
@@ -530,34 +506,18 @@ impl TaskRuntime {
         }
     }
 
-    pub async fn update_project_manager_task(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        input: TaskUpdate,
-        run_id: &str,
-        kind: &str,
-        payload: Value,
-    ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
-        if task_provider(&project)? == TaskProviderKind::Local {
-            return self
-                .local_store
-                .update_project_manager_task(project_id, task_id, input, run_id, kind, payload);
-        }
-        let item = self.update_task(project_id, task_id, input).await?;
-        self.record_project_manager_action(project_id, run_id, kind, task_id, payload, false)?;
-        Ok(item)
-    }
-
     pub async fn mark_task_read(
         &self,
         project_id: &str,
         task_id: &str,
+        activity_sequence: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.mark_task_read(project_id, task_id),
+            TaskProviderKind::Local => {
+                self.local_store
+                    .mark_task_read(project_id, task_id, activity_sequence)
+            }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -662,27 +622,6 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
-    pub fn local_automation_assignment_candidates(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .local_automation_assignment_candidates(project_id, task_id, run_id)
-    }
-
-    pub fn submit_local_automation_workflow_plan(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-        plan: &Value,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
-    }
-
     pub fn create_chat_agent(
         &self,
         project_id: &str,
@@ -754,48 +693,6 @@ impl TaskRuntime {
             .list_project_automation_runs(project_id, rule_id)
     }
 
-    pub fn run_project_manager(
-        &self,
-        project_id: &str,
-        instruction: &str,
-        model_selection: Option<&Value>,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .run_project_manager(project_id, instruction, model_selection)
-    }
-
-    pub fn list_project_manager_runs(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<Value>, TaskRuntimeError> {
-        self.local_store.list_project_manager_runs(project_id)
-    }
-
-    pub fn record_project_manager_action(
-        &self,
-        project_id: &str,
-        run_id: &str,
-        kind: &str,
-        item_id: &str,
-        payload: Value,
-        pending: bool,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .record_project_manager_action(project_id, run_id, kind, item_id, payload, pending)
-    }
-
-    pub fn decide_project_manager_action(
-        &self,
-        project_id: &str,
-        run_id: &str,
-        action_id: &str,
-        approve: bool,
-        version: i64,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .decide_project_manager_action(project_id, run_id, action_id, approve, version)
-    }
-
     pub fn list_executions(
         &self,
         project_id: &str,
@@ -805,6 +702,14 @@ impl TaskRuntime {
     ) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
         self.local_store
             .list_executions(project_id, agent_id, status, include_terminal)
+    }
+
+    pub fn execution_by_runtime_task_id(
+        &self,
+        runtime_task_id: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store
+            .execution_by_runtime_task_id(runtime_task_id)
     }
 
     pub fn list_comments(
@@ -854,6 +759,15 @@ impl TaskRuntime {
             payload,
             trigger_message_id,
         )
+    }
+
+    pub fn submit_collaboration_round(
+        &self,
+        manager_runtime_task_id: &str,
+        plan: &serde_json::Value,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.local_store
+            .submit_collaboration_round(manager_runtime_task_id, plan)
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
@@ -1701,6 +1615,8 @@ mod tests {
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -1805,6 +1721,8 @@ mod tests {
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )

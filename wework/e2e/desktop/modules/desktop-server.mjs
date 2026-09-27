@@ -1247,7 +1247,15 @@ class DesktopE2EServer {
       pathname: url.pathname,
     })
     if (await this.handleControlRoute(request, response, url)) return
-    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    try {
+      if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    } catch (error) {
+      console.error(
+        `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
+        error
+      )
+      throw error
+    }
 
     if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
       const rawBody = await readRawRequestBody(request)
@@ -1282,14 +1290,6 @@ class DesktopE2EServer {
         email: 'desktop-e2e@wework.local',
         preferences: this.userPreferences,
       })
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-    ) {
-      json(response, 200, null)
       return
     }
 

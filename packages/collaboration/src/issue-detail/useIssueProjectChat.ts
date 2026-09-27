@@ -18,9 +18,13 @@ export function mergeIssueChatMessages(
 export function useIssueProjectChat(
   client: ProjectChatClient | undefined,
   projectId: string,
-  issueId: string
+  issueId: string,
+  revision = 0
 ) {
-  const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
+  const owner = useMemo(
+    () => ({ client, projectId, issueId, revision }),
+    [client, projectId, issueId, revision]
+  )
   const empty = useMemo(
     () => ({
       owner,

@@ -58,6 +58,7 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
             "device_id": "cloud-device",
             "execution_target_id": "cloud-device",
             "runtime_instance_id": "runtime-1",
+            "device_type": "cloud",
         }
     )
     calls = []
@@ -68,16 +69,7 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
 
     monkeypatch.setattr(device_namespace_module, "pull_execution", pull)
 
-    runtime_capacity = {
-        "limit": 4,
-        "active": 1,
-        "active_task_ids": ["manual-1"],
-        "queued": 0,
-    }
-    result = await namespace.on_runtime_tasks_pull(
-        "socket-1",
-        {"runtime_capacity": runtime_capacity},
-    )
+    result = await namespace.on_runtime_tasks_pull("socket-1", {})
 
     assert result == {"success": True, "task": {"execution_id": 268}}
     assert calls == [
@@ -87,13 +79,12 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
             "runtime_device_id": "cloud-device",
             "runtime_instance_id": "runtime-1",
             "environment": "cloud",
-            "runtime_capacity": runtime_capacity,
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_app_executor_pulls_cloud_work_for_its_app_target(monkeypatch):
+async def test_app_executor_pulls_local_work_for_its_app_target(monkeypatch):
     namespace = DeviceNamespace()
     namespace.get_session = AsyncMock(
         return_value={
@@ -101,6 +92,7 @@ async def test_app_executor_pulls_cloud_work_for_its_app_target(monkeypatch):
             "device_id": "executor-runtime-device",
             "execution_target_id": "electron-app-device",
             "runtime_instance_id": "runtime-1",
+            "device_type": "app",
         }
     )
     calls = []
@@ -111,17 +103,7 @@ async def test_app_executor_pulls_cloud_work_for_its_app_target(monkeypatch):
 
     monkeypatch.setattr(device_namespace_module, "pull_execution", pull)
 
-    result = await namespace.on_runtime_tasks_pull(
-        "socket-1",
-        {
-            "runtime_capacity": {
-                "limit": 1,
-                "active": 0,
-                "active_task_ids": [],
-                "queued": 0,
-            }
-        },
-    )
+    result = await namespace.on_runtime_tasks_pull("socket-1", {})
 
     assert result == {"success": True, "task": None}
     assert calls == [
@@ -130,13 +112,7 @@ async def test_app_executor_pulls_cloud_work_for_its_app_target(monkeypatch):
             "execution_target_id": "electron-app-device",
             "runtime_device_id": "executor-runtime-device",
             "runtime_instance_id": "runtime-1",
-            "environment": "cloud",
-            "runtime_capacity": {
-                "limit": 1,
-                "active": 0,
-                "active_task_ids": [],
-                "queued": 0,
-            },
+            "environment": "local",
         }
     ]
 

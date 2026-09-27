@@ -30,6 +30,7 @@ export type AutomationEventCollectionMode =
   | "internal"
   | "hybrid";
 export type WorkflowContextSource = "final_result" | "deliveries" | "activity";
+export type AutomationTargetKind = "human" | "agent" | "collaboration_group";
 
 export interface AutomationEventConfig extends Record<string, unknown> {
   collectionMode?: unknown;
@@ -51,22 +52,15 @@ export interface AutomationBackendRule {
   projectId: string;
   name: string;
   prompt: string;
-  triggerType: "schedule" | "event" | "workflow";
+  triggerType: "manual" | "schedule" | "event" | "workflow";
   eventType: AutomationEventType | null;
   eventConfig: AutomationEventConfig;
   cronExpression: string | null;
   timezone: string;
-  assignmentMode: "manual" | "ai_managed";
-  managerType: "custom" | "wegent" | null;
-  agentId: string | null;
-  wegentTeamId: number | null;
-  model: string | null;
-  agentName: string;
-  executionEnvironment: "local" | "cloud" | "managed";
   executionDeviceId: string | null;
-  targetKind?: "human" | "agent" | "collaboration_group" | null;
-  targetId?: string | null;
-  targetName?: string | null;
+  targetKind: AutomationTargetKind;
+  targetId: string;
+  targetName: string;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
@@ -74,14 +68,6 @@ export interface AutomationBackendRule {
   version: number;
   createdAt: string;
   updatedAt: string;
-  roleSource?: "generic" | "agent";
-  runtimeSource?:
-    | "agent_default"
-    | "fixed_profile"
-    | "issue_creator"
-    | "runtime_user";
-  runtimeProfileId?: string | null;
-  runtimeUserId?: number | null;
 }
 
 export interface AutomationBackendRun {
@@ -102,6 +88,9 @@ export interface AutomationBackendRun {
   updatedAt: string;
   completedAt: string | null;
   retryable?: boolean;
+  triggerType?: "schedule" | "event" | "workflow" | null;
+  eventType?: AutomationEventType | null;
+  eventConfig?: AutomationEventConfig | null;
 }
 
 export interface WorkflowExecutionConfig {
@@ -237,27 +226,15 @@ export interface AutomationProject {
 export interface AutomationBackendInput {
   name: string;
   prompt: string;
-  triggerType: "schedule" | "event" | "workflow";
+  triggerType: "manual" | "schedule" | "event" | "workflow";
   eventType: AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
   timezone: string;
-  assignmentMode: "manual" | "ai_managed";
-  managerType: "custom" | "wegent" | null;
-  agentId: string | null;
-  wegentTeamId: number | null;
-  model: string | null;
-  executionEnvironment: "local" | "cloud" | null;
   executionDeviceId: string | null;
+  targetKind: AutomationTargetKind;
+  targetId: string;
   enabled: boolean;
-  roleSource?: "generic" | "agent";
-  runtimeSource?:
-    | "agent_default"
-    | "fixed_profile"
-    | "issue_creator"
-    | "runtime_user";
-  runtimeProfileId?: string | null;
-  runtimeUserId?: number | null;
 }
 
 export interface AutomationEventSourceCatalogItem {

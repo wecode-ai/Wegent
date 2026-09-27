@@ -219,11 +219,6 @@ api_router.include_router(
     prefix="/v1/cloud-projects",
     tags=["cloud-projects"],
 )
-api_router.include_router(
-    loop_item_executions.claim_router,
-    prefix="/v1",
-    tags=["cloud-projects"],
-)
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
 api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])

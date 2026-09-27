@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
-EXECUTOR_ISOLATION="false"
+EXECUTOR_ISOLATION="stable"
 ELECTRON_ARGS=()
 ISOLATED_EXECUTOR_HOME=""
 MANAGED_DWS_BINARY="false"
@@ -25,7 +25,7 @@ Usage: bash wework/scripts/dev-mac-app.sh [options] [-- electron-options]
 
 Options:
   --executor-isolation      Use a temporary Executor Home for this launch.
-  --shared-executor-home    Use the release app's Executor Home (default).
+  --shared-executor-home    Use the release app's Executor Home.
   --no-executor-isolation   Alias for --shared-executor-home.
   -h, --help                Show this help message.
 
@@ -46,11 +46,11 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --executor-isolation)
-      EXECUTOR_ISOLATION="true"
+      EXECUTOR_ISOLATION="temporary"
       shift
       ;;
     --shared-executor-home|--no-executor-isolation)
-      EXECUTOR_ISOLATION="false"
+      EXECUTOR_ISOLATION="shared"
       shift
       ;;
     -h|--help)
@@ -263,9 +263,15 @@ else
   MANAGED_DWS_BINARY="true"
 fi
 
-if [ "$EXECUTOR_ISOLATION" = "true" ]; then
+if [ "$EXECUTOR_ISOLATION" = "temporary" ]; then
   ISOLATED_EXECUTOR_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wework-dev-executor.XXXXXX")"
   export WEGENT_EXECUTOR_HOME="$ISOLATED_EXECUTOR_HOME"
+elif [ "$EXECUTOR_ISOLATION" = "stable" ] && [ -z "${WEGENT_EXECUTOR_HOME:-}" ]; then
+  export WEGENT_EXECUTOR_HOME="$WEWORK_USER_DATA_DIR/executor"
+fi
+
+if [ "$EXECUTOR_ISOLATION" != "shared" ] && [ -z "${WEGENT_RUNTIME_INSTANCE_ID:-}" ]; then
+  export WEGENT_RUNTIME_INSTANCE_ID="runtime-dev-$WEWORK_DEV_INSTANCE_ID"
 fi
 
 print_configuration() {

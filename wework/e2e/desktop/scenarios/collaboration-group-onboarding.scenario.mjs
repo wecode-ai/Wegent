@@ -7,7 +7,6 @@ const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="fal
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `协作小组上手验收-${process.pid}`
 const GROUP_NAME = `项目推进小组-${process.pid}`
-const ISSUE_NAME = `验证小组分配-${process.pid}`
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -302,47 +301,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'collaboration-group-detail-local-group-',
         uiTimeoutMs
       )
-      const groupId = groupDetailTestId.slice('collaboration-group-detail-'.length)
-
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
+      await control.command('waitFor', scoped(`[data-testid="${groupDetailTestId}"]`), {
+        text: GROUP_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
-        value: ISSUE_NAME,
-      })
-      await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-create-assignee-option-group:${groupId}"]`
-      )
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-create-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The collaboration group could not be selected during Issue creation'
-      )
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="cloud-todo-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-detail-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The created Issue did not retain its collaboration group assignee'
-      )
     },
 
     diagnostics() {

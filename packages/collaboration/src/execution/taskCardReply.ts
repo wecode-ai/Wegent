@@ -1,11 +1,7 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
 import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { RuntimePaneQueuedMessage } from "@wegent/chat-core/conversation-queue";
-import {
-  localRuntimeAttachments,
-  remoteAttachmentIds,
-} from "@wegent/chat-core/runtime-attachments";
-import { createRuntimeUserMessage } from "./runtimeUserMessage";
+import { remoteAttachmentIds } from "@wegent/chat-core/runtime-attachments";
 import {
   startTaskAiRun,
   type CommentExecutionTask,
@@ -57,6 +53,12 @@ export function cardSessionActive(
 ): boolean {
   return [card.root, ...card.replies].some((message) => {
     if (message.sender.type !== "agent") return false;
+    const recordedStatus = message.status.toLowerCase();
+    if (
+      ["completed", "failed", "cancelled", "canceled"].includes(recordedStatus)
+    ) {
+      return false;
+    }
     const running = message.runtimeAddress
       ? busy(message.runtimeAddress)
       : undefined;
@@ -66,16 +68,6 @@ export function cardSessionActive(
     );
   });
 }
-export function isCustomAutomationManager(
-  message: ProjectChatMessage,
-): boolean {
-  return (
-    message.sender.type === "agent" &&
-    message.metadata.executor_type === "automation_manager" &&
-    message.metadata.manager_type === "custom"
-  );
-}
-
 export interface TaskCardReplyInput<
   Project,
   Task extends CommentExecutionTask,
@@ -106,7 +98,6 @@ export async function dispatchTaskCardReply<
     task,
     card,
     reply,
-    runtime,
     onMessages,
     startFailedText,
     sendFailedText,
@@ -129,7 +120,6 @@ export async function dispatchTaskCardReply<
   const rootId = card.root.messageId;
   const attachments = reply.attachments ?? [];
   const address = cardSessionAddress(card);
-  const customManager = isCustomAutomationManager(card.root);
   let persisted = false;
   let executionError: string | null = null;
   const onError = (error: string) => {
@@ -140,12 +130,6 @@ export async function dispatchTaskCardReply<
     return { ok: false, persisted, error: sendFailedText };
   const serverExecution =
     project.project_store === "backend" && client.executeTaskComment;
-  if (
-    !serverExecution &&
-    customManager &&
-    (!client.continueAutomationManager || !address)
-  )
-    return { ok: false, persisted, error: startFailedText };
   try {
     const text = input.prepareComment
       ? await input.prepareComment(reply.content, attachments)
@@ -161,7 +145,6 @@ export async function dispatchTaskCardReply<
       mentions: [
         ...(!serverExecution &&
         agent &&
-        !customManager &&
         !(input.selfManagedExecution && address)
           ? [{ type: "agent" as const, id: agent.id, label: agent.name }]
           : []),
@@ -183,57 +166,6 @@ export async function dispatchTaskCardReply<
           attachmentIds: remoteAttachmentIds(attachments),
         }),
       );
-    } else if (customManager && address) {
-      let pending: ProjectChatMessage | undefined;
-      try {
-        pending = await client.continueAutomationManager!({
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: message.messageId,
-          managerMessageId: rootId,
-        });
-        onMessages([pending]);
-        const continued = await runtime.sendRuntimePaneMessage(
-          {
-            address,
-            message: message.content,
-            collaborationMode: "default",
-            attachmentIds: remoteAttachmentIds(attachments),
-            attachments: localRuntimeAttachments(attachments),
-          },
-          {
-            optimisticUserMessage: createRuntimeUserMessage(
-              message.content,
-              attachments,
-              {
-                id: pending.messageId,
-              },
-            ),
-            onError,
-          },
-        );
-        if (!continued) throw new Error(executionError ?? startFailedText);
-      } catch (cause) {
-        const error = cause instanceof Error ? cause.message : startFailedText;
-        if (pending) {
-          try {
-            onMessages([
-              await client.failAgentResponse({
-                projectId: project.id,
-                taskId: task.id,
-                messageId: pending.messageId,
-                error,
-              }),
-            ]);
-          } catch (cleanupError) {
-            onError(
-              `${error}; ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-            );
-            return { ok: false, persisted, error: executionError ?? error };
-          }
-        }
-        throw cause;
-      }
     } else if (agent && (!input.selfManagedExecution || address)) {
       if (agent.runtime === "wegent") {
         if (!client.continueWegentTask) throw new Error(startFailedText);

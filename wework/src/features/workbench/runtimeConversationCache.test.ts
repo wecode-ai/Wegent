@@ -26,6 +26,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
+  reconcileRuntimeConversationSnapshot,
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   replaceRuntimeConversationSnapshot,
@@ -37,6 +38,7 @@ import {
   settleRuntimeConversationSubagents,
   setRuntimeConversationGoal,
   setRuntimeConversationTaskPlan,
+  syncRuntimeConversationDeviceAliases,
   takeAppliedRuntimeConversationGuidance,
   takeInterruptedRuntimeConversationGuidance,
   restoreOptimisticallyInterruptedRuntimeConversation,
@@ -68,6 +70,60 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('shares one conversation cache across executor device aliases', () => {
+    syncRuntimeConversationDeviceAliases([
+      {
+        id: 0,
+        device_id: 'electron-local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        app_device_id: 'electron-local-device',
+        socket_device_id: 'app-record-65',
+        runtime_instance_id: 'runtime-local-device',
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: 'electron-local-device',
+            runtime_device_id: 'app-record-65',
+            device_type: 'local',
+            name: 'Local Executor',
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    const bindingAddress = {
+      deviceId: 'app-record-65',
+      taskId: 'task-1',
+    }
+    const executorAddress = {
+      deviceId: 'electron-local-device',
+      taskId: 'task-1',
+    }
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(bindingAddress, listener)
+
+    applyRuntimeConversationAction(executorAddress, {
+      type: 'user_added',
+      message: {
+        id: 'user-1',
+        role: 'user',
+        content: 'hello through the binding alias',
+        status: 'done',
+        createdAt: '2026-09-26T00:00:00.000Z',
+      },
+    })
+
+    expect(getRuntimeConversationMessages(bindingAddress)).toEqual(
+      getRuntimeConversationMessages(executorAddress)
+    )
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   test('reuses the projection while the canonical turns are unchanged', () => {
@@ -194,6 +250,197 @@ describe('runtimeConversationCache', () => {
       expect.objectContaining({
         id: 'server-turn',
         items: [expect.objectContaining({ content: 'authoritative output' })],
+      }),
+    ])
+  })
+
+  test('preserves matching terminal turn and block timing when replacing a snapshot', () => {
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'stale-turn',
+        status: 'done',
+        items: [],
+      },
+      {
+        id: 'terminal-turn',
+        status: 'done',
+        startedAt: 1_790_451_447_483,
+        completedAt: 1_790_451_464_910,
+        durationMs: 17_427,
+        items: [
+          {
+            id: 'timed-tool',
+            type: 'block',
+            block: {
+              id: 'timed-tool',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1_790_451_449_900,
+              completedAt: 1_790_451_464_800,
+              durationMs: 14_900,
+            },
+          },
+          {
+            id: 'stale-live-tool',
+            type: 'block',
+            block: {
+              id: 'stale-live-tool',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1_790_451_450_000,
+            },
+          },
+        ],
+      },
+      {
+        id: null,
+        status: 'pending',
+        items: [],
+      },
+    ])
+
+    replaceRuntimeConversationSnapshot(address, [
+      {
+        id: 'terminal-turn',
+        status: 'done',
+        completedAt: null,
+        items: [
+          {
+            id: 'timed-tool',
+            type: 'block',
+            block: {
+              id: 'timed-tool',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1_790_451_449_000,
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(getRuntimeConversationTurns(address)).toEqual([
+      expect.objectContaining({
+        id: 'terminal-turn',
+        startedAt: 1_790_451_447_483,
+        completedAt: 1_790_451_464_910,
+        durationMs: 17_427,
+        items: [
+          expect.objectContaining({
+            id: 'timed-tool',
+            block: expect.objectContaining({
+              createdAt: 1_790_451_449_900,
+              completedAt: 1_790_451_464_800,
+              durationMs: 14_900,
+            }),
+          }),
+        ],
+      }),
+    ])
+  })
+
+  test('preserves an answered elicitation when terminal history omits its transient form block', () => {
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'terminal-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'request-user-input-1',
+            type: 'block',
+            block: {
+              id: 'request-user-input-1',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1_790_451_544_000,
+              renderPayload: {
+                kind: 'request_user_input',
+                request_id: 1,
+                questions: [
+                  {
+                    id: 'audience',
+                    question: '访问范围',
+                    options: [
+                      { label: '所有人', description: 'all' },
+                      { label: '仅自己', description: 'owner' },
+                    ],
+                  },
+                ],
+                response: {
+                  requestId: 1,
+                  answers: {
+                    audience: { answers: ['仅自己'] },
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: 'mcp-call',
+            type: 'block',
+            block: {
+              id: 'mcp-call',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'confirm_inner_site_access',
+              status: 'done',
+              createdAt: 1_790_451_545_000,
+            },
+          },
+        ],
+      },
+    ])
+
+    replaceRuntimeConversationSnapshot(address, [
+      {
+        id: 'terminal-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'mcp-call',
+            type: 'block',
+            block: {
+              id: 'mcp-call',
+              subtaskId: 'terminal-turn',
+              type: 'tool',
+              toolName: 'confirm_inner_site_access',
+              status: 'done',
+              createdAt: 1_790_451_545_000,
+            },
+          },
+          {
+            id: 'assistant-final',
+            type: 'assistant_text',
+            content: '完成',
+            createdAt: 1_790_451_546_000,
+          },
+        ],
+      },
+    ])
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'request-user-input-1',
+            renderPayload: expect.objectContaining({
+              response: {
+                requestId: 1,
+                answers: {
+                  audience: { answers: ['仅自己'] },
+                },
+              },
+            }),
+          }),
+        ]),
       }),
     ])
   })

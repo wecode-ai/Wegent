@@ -102,6 +102,7 @@ async function startMysqlServer(logPath) {
     '--skip-log-bin',
     '--max-connections=64',
     '--innodb-buffer-pool-size=64M',
+    '--sql-mode=NO_ENGINE_SUBSTITUTION',
   ]
   if (process.platform !== 'win32') {
     serverArgs.push('--user=root', `--socket=${socketPath}`)

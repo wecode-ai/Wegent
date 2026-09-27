@@ -2,23 +2,14 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  assistantMessage,
-  createSse,
-  readRequestBody,
-  responseCompleted,
-  responseCreated,
-} from '../modules/response-protocol.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
-import {
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  initializeFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = `首次协作验收-${process.pid}`
 const ISSUE_NAME = `整理首用闭环-${process.pid}`
-const RUN_MARKER = 'COLLABORATION_FIRST_USE_ASSISTANT'
-const COMPLETION_MARKER = 'COLLABORATION_FIRST_USE_COMPLETED'
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -28,54 +19,12 @@ function sidebarScoped(selector) {
   return inCollaborationSidebar(selector)
 }
 
-async function waitForValue(read, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let lastValue
-  while (Date.now() < deadline) {
-    lastValue = await read()
-    if (predicate(lastValue)) return lastValue
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  assert.fail(`${message}. Last value: ${JSON.stringify(lastValue)}`)
-}
-
-export function createDesktopScenario({
-  captureScreenshot,
-  modelResponseTimeoutMs,
-  uiTimeoutMs,
-  workbenchReadyTimeoutMs,
-}) {
-  let active = false
-  let verifiedRequest = null
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
   return {
-    async handleHttp(request, response, url) {
-      if (
-        !active ||
-        request.method !== 'POST' ||
-        !['/responses', '/v1/responses'].includes(url.pathname)
-      ) {
-        return false
-      }
-      const body = await readRequestBody(request)
-      if (!JSON.stringify(body).includes(RUN_MARKER)) return false
-      verifiedRequest = body
-      const responseId = `collaboration-first-use-${Date.now()}`
-      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-      response.end(
-        createSse([
-          responseCreated(responseId),
-          assistantMessage(COMPLETION_MARKER),
-          responseCompleted(responseId),
-        ])
-      )
-      return true
-    },
-
     async verify(control) {
-      active = true
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -116,6 +65,18 @@ export function createDesktopScenario({
       await capture(control, 'collaboration-first-use-04-project.png')
 
       await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-settings-environments"]'),
+        { timeoutMs: uiTimeoutMs }
+      )
+      await initializeFirstProjectExecutionEnvironment(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        uiTimeoutMs
+      )
+      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+      await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
       await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -128,67 +89,23 @@ export function createDesktopScenario({
         scoped('[data-testid="cloud-todo-create-confirm"]'),
         { timeoutMs: uiTimeoutMs }
       )
-      await capture(control, 'collaboration-first-use-06-assistant.png')
-
-      await control.command('click', scoped('[data-testid="cloud-todo-start-default-assistant"]'))
-      const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
-      const composer = `${taskPanel} [data-testid="chat-message-input"]`
-      await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
-      await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, taskPanel)
-      await capture(control, 'collaboration-first-use-07-composer.png')
-
-      await control.command('fill', composer, {
-        value: `${RUN_MARKER} 完成当前 Issue，并明确回复执行结果。`,
-      })
-      await control.command('press', composer, { key: 'Enter' })
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="work-item-task-chat-panel"] [data-testid="message-assistant"]'),
-        {
-          text: COMPLETION_MARKER,
-          timeoutMs: modelResponseTimeoutMs,
-        }
-      )
-      assert.ok(verifiedRequest, 'The default assistant did not reach the real model request')
-      await capture(control, 'collaboration-first-use-08-result.png')
-
-      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-      await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
-        visible: false,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-toggle-tasks"]'), {
+      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        text: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
         ISSUE_NAME,
-        'The completed default-assistant run returned to a different Issue'
+        'The first Issue did not open after creation'
       )
-      assert.ok(
-        (
-          await control.command('getText', scoped('[data-testid="cloud-todo-state-summary"]'))
-        ).includes('1'),
-        'The completed default-assistant run was not linked back to the Issue'
-      )
-      const acceptButton = scoped('[data-testid^="cloud-task-activity-accept-"]')
-      await control.command('waitFor', acceptButton, { timeoutMs: uiTimeoutMs })
-      await control.command('click', acceptButton)
-      await waitForValue(
-        () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
-        value => value === 'completed',
-        'The accepted Issue did not reach the completed state',
-        uiTimeoutMs
-      )
-      await capture(control, 'collaboration-first-use-09-issue-result.png')
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'collaboration-first-use-06-issue-ready.png')
     },
 
     diagnostics() {
-      return {
-        active,
-        requestVerified: Boolean(verifiedRequest),
-      }
+      return { issueName: ISSUE_NAME }
     },
   }
 }

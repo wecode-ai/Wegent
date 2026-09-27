@@ -18,6 +18,7 @@ const message = {
   sender: { type: 'agent' },
   metadata: { run_status: 'running' },
   runtimeAddress: address,
+  status: 'streaming',
 } as ProjectChatMessage
 
 function transcript({

@@ -11010,7 +11010,6 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('archives a worktree task without prompting and preserves a snapshot', async () => {
-    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -11049,9 +11048,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-      projectSpaceApis: {
-        local: { updateTaskTrackingStatus },
-      } as unknown as WorkbenchServices['projectSpaceApis'],
     })
     const archivedAddress = {
       deviceId: 'device-1',
@@ -11077,7 +11073,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
     expect(getRuntimeConversationMessages(archivedAddress)).toEqual([])
     expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
       deviceId: 'device-1',
@@ -15194,13 +15189,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('keeps board status writes out of renderer lifecycle reconciliation', async () => {
+  test('keeps runtime title synchronization separate from lifecycle reconciliation', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onChatStart) streamHandlers = handlers
       return vi.fn()
     })
-    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const updateTaskTrackingTitle = vi.fn().mockResolvedValue(null)
     const initialRuntimeWork = createRuntimeWork({
       projects: [
@@ -15289,7 +15283,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus, updateTaskTrackingTitle },
+        local: { updateTaskTrackingTitle },
       } as unknown as WorkbenchServices['projectSpaceApis'],
     })
 
@@ -15302,8 +15296,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
-
     act(() => {
       streamHandlers.onChatStart?.({
         taskId: 'runtime-a',
@@ -15336,7 +15328,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         result: { value: 'done' },
       })
     })
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent(
       '修复登录回调|Runtime B'
@@ -15345,64 +15336,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-a-task-status')).toHaveTextContent('done')
   })
 
-  test('does not write board status while restoring runtime state', async () => {
-    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
-    const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(
-        createRuntimeWork({
-          projects: [
-            {
-              project: { id: 7, name: 'Wegent' },
-              deviceWorkspaces: [
-                {
-                  deviceId: 'device-1',
-                  deviceName: 'Project Device',
-                  deviceStatus: 'online',
-                  workspacePath: '/workspace/project-alpha',
-                  mapped: true,
-                  available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-a',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Runtime A',
-                      runtime: 'codex',
-                      running: true,
-                      status: 'running',
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          totalTasks: 1,
-        })
-      ),
-    })
-    const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-      projectSpaceApis: {
-        local: {
-          updateTaskTrackingStatus,
-          updateTaskTrackingTitle: vi.fn().mockResolvedValue(null),
-        },
-      } as unknown as WorkbenchServices['projectSpaceApis'],
-    })
-
-    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
-
-    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
-  })
-
   test('routes task titles to the project store recorded in the runtime handle', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onRuntimeTaskTitleUpdated) streamHandlers = handlers
       return vi.fn()
     })
-    const updateLocalTaskStatus = vi.fn().mockResolvedValue(null)
-    const updateCloudTaskStatus = vi.fn().mockResolvedValue(null)
     const updateLocalTaskTitle = vi.fn().mockResolvedValue(null)
     const updateCloudTaskTitle = vi.fn().mockResolvedValue(null)
     const updateLegacyCloudTaskTitle = vi.fn().mockResolvedValue(null)
@@ -15450,11 +15389,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
       projectSpaceApis: {
         local: {
-          updateTaskTrackingStatus: updateLocalTaskStatus,
           updateTaskTrackingTitle: updateLocalTaskTitle,
         },
         cloud: {
-          updateTaskTrackingStatus: updateCloudTaskStatus,
           updateTaskTrackingTitle: updateLegacyCloudTaskTitle,
         },
         defaultLocation: 'cloud',
@@ -15467,9 +15404,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
     await waitFor(() => expect(streamHandlers.onRuntimeTaskTitleUpdated).toBeDefined())
-    expect(updateCloudTaskStatus).not.toHaveBeenCalled()
-    expect(updateLocalTaskStatus).not.toHaveBeenCalled()
-
     act(() => {
       streamHandlers.onRuntimeTaskTitleUpdated?.({
         taskId: 'runtime-cloud',
@@ -15489,15 +15423,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(updateLocalTaskTitle).not.toHaveBeenCalled()
-    expect(updateCloudTaskStatus).not.toHaveBeenCalled()
     expect(updateLegacyCloudTaskTitle).not.toHaveBeenCalled()
   })
 
   test('does not backfill historical runtime tasks into My Tasks during load', async () => {
-    const updateTaskTrackingStatus = vi.fn().mockResolvedValue({
-      id: 'WORK-1',
-      status: 'in_review',
-    })
     const trackProjectTask = vi.fn().mockResolvedValue({
       item: {
         id: 'WORK-1',
@@ -15548,7 +15477,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       projectSpaceApis: {
         local: {
           trackProjectTask,
-          updateTaskTrackingStatus,
           updateTaskTrackingTitle: vi.fn().mockResolvedValue(null),
         },
       } as unknown as WorkbenchServices['projectSpaceApis'],
@@ -15558,7 +15486,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
     expect(trackProjectTask).not.toHaveBeenCalled()
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
   })
 
   test('polls the cloud executor until idle when the cached snapshot predates the active turn', async () => {

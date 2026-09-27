@@ -35,7 +35,6 @@ from app.schemas.project_chat import (
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
-    ProjectChatAutomationManagerContinuation,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -154,6 +153,7 @@ _EXECUTION_STATE_FROM_AI_STATUS = {
 BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
+BOT_CAPABILITY_MODE_KEY = "capability_mode"
 BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
 BOT_WORKSPACE_POLICY_KEY = "workspace_policy"
 BOT_RUNTIME_KEY = "runtime"
@@ -165,6 +165,7 @@ BOT_MCP_SERVERS_KEY = "mcp_servers"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
+BOT_DEFAULT_CAPABILITY_MODE = "follow_device"
 BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
@@ -200,6 +201,15 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
     """Read the robot configuration stored in the single-table metadata JSON."""
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    capability_mode = metadata.get(BOT_CAPABILITY_MODE_KEY)
+    if capability_mode not in {"follow_device", "manual"}:
+        has_manual_capabilities = bool(
+            metadata.get("model")
+            or metadata.get(BOT_PLUGINS_KEY)
+            or metadata.get(BOT_ADDITIONAL_SKILLS_KEY)
+            or metadata.get(BOT_MCP_SERVERS_KEY)
+        )
+        capability_mode = "manual" if has_manual_capabilities else "follow_device"
     return {
         "runtime": bot_runtime(row),
         "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
@@ -210,6 +220,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "execution_mode": metadata.get(
             BOT_EXECUTION_MODE_KEY, BOT_DEFAULT_EXECUTION_MODE
         ),
+        "capability_mode": capability_mode,
         "execution_device_id": row.device_id,
         "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
         "plugins": metadata.get(BOT_PLUGINS_KEY, []),
@@ -500,6 +511,7 @@ class ProjectChatService:
             "model_type": request.model_type,
             "model_options": request.model_options,
             "system_prompt": request.system_prompt,
+            BOT_CAPABILITY_MODE_KEY: request.capability_mode,
             BOT_VISIBILITY_KEY: request.visibility,
             BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
             BOT_EXECUTION_MODE_KEY: request.execution_mode,
@@ -601,6 +613,8 @@ class ProjectChatService:
             metadata[BOT_MCP_SERVERS_KEY] = request.mcp_servers
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
+        if request.capability_mode is not None:
+            metadata[BOT_CAPABILITY_MODE_KEY] = request.capability_mode
         if request.visibility is not None:
             metadata[BOT_VISIBILITY_KEY] = request.visibility
         if request.execution_mode is not None:
@@ -998,195 +1012,6 @@ class ProjectChatService:
         db.refresh(row)
         return self.to_view(row)
 
-    def start_automation_manager_response(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        request: ProjectChatAutomationManagerContinuation,
-    ) -> ProjectChatMessageView:
-        """Open a new reply in the custom manager's existing Runtime session."""
-
-        self._require_scope(
-            db,
-            user_id=user_id,
-            project_id=request.project_id,
-            task_id=request.task_id,
-            required_role=BaseRole.Developer,
-        )
-        trigger = self._user_trigger(
-            db,
-            user_id=user_id,
-            project_id=request.project_id,
-            task_id=request.task_id,
-            message_id=request.trigger_message_id,
-        )
-        manager = self._custom_manager_reply_target(
-            db,
-            project_id=request.project_id,
-            task_id=request.task_id,
-            message_id=request.manager_message_id,
-        )
-        if trigger.reply_to_message_id != manager.message_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Reply does not target this custom AI manager comment",
-            )
-        existing = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.trigger_message_id == trigger.message_id,
-                ProjectChatMessage.sender_id == manager.sender_id,
-                ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
-                ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .first()
-        )
-        if existing is not None:
-            return self.to_view(existing)
-
-        message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-        manager_metadata = (
-            manager.metadata_json if isinstance(manager.metadata_json, dict) else {}
-        )
-        metadata = {
-            "kind": "automation_manager_continuation",
-            "manager_type": "custom",
-            "manager_root_message_id": manager.message_id,
-            "run_id": (
-                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-            ),
-            "run_status": "running",
-            "conversation_only": True,
-        }
-        model = manager_metadata.get("model")
-        if isinstance(model, str) and model:
-            metadata["model"] = model
-        row = ProjectChatMessage(
-            message_id=message_id,
-            client_message_id=message_id,
-            runtime_activity_key=self._runtime_activity_key(
-                manager.runtime_device_id,
-                manager.runtime_task_id,
-                trigger.message_id,
-            ),
-            project_id=request.project_id,
-            task_id=request.task_id,
-            sender_type="agent",
-            sender_id=manager.sender_id,
-            sender_name=manager.sender_name,
-            message_type="agent_chunk",
-            content="",
-            metadata_json=metadata,
-            trigger_message_id=trigger.message_id,
-            reply_to_message_id=trigger.message_id,
-            thread_root_message_id=manager.message_id,
-            agent_id="",
-            runtime_device_id=manager.runtime_device_id,
-            runtime_task_id=manager.runtime_task_id,
-            status="streaming",
-        )
-        try:
-            db.add(row)
-            self._commit(db)
-        except IntegrityError:
-            db.rollback()
-            existing = (
-                db.query(ProjectChatMessage)
-                .filter(
-                    ProjectChatMessage.trigger_message_id == trigger.message_id,
-                    ProjectChatMessage.sender_id == manager.sender_id,
-                    ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
-                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-                )
-                .first()
-            )
-            if existing is None:
-                raise
-            return self.to_view(existing)
-        db.refresh(row)
-        return self.to_view(row)
-
-    @staticmethod
-    def _user_trigger(
-        db: Session,
-        *,
-        user_id: int,
-        project_id: str,
-        task_id: str,
-        message_id: str,
-    ) -> ProjectChatMessage:
-        row = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.message_id == message_id,
-                ProjectChatMessage.project_id == project_id,
-                ProjectChatMessage.task_id == task_id,
-                ProjectChatMessage.sender_type == "user",
-                ProjectChatMessage.sender_id == str(user_id),
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .one_or_none()
-        )
-        if row is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Custom AI manager continuation requires your task comment",
-            )
-        return row
-
-    @staticmethod
-    def _custom_manager_reply_target(
-        db: Session,
-        *,
-        project_id: str,
-        task_id: str,
-        message_id: str,
-    ) -> ProjectChatMessage:
-        row = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.message_id == message_id,
-                ProjectChatMessage.project_id == project_id,
-                ProjectChatMessage.task_id == task_id,
-                ProjectChatMessage.sender_type == "agent",
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .one_or_none()
-        )
-        metadata = (
-            row.metadata_json
-            if row is not None and isinstance(row.metadata_json, dict)
-            else {}
-        )
-        try:
-            execution_id = int(metadata["execution_id"])
-        except (KeyError, TypeError, ValueError):
-            execution_id = 0
-        from app.models.loop_item_execution import LoopItemExecution
-
-        execution = db.get(LoopItemExecution, execution_id) if execution_id else None
-        if (
-            row is None
-            or metadata.get("executor_type") != "automation_manager"
-            or metadata.get("manager_type") != "custom"
-            or not row.runtime_device_id
-            or not row.runtime_task_id
-            or execution is None
-            or execution.executor_type != "automation_manager"
-            or execution.cloud_project_id != project_id
-            or execution.loop_item_id != task_id
-            or execution.runtime_device_id != row.runtime_device_id
-            or execution.runtime_task_id != row.runtime_task_id
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Reply target is not a custom AI manager execution",
-            )
-        return row
-
     @staticmethod
     def _runtime_activity_key(
         runtime_device_id: str, runtime_task_id: str, trigger_message_id: str
@@ -1330,18 +1155,6 @@ class ProjectChatService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or run.status not in TERMINAL_RUN_STATUSES:
             return False
-        if (
-            run.status == "succeeded"
-            and metadata.get("executor_type") == "project_robot"
-        ):
-            from app.services.project_automation_execution import (
-                project_automation_execution,
-            )
-
-            if project_automation_execution.has_recorded_manager_assignment(
-                db, run_id=run_id
-            ):
-                return False
         return True
 
     @staticmethod
@@ -1352,14 +1165,6 @@ class ProjectChatService:
         event_name: str,
     ) -> None:
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
-        # An AI manager's runtime owns only the audit comment. Its successful
-        # terminal event means the assignment decision was made, not that the
-        # original task was executed. The manager finalizer closes the rule run
-        # from that durable decision; a selected robot executes independently.
-        if metadata.get("assignment_mode") == "ai_managed" and metadata.get(
-            "manager_type"
-        ) in {"custom", "wegent"}:
-            return
         run_id = metadata.get("automation_run_id")
         if not isinstance(run_id, str) or not run_id:
             return
@@ -1380,11 +1185,6 @@ class ProjectChatService:
             run.status = "running"
         else:
             return
-        from app.services.project_workflow_projection import (
-            sync_automation_workflow_node,
-        )
-
-        sync_automation_workflow_node(db, run)
 
     @staticmethod
     def _streaming_activity_for_runtime(
@@ -1614,17 +1414,23 @@ class ProjectChatService:
             return None
 
         child_name = self._subagent_name(data)
-        text = self._subagent_text(data)
-        if not child_name or not text:
+        if not child_name:
             return None
 
         child_id = self._subagent_identity(data)
+        text = self._subagent_text(data) or ""
+        subagent_status, message_status = self._subagent_run_status(data)
+        if parent.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+            message_status = self._normalized_terminal_status(parent.status)
+            subagent_status = message_status
         metadata = {
             "kind": "task_ai_subagent",
             "parent_agent_id": parent.agent_id,
             "parent_message_id": parent.message_id,
             "subagent_id": child_id,
             "subagent_name": child_name,
+            "subagent_status": subagent_status,
+            "run_status": subagent_status,
         }
         existing = (
             db.query(ProjectChatMessage)
@@ -1664,13 +1470,22 @@ class ProjectChatService:
                     parent.runtime_task_id or "",
                     f"{parent.message_id}:{child_id}",
                 ),
-                status="completed",
+                status=message_status,
             )
             db.add(existing)
         else:
-            existing.content = text
-            existing.metadata_json = metadata
-            existing.status = "completed"
+            if existing.status in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
+                durable_status = self._normalized_terminal_status(existing.status)
+                existing.metadata_json = {
+                    **metadata,
+                    "subagent_status": durable_status,
+                    "run_status": durable_status,
+                }
+            else:
+                if text:
+                    existing.content = text
+                existing.metadata_json = metadata
+                existing.status = message_status
             existing.message_type = "text"
         self._commit(db)
         db.refresh(existing)
@@ -1678,7 +1493,13 @@ class ProjectChatService:
 
     @staticmethod
     def _subagent_name(data: dict) -> str | None:
-        for key in ("subagent_name", "subagentName", "executor_name", "name"):
+        for key in (
+            "subagent_name",
+            "subagentName",
+            "executor_name",
+            "agent_name",
+            "name",
+        ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -1691,7 +1512,13 @@ class ProjectChatService:
 
     @staticmethod
     def _subagent_identity(data: dict) -> str:
-        for key in ("subagent_id", "subagentId", "executor_id", "id"):
+        for key in (
+            "subagent_id",
+            "subagentId",
+            "executor_id",
+            "agent_id",
+            "id",
+        ):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -1709,6 +1536,26 @@ class ProjectChatService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    @staticmethod
+    def _subagent_run_status(data: dict) -> tuple[str, str]:
+        value = data.get("status") or data.get("kind")
+        normalized = (
+            value.strip().replace("_", "").replace("-", "").lower()
+            if isinstance(value, str)
+            else ""
+        )
+        if normalized in {"done", "completed", "taskcomplete"}:
+            return "completed", "completed"
+        if normalized in {"failed", "error"}:
+            return "failed", "failed"
+        if normalized in {"interrupted", "cancelled", "canceled", "aborted"}:
+            return "cancelled", "cancelled"
+        return "running", "streaming"
+
+    @staticmethod
+    def _normalized_terminal_status(value: str) -> str:
+        return "cancelled" if value == "canceled" else value
 
     @staticmethod
     def _agent_response_for_runtime(
@@ -1764,7 +1611,13 @@ class ProjectChatService:
         if not row.task_id:
             return
 
-        task = db.get(LoopItem, row.task_id)
+        task = (
+            db.query(LoopItem)
+            .filter(LoopItem.id == row.task_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
         if task is None or not loop_datetime_value_is_unset(task.deleted_at):
             logger.warning(
                 "[ProjectChat] Task AI state update skipped because task was not found: "
@@ -1813,11 +1666,9 @@ class ProjectChatService:
             next_state["lease_expires_at"] = lease_expires_at.isoformat()
             next_state["completed_at"] = None
             next_state["last_error"] = None
-            from app.services.human_issue_work import human_issue_work_service
-
             if (
                 not external_index
-                and not human_issue_work_service.is_direct_human_assignment(db, task)
+                and task_metadata.get("dispatch_child") is not True
                 and task.status
                 not in {
                     "in_progress",
@@ -1954,6 +1805,11 @@ class ProjectChatService:
 
         if not row.task_id:
             return
+        message_metadata = (
+            row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        )
+        if message_metadata.get("dispatch_role") in {"manager", "member"}:
+            return
         task = db.get(LoopItem, row.task_id)
         if (
             task is None
@@ -1974,8 +1830,11 @@ class ProjectChatService:
         if (
             task_metadata.get("external_index") is True
             or task_metadata.get("external_shadow") is True
+            or task_metadata.get("dispatch_child") is True
+            or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External provider tasks keep their status in provider labels.
+            # External providers and dispatch/workflow tasks own their status
+            # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:
@@ -1992,47 +1851,6 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
-
-        ProjectChatService._sync_issue_workflow_from_completed_task(
-            db,
-            task=task,
-        )
-
-    @staticmethod
-    def _sync_issue_workflow_from_completed_task(
-        db: Session,
-        *,
-        task: LoopItem,
-    ) -> None:
-        """Keep a secondary workflow projection from aborting finalization."""
-
-        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
-        plan = metadata.get("workflow_plan")
-        if (
-            not task.parent_id
-            or not isinstance(plan, dict)
-            or not str(plan.get("run_id") or "")
-        ):
-            return
-        # Flush the activity and task truth before opening the projection
-        # savepoint. A failure in these primary writes must still abort the
-        # caller's transaction.
-        db.flush()
-        from app.services.issue_workflow_planning import (
-            issue_workflow_planning_service,
-        )
-
-        try:
-            with db.begin_nested():
-                issue_workflow_planning_service.sync_from_child(
-                    db,
-                    child_id=task.id,
-                )
-        except Exception:
-            logger.exception(
-                "[ProjectChat] Issue workflow projection failed task_id=%s",
-                task.id,
-            )
 
     def fail_agent_response(
         self,
@@ -2237,6 +2055,7 @@ class ProjectChatService:
             "model_type",
             "model_options",
             "system_prompt",
+            "capability_mode",
             "execution_environment",
             "execution_mode",
             "execution_device_id",
@@ -2319,6 +2138,9 @@ class ProjectChatService:
                 else ""
             ),
             capability_description=row.description or "",
+            capability_mode=(
+                config.get("capability_mode") or BOT_DEFAULT_CAPABILITY_MODE
+            ),
             status="archived" if row.status == "archived" else "active",
             visibility=config.get("visibility") or BOT_DEFAULT_VISIBILITY,
             execution_environment=(

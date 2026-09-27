@@ -260,7 +260,7 @@ describe('AiChatModal', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('opens a blank embedded task composer in the right sidebar', () => {
+  it('opens the bound Issue composer in the right sidebar', () => {
     render(
       <AiChatModal
         project={project}
@@ -286,7 +286,7 @@ describe('AiChatModal', () => {
       'bg-background'
     )
     expect(sidebar).not.toHaveClass('fixed', 'inset-0')
-    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('新建任务')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-panel-testid',
       'work-item-new-task-chat-panel'
@@ -868,6 +868,41 @@ describe('AiChatModal', () => {
       'data-initial-task-id',
       'resolved-task'
     )
+  })
+
+  it('remounts a bound task conversation when its device alias resolves', () => {
+    const { rerender } = render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'app-record-65', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+    const firstMount = Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+
+    rerender(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'electron-runtime-device', taskId: 'resolved-task' }}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-device-id',
+      'electron-runtime-device'
+    )
+    expect(
+      Number(screen.getByTestId('mock-chat-panel').getAttribute('data-mount-id'))
+    ).toBeGreaterThan(firstMount)
   })
 
   it('separates returning to the Issue from closing the unified sidebar', async () => {

@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import decrypt_provider_token
@@ -358,13 +359,21 @@ class ExternalLoopItemProvider:
                 )
                 if str(entry["id"]) == values.assignee_group_id
             )
-            self._ensure_index_row(
+            index_row = self._ensure_index_row(
                 db,
                 item_id=item_id,
                 project=project,
                 assignee_type="group",
                 assignee_id=str(group["id"]),
                 assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
+            self._dispatch_collaboration_group(
+                db,
+                project=project,
+                issue=issue,
+                item=index_row,
+                group=group,
                 user_id=user_id,
             )
             db.commit()
@@ -766,7 +775,8 @@ class ExternalLoopItemProvider:
                 project=project,
                 user_id=user_id,
                 values=values,
-                priority=str(current_response["priority"]),
+                issue=issue,
+                priority=str(values.priority or current_response["priority"]),
             )
         return self._response(db, project, issue, access, user_id)
 
@@ -868,12 +878,6 @@ class ExternalLoopItemProvider:
             .all()
         )
         for execution in active:
-            if (
-                preserve_automation_run_id
-                and execution.executor_type == "automation_manager"
-                and str(execution.automation_run_id or "") == preserve_automation_run_id
-            ):
-                continue
             cancelled = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
@@ -896,6 +900,7 @@ class ExternalLoopItemProvider:
         project: CloudProject,
         user_id: int,
         values: LoopItemUpdate,
+        issue: dict[str, Any],
         priority: str,
     ) -> None:
         """Recreate queue state for an assignee change made through update."""
@@ -950,13 +955,21 @@ class ExternalLoopItemProvider:
                 )
                 if str(entry["id"]) == values.assignee_group_id
             )
-            self._ensure_index_row(
+            index_row = self._ensure_index_row(
                 db,
                 item_id=item_id,
                 project=project,
                 assignee_type="group",
                 assignee_id=str(group["id"]),
                 assignee_name=str(group["name"]),
+                user_id=user_id,
+            )
+            self._dispatch_collaboration_group(
+                db,
+                project=project,
+                issue=issue,
+                item=index_row,
+                group=group,
                 user_id=user_id,
             )
         elif values.assignee_user_id:
@@ -974,7 +987,7 @@ class ExternalLoopItemProvider:
             self._soft_delete_index_row(db, item_id)
         db.commit()
         if cancelled_runs:
-            from app.services.board_team_execution import (
+            from app.services.loop_item_executions.cancellation import (
                 request_execution_cancellations,
             )
 
@@ -1159,6 +1172,14 @@ class ExternalLoopItemProvider:
             user_id=user_id,
         )
         if group is not None:
+            self._dispatch_collaboration_group(
+                db,
+                project=project,
+                issue=issue,
+                item=index_row,
+                group=group,
+                user_id=user_id,
+            )
             db.commit()
             return self._response(db, project, issue, access, user_id)
         from app.services.issue_assignments import issue_assignment_service
@@ -1168,7 +1189,7 @@ class ExternalLoopItemProvider:
             if agent is not None
             else str(team.id) if team is not None else str(target_user_id)
         )
-        _, assignment_created = issue_assignment_service.record(
+        assignment, assignment_created = issue_assignment_service.record(
             db,
             project_id=project.id,
             issue_id=index_row.id,
@@ -1214,13 +1235,25 @@ class ExternalLoopItemProvider:
                 or previous_assignee["id"] != str(target_user_id)
             )
         ):
-            assigner = db.get(User, user_id)
-            notify_project_task_assignee(
+            from app.services.collaboration_human_assignments import (
+                notify_direct_human_assignment,
+            )
+
+            human = db.get(User, target_user_id)
+            if human is None:
+                raise HTTPException(422, "Assignee does not exist")
+            notify_direct_human_assignment(
                 db,
+                project=project,
+                issue=index_row,
+                human=human,
                 actor_user_id=user_id,
-                user_id=target_user_id,
-                target=self._notification_target(project, issue, item_id),
-                assigner_name=assigner.user_name if assigner else str(user_id),
+                assignment_id=assignment.id,
+                task_title=str(issue.get("title") or item_id),
+                instructions=(
+                    str(issue.get(self._body_key(project)) or "").strip()
+                    or str(issue.get("title") or item_id)
+                ),
             )
         db.commit()
         return self._response(db, project, issue, access, user_id)
@@ -1256,6 +1289,8 @@ class ExternalLoopItemProvider:
         metadata = dict(row.metadata_json or {})
         metadata["external_index"] = True
         if assignee_type == "agent":
+            metadata.pop("collaboration_group", None)
+            metadata.pop("collaboration_group_assignment_key", None)
             row.assignee_agent_id = assignee_id
             row.assignee_team_id = None
             # Production MySQL stores unset user assignees as 0, not NULL.
@@ -1264,6 +1299,8 @@ class ExternalLoopItemProvider:
                 metadata, user_id, "agent", assignee_id, assignee_name
             )
         elif assignee_type == "team":
+            metadata.pop("collaboration_group", None)
+            metadata.pop("collaboration_group_assignment_key", None)
             row.assignee_user_id = 0
             row.assignee_agent_id = ""
             row.assignee_team_id = int(assignee_id)
@@ -1271,6 +1308,14 @@ class ExternalLoopItemProvider:
                 metadata, user_id, "team", assignee_id, assignee_name
             )
         elif assignee_type == "group":
+            previous_group = metadata.get("collaboration_group")
+            previous_group_id = (
+                str(previous_group.get("id") or "")
+                if isinstance(previous_group, dict)
+                else ""
+            )
+            if previous_group_id != assignee_id:
+                metadata.pop("collaboration_group_assignment_key", None)
             row.assignee_user_id = 0
             row.assignee_agent_id = ""
             row.assignee_team_id = None
@@ -1282,6 +1327,8 @@ class ExternalLoopItemProvider:
                 metadata, user_id, "group", assignee_id, assignee_name
             )
         else:
+            metadata.pop("collaboration_group", None)
+            metadata.pop("collaboration_group_assignment_key", None)
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
             row.assignee_agent_id = ""
             row.assignee_team_id = None
@@ -1290,6 +1337,46 @@ class ExternalLoopItemProvider:
             )
         row.metadata_json = metadata
         return row
+
+    def _dispatch_collaboration_group(
+        self,
+        db: Session,
+        *,
+        project: CloudProject,
+        issue: dict[str, Any],
+        item: LoopItem,
+        group: dict[str, Any],
+        user_id: int,
+    ) -> None:
+        """Materialize the external Issue snapshot required by one dispatch."""
+
+        from app.services.collaboration_group_execution import (
+            dispatch_collaboration_group_assignment,
+            new_assignment_key,
+        )
+
+        raw_description = str(issue.get(self._body_key(project)) or "")
+        item.title = str(issue.get("title") or item.id)
+        item.description = "\n".join(
+            line
+            for line in raw_description.splitlines()
+            if not line.strip().startswith(PARENT_MARKER)
+        ).strip()
+        labels = self._labels(issue)
+        item.status = self._status(labels, str(issue.get("state") or ""))
+        item.priority = self._priority(labels)
+        metadata = dict(item.metadata_json or {})
+        metadata["collaboration_group"] = jsonable_encoder(group)
+        if not metadata.get("collaboration_group_assignment_key"):
+            metadata["collaboration_group_assignment_key"] = new_assignment_key()
+        item.metadata_json = metadata
+        db.flush()
+        dispatch_collaboration_group_assignment(
+            db,
+            item=item,
+            user_id=user_id,
+            group=group,
+        )
 
     @staticmethod
     def _soft_delete_index_row(db: Session, item_id: str) -> None:

@@ -1,4 +1,5 @@
 import type {
+  DeviceInfo,
   RuntimeDeviceWorkspace,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
@@ -7,6 +8,7 @@ import type {
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
@@ -110,6 +112,19 @@ export class RuntimeTaskLifecycleStore {
           address,
           task: normalizedTask,
         }) || changed
+    }
+    if (changed) this.publish()
+  }
+
+  syncDevices(devices: DeviceInfo[]): void {
+    let changed = false
+    for (const device of devices) {
+      const canonicalDeviceId = device.device_id.trim()
+      if (!canonicalDeviceId) continue
+      for (const alias of getWorkbenchDeviceIds(device)) {
+        if (alias === canonicalDeviceId) continue
+        changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
+      }
     }
     if (changed) this.publish()
   }

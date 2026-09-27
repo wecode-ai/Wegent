@@ -153,7 +153,7 @@ const copy = {
     stages: "参考阶段",
     stagesHint: "可选",
     addStage: "添加阶段",
-    leaderAssignment: "由负责人执行",
+    leaderAssignment: "未指定执行者",
     environmentRequirements: "执行环境要求",
     environmentRequirementsHint: "按标签筛选可用环境，留空则不限制。",
     requiredEnvironmentTags: "环境标签",
@@ -211,7 +211,7 @@ const copy = {
     stages: "Reference stages",
     stagesHint: "Optional",
     addStage: "Add stage",
-    leaderAssignment: "Handled by leader",
+    leaderAssignment: "No assigned executor",
     environmentRequirements: "Execution requirements",
     environmentRequirementsHint:
       "Filter available environments by tag. Leave empty for no restriction.",
@@ -715,11 +715,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
     setDraftDescription(selectedGroup.description);
     setDraftInstructions(selectedGroup.instructions ?? "");
     setDraftLeader(`${selectedGroup.leader.kind}:${selectedGroup.leader.id}`);
-    setDraftMembers(selectedGroup.members.map((member) => ({ ...member })));
+    const leaderIdentity = `${selectedGroup.leader.kind}:${selectedGroup.leader.id}`;
+    setDraftMembers(
+      selectedGroup.members.map((member) => ({
+        ...member,
+        responsibility:
+          `${member.kind}:${member.id}` === leaderIdentity
+            ? ""
+            : member.responsibility,
+      })),
+    );
     setDraftStages(
       selectedGroup.stages.map((stage) => ({
         ...stage,
-        assignee: stage.assignee ? { ...stage.assignee } : null,
+        assignee:
+          stage.assignee &&
+          `${stage.assignee.kind}:${stage.assignee.id}` !== leaderIdentity
+            ? { ...stage.assignee }
+            : null,
       })),
     );
     setDraftRequiredEnvironmentTags(
@@ -734,7 +747,15 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const displayName = (kind: "human" | "agent", id: string) =>
     candidates.find(
       (candidate) => candidate.kind === kind && candidate.id === id,
-    )?.name ?? id;
+    )?.name ?? "";
+  const executableDraftMembers = draftMembers.filter(
+    (member) =>
+      `${member.kind}:${member.id}` !== draftLeader &&
+      Boolean(displayName(member.kind, member.id)),
+  );
+  const executableDraftMemberIds = new Set(
+    executableDraftMembers.map((member) => `${member.kind}:${member.id}`),
+  );
 
   const updateMemberSelection = (
     candidate: (typeof candidates)[number],
@@ -904,10 +925,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
                 return;
               }
               const [leaderKind, leaderId] = draftLeader.split(":");
-              const leaderMember = draftMembers.find(
-                (member) =>
-                  member.kind === leaderKind && member.id === leaderId,
-              );
               setSaving(true);
               setError(null);
               void commands
@@ -919,11 +936,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   leader: {
                     kind: leaderKind as "human" | "agent",
                     id: leaderId,
-                    responsibility: leaderMember?.responsibility ?? "",
+                    responsibility: "",
                   },
-                  members: draftMembers,
+                  members: draftMembers.map((member) =>
+                    member.kind === leaderKind && member.id === leaderId
+                      ? { ...member, responsibility: "" }
+                      : member,
+                  ),
                   coordinationMode: "manager",
-                  stages: draftStages,
+                  stages: draftStages.map((stage) => ({
+                    ...stage,
+                    assignee:
+                      stage.assignee &&
+                      executableDraftMemberIds.has(
+                        `${stage.assignee.kind}:${stage.assignee.id}`,
+                      )
+                        ? stage.assignee
+                        : null,
+                  })),
                   executionRequirements: {
                     requiredTags: draftRequiredEnvironmentTags,
                   },
@@ -1052,7 +1082,23 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     }
                     onLeaderChange={(candidate) => {
                       updateMemberSelection(candidate, true);
+                      setDraftMembers((current) =>
+                        current.map((member) =>
+                          member.kind === candidate.kind &&
+                          member.id === candidate.id
+                            ? { ...member, responsibility: "" }
+                            : member,
+                        ),
+                      );
                       setDraftLeader(candidate.value);
+                      setDraftStages((current) =>
+                        current.map((stage) =>
+                          stage.assignee?.kind === candidate.kind &&
+                          stage.assignee.id === candidate.id
+                            ? { ...stage, assignee: null }
+                            : stage,
+                        ),
+                      );
                     }}
                     onMemberChange={updateMemberSelection}
                     onResponsibilityChange={(candidate, responsibility) =>
@@ -1233,7 +1279,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
                               />
                               <select
                                 value={
-                                  stage.assignee
+                                  stage.assignee &&
+                                  executableDraftMemberIds.has(
+                                    `${stage.assignee.kind}:${stage.assignee.id}`,
+                                  )
                                     ? `${stage.assignee.kind}:${stage.assignee.id}`
                                     : ""
                                 }
@@ -1264,7 +1313,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                 <option value="">
                                   {messages.leaderAssignment}
                                 </option>
-                                {draftMembers.map((member) => (
+                                {executableDraftMembers.map((member) => (
                                   <option
                                     key={`${member.kind}:${member.id}`}
                                     value={`${member.kind}:${member.id}`}
@@ -1455,11 +1504,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   event.preventDefault();
                   if (!name.trim() || !leader) return;
                   const [leaderKind, leaderId] = leader.split(":");
-                  const leaderMember = createMembers.find(
-                    (member) => `${member.kind}:${member.id}` === leader,
-                  );
-                  const leaderResponsibility =
-                    leaderMember?.responsibility ?? "";
                   setSaving(true);
                   setError(null);
                   void commands
@@ -1469,13 +1513,13 @@ export function WorkspaceCollaborationGroupsConfiguration({
                       leader: {
                         kind: leaderKind as "human" | "agent",
                         id: leaderId,
-                        responsibility: leaderResponsibility,
+                        responsibility: "",
                       },
                       members: [
                         {
                           kind: leaderKind as "human" | "agent",
                           id: leaderId,
-                          responsibility: leaderResponsibility,
+                          responsibility: "",
                         },
                         ...createMembers.filter(
                           (member) => `${member.kind}:${member.id}` !== leader,
@@ -1585,7 +1629,12 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                   });
                                 }
                               }
-                              return next;
+                              return next.map((member) =>
+                                `${member.kind}:${member.id}` ===
+                                candidate.value
+                                  ? { ...member, responsibility: "" }
+                                  : member,
+                              );
                             });
                             setLeader(candidate.value);
                           }}

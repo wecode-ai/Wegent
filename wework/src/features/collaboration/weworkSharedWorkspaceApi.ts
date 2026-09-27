@@ -11,8 +11,6 @@ import {
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
-  mapWorkspaceWorkflowPlanDto,
-  mapWorkspaceWorkflowStageContextDto,
 } from '@wegent/collaboration'
 import type {
   CollaborationAgent,
@@ -59,7 +57,6 @@ export interface WeworkAutomationSharedWorkspaceApi {
     NonNullable<SharedWorkspaceApi['automations']>,
     'list' | 'create' | 'migrateWorkflow' | 'update' | 'remove' | 'runNow' | 'listRuns'
   >
-  projectManager?: SharedWorkspaceApi['projectManager']
   incomingHooks?: Pick<
     NonNullable<SharedWorkspaceApi['incomingHooks']>,
     'catalog' | 'list' | 'create' | 'update' | 'rotate' | 'remove'
@@ -73,7 +70,6 @@ export interface WeworkDeliverySharedWorkspaceApi {
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
   taskBindings: SharedWorkspaceApi['taskBindings']
-  workflowPlans: SharedWorkspaceApi['workflowPlans']
   members: SharedWorkspaceApi['members']
   files: SharedWorkspaceApi['files']
   deliveries: SharedWorkspaceApi['deliveries']
@@ -109,16 +105,6 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   ],
   collaborators: ['list', 'add', 'remove'],
   taskBindings: ['list', 'bindTask', 'unbindTask'],
-  workflowPlans: [
-    'get',
-    'approve',
-    'approveReview',
-    'pause',
-    'resume',
-    'replan',
-    'decideNode',
-    'getStageContext',
-  ],
   members: ['list', 'searchUsers', 'add', 'update', 'remove'],
   files: [
     'list',
@@ -148,7 +134,6 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS = {
     'update',
     'remove',
     'runNow',
-    'runWorkflowNode',
     'listRuns',
     'cancelRun',
     'retryRun',
@@ -303,12 +288,7 @@ function createWeworkAutomationsApi(
       return (await projectAutomationApi.list(projectId)).map(toAutomationRule)
     },
     async create(projectId, input) {
-      return toAutomationRule(
-        await projectAutomationApi.create(
-          projectId,
-          input as unknown as Parameters<ProjectAutomationApi['create']>[1]
-        )
-      )
+      return toAutomationRule(await projectAutomationApi.create(projectId, input))
     },
     async migrateWorkflow(projectId, input) {
       const result = await projectAutomationApi.migrateWorkflow(
@@ -321,13 +301,7 @@ function createWeworkAutomationsApi(
       }
     },
     async update(projectId, automationId, input) {
-      return toAutomationRule(
-        await projectAutomationApi.update(
-          projectId,
-          automationId,
-          input as unknown as Parameters<ProjectAutomationApi['update']>[2]
-        )
-      )
+      return toAutomationRule(await projectAutomationApi.update(projectId, automationId, input))
     },
     remove: projectAutomationApi.delete,
     async runNow(projectId, automationId) {
@@ -463,9 +437,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
               automatic_processing_rules: input.automaticProcessingRules as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['automatic_processing_rules'],
-              project_manager: input.projectManager as Parameters<
-                DeliveryApi['updateCloudProject']
-              >[1]['project_manager'],
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
@@ -527,12 +498,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
               tags: input.tags,
               local_project_id: input.localProjectId,
               local_project_name: input.localProjectName,
-              workflow: input.workflow as Parameters<DeliveryApi['createLoopItem']>[1]['workflow'],
-              execution_config: input.executionConfig as Parameters<
-                DeliveryApi['createLoopItem']
-              >[1]['execution_config'],
-              automation_rule_id: input.automationRuleId,
               assignee_user_id: input.assigneeUserId,
+              assignee_group_id: input.assigneeGroupId,
+              assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
@@ -556,11 +524,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
               due_at: input.dueAt,
               tags: input.tags,
               security_level: input.securityLevel,
-              workflow: input.workflow as Parameters<DeliveryApi['updateLoopItem']>[1]['workflow'],
-              execution_config: input.executionConfig as Parameters<
-                DeliveryApi['updateLoopItem']
-              >[1]['execution_config'],
-              automation_rule_id: input.automationRuleId,
             }) as Parameters<DeliveryApi['updateLoopItem']>[1]
           )
           .then(toIssue)
@@ -586,8 +549,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
           })
         ).items.map(toIssue)
       },
-      markRead(issueId) {
-        return deliveryApi.markLoopItemRead(issueId).then(toIssue)
+      markRead(issueId, activitySequence) {
+        return deliveryApi.markLoopItemRead(issueId, activitySequence).then(toIssue)
       },
     },
     attachments: {
@@ -640,47 +603,6 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listTaskBindings(issueId)).map(binding =>
           mapWorkspaceTaskBindingDto(binding, projectId)
         )
-      },
-    },
-    workflowPlans: {
-      get get() {
-        if (typeof deliveryApi.getWorkflowPlan !== 'function') return undefined
-        return async (issueId: string) => {
-          const plan = await deliveryApi.getWorkflowPlan(issueId)
-          return plan ? mapWorkspaceWorkflowPlanDto(plan) : null
-        }
-      },
-      get approve() {
-        if (typeof deliveryApi.approveWorkflowPlan !== 'function') return undefined
-        return async (issueId: string) =>
-          mapWorkspaceWorkflowPlanDto(await deliveryApi.approveWorkflowPlan(issueId))
-      },
-      get approveReview() {
-        if (typeof deliveryApi.approveWorkflowReview !== 'function') return undefined
-        return async (issueId: string) =>
-          mapWorkspaceWorkflowPlanDto(await deliveryApi.approveWorkflowReview(issueId))
-      },
-      get pause() {
-        if (typeof deliveryApi.pauseWorkflowPlan !== 'function') return undefined
-        return async (issueId: string) =>
-          mapWorkspaceWorkflowPlanDto(await deliveryApi.pauseWorkflowPlan(issueId))
-      },
-      get resume() {
-        if (typeof deliveryApi.resumeWorkflowPlan !== 'function') return undefined
-        return async (issueId: string) =>
-          mapWorkspaceWorkflowPlanDto(await deliveryApi.resumeWorkflowPlan(issueId))
-      },
-      get replan() {
-        if (typeof deliveryApi.replanWorkflowPlan !== 'function') return undefined
-        return async (issueId: string) =>
-          mapWorkspaceWorkflowPlanDto(await deliveryApi.replanWorkflowPlan(issueId))
-      },
-      decideNode(issueId, workflowNodeId, action, reason) {
-        return deliveryApi.decideWorkflowNode(issueId, workflowNodeId, action, reason)
-      },
-      async getStageContext(issueId, workflowNodeId) {
-        const context = await deliveryApi.getWorkflowStageContext(issueId, workflowNodeId)
-        return mapWorkspaceWorkflowStageContextDto(context)
       },
     },
     members: {
@@ -812,14 +734,6 @@ export function createWeworkAutomationSharedWorkspaceApi(
     ...(projectAutomationApi
       ? {
           automations: createWeworkAutomationsApi(projectAutomationApi),
-          projectManager: {
-            get: projectAutomationApi.getProjectManager,
-            save: projectAutomationApi.saveProjectManager,
-            run: projectAutomationApi.runProjectManager,
-            listRuns: projectAutomationApi.listProjectManagerRuns,
-            getRun: projectAutomationApi.getProjectManagerRun,
-            decide: projectAutomationApi.decideProjectManagerAction,
-          },
         }
       : {}),
     ...(projectIncomingHookApi
@@ -841,11 +755,10 @@ export function createWeworkWorkspaceRuntimePort(
       return {
         project: toProject(context.project),
         issueId: context.loop_item_id,
-        workflowNodeId: context.workflow_node_id,
       }
     },
-    bindTask(issueId, task, taskTitle, workflowNodeId) {
-      return deliveryApi.bindTask(issueId, toRuntimeTaskAddress(task), taskTitle, workflowNodeId)
+    bindTask(issueId, task, taskTitle, dispatch) {
+      return deliveryApi.bindTask(issueId, toRuntimeTaskAddress(task), taskTitle, null, dispatch)
     },
     unbindTask(issueId, task) {
       return deliveryApi.unbindTask(issueId, toRuntimeTaskAddress(task))
@@ -862,23 +775,9 @@ export function createWeworkWorkspaceRuntimePort(
       )
       return { issue: toIssue(result.item) }
     },
-    async updateTrackedTaskStatus(task, executionStatus) {
-      const issue = await deliveryApi.updateTaskTrackingStatus(
-        toRuntimeTaskAddress(task),
-        executionStatus
-      )
-      return issue ? toIssue(issue) : null
-    },
     async updateTrackedTaskTitle(task, title) {
       const issue = await deliveryApi.updateTaskTrackingTitle(toRuntimeTaskAddress(task), title)
       return issue ? toIssue(issue) : null
-    },
-    async claimNextExecution(input) {
-      const execution = await projectAutomationApi.claimNext({
-        execution_device_id: input.executionDeviceId,
-        lease_seconds: input.leaseSeconds,
-      })
-      return execution ? mapCollaborationExecutionDto(execution) : null
     },
     async reportExecutionLifecycle(projectId, executionId, event) {
       const execution = { id: executionId, cloud_project_id: projectId }
@@ -1014,30 +913,12 @@ export function createWeworkSharedWorkspaceApi<
     assignments: sharedHttpApi.assignments,
     automations: {
       ...createWeworkAutomationsApi(projectAutomationApi),
-      async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        return toAutomationRun(
-          await projectAutomationApi.runWorkflowNode(
-            projectId,
-            issueId,
-            workflowNodeId,
-            automationId
-          )
-        )
-      },
       async cancelRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.cancelRun(projectId, runId))
       },
       async retryRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.retryRun(projectId, runId))
       },
-    },
-    projectManager: {
-      get: projectAutomationApi.getProjectManager,
-      save: projectAutomationApi.saveProjectManager,
-      run: projectAutomationApi.runProjectManager,
-      listRuns: projectAutomationApi.listProjectManagerRuns,
-      getRun: projectAutomationApi.getProjectManagerRun,
-      decide: projectAutomationApi.decideProjectManagerAction,
     },
     incomingHooks: {
       ...createWeworkIncomingHooksApi(projectIncomingHookApi),

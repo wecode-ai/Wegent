@@ -40,7 +40,6 @@ import {
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
-import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
 import {
   getComposerApps,
   publishComposerApps,
@@ -137,6 +136,7 @@ import {
   settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
+  syncRuntimeConversationDeviceAliases,
 } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
@@ -256,10 +256,6 @@ export function WorkbenchProvider({
   const executorClient = useMemo(() => {
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
-  useEffect(() => {
-    if (!resolvedServices.localLoopItemExecutionApi) return
-    return startLocalRobotQueueDispatcher(resolvedServices)
-  }, [resolvedServices])
   const sharedLifecycleStore = useMemo(
     () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
     [providedLifecycleStore, user.id]
@@ -332,8 +328,10 @@ export function WorkbenchProvider({
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
+    syncRuntimeConversationDeviceAliases(state.devices)
+    lifecycleStore.syncDevices(state.devices)
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork])
+  }, [lifecycleStore, state.devices, state.runtimeWork])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])

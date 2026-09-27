@@ -365,7 +365,7 @@ jobs:
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Set up Collaboration frontend
-        if: contains(matrix.segments, 'collaboration-shared-core') || contains(matrix.segments, 'collaboration-settings-matrix') || contains(matrix.segments, 'collaboration-agent-automation-chain')
+        if: contains(matrix.segments, 'collaboration-shared-core') || contains(matrix.segments, 'collaboration-agent-automation-chain')
         uses: ./.github/actions/setup-node-workspace
         with:
           setup-toolchain: "false"

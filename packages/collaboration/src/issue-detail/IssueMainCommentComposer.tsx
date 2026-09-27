@@ -98,7 +98,7 @@ export function IssueMainCommentComposer({
           placeholder={labels.placeholder}
           testId={testIds.input}
           translate={translate}
-          className=""
+          className="task-detail-comment-editor"
           rows={2}
           textareaRef={editorRef}
           mentionScope="external"

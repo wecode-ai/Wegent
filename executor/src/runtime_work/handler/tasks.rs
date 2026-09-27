@@ -5,6 +5,107 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn create_collaboration_dispatch(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        if payload.get("dispatchKind").and_then(Value::as_str) != Some("collaboration_group") {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration dispatch kind is required",
+            ));
+        }
+        let dispatch_task_id = string_field(&payload, "dispatchTaskId")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration dispatch task identity is required",
+                )
+            })?;
+        let mut manager_request = payload
+            .get("managerRuntimeRequest")
+            .cloned()
+            .filter(Value::is_object)
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager Runtime request is required",
+                )
+            })?;
+        let claimed_dispatch_task_id = id_field(&manager_request, "taskId")
+            .or_else(|| id_field(&manager_request, "localTaskId"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration manager task identity is required",
+                )
+            })?;
+        if claimed_dispatch_task_id != dispatch_task_id {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration manager must run inside the claimed dispatch",
+            ));
+        }
+        let manager_task_id = format!("{dispatch_task_id}-manager-initial");
+        let member_profiles = payload
+            .get("memberRuntimeProfiles")
+            .and_then(Value::as_array)
+            .filter(|profiles| !profiles.is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "collaboration member Runtime profiles are required",
+                )
+            })?;
+        detach_collaboration_manager_from_backend_execution(&mut manager_request, &manager_task_id);
+        let manager_context = string_field(&manager_request, "message")
+            .or_else(|| string_field(&manager_request, "content"))
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", "collaboration manager context is required")
+            })?;
+        {
+            let manager_request_object = manager_request
+                .as_object_mut()
+                .expect("validated collaboration manager request");
+            manager_request_object.insert(
+                "collaborationDispatch".to_owned(),
+                json!({"taskId": dispatch_task_id}),
+            );
+            let runtime_handle = manager_request_object
+                .entry("runtimeHandle")
+                .or_insert_with(|| json!({}));
+            if !runtime_handle.is_object() {
+                *runtime_handle = json!({});
+            }
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    COLLABORATION_MANAGER_CONTEXT_KEY.to_owned(),
+                    Value::String(manager_context),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationDispatchTaskId".to_owned(),
+                    Value::String(dispatch_task_id),
+                );
+            runtime_handle
+                .as_object_mut()
+                .expect("collaboration Runtime handle was normalized")
+                .insert(
+                    "collaborationMemberRuntimeProfiles".to_owned(),
+                    Value::Array(member_profiles),
+                );
+        }
+        self.create_task(manager_request).await
+    }
+
     pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
@@ -391,6 +492,7 @@ impl RuntimeWorkRpcHandler {
             ensure_claude_execution_identity(&local_task_id, &mut request);
         }
         set_runtime_task_title(&mut request, &title);
+        self.retain_runtime_model_config(&local_task_id, &request.model_config);
         log_executor_event(
             "runtime task create identity",
             &[
@@ -622,7 +724,12 @@ impl RuntimeWorkRpcHandler {
                 .or_else(|| payload.get("runtime_handle"))
                 .and_then(Value::as_object),
         ) {
-            for key in ["wegentTeam"] {
+            for key in [
+                "wegentTeam",
+                COLLABORATION_MANAGER_CONTEXT_KEY,
+                "collaborationDispatchTaskId",
+                "collaborationMemberRuntimeProfiles",
+            ] {
                 if let Some(value) = payload_handle.get(key) {
                     runtime_handle.insert(key.to_owned(), value.clone());
                 }
@@ -725,6 +832,7 @@ impl RuntimeWorkRpcHandler {
             };
             if let Err(error) = spawn_result {
                 self.retain_failed_runtime_task(&local_task_id, &error);
+                self.forget_runtime_model_config(&local_task_id);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")
@@ -1945,6 +2053,51 @@ impl RuntimeWorkRpcHandler {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
         self.upsert_local_task(link);
+    }
+}
+
+fn detach_collaboration_manager_from_backend_execution(
+    manager_request: &mut Value,
+    manager_task_id: &str,
+) {
+    let Some(request) = manager_request.as_object_mut() else {
+        return;
+    };
+    request.insert(
+        "taskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    request.insert(
+        "localTaskId".to_owned(),
+        Value::String(manager_task_id.to_owned()),
+    );
+    if let Some(origin) = request.get_mut("origin").and_then(Value::as_object_mut) {
+        origin.remove("executionId");
+        origin.remove("execution_id");
+    }
+    let execution_request = if request.contains_key("executionRequest") {
+        request.get_mut("executionRequest")
+    } else {
+        request.get_mut("execution_request")
+    };
+    if let Some(execution_request) = execution_request.and_then(Value::as_object_mut) {
+        execution_request.insert(
+            "task_id".to_owned(),
+            Value::String(manager_task_id.to_owned()),
+        );
+        execution_request.insert(
+            "subtask_id".to_owned(),
+            Value::String(format!("{manager_task_id}-initial")),
+        );
+        if let Some(origin) = execution_request
+            .get_mut("extra")
+            .and_then(Value::as_object_mut)
+            .and_then(|extra| extra.get_mut("origin"))
+            .and_then(Value::as_object_mut)
+        {
+            origin.remove("executionId");
+            origin.remove("execution_id");
+        }
     }
 }
 

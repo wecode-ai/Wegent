@@ -198,7 +198,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(byTestId("collaboration-group-leader-human-7")).not.toBeNull();
     expect(
       byTestId("collaboration-group-create-responsibility-human-7"),
-    ).not.toBeNull();
+    ).toBeNull();
     await change(
       byTestId<HTMLInputElement>("collaboration-group-name"),
       "我的协作小组",
@@ -213,7 +213,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     );
   });
 
-  it("keeps responsibilities editable for the leader after changing the leader", async () => {
+  it("clears and hides responsibility when a member becomes the leader", async () => {
     await act(async () =>
       root.render(
         <WorkspaceCollaborationGroupsConfiguration
@@ -252,10 +252,8 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       ).value,
     ).toBe("");
     expect(
-      byTestId<HTMLInputElement>(
-        "collaboration-group-create-responsibility-agent-1",
-      ).value,
-    ).toBe("审查代码");
+      byTestId("collaboration-group-create-responsibility-agent-1"),
+    ).toBeNull();
     expect(
       container.querySelector(".collaboration-group-roster-item:first-child")
         ?.textContent,
@@ -271,7 +269,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-remove-member-human-7"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(
       byTestId("collaboration-group-create-responsibility-human-7"),
     ).toBeNull();
@@ -283,8 +281,8 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        leader: { kind: "agent", id: "1", responsibility: "审查代码" },
-        members: [{ kind: "agent", id: "1", responsibility: "审查代码" }],
+        leader: { kind: "agent", id: "1", responsibility: "" },
+        members: [{ kind: "agent", id: "1", responsibility: "" }],
       }),
     );
   });
@@ -425,7 +423,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-leader-agent-1"));
     expect(
       byTestId("collaboration-group-create-responsibility-agent-1"),
-    ).not.toBeNull();
+    ).toBeNull();
     await change(
       byTestId<HTMLInputElement>(
         "collaboration-group-create-responsibility-human-7",
@@ -480,11 +478,18 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
         .value,
     ).toBe("实现工作应该 @Codex 来完成");
+    const stageAssignee = container.querySelector<HTMLSelectElement>(
+      '[data-testid="collaboration-group-stage-stage-1"] select',
+    );
+    expect(stageAssignee?.options[0].textContent).toBe("未指定执行者");
     expect(
-      container.querySelector<HTMLSelectElement>(
-        '[data-testid="collaboration-group-stage-stage-1"] select',
-      )?.options[0].textContent,
-    ).toBe("由负责人执行");
+      [...(stageAssignee?.options ?? [])].map((option) => option.textContent),
+    ).toEqual(["未指定执行者", "@Claude Code"]);
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-group-create-responsibility-agent-1"]',
+      ),
+    ).toBeNull();
     await click(byTestId("collaboration-group-rule-mention-trigger"));
     await click(byTestId("collaboration-group-rule-mention-agent-2"));
     expect(
@@ -509,7 +514,8 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(commands.updateCollaborationGroup).toHaveBeenCalledWith(
       group.id,
       expect.objectContaining({
-        members: [{ kind: "agent", id: "1", responsibility: "Implement" }],
+        leader: { kind: "agent", id: "1", responsibility: "" },
+        members: [{ kind: "agent", id: "1", responsibility: "" }],
         instructions: expect.stringContaining("@Claude Code"),
         stages: [
           expect.objectContaining({

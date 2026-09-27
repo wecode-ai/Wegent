@@ -284,7 +284,6 @@ class WeworkExecutionProfile:
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
-    manager_mode: bool = False
     workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     additional_skills: tuple[Any, ...] = ()
@@ -395,34 +394,6 @@ class WeworkExecutionProfile:
         )
 
     @classmethod
-    def for_automation_manager(
-        cls,
-        *,
-        owner_user_id: int,
-        display_name: str,
-        instruction: str,
-        developer_instruction: str,
-        model: str,
-        model_type: str | None = None,
-        model_options: dict[str, str] | None = None,
-        local_project_id: int = 0,
-    ) -> "WeworkExecutionProfile":
-        if not model:
-            raise ValueError("Custom AI manager model is required")
-        return cls(
-            owner_user_id=owner_user_id,
-            display_name=display_name or "AI 托管",
-            execution_prompt="",
-            instruction=instruction,
-            system_prompt=developer_instruction,
-            model=model,
-            model_type=model_type,
-            model_options=dict(model_options or {}),
-            local_project_id=local_project_id,
-            manager_mode=True,
-        )
-
-    @classmethod
     def for_generic_robot(
         cls,
         *,
@@ -468,28 +439,12 @@ class WeworkExecutionProfile:
         project_id: str,
         task_id: str,
         execution_id: int,
-        workflow_stage_input: dict[str, Any] | None = None,
     ) -> str:
-        if self.manager_mode:
-            return self.instruction.strip()
-        from app.services.workflow_stage_context import compiled_workflow_stage_input
-
-        stage_instruction = (
-            str(
-                compiled_workflow_stage_input(workflow_stage_input).get(
-                    "compiled_task_instruction"
-                )
-                or ""
-            )
-            if workflow_stage_input
-            else ""
-        )
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
             execution_id=execution_id,
             execution_prompt=self.execution_prompt,
-            stage_instruction=stage_instruction,
         )
 
     def build_runtime_request(
@@ -570,20 +525,21 @@ class WeworkExecutionProfile:
             project_id=str(project.id),
             task_id=task_id,
             execution_id=execution_id,
-            workflow_stage_input=(
-                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
-            ),
         )
         if origin_context.get("comment_trigger_message_id"):
             prompt = str(origin_context["comment_prompt"])
-        title = str(getattr(task, "title", "") or "")
+        title = str(
+            origin_context.get("workflow_task_title")
+            or getattr(task, "title", "")
+            or ""
+        )
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
             "type": (
                 "board_comment"
                 if origin_context.get("comment_trigger_message_id")
-                else "project_automation" if self.manager_mode else "board_task"
+                else "board_task"
             ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
@@ -593,6 +549,19 @@ class WeworkExecutionProfile:
                 f"{str(getattr(task, 'id', ''))}"
             ),
         }
+        dispatch_id = str(origin_context.get("dispatch_id") or "")
+        dispatch_task_id = str(origin_context.get("dispatch_task_id") or "")
+        dispatch_role = str(origin_context.get("dispatch_role") or "")
+        manager_agent_id = str(origin_context.get("manager_agent_id") or "")
+        if dispatch_id and dispatch_task_id and dispatch_role:
+            origin.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": dispatch_task_id,
+                    "dispatchRole": dispatch_role,
+                    "managerAgentId": manager_agent_id,
+                }
+            )
         if isinstance(workflow_stage_input, dict):
             target_stage = workflow_stage_input.get("target_stage")
             if isinstance(target_stage, dict):
@@ -602,8 +571,6 @@ class WeworkExecutionProfile:
                     target_stage.get("name") or workflow_stage_id
                 )
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
-        if self.manager_mode:
-            origin["automationRole"] = "manager"
         configured_runtime = origin_context.get("runtime")
         runtime, shell_type = native_runtime_contract(
             configured_runtime if configured_runtime is not None else self.runtime
@@ -630,6 +597,24 @@ class WeworkExecutionProfile:
                 ],
             }
         ]
+        coordinate_bots = origin_context.get("coordinate_bots")
+        if coordinate_bots is not None:
+            if not isinstance(coordinate_bots, list) or not all(
+                isinstance(value, dict) for value in coordinate_bots
+            ):
+                raise WeworkExecutionProfileError(
+                    "Coordinate bots must be a list of objects"
+                )
+            if not coordinate_bots:
+                raise WeworkExecutionProfileError(
+                    "Coordinate execution requires at least one bot"
+                )
+            bot = [dict(value) for value in coordinate_bots]
+            origin["collaborationMode"] = str(
+                origin_context.get("collaborationMode")
+                or origin_context.get("collaboration_mode")
+                or "coordinate"
+            )
         configured_additional_context = origin_context.get("additional_context")
         additional_context: dict[str, dict[str, Any]] = (
             dict(configured_additional_context)

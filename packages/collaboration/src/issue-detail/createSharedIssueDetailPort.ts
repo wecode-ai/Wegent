@@ -9,9 +9,6 @@ import type {
   CollaborationIssue,
   CollaborationMember,
 } from "../types";
-import type { IssueWorkflowPlanView } from "./IssueWorkflowPlanSection";
-import type { WorkflowDeliverableDraft } from "./WorkflowStageCompletionDialog";
-import type { SharedWorkflowNode } from "./workflowTypes";
 import type { ExecutionDisplayStatus } from "./executionStatus";
 
 export interface SharedIssueDetailTaskBinding {
@@ -24,7 +21,6 @@ export interface SharedIssueDetailTaskBinding {
   task_title: string | null;
   backend_task_id: number | null;
   modelSelection?: Record<string, unknown> | null;
-  workflow_node_id?: string | null;
   binding_type?: "system" | "user";
   linked_at: string;
 }
@@ -43,27 +39,6 @@ export interface SharedIssueDetailCollaborator {
   source: string;
   added_by_user_id: number;
   created_at: string;
-}
-
-export interface SharedIssueDetailWorkflowPlan {
-  run_id: string;
-  issue_id: string;
-  stage_id: string;
-  plan_version: number;
-  approval_policy: "required" | "automatic";
-  status:
-    | "idle"
-    | "planning"
-    | "awaiting_approval"
-    | "dispatching"
-    | "running"
-    | "awaiting_review"
-    | "paused"
-    | "completed"
-    | "failed";
-  summary: string;
-  items: object[];
-  manager_run?: object | null;
 }
 
 export interface SharedIssueDetailDeliveryAsset {
@@ -107,9 +82,6 @@ export interface SharedIssueDetailCreateInput {
   tags?: string[];
   local_project_id?: number | null;
   local_project_name?: string | null;
-  workflow?: Record<string, unknown> | null;
-  execution_config?: Record<string, unknown> | null;
-  automation_rule_id?: string | null;
   assignee_user_id?: number | null;
   notify_assignee?: boolean;
   creator_name?: string;
@@ -129,9 +101,6 @@ export interface SharedIssueDetailUpdateInput {
   assignee_group_id?: string | null;
   due_at?: string | null;
   tags?: string[];
-  workflow?: Record<string, unknown> | null;
-  execution_config?: Record<string, unknown> | null;
-  automation_rule_id?: string | null;
 }
 
 export interface SharedIssueDetailAssignmentInput {
@@ -179,14 +148,6 @@ export interface SharedIssueDetailPort {
       projectId?: string | number | null,
     ): Promise<SharedIssueDetailTaskBinding[]>;
   };
-  workflowPlans: {
-    get?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan | null>;
-    approve?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan>;
-    approveReview?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan>;
-    pause?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan>;
-    resume?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan>;
-    replan?: (issueId: string) => Promise<SharedIssueDetailWorkflowPlan>;
-  };
   members: {
     list(projectId: string): Promise<CollaborationMember[]>;
   };
@@ -200,28 +161,6 @@ export interface SharedIssueDetailPort {
     list(issueId: string): Promise<SharedIssueDetailDelivery[]>;
     get(deliveryId: string): Promise<SharedIssueDetailDeliveryDetail>;
   };
-  workflowNodes: {
-    run(
-      projectId: string,
-      issueId: string,
-      workflowNodeId: string,
-      automationRuleId: string,
-    ): Promise<CollaborationIssue>;
-    complete(
-      issueId: string,
-      stage: SharedWorkflowNode,
-      tasks: SharedIssueDetailTaskBinding[],
-      action: "submit" | "approve" | "force_advance",
-      reason: string,
-      values: WorkflowDeliverableDraft[],
-    ): Promise<CollaborationIssue>;
-    decide(
-      issueId: string,
-      workflowNodeId: string,
-      action: "approve" | "reject" | "force_advance",
-      reason: string,
-    ): Promise<CollaborationIssue>;
-  };
 }
 
 export type SharedIssueDetailWorkspaceApi = Omit<
@@ -231,66 +170,13 @@ export type SharedIssueDetailWorkspaceApi = Omit<
     | "attachments"
     | "collaborators"
     | "taskBindings"
-    | "workflowPlans"
-    | "automations"
     | "members"
     | "deliveries"
   >,
-  "automations"
+  never
 > & {
-  automations?: Pick<
-    NonNullable<SharedWorkspaceApi["automations"]>,
-    "runWorkflowNode"
-  >;
   agents: Pick<SharedWorkspaceApi["agents"], "list">;
 };
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-export function sharedIssueDetailWorkflowPlanView(
-  plan: SharedIssueDetailWorkflowPlan | null,
-): IssueWorkflowPlanView | null {
-  if (!plan) return null;
-  const manager = plan.manager_run as
-    | Record<string, unknown>
-    | null
-    | undefined;
-  return {
-    status: plan.status,
-    summary: plan.summary,
-    items: plan.items.map((value, index) => {
-      const item = value as Record<string, unknown>;
-      return {
-        id: optionalString(item.id) ?? String(index),
-        title:
-          optionalString(item.title) ??
-          optionalString(item.name) ??
-          `#${index + 1}`,
-        description: optionalString(item.description),
-        assigneeId: optionalString(item.assignee_id),
-        assigneeName: optionalString(item.assignee_name),
-        rationale: optionalString(item.rationale),
-        taskId: optionalString(item.task_id) ?? null,
-        taskStatus: optionalString(item.task_status) ?? null,
-        outcomeVerdict: optionalString(item.outcome_verdict) ?? null,
-        outcomeSummary: optionalString(item.outcome_summary) ?? null,
-      };
-    }),
-    manager:
-      manager && typeof manager === "object"
-        ? {
-            id: optionalString(manager.id),
-            status: optionalString(manager.status),
-            recentActivity: optionalString(manager.recent_activity),
-            error: optionalString(manager.error),
-            model: optionalString(manager.model),
-            deviceId: optionalString(manager.device_id),
-          }
-        : null,
-  };
-}
 
 export function toSharedIssueDetailTaskBinding(
   binding: Awaited<
@@ -307,7 +193,6 @@ export function toSharedIssueDetailTaskBinding(
     task_title: binding.taskTitle,
     backend_task_id: binding.backendTaskId,
     modelSelection: binding.modelSelection,
-    workflow_node_id: binding.workflowNodeId,
     binding_type: binding.bindingType,
     linked_at: binding.linkedAt,
   };
@@ -327,24 +212,6 @@ function toCollaborator(
     source: collaborator.source,
     added_by_user_id: collaborator.addedByUserId,
     created_at: collaborator.createdAt,
-  };
-}
-
-function toWorkflowPlan(
-  plan: NonNullable<
-    Awaited<ReturnType<NonNullable<SharedWorkspaceApi["workflowPlans"]["get"]>>>
-  >,
-): SharedIssueDetailWorkflowPlan {
-  return {
-    run_id: plan.runId,
-    issue_id: plan.issueId,
-    stage_id: plan.stageId,
-    plan_version: plan.planVersion,
-    approval_policy: plan.approvalPolicy,
-    status: plan.status,
-    summary: plan.summary,
-    items: plan.items,
-    manager_run: plan.managerRun,
   };
 }
 
@@ -382,95 +249,6 @@ function toDeliveryDetail(
   };
 }
 
-async function uploadWorkflowDeliverables(
-  api: SharedWorkspaceApi["deliveries"],
-  deliveryId: string,
-  values: WorkflowDeliverableDraft[],
-): Promise<Array<Record<string, unknown>>> {
-  const fulfillments: Array<Record<string, unknown>> = [];
-  for (const value of values) {
-    const requirementId = value.requirement.id;
-    if (value.requirement.value_type === "text" && value.text?.trim()) {
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "text",
-        text: value.text.trim(),
-      });
-    } else if (value.requirement.value_type === "url" && value.url?.trim()) {
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "url",
-        url: value.url.trim(),
-        title: value.title?.trim() ?? "",
-      });
-    } else if (value.requirement.value_type === "file" && value.files?.length) {
-      const assets = [];
-      for (const file of value.files) {
-        assets.push(
-          await api.addAsset(deliveryId, file, `${requirementId}/${file.name}`),
-        );
-      }
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "file",
-        asset_ids: assets.map((asset) => asset.id),
-      });
-    } else if (
-      value.requirement.value_type === "code_snapshot" &&
-      value.files?.[0]
-    ) {
-      const file = value.files[0];
-      const asset = await api.addAsset(
-        deliveryId,
-        file,
-        `${requirementId}/${file.name}`,
-      );
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "code_snapshot",
-        asset_id: asset.id,
-        changed_files: [file.name],
-        base_revision: null,
-        head_revision: null,
-        sha256: asset.sha256,
-      });
-    } else if (
-      value.requirement.value_type === "git_branch" &&
-      value.remoteUrl?.trim() &&
-      value.branch?.trim() &&
-      value.commitSha?.trim()
-    ) {
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "git_branch",
-        remote_url: value.remoteUrl.trim(),
-        branch: value.branch.trim(),
-        commit_sha: value.commitSha.trim(),
-      });
-    } else if (
-      value.requirement.value_type === "pull_request" &&
-      value.url?.trim() &&
-      value.number?.trim() &&
-      value.headBranch?.trim() &&
-      value.baseBranch?.trim() &&
-      value.commitSha?.trim()
-    ) {
-      fulfillments.push({
-        requirement_id: requirementId,
-        kind: "pull_request",
-        provider: value.provider ?? "github",
-        url: value.url.trim(),
-        number: Number(value.number),
-        state: "draft",
-        head_branch: value.headBranch.trim(),
-        base_branch: value.baseBranch.trim(),
-        head_commit: value.commitSha.trim(),
-      });
-    }
-  }
-  return fulfillments;
-}
-
 /**
  * Canonical cloud controller used by every host rendering the shared issue
  * detail. Desktop-only effects are injected instead of encoded in the cloud
@@ -488,17 +266,6 @@ export function createSharedIssueDetailPort(
       >;
     }
   ).projects;
-  const workflowOperation = (
-    operation:
-      | SharedWorkspaceApi["workflowPlans"]["approve"]
-      | SharedWorkspaceApi["workflowPlans"]["approveReview"]
-      | SharedWorkspaceApi["workflowPlans"]["pause"]
-      | SharedWorkspaceApi["workflowPlans"]["resume"]
-      | SharedWorkspaceApi["workflowPlans"]["replan"],
-  ) =>
-    operation
-      ? (issueId: string) => operation(issueId).then(toWorkflowPlan)
-      : undefined;
 
   return {
     issues: {
@@ -521,13 +288,6 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.local_project_name !== undefined
             ? { localProjectName: input.local_project_name }
-            : {}),
-          ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
-          ...(input.execution_config !== undefined
-            ? { executionConfig: input.execution_config }
-            : {}),
-          ...(input.automation_rule_id !== undefined
-            ? { automationRuleId: input.automation_rule_id }
             : {}),
           ...(input.assignee_user_id !== undefined
             ? { assigneeUserId: input.assignee_user_id }
@@ -565,13 +325,6 @@ export function createSharedIssueDetailPort(
             : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),
-          ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
-          ...(input.execution_config !== undefined
-            ? { executionConfig: input.execution_config }
-            : {}),
-          ...(input.automation_rule_id !== undefined
-            ? { automationRuleId: input.automation_rule_id }
-            : {}),
         }),
       assign: api.issues.assign,
     },
@@ -603,19 +356,6 @@ export function createSharedIssueDetailPort(
           .list(issueId, projectId == null ? undefined : String(projectId))
           .then((items) => items.map(toSharedIssueDetailTaskBinding)),
     },
-    workflowPlans: {
-      get: api.workflowPlans.get
-        ? (issueId) =>
-            api.workflowPlans.get!(issueId).then((plan) =>
-              plan ? toWorkflowPlan(plan) : null,
-            )
-        : undefined,
-      approve: workflowOperation(api.workflowPlans.approve),
-      approveReview: workflowOperation(api.workflowPlans.approveReview),
-      pause: workflowOperation(api.workflowPlans.pause),
-      resume: workflowOperation(api.workflowPlans.resume),
-      replan: workflowOperation(api.workflowPlans.replan),
-    },
     members: api.members,
     agents: {
       list: (projectId) =>
@@ -636,83 +376,6 @@ export function createSharedIssueDetailPort(
         api.deliveries.list(issueId).then((items) => items.map(toDelivery)),
       get: (deliveryId) =>
         api.deliveries.get(deliveryId).then(toDeliveryDetail),
-    },
-    workflowNodes: {
-      async run(projectId, issueId, workflowNodeId, automationRuleId) {
-        if (!api.automations) {
-          throw new Error(
-            "Workflow automation is unavailable for this workspace host",
-          );
-        }
-        try {
-          await api.automations.runWorkflowNode(
-            projectId,
-            issueId,
-            workflowNodeId,
-            automationRuleId,
-          );
-        } catch (error) {
-          const refreshed = await api.issues.get(issueId).catch(() => null);
-          const workflow = refreshed?.workflow as
-            | { nodes?: Array<{ id?: unknown; status?: unknown }> }
-            | null
-            | undefined;
-          const node = workflow?.nodes?.find(
-            (candidate) => candidate.id === workflowNodeId,
-          );
-          const status =
-            typeof node?.status === "string" ? node.status : undefined;
-          if (refreshed && ["queued", "running"].includes(status ?? "")) {
-            return refreshed;
-          }
-          throw error;
-        }
-        return api.issues.get(issueId);
-      },
-      decide: api.workflowPlans.decideNode,
-      async complete(issueId, stage, tasks, action, reason, values) {
-        if (values.length > 0) {
-          const source = tasks
-            .filter((binding) => binding.workflow_node_id === stage.id)
-            .at(-1);
-          if (!source) {
-            throw new Error("The workflow stage has no execution task");
-          }
-          const markdown = [
-            `# ${stage.name} stage deliverables`,
-            ...(stage.required_deliverables ?? []).map(
-              (requirement) =>
-                `- ${requirement.name} (${requirement.value_type})`,
-            ),
-          ].join("\n");
-          const delivery = await api.deliveries.create(issueId, {
-            markdown,
-            sourceTask: {
-              deviceId: source.device_id,
-              taskId: source.task_id,
-              backendTaskId: source.backend_task_id,
-              modelSelection: source.modelSelection,
-            },
-          });
-          try {
-            const fulfillments = await uploadWorkflowDeliverables(
-              api.deliveries,
-              delivery.id,
-              values,
-            );
-            await api.deliveries.finalize(delivery.id, { fulfillments });
-          } catch (error) {
-            await api.deliveries
-              .discardDraft(delivery.id)
-              .catch(() => undefined);
-            throw error;
-          }
-        }
-        if (action !== "submit") {
-          await api.workflowPlans.decideNode(issueId, stage.id, action, reason);
-        }
-        return api.issues.get(issueId);
-      },
     },
   };
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectChatClient, ProjectChatMessage } from "@wegent/chat-core";
-import { cardSessionAddress, dispatchTaskCardReply } from "./taskCardReply";
+import {
+  cardSessionActive,
+  cardSessionAddress,
+  dispatchTaskCardReply,
+} from "./taskCardReply";
 
 const address = {
   deviceId: "device-1",
@@ -26,7 +30,6 @@ function setup() {
     startAgentResponse: vi.fn().mockResolvedValue(run),
     failAgentResponse: vi.fn().mockResolvedValue({ ...run, status: "failed" }),
     continueWegentTask: vi.fn().mockResolvedValue(run),
-    continueAutomationManager: vi.fn().mockResolvedValue(run),
   } as unknown as ProjectChatClient;
   const runtime = {
     createProjectRuntimeTask: vi.fn().mockResolvedValue(false),
@@ -62,6 +65,28 @@ function setup() {
   return { input, client, runtime };
 }
 describe("shared PC card reply dispatch", () => {
+  it("treats a persisted terminal execution as idle even while liveness is stale", () => {
+    expect(
+      cardSessionActive(
+        {
+          root,
+          replies: [{ ...run, status: "completed" }],
+        },
+        () => true,
+      ),
+    ).toBe(false);
+  });
+  it("keeps a newly persisted active execution busy", () => {
+    expect(
+      cardSessionActive(
+        {
+          root,
+          replies: [{ ...run, status: "streaming" }],
+        },
+        () => true,
+      ),
+    ).toBe(true);
+  });
   it("continues the activity-owned session even when no runtime-work snapshot is available", async () => {
     const { input, client, runtime } = setup();
     expect(cardSessionAddress(input.card)).toEqual(address);
@@ -145,34 +170,6 @@ describe("shared PC card reply dispatch", () => {
       }),
     );
     expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled();
-  });
-  it("closes the custom-manager response when its runtime send throws", async () => {
-    const { input, client, runtime } = setup();
-    runtime.sendRuntimePaneMessage.mockRejectedValueOnce(
-      new Error("Connection lost"),
-    );
-    expect(
-      await dispatchTaskCardReply({
-        ...input,
-        card: {
-          root: {
-            ...run,
-            metadata: {
-              executor_type: "automation_manager",
-              manager_type: "custom",
-            },
-          },
-          replies: [],
-        },
-      }),
-    ).toEqual({ ok: false, persisted: true, error: "Connection lost" });
-    expect(client.continueAutomationManager).toHaveBeenCalled();
-    expect(client.failAgentResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messageId: run.messageId,
-        error: "Connection lost",
-      }),
-    );
   });
 });
 

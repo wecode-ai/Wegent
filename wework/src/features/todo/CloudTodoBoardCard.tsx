@@ -3,7 +3,6 @@ import {
   IssueBoardCard,
   IssueBoardCardContent,
   IssueCardTaskSummary,
-  getCurrentWorkflowNode,
   createIssueBoardCardLabels,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
@@ -30,7 +29,6 @@ import {
   stoppedTaskNeedsAttention,
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
-import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { Archive, CircleCheck } from 'lucide-react'
 
 export interface BoardCardDisplaySettings {
@@ -54,8 +52,6 @@ interface CloudTodoCardContentProps {
   item: CloudLoopItem
   goalBinding?: CloudTodoBoardTaskBinding
   display: BoardCardDisplaySettings
-  processingStatus: boolean
-  showWorkflowStage?: boolean
   /** Active robot names for the current project, used when the item only
    * carries `assignee_agent_id` (local projects do not resolve the name). */
   agentNames?: Record<string, string>
@@ -65,8 +61,6 @@ export function CloudTodoCardContent({
   item,
   goalBinding,
   display,
-  processingStatus,
-  showWorkflowStage = true,
   agentNames,
 }: CloudTodoCardContentProps) {
   const t = useBoardTranslate()
@@ -83,10 +77,6 @@ export function CloudTodoCardContent({
           ? { bindingId: goalBinding.id, objective: goalBinding.runtimeGoal.objective }
           : null
       }
-      needsExecutionConfiguration={processingStatus && itemNeedsExecutionConfiguration(item)}
-      workflowNode={
-        showWorkflowStage && item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
-      }
     />
   )
 }
@@ -96,7 +86,6 @@ export interface CloudTodoBoardTaskBinding {
   device_id: string
   task_id: string
   task_title: string | null
-  workflow_node_id?: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   modelSelection?: ModelSelectionConfig | null
@@ -109,7 +98,6 @@ interface CloudTodoBoardCardProps {
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
-  onConfigureExecution?: () => void
   onArchive: () => void
   previewPinned?: boolean
   onPreviewPinnedChange?: (pinned: boolean) => void
@@ -117,7 +105,6 @@ interface CloudTodoBoardCardProps {
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   display: BoardCardDisplaySettings
-  processingStatus: boolean
   agentNames?: Record<string, string>
   dragDisabled?: boolean
   previewDisabled?: boolean
@@ -144,7 +131,6 @@ export function CloudTodoBoardCard({
   unread,
   taskBindings = [],
   onClick,
-  onConfigureExecution,
   onArchive,
   previewPinned,
   onPreviewPinnedChange,
@@ -152,7 +138,6 @@ export function CloudTodoBoardCard({
   onLoadRuntimeGoal,
   onOpenRuntimeTask,
   display,
-  processingStatus,
   agentNames,
   dragDisabled = false,
   previewDisabled = false,
@@ -166,9 +151,6 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
   const editable = canEditProjectSpaceIssue(item)
-  const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
-  const needsExecutionConfiguration =
-    processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
   const hasActiveTask = isLoopItemExecutionActive(item)
   const runningTaskBindings = taskBindings.filter(binding => binding.running)
   const currentTaskBinding = runningTaskBindings[0] ?? taskBindings[0]
@@ -199,9 +181,6 @@ export function CloudTodoBoardCard({
       labels={createIssueBoardCardLabels(t)}
       agentNames={agentNames}
       translate={t}
-      workflowNode={currentWorkflowNode}
-      needsExecutionConfiguration={needsExecutionConfiguration}
-      onConfigureExecution={onConfigureExecution}
       archiveLabel={archiveLabel}
       onArchive={editable && !archiveDisabled ? onArchive : undefined}
       previewPinned={previewPinned}

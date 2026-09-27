@@ -800,9 +800,9 @@ impl RuntimeWorkRpcHandler {
         }
         self.store.update_task(&local_task_id, |link| {
             apply_local_execution_state(link, true, None);
-            let started_at = now_ms();
-            link.updated_at = started_at.max(link.updated_at.saturating_add(1));
-            link.recency_at = started_at.max(link.recency_at.saturating_add(1));
+            let started_at = now_ms().max(link.updated_at.max(link.recency_at).saturating_add(1));
+            link.updated_at = started_at;
+            link.recency_at = started_at;
             link.completed_at = None;
         });
         if let Some(link) = self.local_task_link(&local_task_id) {
@@ -1180,7 +1180,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         message: &Value,
-    ) {
+    ) -> bool {
         let notification = codex_notification(message);
         let goal_status = match notification.method.as_str() {
             "thread/goal/updated" => notification
@@ -1188,9 +1188,11 @@ impl RuntimeWorkRpcHandler {
                 .get("goal")
                 .and_then(|goal| string_field(goal, "status")),
             "thread/goal/cleared" => None,
-            _ => return,
+            _ => return false,
         };
+        let goal_is_active = goal_status.as_deref() == Some("active");
         self.sync_runtime_task_goal_status(local_task_id, goal_status);
+        goal_is_active
     }
 
     pub(super) fn sync_runtime_task_goal_status(

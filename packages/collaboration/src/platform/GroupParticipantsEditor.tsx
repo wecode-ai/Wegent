@@ -304,7 +304,9 @@ export function GroupParticipantsEditor({
               leader: candidate.value === leader,
               className: "collaboration-group-person-card",
             }))}
-            renderResponsibility={(candidate) => responsibility(candidate)}
+            renderResponsibility={(candidate) =>
+              candidate.leader ? null : responsibility(candidate)
+            }
             renderActions={(candidate) =>
               candidate.leader ? null : (
                 <span className="collaboration-group-person-actions">

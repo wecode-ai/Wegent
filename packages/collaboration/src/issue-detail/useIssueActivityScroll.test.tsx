@@ -33,20 +33,47 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
     let frame: FrameRequestCallback | undefined;
     let scrollTo: ReturnType<typeof vi.fn>;
     let cardBottom: number;
-    function Fixture({ messages }: { messages: ProjectChatMessage[] }) {
+    function Fixture({
+      messages,
+      issueId,
+      readSequence,
+      onReadSequence,
+    }: {
+      messages: ProjectChatMessage[];
+      issueId?: string;
+      readSequence?: number;
+      onReadSequence?: (sequence: number) => void;
+    }) {
       controls = useIssueActivityScroll({
         messages,
         loading: false,
+        issueId,
+        readSequence,
+        onReadSequence,
         cardTestIdPrefix: prefix,
       });
       return (
         <div ref={controls.listRef} data-testid="list">
-          <div data-testid={`${prefix}root`} />
+          <div
+            data-testid={`${prefix}root`}
+            data-activity-sequence={Math.max(
+              ...messages.map((item) => item.sequenceNumber),
+            )}
+          />
         </div>
       );
     }
-    async function render(messages = [message("root"), message("run")]) {
-      await act(async () => root.render(<Fixture messages={messages} />));
+    async function render(
+      messages = [message("root"), message("run")],
+      props: {
+        issueId?: string;
+        readSequence?: number;
+        onReadSequence?: (sequence: number) => void;
+      } = {},
+    ) {
+      await act(async () =>
+        root.render(<Fixture messages={messages} {...props} />),
+      );
     }
     beforeEach(async () => {
       globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,8 +101,10 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
       cardBottom = 600;
       scrollTo = vi.fn();
       list.scrollTo = scrollTo;
-      list.getBoundingClientRect = () => ({ bottom: 400 }) as DOMRect;
-      card.getBoundingClientRect = () => ({ bottom: cardBottom }) as DOMRect;
+      list.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400, height: 400 }) as DOMRect;
+      card.getBoundingClientRect = () =>
+        ({ top: cardBottom - 100, bottom: cardBottom, height: 100 }) as DOMRect;
     });
     afterEach(() => {
       act(() => root.unmount());
@@ -117,6 +146,23 @@ describe.each(["cloud-task-activity-card-", "collaboration-chat-card-"])(
       expect(scrollTo).not.toHaveBeenCalled();
       act(() => controls.scrollTaskCommentsToBottom());
       expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: "auto" });
+    });
+    it("opens at the first unread activity and advances the cursor after it is visible", async () => {
+      const onReadSequence = vi.fn();
+      cardBottom = 200;
+      vi.mocked(window.requestAnimationFrame).mockClear();
+      await render([message("root"), message("run")], {
+        issueId: "issue",
+        readSequence: 1,
+        onReadSequence,
+      });
+      const initialFrames = vi
+        .mocked(window.requestAnimationFrame)
+        .mock.calls.map(([callback]) => callback);
+      act(() => initialFrames.forEach((callback) => callback(0)));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 100, behavior: "auto" });
+      act(() => frame?.(0));
+      expect(onReadSequence).toHaveBeenCalledExactlyOnceWith(2);
     });
   },
 );

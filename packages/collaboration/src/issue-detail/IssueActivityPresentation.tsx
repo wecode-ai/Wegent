@@ -14,6 +14,7 @@ export function IssueActivityAvatar({
 }) {
   return (
     <span
+      title={author}
       className={cn(
         "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
         agent
@@ -39,6 +40,7 @@ export function IssueActivityMessage({
   agent = false,
   avatar,
   metadata,
+  hideTime = false,
   children,
   ...attributes
 }: HTMLAttributes<HTMLElement> & {
@@ -47,6 +49,7 @@ export function IssueActivityMessage({
   agent?: boolean;
   avatar?: ReactNode;
   metadata?: ReactNode;
+  hideTime?: boolean;
 }) {
   return (
     <article {...attributes} className="task-detail-thread-message">
@@ -56,9 +59,11 @@ export function IssueActivityMessage({
           {author}
         </span>
         {metadata}
-        <time className="text-sm text-text-muted" dateTime={createdAt}>
-          {formatIssueTimestamp(createdAt)}
-        </time>
+        {hideTime ? null : (
+          <time className="text-sm text-text-muted" dateTime={createdAt}>
+            {formatIssueTimestamp(createdAt)}
+          </time>
+        )}
       </header>
       <div className="task-detail-thread-message-body">{children}</div>
     </article>

@@ -5,18 +5,38 @@ import type { ProjectChatMessage } from "@wegent/chat-core";
 export function useIssueActivityScroll({
   messages: threadMessages,
   loading,
+  issueId,
+  readSequence = 0,
+  onReadSequence,
   linear = true,
   compact = true,
   cardTestIdPrefix,
 }: {
   messages: ProjectChatMessage[];
   loading: boolean;
+  issueId?: string;
+  readSequence?: number;
+  onReadSequence?(sequence: number): Promise<void> | void;
   linear?: boolean;
   compact?: boolean;
   cardTestIdPrefix: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const followCardRef = useRef<string | null>(null);
+  const initializedIssueRef = useRef<string | null>(null);
+  const cursorIssueRef = useRef<string | undefined>(issueId);
+  const requestedReadSequenceRef = useRef(readSequence);
+  const readSequenceRef = useRef(readSequence);
+  if (cursorIssueRef.current !== issueId) {
+    cursorIssueRef.current = issueId;
+    readSequenceRef.current = readSequence;
+    requestedReadSequenceRef.current = readSequence;
+  }
+  readSequenceRef.current = Math.max(readSequenceRef.current, readSequence);
+  requestedReadSequenceRef.current = Math.max(
+    requestedReadSequenceRef.current,
+    readSequence,
+  );
   const scrollTaskCommentsToBottom = useCallback(
     (behavior: ScrollBehavior = "auto") => {
       const scroller = resolveTaskCommentScrollContainer(
@@ -82,6 +102,62 @@ export function useIssueActivityScroll({
   }, [compact, linear, loading, threadMessages.length, cardTestIdPrefix]);
 
   useEffect(() => {
+    if (!issueId || loading || initializedIssueRef.current === issueId) return;
+    const frame = requestAnimationFrame(() => {
+      const scroller = resolveTaskCommentScrollContainer(
+        listRef.current,
+        linear,
+      );
+      if (!scroller) return;
+      const activities = activityElements(scroller);
+      if (activities.length === 0) return;
+      initializedIssueRef.current = issueId;
+      const firstUnread = activities.find(
+        (element) => activitySequence(element) > readSequenceRef.current,
+      );
+      if (firstUnread) {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const activityRect = firstUnread.getBoundingClientRect();
+        scroller.scrollTo({
+          top: scroller.scrollTop + activityRect.top - scrollerRect.top,
+          behavior: "auto",
+        });
+      } else {
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
+      }
+      requestAnimationFrame(() =>
+        markVisibleActivitiesRead(
+          scroller,
+          requestedReadSequenceRef,
+          onReadSequence,
+        ),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [issueId, linear, loading, onReadSequence, threadMessages.length]);
+
+  useEffect(() => {
+    const scroller = resolveTaskCommentScrollContainer(listRef.current, linear);
+    if (!scroller || !onReadSequence) return;
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() =>
+        markVisibleActivitiesRead(
+          scroller,
+          requestedReadSequenceRef,
+          onReadSequence,
+        ),
+      );
+    };
+    scroller.addEventListener("scroll", update, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener("scroll", update);
+    };
+  }, [linear, onReadSequence]);
+
+  useEffect(() => {
     const frame = requestAnimationFrame(() => {
       if (followCardRef.current) {
         revealCardBottom(followCardRef.current);
@@ -130,6 +206,40 @@ export function useIssueActivityScroll({
     scrollTaskCommentsToBottom,
     revealCardBottom,
   };
+}
+
+function activityElements(scroller: HTMLElement): HTMLElement[] {
+  return Array.from(
+    scroller.querySelectorAll<HTMLElement>("[data-activity-sequence]"),
+  );
+}
+
+function activitySequence(element: HTMLElement): number {
+  const value = Number(element.dataset.activitySequence);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function markVisibleActivitiesRead(
+  scroller: HTMLElement,
+  requestedReadSequenceRef: { current: number },
+  onReadSequence?: (sequence: number) => Promise<void> | void,
+): void {
+  if (!onReadSequence) return;
+  const viewport = scroller.getBoundingClientRect();
+  const sequence = activityElements(scroller).reduce((latest, element) => {
+    const rect = element.getBoundingClientRect();
+    if (
+      rect.height > 0 &&
+      rect.bottom > viewport.top &&
+      rect.top < viewport.bottom
+    ) {
+      return Math.max(latest, activitySequence(element));
+    }
+    return latest;
+  }, requestedReadSequenceRef.current);
+  if (sequence <= requestedReadSequenceRef.current) return;
+  requestedReadSequenceRef.current = sequence;
+  void onReadSequence(sequence);
 }
 
 function findTaskCommentScrollContainer(
