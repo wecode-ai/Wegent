@@ -227,6 +227,40 @@ fn combined_text_result_repeats_action_guidance_after_inspect() {
 }
 
 #[test]
+fn inspect_text_result_flags_login_wall_urls() {
+    let text = inspect_text_result(&json!({
+        "kind": "browser.inspect",
+        "inspectText": "Page: 登录 - 微博\nURL: https://passport.weibo.com/sso/signin\n[0] button \"登录/注册\""
+    }))
+    .unwrap();
+    assert!(text.contains("Auth warning:"));
+    assert!(text.contains("wait for their confirmation"));
+
+    let public_page = inspect_text_result(&json!({
+        "kind": "browser.inspect",
+        "inspectText": "Page: Example\nURL: https://example.com/docs\n[0] link \"Docs\""
+    }))
+    .unwrap();
+    assert!(!public_page.contains("Auth warning:"));
+}
+
+#[test]
+fn combined_text_result_flags_login_wall_urls() {
+    let text = combined_text_result(&json!({
+        "kind": "browser.combined",
+        "ok": true,
+        "tool": "open_and_inspect",
+        "wait": { "ok": true, "reason": "load_finished" },
+        "inspect": {
+            "kind": "browser.inspect",
+            "inspectText": "Page: 微博\nURL: https://weibo.com/newlogin?tabtype=\n[0] button \"登录/注册\""
+        }
+    }))
+    .unwrap();
+    assert!(text.contains("Auth warning:"));
+}
+
+#[test]
 fn action_text_result_is_concise_and_drives_the_next_requested_action() {
     let text = action_text_result(&json!({
         "ok": true,
