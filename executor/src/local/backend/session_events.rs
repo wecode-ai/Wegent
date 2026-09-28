@@ -8,33 +8,37 @@ use serde_json::{json, Value};
 
 use crate::local::session::{
     LocalSessionHandler, SessionResult, SessionStartRequest, SessionType, UnixSessionPtyManager,
+    APP_SIDECAR_SESSION_PUBLIC_BASE_URL, DEFAULT_SESSION_PUBLIC_BASE_URL,
 };
 
 pub(super) fn default_session_handler(
     configured_workspace_root: Option<PathBuf>,
 ) -> LocalSessionHandler {
-    configured_session_handler(configured_workspace_root, true, "http://localhost:17888")
+    configured_session_handler(
+        configured_workspace_root,
+        true,
+        DEFAULT_SESSION_PUBLIC_BASE_URL,
+    )
 }
 
 pub(super) fn app_sidecar_session_handler(
     configured_workspace_root: Option<PathBuf>,
 ) -> LocalSessionHandler {
-    configured_session_handler(configured_workspace_root, false, "http://localhost:0")
+    configured_session_handler(
+        configured_workspace_root,
+        false,
+        APP_SIDECAR_SESSION_PUBLIC_BASE_URL,
+    )
 }
 
 fn configured_session_handler(
     configured_workspace_root: Option<PathBuf>,
     gateway_enabled_default: bool,
-    public_base_url_default: &str,
+    public_base_url: &str,
 ) -> LocalSessionHandler {
     let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", gateway_enabled_default);
     let code_server_enabled = gateway_enabled && env_bool("DEVICE_CODE_SERVER_ENABLED", true);
     let terminal_enabled = env_bool("DEVICE_TERMINAL_ENABLED", true);
-    let public_base_url = env::var("DEVICE_PUBLIC_BASE_URL")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| public_base_url_default.to_owned());
     let code_server_port = env::var("DEVICE_CODE_SERVER_PORT")
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok())
@@ -42,7 +46,7 @@ fn configured_session_handler(
         .unwrap_or(18080);
     let workspace_root = configured_workspace_root.unwrap_or_else(default_workspace_root);
     LocalSessionHandler::new(
-        &public_base_url,
+        public_base_url,
         gateway_enabled,
         code_server_port,
         workspace_root,

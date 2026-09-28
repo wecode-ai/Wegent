@@ -333,6 +333,20 @@ impl RuntimeWorkRpcHandler {
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
         if navigation_only {
+            if !direct_thread_override
+                && local_link
+                    .as_ref()
+                    .is_some_and(provider_transcript_is_unmaterialized)
+            {
+                return Ok(transcript_navigation_response(
+                    local_task_id,
+                    local_link
+                        .as_ref()
+                        .map(|link| link.workspace_path.clone())
+                        .unwrap_or_default(),
+                    Vec::new(),
+                ));
+            }
             let Some(thread_id) = session_id else {
                 return Ok(transcript_navigation_response(
                     local_task_id,
@@ -454,8 +468,18 @@ impl RuntimeWorkRpcHandler {
             link.ephemeral
                 || !runtime_has_provider_transcript_reader(&link.runtime)
                 || session_id.is_none()
+                || (!direct_thread_override && provider_transcript_is_unmaterialized(link))
         }) {
             let mut messages = cached_runtime_transcript_messages(link);
+            let page_messages = messages.clone();
+            attach_user_message_presentations_for_page(
+                &mut messages,
+                user_message_presentations(link),
+                &page_messages,
+                &[],
+                false,
+                false,
+            );
             if conversation_context_only {
                 project_conversation_context_messages(&mut messages);
             }
@@ -500,7 +524,7 @@ impl RuntimeWorkRpcHandler {
                 running: local_execution_running,
             });
             let pagination = transcript_pagination(&runtime, limit, before_cursor, after_cursor);
-            return Ok(transcript_response(TranscriptResponseInput {
+            let mut response = transcript_response(TranscriptResponseInput {
                 local_task_id,
                 workspace_path,
                 runtime,
@@ -512,7 +536,17 @@ impl RuntimeWorkRpcHandler {
                 conversation_context_only,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
                 turn_navigation: Vec::new(),
-            }));
+            });
+            // Creation may not have registered the task yet. Absence of a local
+            // execution is unknown state, not evidence that the send has settled.
+            if !local_execution_running
+                && !local_link
+                    .as_ref()
+                    .is_some_and(|link| link.completed_at.is_some())
+            {
+                response.as_object_mut().unwrap().remove("running");
+            }
+            return Ok(response);
         };
 
         if refresh && !local_execution_running && !direct_thread_override {
@@ -531,12 +565,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let CodexTranscriptPage {
-            mut thread,
-            before_cursor: page_before_cursor,
-            after_cursor: page_after_cursor,
-            prepend_item_turn_ids,
-        } = load_codex_transcript(
+        let transcript_page = load_codex_transcript(
             &self.codex_app_server,
             CodexTranscriptRequest {
                 thread_id: &thread_id,
@@ -558,8 +587,79 @@ impl RuntimeWorkRpcHandler {
                 }),
             },
         )
-        .await
-        .map_err(|error| AppIpcError::new("codex_error", error))?;
+        .await;
+        let CodexTranscriptPage {
+            mut thread,
+            before_cursor: page_before_cursor,
+            after_cursor: page_after_cursor,
+            prepend_item_turn_ids,
+        } = match transcript_page {
+            Ok(page) => page,
+            Err(error)
+                if before_cursor.is_none()
+                    && after_cursor.is_none()
+                    && !direct_thread_override
+                    && local_link.as_ref().is_some_and(|link| {
+                        !transcript_snapshot_messages(link).is_empty()
+                            || !completed_transcript_messages(link).is_empty()
+                    }) =>
+            {
+                let link = local_link
+                    .as_ref()
+                    .expect("cached transcript fallback requires a local task");
+                let mut messages = transcript_snapshot_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    cached_runtime_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    completed_transcript_messages(link),
+                );
+                attach_user_message_presentations_for_page(
+                    &mut messages,
+                    user_message_presentations(link),
+                    &[],
+                    &[],
+                    false,
+                    false,
+                );
+                if conversation_context_only {
+                    project_conversation_context_messages(&mut messages);
+                }
+                log_executor_event(
+                    "runtime work provider transcript unavailable; using persisted snapshot",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                        ("error", error),
+                    ],
+                );
+                log_runtime_transcript_finished(RuntimeTranscriptLog {
+                    started_at,
+                    local_task_id: &local_task_id,
+                    thread_id: &thread_id,
+                    source: "persisted_snapshot",
+                    refresh,
+                    running_hint,
+                    limit,
+                    before_cursor: None,
+                    after_cursor: None,
+                    message_count: messages.len(),
+                    running: local_execution_running,
+                });
+                return Ok(cached_transcript_response(
+                    link,
+                    messages,
+                    None,
+                    local_execution_running,
+                    limit,
+                    None,
+                    None,
+                ));
+            }
+            Err(error) => return Err(AppIpcError::new("codex_error", error)),
+        };
         if let Some(workspace_path) = local_link
             .as_ref()
             .map(|link| link.workspace_path.as_str())

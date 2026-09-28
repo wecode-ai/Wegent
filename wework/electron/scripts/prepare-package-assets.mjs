@@ -2,6 +2,7 @@ import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
 import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
@@ -41,14 +42,17 @@ const packageEnvironment = {
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
-const { assetDirectory: harnessRuntimeAssetDirectory } = resolveHarnessRuntimeCachePaths(
-  weworkRoot,
-  packageEnvironment
-)
+const {
+  assetDirectory: harnessRuntimeAssetDirectory,
+  materializedRoot: harnessRuntimeMaterializedRoot,
+} = resolveHarnessRuntimeCachePaths(weworkRoot, packageEnvironment)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
-    ? Promise.resolve(resolve(configuredExecutorPath))
+    ? waitForConfiguredExecutor(
+        resolve(configuredExecutorPath),
+        process.env.WEWORK_EXECUTOR_WAIT_SECONDS
+      )
     : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
   run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
@@ -59,7 +63,7 @@ const [executorPath] = await Promise.all([
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
 const runtimeCatalog = JSON.parse(
-  await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
 )
 const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
   ['core', 'workbench'].includes(runtime.role)
@@ -81,10 +85,14 @@ await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
-  await cp(corePluginSource(weworkRoot, directory), join(corePluginsRoot, corePluginTarget(directory)), {
-    recursive: true,
-    filter: source => !source.endsWith('.test.mjs'),
-  })
+  await cp(
+    corePluginSource(weworkRoot, directory),
+    join(corePluginsRoot, corePluginTarget(directory)),
+    {
+      recursive: true,
+      filter: source => !source.endsWith('.test.mjs'),
+    }
+  )
 }
 if (INTERNAL_CORE_PLUGINS.length > 0) {
   await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
@@ -211,6 +219,26 @@ async function buildExecutor(profile, target, targetDirectory) {
     CARGO_TARGET_DIR: targetDirectory,
   })
   return executorPackageBinaryPath(targetDirectory, target, profile)
+}
+
+async function waitForConfiguredExecutor(path, configuredWaitSeconds) {
+  const waitSeconds = Number(configuredWaitSeconds || 0)
+  if (!Number.isInteger(waitSeconds) || waitSeconds < 0) {
+    throw new Error(`Invalid WEWORK_EXECUTOR_WAIT_SECONDS: ${configuredWaitSeconds}`)
+  }
+
+  const deadline = Date.now() + waitSeconds * 1000
+  while (true) {
+    const file = await stat(path).catch(error => {
+      if (error?.code === 'ENOENT') return null
+      throw error
+    })
+    if (file?.isFile()) return path
+    if (Date.now() >= deadline) {
+      throw new Error(`Configured Wework executor was not available after ${waitSeconds}s: ${path}`)
+    }
+    await delay(250)
+  }
 }
 
 function run(command, args, cwd, environment = process.env) {

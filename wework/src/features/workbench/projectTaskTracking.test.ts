@@ -5,14 +5,14 @@ import { projectTaskTrackingApi, rememberProjectTaskStore } from './projectTaskT
 
 describe('projectTaskTrackingApi', () => {
   test('routes backend task ownership through the shared cloud runtime port', async () => {
-    const updateTrackedTaskStatus = vi.fn().mockResolvedValue(null)
+    const updateTrackedTaskTitle = vi.fn().mockResolvedValue(null)
     const services = {
       projectSpaceApis: {
-        local: { updateTaskTrackingStatus: vi.fn() },
+        local: { updateTaskTrackingTitle: vi.fn() },
         defaultLocation: 'cloud',
       },
       workspaceRuntimePort: {
-        updateTrackedTaskStatus,
+        updateTrackedTaskTitle,
       },
     } as unknown as WorkbenchServices
 
@@ -26,16 +26,16 @@ describe('projectTaskTrackingApi', () => {
       },
     })
 
-    await resolved?.updateTaskTrackingStatus(
+    await resolved?.updateTaskTrackingTitle(
       { deviceId: 'local-device', taskId: 'runtime-1' },
-      'running'
+      'Renamed task'
     )
 
-    expect(updateTrackedTaskStatus).toHaveBeenCalledOnce()
+    expect(updateTrackedTaskTitle).toHaveBeenCalledOnce()
   })
 
   test('routes local task ownership to the local DeliveryApi', () => {
-    const local = { updateTaskTrackingStatus: vi.fn() }
+    const local = { updateTaskTrackingTitle: vi.fn() }
     const services = {
       projectSpaceApis: {
         local,
@@ -57,7 +57,7 @@ describe('projectTaskTrackingApi', () => {
   })
 
   test('does not fall back to the cloud legacy DeliveryApi', () => {
-    const cloud = { updateTaskTrackingStatus: vi.fn() }
+    const cloud = { updateTaskTrackingTitle: vi.fn() }
     const services = {
       projectSpaceApis: {
         cloud,
@@ -76,7 +76,7 @@ describe('projectTaskTrackingApi', () => {
   })
 
   test('routes a task through the store recorded by its completed binding', () => {
-    const local = { updateTaskTrackingStatus: vi.fn() }
+    const local = { updateTaskTrackingTitle: vi.fn() }
     const services = {
       projectSpaceApis: {
         local,

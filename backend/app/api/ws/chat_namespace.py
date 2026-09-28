@@ -2282,16 +2282,6 @@ def _mark_task_and_board_cancelling(subtask_id: int) -> None:
         task_stores.task_store.update_json(
             db, task=task, payload=task_crd.model_dump(mode="json")
         )
-        from app.services.board_team_completion import (
-            request_board_team_cancellation,
-        )
-
-        request_board_team_cancellation(
-            db,
-            task_id=task.id,
-            subtask_id=subtask.id,
-            user_id=task.user_id,
-        )
 
 
 def _finalize_stuck_cancellation(subtask_id: int) -> Optional[list[int]]:

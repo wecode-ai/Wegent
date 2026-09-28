@@ -18,12 +18,13 @@ import type {
   CollaborationAgent,
   CollaborationGroup,
   CollaborationMember,
-  CollaborationRole,
+  CollaborationWorkspaceMember,
+  CollaborationWorkspaceRole,
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
 
-type MemberRole = Exclude<CollaborationRole, "Owner">;
+type MemberRole = Exclude<CollaborationWorkspaceRole, "Owner">;
 
 export function isCurrentDeviceCollaborationAgent(
   agent: CollaborationAgent,
@@ -40,8 +41,14 @@ export function isCurrentDeviceCollaborationAgent(
 
 export interface WorkspaceResourceCommands {
   searchUsers(query: string): Promise<CollaborationUser[]>;
-  addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
-  updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
+  addMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
+  updateMember(
+    userId: number,
+    role: MemberRole,
+  ): Promise<CollaborationWorkspaceMember>;
   removeMember(userId: number): Promise<void>;
   createCollaborationGroup(input: {
     name: string;
@@ -110,7 +117,6 @@ export interface WorkspaceResourceCommands {
 }
 
 export interface CollaborationGroupAgentActions {
-  createDefault?(): Promise<CollaborationAgent>;
   renderCreator?(props: {
     onClose(): void;
     onCreated(agent: CollaborationAgent): Promise<void>;
@@ -130,6 +136,7 @@ const copy = {
     owner: "所有者",
     maintainer: "管理员",
     developer: "开发者",
+    viewer: "只读成员",
     reporter: "参与者",
     noMembers: "空间中还没有成员",
     collaborationGroups: "协作小组",
@@ -146,7 +153,7 @@ const copy = {
     stages: "参考阶段",
     stagesHint: "可选",
     addStage: "添加阶段",
-    leaderAssignment: "由负责人执行",
+    leaderAssignment: "未指定执行者",
     environmentRequirements: "执行环境要求",
     environmentRequirementsHint: "按标签筛选可用环境，留空则不限制。",
     requiredEnvironmentTags: "环境标签",
@@ -169,8 +176,6 @@ const copy = {
     deleting: "删除中…",
     memberHint: "统一管理空间成员，方便空间内项目复用；项目仍可独立管理成员。",
     operationFailed: "操作失败，请稍后重试",
-    createDefaultAgent: "创建默认智能体",
-    createDefaultAgentHint: "使用当前设备的模型、技能和工具",
     createAgent: "新建智能体",
     createAgentHint: "配置一个仅属于当前协作小组的智能体",
     copyAgent: "复制其他小组的智能体",
@@ -189,6 +194,7 @@ const copy = {
     owner: "Owner",
     maintainer: "Maintainer",
     developer: "Developer",
+    viewer: "Viewer",
     reporter: "Reporter",
     noMembers: "No members in this workspace",
     collaborationGroups: "Collaboration groups",
@@ -205,7 +211,7 @@ const copy = {
     stages: "Reference stages",
     stagesHint: "Optional",
     addStage: "Add stage",
-    leaderAssignment: "Handled by leader",
+    leaderAssignment: "No assigned executor",
     environmentRequirements: "Execution requirements",
     environmentRequirementsHint:
       "Filter available environments by tag. Leave empty for no restriction.",
@@ -232,8 +238,6 @@ const copy = {
     memberHint:
       "Manage shared space members for reuse. Projects can still manage members independently.",
     operationFailed: "Operation failed. Please try again.",
-    createDefaultAgent: "Create default agent",
-    createDefaultAgentHint: "Use models, skills, and tools on this device",
     createAgent: "Create agent",
     createAgentHint: "Configure an agent owned only by this group",
     copyAgent: "Copy agent from another group",
@@ -245,10 +249,11 @@ const copy = {
 
 type ResourceCopy = (typeof copy)[keyof typeof copy];
 
-function roleLabel(role: CollaborationRole, messages: ResourceCopy) {
+function roleLabel(role: CollaborationWorkspaceRole, messages: ResourceCopy) {
   if (role === "Owner") return messages.owner;
   if (role === "Maintainer") return messages.maintainer;
   if (role === "Developer") return messages.developer;
+  if (role === "Viewer") return messages.viewer;
   return messages.reporter;
 }
 
@@ -266,7 +271,7 @@ function MemberInviteDialog({
   commands,
   onClose,
 }: {
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   messages: ResourceCopy;
   commands: WorkspaceResourceCommands;
   onClose(): void;
@@ -320,6 +325,7 @@ function MemberInviteDialog({
           >
             <option value="Maintainer">{messages.maintainer}</option>
             <option value="Developer">{messages.developer}</option>
+            <option value="Viewer">{messages.viewer}</option>
             <option value="Reporter">{messages.reporter}</option>
           </select>
         </label>
@@ -387,7 +393,7 @@ export function WorkspaceMembersConfiguration({
   commands,
 }: {
   workspace: CollaborationWorkspace;
-  members: CollaborationMember[];
+  members: CollaborationWorkspaceMember[];
   locale: "zh-CN" | "en";
   commands: WorkspaceResourceCommands;
 }) {
@@ -450,6 +456,7 @@ export function WorkspaceMembersConfiguration({
                     >
                       <option value="Maintainer">{messages.maintainer}</option>
                       <option value="Developer">{messages.developer}</option>
+                      <option value="Viewer">{messages.viewer}</option>
                       <option value="Reporter">{messages.reporter}</option>
                     </select>
                     <button
@@ -514,7 +521,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
   availableGroups?: CollaborationGroup[];
-  members: CollaborationMember[];
+  members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
   agents: CollaborationAgent[];
   locale: "zh-CN" | "en";
   currentUserId?: number;
@@ -645,23 +652,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
   };
 
   const groupAgentActions: GroupAgentAction[] = [
-    ...(agentActions?.createDefault
-      ? [
-          {
-            id: "create-default" as const,
-            label: messages.createDefaultAgent,
-            description: messages.createDefaultAgentHint,
-            onSelect: () => {
-              setAgentActionBusy(true);
-              setError(null);
-              void agentActions.createDefault!()
-                .then(addCreatedAgent)
-                .catch(() => setError(messages.operationFailed))
-                .finally(() => setAgentActionBusy(false));
-            },
-          },
-        ]
-      : []),
     ...(agentActions?.renderCreator
       ? [
           {
@@ -725,11 +715,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
     setDraftDescription(selectedGroup.description);
     setDraftInstructions(selectedGroup.instructions ?? "");
     setDraftLeader(`${selectedGroup.leader.kind}:${selectedGroup.leader.id}`);
-    setDraftMembers(selectedGroup.members.map((member) => ({ ...member })));
+    const leaderIdentity = `${selectedGroup.leader.kind}:${selectedGroup.leader.id}`;
+    setDraftMembers(
+      selectedGroup.members.map((member) => ({
+        ...member,
+        responsibility:
+          `${member.kind}:${member.id}` === leaderIdentity
+            ? ""
+            : member.responsibility,
+      })),
+    );
     setDraftStages(
       selectedGroup.stages.map((stage) => ({
         ...stage,
-        assignee: stage.assignee ? { ...stage.assignee } : null,
+        assignee:
+          stage.assignee &&
+          `${stage.assignee.kind}:${stage.assignee.id}` !== leaderIdentity
+            ? { ...stage.assignee }
+            : null,
       })),
     );
     setDraftRequiredEnvironmentTags(
@@ -744,7 +747,15 @@ export function WorkspaceCollaborationGroupsConfiguration({
   const displayName = (kind: "human" | "agent", id: string) =>
     candidates.find(
       (candidate) => candidate.kind === kind && candidate.id === id,
-    )?.name ?? id;
+    )?.name ?? "";
+  const executableDraftMembers = draftMembers.filter(
+    (member) =>
+      `${member.kind}:${member.id}` !== draftLeader &&
+      Boolean(displayName(member.kind, member.id)),
+  );
+  const executableDraftMemberIds = new Set(
+    executableDraftMembers.map((member) => `${member.kind}:${member.id}`),
+  );
 
   const updateMemberSelection = (
     candidate: (typeof candidates)[number],
@@ -914,10 +925,6 @@ export function WorkspaceCollaborationGroupsConfiguration({
                 return;
               }
               const [leaderKind, leaderId] = draftLeader.split(":");
-              const leaderMember = draftMembers.find(
-                (member) =>
-                  member.kind === leaderKind && member.id === leaderId,
-              );
               setSaving(true);
               setError(null);
               void commands
@@ -929,11 +936,24 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   leader: {
                     kind: leaderKind as "human" | "agent",
                     id: leaderId,
-                    responsibility: leaderMember?.responsibility ?? "",
+                    responsibility: "",
                   },
-                  members: draftMembers,
+                  members: draftMembers.map((member) =>
+                    member.kind === leaderKind && member.id === leaderId
+                      ? { ...member, responsibility: "" }
+                      : member,
+                  ),
                   coordinationMode: "manager",
-                  stages: draftStages,
+                  stages: draftStages.map((stage) => ({
+                    ...stage,
+                    assignee:
+                      stage.assignee &&
+                      executableDraftMemberIds.has(
+                        `${stage.assignee.kind}:${stage.assignee.id}`,
+                      )
+                        ? stage.assignee
+                        : null,
+                  })),
                   executionRequirements: {
                     requiredTags: draftRequiredEnvironmentTags,
                   },
@@ -1062,7 +1082,23 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     }
                     onLeaderChange={(candidate) => {
                       updateMemberSelection(candidate, true);
+                      setDraftMembers((current) =>
+                        current.map((member) =>
+                          member.kind === candidate.kind &&
+                          member.id === candidate.id
+                            ? { ...member, responsibility: "" }
+                            : member,
+                        ),
+                      );
                       setDraftLeader(candidate.value);
+                      setDraftStages((current) =>
+                        current.map((stage) =>
+                          stage.assignee?.kind === candidate.kind &&
+                          stage.assignee.id === candidate.id
+                            ? { ...stage, assignee: null }
+                            : stage,
+                        ),
+                      );
                     }}
                     onMemberChange={updateMemberSelection}
                     onResponsibilityChange={(candidate, responsibility) =>
@@ -1243,7 +1279,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
                               />
                               <select
                                 value={
-                                  stage.assignee
+                                  stage.assignee &&
+                                  executableDraftMemberIds.has(
+                                    `${stage.assignee.kind}:${stage.assignee.id}`,
+                                  )
                                     ? `${stage.assignee.kind}:${stage.assignee.id}`
                                     : ""
                                 }
@@ -1274,7 +1313,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                                 <option value="">
                                   {messages.leaderAssignment}
                                 </option>
-                                {draftMembers.map((member) => (
+                                {executableDraftMembers.map((member) => (
                                   <option
                                     key={`${member.kind}:${member.id}`}
                                     value={`${member.kind}:${member.id}`}
@@ -1573,29 +1612,29 @@ export function WorkspaceCollaborationGroupsConfiguration({
                               (item) => item.value === leader,
                             );
                             setCreateMembers((current) => {
-                              const next = current.filter(
-                                (member) =>
-                                  `${member.kind}:${member.id}` !==
-                                  candidate.value,
-                              );
-                              if (
-                                !previous ||
-                                next.some(
-                                  (member) =>
-                                    `${member.kind}:${member.id}` ===
-                                    previous.value,
-                                )
-                              ) {
-                                return next;
+                              const next = [...current];
+                              for (const participant of [previous, candidate]) {
+                                if (
+                                  participant &&
+                                  !next.some(
+                                    (member) =>
+                                      `${member.kind}:${member.id}` ===
+                                      participant.value,
+                                  )
+                                ) {
+                                  next.push({
+                                    kind: participant.kind,
+                                    id: participant.id,
+                                    responsibility: "",
+                                  });
+                                }
                               }
-                              return [
-                                ...next,
-                                {
-                                  kind: previous.kind,
-                                  id: previous.id,
-                                  responsibility: "",
-                                },
-                              ];
+                              return next.map((member) =>
+                                `${member.kind}:${member.id}` ===
+                                candidate.value
+                                  ? { ...member, responsibility: "" }
+                                  : member,
+                              );
                             });
                             setLeader(candidate.value);
                           }}

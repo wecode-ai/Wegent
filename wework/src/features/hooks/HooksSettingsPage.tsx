@@ -51,7 +51,11 @@ export function HooksSettingsPage() {
       ) : settings.error ? (
         <div className="rounded-lg bg-red-500/10 p-3 text-sm text-red-500">
           {settings.error}
-          <button className="ml-3" onClick={() => void settings.reload()}>
+          <button
+            className="ml-3"
+            aria-label={t('retry', '重试')}
+            onClick={() => void settings.reload()}
+          >
             <RefreshCw className="inline h-4 w-4" />
           </button>
         </div>

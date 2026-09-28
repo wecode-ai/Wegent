@@ -8,12 +8,12 @@ import {
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationGoal,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { runtimeTaskLifecycleTransitionChanged } from './RuntimeTaskLifecycleStore'
 import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 
@@ -182,21 +182,22 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const settleMatchingTask = (
       payload: LifecycleEventPayload,
       outcome: 'succeeded' | 'failed' | 'cancelled'
-    ): { address: RuntimeTaskAddress; settled: boolean } | null => {
+    ): { address: RuntimeTaskAddress; settled: boolean; terminalTurnId: string | null } | null => {
       const address = matchingLifecycleAddress(store, payload)
       if (!address) return null
       const terminalTurnId = payload.subtaskId?.trim() || null
       const activeTurnId = store.getTask(address)?.turn.id
       if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
-        return { address, settled: false }
+        return { address, settled: false, terminalTurnId }
       }
       store.turnSettled(address, terminalTurnId, outcome)
-      return { address, settled: true }
+      return { address, settled: true, terminalTurnId }
     }
 
     const reconcileTerminalTranscript = async (
       address: RuntimeTaskAddress,
-      outcome?: 'succeeded' | 'failed' | 'cancelled'
+      outcome?: 'succeeded' | 'failed' | 'cancelled',
+      terminalTurnId?: string | null
     ) => {
       const expectedSnapshot = store.getTask(address)
       try {
@@ -204,11 +205,20 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           ...address,
           limit: 50,
           refresh: true,
+          includeFullContent: true,
         })
         if (disposed) return
         const transcript = projectRuntimePaneTranscript(transcriptResponse)
-        reconcileRuntimeConversationSnapshot(address, transcript.turns)
-        if (runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))) return
+        const currentSnapshot = store.getTask(address)
+        if (didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId)) {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
+          return
+        }
+        if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
+          replaceRuntimeConversationSnapshot(address, transcript.turns)
+        } else {
+          reconcileRuntimeConversationSnapshot(address, transcript.turns)
+        }
         store.syncTranscript(address, transcript)
         if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
           store.turnSettled(address, null, outcome)
@@ -237,7 +247,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')
         if (match) {
-          void reconcileTerminalTranscript(match.address, 'succeeded')
+          void reconcileTerminalTranscript(match.address, 'succeeded', match.terminalTurnId)
         }
       },
       onChatError: payload => {
@@ -248,7 +258,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         if (match && !match.settled) {
           void reconcileTerminalTranscript(
             match.address,
-            isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
+            isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed',
+            match.terminalTurnId
           )
         }
       },
@@ -267,6 +278,16 @@ export function RuntimeTaskLifecycleStreamCoordinator({
   }, [executorClient, recoverRuntimeConnections, services.chatStream, store])
 
   return null
+}
+
+function didStartNewerTurn(
+  expected: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
+  current: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
+  terminalTurnId: string | null | undefined
+): boolean {
+  if (!current || current.turn.phase !== 'streaming') return false
+  if (terminalTurnId && current.turn.id === terminalTurnId) return false
+  return expected?.turn.phase !== 'streaming' || expected.turn.id !== current.turn.id
 }
 
 function runtimeRecoveryAddresses(

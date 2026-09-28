@@ -63,17 +63,19 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_readiness_pending": "待完成",
     "todo.execution_environment_readiness_ready": "已完成",
     "todo.issue_environment_notice_unassigned":
-      "当前项目还没有可用的执行环境。Issue 仍可创建；智能体会等待环境就绪。",
+      "当前项目还没有可用的执行环境。请先完成环境初始化，再创建 Issue。",
     "todo.issue_environment_notice_offline":
-      "项目环境已配置，但运行设备当前离线。Issue 仍可创建；智能体会等待设备上线。",
+      "项目环境已配置，但运行设备当前离线。请先启动设备，再创建 Issue。",
     "todo.issue_environment_notice_preparing":
-      "项目环境正在初始化。Issue 仍可创建；智能体会在环境就绪后执行。",
+      "项目环境正在初始化。请等待环境就绪后再创建 Issue。",
     "todo.issue_environment_notice_error":
-      "项目环境初始化失败。Issue 仍可创建；请修复环境后再启动智能体执行。",
+      "项目环境初始化失败。请修复并重新初始化环境后再创建 Issue。",
     "todo.issue_environment_notice_unknown":
-      "暂时无法检查项目执行环境。Issue 仍可创建。",
+      "暂时无法检查项目执行环境。请重新检查后再创建 Issue。",
     "todo.issue_environment_notice_uninitialized":
-      "项目运行设备尚未完成环境初始化。Issue 仍可创建；智能体会等待环境就绪。",
+      "项目运行设备尚未完成环境初始化。请先初始化环境，再创建 Issue。",
+    "todo.issue_environment_create_blocked":
+      "请先完成项目执行环境初始化，再创建 Issue。",
     "todo.issue_environment_notice_contact_manager":
       "如需初始化，请联系项目 Owner 或 Maintainer。",
     "todo.issue_environment_notice_configure": "去配置执行环境",
@@ -161,17 +163,19 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_readiness_pending": "Not completed",
     "todo.execution_environment_readiness_ready": "Completed",
     "todo.issue_environment_notice_unassigned":
-      "This project has no available execution environment yet. You can still create the Issue; Agent work will wait for the environment.",
+      "This project has no available execution environment yet. Initialize it before creating an Issue.",
     "todo.issue_environment_notice_offline":
-      "The project environment is configured, but its runtime device is offline. You can still create the Issue; Agent work will wait for the device.",
+      "The project environment is configured, but its runtime device is offline. Start the device before creating an Issue.",
     "todo.issue_environment_notice_preparing":
-      "The project environment is being initialized. You can still create the Issue; Agent work will start when it is ready.",
+      "The project environment is being initialized. Wait until it is ready before creating an Issue.",
     "todo.issue_environment_notice_error":
-      "Project environment initialization failed. You can still create the Issue; repair the environment before starting Agent work.",
+      "Project environment initialization failed. Repair and initialize it before creating an Issue.",
     "todo.issue_environment_notice_unknown":
-      "The project execution environment could not be checked. You can still create the Issue.",
+      "The project execution environment could not be checked. Check again before creating an Issue.",
     "todo.issue_environment_notice_uninitialized":
-      "The project's runtime device has not finished environment initialization. You can still create the Issue; Agent work will wait for it.",
+      "The project's runtime device has not finished initialization. Initialize it before creating an Issue.",
+    "todo.issue_environment_create_blocked":
+      "Initialize the project execution environment before creating an Issue.",
     "todo.issue_environment_notice_contact_manager":
       "Contact a project Owner or Maintainer to initialize it.",
     "todo.issue_environment_notice_configure": "Configure environment",

@@ -24,6 +24,9 @@ from app.services.adapters.public_model import (
     is_public_model_visible,
     with_public_model_visibility,
 )
+from app.services.model_embedding_dimension import (
+    validate_embedding_dimension_declaration,
+)
 
 router = APIRouter()
 
@@ -125,6 +128,12 @@ async def create_public_model(
             detail=f"Public model '{model_data.name}' already exists in namespace '{model_data.namespace}'",
         )
 
+    validate_embedding_dimension_declaration(
+        spec=model_data.model_json.get("spec") or {},
+        stored_spec=None,
+        name=model_data.name,
+    )
+
     is_visible = (
         model_data.is_visible
         if model_data.is_visible is not None
@@ -166,6 +175,8 @@ async def update_public_model(
             detail=f"Public model with id {model_id} not found",
         )
 
+    stored_spec = model.json.get("spec") if isinstance(model.json, dict) else None
+
     # Check name uniqueness if being changed
     if model_data.name and model_data.name != model.name:
         namespace = model_data.namespace or model.namespace
@@ -191,6 +202,11 @@ async def update_public_model(
     if model_data.namespace is not None:
         model.namespace = model_data.namespace
     if model_data.model_json is not None:
+        validate_embedding_dimension_declaration(
+            spec=model_data.model_json.get("spec") or {},
+            stored_spec=stored_spec,
+            name=model_data.name or model.name,
+        )
         json_visibility = explicit_public_model_visibility(model_data.model_json)
         updated_visibility = (
             model_data.is_visible

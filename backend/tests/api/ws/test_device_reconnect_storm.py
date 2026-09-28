@@ -425,10 +425,16 @@ async def test_cloud_device_register_matches_cloud_device(monkeypatch):
 
     assert result == {"success": True, "device_id": "standalone-admin-device"}
     match_cloud_device.assert_awaited_once_with(
-        7, "198.18.0.1", "standalone-admin-device", None
+        7,
+        "198.18.0.1",
+        "standalone-admin-device",
+        None,
+        "198.18.0.1",
+        17888,
     )
     run_sync_in_executor.assert_not_awaited()
     set_device_online.assert_awaited_once()
+    assert set_device_online.await_args.kwargs["runtime_transfer_port"] == 17888
 
 
 def test_connection_rate_limit_tracks_attempt_window():

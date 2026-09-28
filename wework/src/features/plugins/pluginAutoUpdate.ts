@@ -210,7 +210,11 @@ export async function runCurrentDevicePluginAutoUpdate({
         deviceSyncPerformed = true
         return syncDevice(deviceId)
       },
-      syncWhenNoUpdates: Boolean(marketplace && marketplaceNeedsDeviceSync(marketplace.items)),
+      syncWhenNoUpdates: Boolean(
+        marketplace &&
+        (marketplaceNeedsDeviceSync(marketplace.items) ||
+          marketplace.items.some(marketplaceItemNeedsPluginAutoUpdate))
+      ),
     })
     return { deviceId, ...updateResult, deviceSyncPerformed }
   } finally {

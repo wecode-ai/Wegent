@@ -28,6 +28,7 @@ import type { DesktopControlCommand } from '@/extensions/desktop-control-contrac
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessagesForLogicalAddress,
@@ -1932,8 +1933,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return ''
     }
-    case 'storeLocalProxyUrl':
-      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'storeLocalProxyUrl': {
+      const config = saveLocalProxyUrl(command.value?.trim() ?? '')
+      await flushDesktopLocalStoragePersistence()
+      return JSON.stringify(config)
+    }
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalStorageItem': {
@@ -1949,7 +1953,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return window.location.origin
     case 'restartCoreDsh':
       await flushDesktopLocalStoragePersistence()
-      await invokeDesktopHost('runtime.restartCoreDsh')
       return ''
     case 'setEmbeddedBrowserLocalStorageItem':
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
@@ -2706,6 +2709,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerPluginInventoryDiagnostics': {
+      const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
+      const installed =
+        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
+        peekLocalCodexPluginsReadState()
+      return JSON.stringify({
+        composerApps: getComposerApps().map(app => ({
+          id: app.id,
+          isAccessible: app.isAccessible,
+          isEnabled: app.isEnabled,
+          name: app.name,
+          pluginKey: app.pluginKey ?? null,
+          source: app.source,
+        })),
+        installedPlugins: (installed?.installedPlugins ?? []).map(plugin => ({
+          enabled: plugin.spec.enabled,
+          installState: plugin.spec.installState,
+          marketplace: plugin.spec.source.marketplace,
+          name: plugin.metadata.name,
+          pluginKey: plugin.spec.source.pluginKey,
+          skillCount: plugin.spec.components.skills.length,
+        })),
+      })
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
@@ -2916,6 +2943,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           await invokeDesktopHost('e2e.hideMainWindow')
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
+        } else if (command.action === 'restartCoreDsh') {
+          // A Core DSH restart replaces this renderer, so acknowledge the
+          // command before starting it. The scenario verifies the replacement
+          // through the next control-client ready event.
+          await invokeDesktopHost('runtime.restartCoreDsh')
+          return
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
           return

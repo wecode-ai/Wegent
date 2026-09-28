@@ -35,11 +35,13 @@ def validate_wework_url(value: str) -> str:
         raise ValueError("Invalid Wework destination identifier")
     if url.netloc == "tasks" and len(parts) == 2:
         return value
-    if (
-        url.netloc == "boards"
-        and len(parts) in {1, 3}
-        and re.fullmatch(r"[1-9][0-9]*", parts[0])
-        and (len(parts) == 1 or url.path.split("/")[2] == "issues")
-    ):
-        return value
+    if url.netloc == "boards" and re.fullmatch(r"[1-9][0-9]*", parts[0]):
+        # /{projectId}; /{projectId}/issues/{itemId}; and the same item followed
+        # by /comments/{commentId} when the link targets one comment.
+        if len(parts) == 1:
+            return value
+        if len(parts) == 3 and parts[1] == "issues":
+            return value
+        if len(parts) == 5 and parts[1] == "issues" and parts[3] == "comments":
+            return value
     raise ValueError("Unsupported Wework destination")

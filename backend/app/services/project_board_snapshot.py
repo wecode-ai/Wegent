@@ -70,7 +70,7 @@ class ProjectBoardSnapshotService:
     ) -> ProjectBoardSnapshotResponse:
         access = cloud_project_service.access(db, project_id, user_id)
         _, items = self.list_item_views(db, project_id, user_id)
-        if access.is_public_visitor:
+        if access.is_viewer:
             return ProjectBoardSnapshotResponse(
                 items=items,
                 task_bindings=[],

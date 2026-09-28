@@ -1,8 +1,10 @@
-import { IssueThreadReplyComposer } from '@wegent/collaboration'
+import { IssueThreadReplyComposer, type CollaborationTranslate } from '@wegent/collaboration'
+import type { ComposerExternalMentionCandidate } from '@wegent/collaboration/composer/composerAutocompleteInputTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import type { Attachment } from '@/types/api'
+import type { ProjectChatMention } from '@/api/backend/projectChatSocket'
 
 export interface CardCommentSendResult {
   ok: boolean
@@ -15,7 +17,13 @@ interface CardCommentComposerProps {
   disabled: boolean
   placeholder: string
   aiError?: string | null
-  onSend: (text: string, attachments: Attachment[]) => Promise<CardCommentSendResult>
+  mentionCandidates?: ComposerExternalMentionCandidate[]
+  translate: CollaborationTranslate
+  onSend: (
+    text: string,
+    mentions: ProjectChatMention[],
+    attachments: Attachment[]
+  ) => Promise<CardCommentSendResult>
 }
 
 export function CardCommentComposer({
@@ -24,6 +32,8 @@ export function CardCommentComposer({
   disabled,
   placeholder,
   aiError,
+  mentionCandidates = [],
+  translate,
   onSend,
 }: CardCommentComposerProps) {
   const { t } = useTranslation('common')
@@ -39,7 +49,9 @@ export function CardCommentComposer({
       disabled={disabled}
       attachments={attachmentSelection}
       aiError={aiError}
-      onSend={text => onSend(text, attachmentSelection.attachments)}
+      mentionCandidates={mentionCandidates}
+      translate={translate}
+      onSend={(text, mentions) => onSend(text, mentions, attachmentSelection.attachments)}
       labels={{
         placeholder,
         send: t('workbench.send_message'),

@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { ChromeTitlebar } from './ChromeTitlebar'
 
@@ -54,6 +54,10 @@ describe('ChromeTitlebar', () => {
     enableElectron()
     mockUserAgent('Mozilla/5.0')
     window.history.replaceState({}, '', '/')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   test('renders the document tab strip and titlebar slots', () => {

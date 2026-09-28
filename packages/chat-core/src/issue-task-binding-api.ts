@@ -12,7 +12,13 @@ export function createIssueTaskBindingApi(client: BindingHttpClient) {
       itemId: string,
       task: RuntimeTaskAddress,
       taskTitle?: string | null,
-      workflowNodeId?: string | null
+      workflowNodeId?: string | null,
+      dispatch?: {
+        humanAssignmentId: string
+        dispatchId: string
+        dispatchRoundId: string
+        assignmentId: string
+      } | null
     ): Promise<void> {
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
@@ -20,6 +26,7 @@ export function createIssueTaskBindingApi(client: BindingHttpClient) {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
+        ...(dispatch ?? {}),
         ...(modelSelection ? { modelSelection } : {}),
       })
     },

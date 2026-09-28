@@ -189,6 +189,25 @@ describe('loadTaskChangeRequests', () => {
     expect(executeCommand).toHaveBeenCalledTimes(2)
   })
 
+  it('returns a structured unavailable state when the hosting CLI is missing', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      stderr: 'gh: command not found',
+    })
+
+    const snapshots = await loadTaskChangeRequests({ executeCommand }, targets)
+
+    expect(executeCommand).toHaveBeenCalledTimes(1)
+    expect(snapshots).toHaveLength(2)
+    expect(snapshots[0]).toMatchObject({
+      provider: 'github',
+      lookupState: 'unavailable',
+      changeRequest: null,
+      error: 'gh: command not found',
+    })
+  })
+
   it('loads check conclusions for merged pull requests', async () => {
     const executeCommand = vi.fn(async (_deviceId: string, request: { command_key: string }) => {
       if (request.command_key === 'git_github_pull_requests_batch') {

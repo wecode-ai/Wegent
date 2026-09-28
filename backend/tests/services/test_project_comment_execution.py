@@ -192,7 +192,7 @@ async def test_old_thread_survives_reassignment(scenario):
     "boundary",
     [
         "outsider",
-        "reporter",
+        "viewer",
         "other_author",
         "other_issue",
         "binding",
@@ -207,8 +207,8 @@ async def test_rejects_invalid_collaboration_without_runtime_dispatch(
     request = comment(s)
     if boundary == "outsider":
         s.db.delete(s.grant)
-    elif boundary == "reporter":
-        s.grant.role = BaseRole.Reporter.value
+    elif boundary == "viewer":
+        s.grant.role = BaseRole.Viewer.value
     elif boundary == "other_author":
         s.db.query(ProjectChatMessage).filter_by(
             message_id=request.trigger_message_id
@@ -434,7 +434,7 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Reporter])
+@pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
 async def test_member_reads_bound_transcript_using_original_owner(scenario, role):
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript

@@ -1,4 +1,4 @@
-import { useIssueMentionGroups } from './useIssueMentionGroups'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 import { useEffect, useMemo, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
@@ -25,6 +25,7 @@ import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
+import type { IssueMentionOption } from './issueCommentMentions'
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { issueCommentBody } from './useIssueCommentAttachments'
 
@@ -64,7 +65,7 @@ export function BrowserIssueCommentComposer({
   onCommentPersisted?(message: ProjectChatMessage): void
   onTaskUpdated?(issue: CollaborationIssue): void
 }) {
-  const mentionGroups = useIssueMentionGroups(members, agents, t)
+  const mentionCandidates = useIssueMentionCandidates(members, agents, t)
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && client.executeTaskComment
@@ -101,9 +102,11 @@ export function BrowserIssueCommentComposer({
     [runtime]
   )
   const setOption = (id: string, value: string) =>
-    draft.setSelection({ model: selectedModel, options: { ...options, [id]: value } })
-  async function submit() {
-    const text = draft.draft.trim()
+    draft.setSelection({
+      model: selectedModel,
+      options: { ...options, [id]: value },
+    })
+  async function submit(text: string, mentions: IssueMentionOption[]) {
     if (
       !canComment ||
       loading ||
@@ -145,11 +148,14 @@ export function BrowserIssueCommentComposer({
         text: issueCommentBody(text, imported),
         replyToMessageId: null,
         model: serverExecution ? null : (model?.name ?? null),
-        mentions: serverExecution
-          ? commentAgentMentions(text, agents)
-          : agent
-            ? [{ type: 'agent', id: agent.id, label: agent.name }]
-            : [],
+        mentions: [
+          ...(serverExecution
+            ? commentAgentMentions(text, agents)
+            : agent
+              ? [{ type: 'agent' as const, id: agent.id, label: agent.name }]
+              : []),
+          ...mentions.filter(mention => mention.type === 'user'),
+        ],
       })
       onMessages([message])
       onCommentPersisted?.(message)
@@ -210,10 +216,11 @@ export function BrowserIssueCommentComposer({
         </div>
       )}
       <IssueMainCommentComposer
-        mentionGroups={mentionGroups}
+        mentionCandidates={mentionCandidates}
+        translate={t}
         value={draft.draft}
         onChange={draft.setDraft}
-        onSubmit={() => void submit()}
+        onSubmit={(body, mentions) => void submit(body, mentions)}
         disabled={!canComment || loading}
         sending={draft.busy}
         uploading={!draft.attachments.isAttachmentReadyToSend}
@@ -231,7 +238,6 @@ export function BrowserIssueCommentComposer({
           settings: 'collaboration-comment-settings-toggle',
           file: 'collaboration-comment-attach-input',
           attach: 'collaboration-comment-attach',
-          mentions: 'collaboration-issue-mention-popup',
         }}
         onSelectFiles={canAttach ? files => draft.attachments.handleFileSelect(files) : undefined}
         attachments={

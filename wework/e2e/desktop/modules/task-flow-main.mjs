@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -103,6 +104,7 @@ import {
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyComposerPluginNetworkIsolation,
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
@@ -189,6 +191,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
   MESSAGE_EDIT_ONLY,
@@ -282,6 +286,7 @@ import {
 } from './task-state-flows.mjs'
 
 import {
+  verifyAttachmentComposerClearsOnSubmit,
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
   verifyCrossProviderSwitchRetry,
@@ -321,6 +326,7 @@ const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
 const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
 const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
+const GPT_6_SOL_MODEL_ID = 'gpt-6-sol'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
@@ -841,6 +847,20 @@ async function verifyLocalModelRouting({
     selectedModelLabel,
     'The model selector did not expose its selected model before refresh'
   )
+
+  setPhase('model-catalog-gpt-6-sol')
+  const gpt6SolMenu = await ensureModelOptionVisible(control, GPT_6_SOL_MODEL_ID, modelSelector)
+  assert.ok(
+    gpt6SolMenu.testIds.includes(`model-option-${GPT_6_SOL_MODEL_ID}`),
+    'The Codex model selector did not expose GPT-6 Sol'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  setPhase('model-catalog-refresh')
   await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
   const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.ok(
@@ -1179,7 +1199,8 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
-        databasePath: cloudEnvironment.databasePath,
+        executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
         setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
@@ -1214,7 +1235,9 @@ async function main() {
         }`,
         'openai-responses',
         desktopScenario?.modelProviderConfigToml,
-        desktopScenario?.modelProviderAuthToml
+        desktopScenario?.modelProviderAuthToml,
+        desktopScenario?.modelProviderId,
+        desktopScenario?.modelId
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1336,10 +1359,14 @@ async function main() {
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: desktopScenario?.electronLaunchArguments ?? [],
     })
+    const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
+    if (desktopScenario?.launchWorkingDirectory) {
+      await mkdir(launchWorkingDirectory, { recursive: true })
+    }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
-        cwd: weworkDir,
+        cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
@@ -1555,22 +1582,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (DESKTOP_SEGMENT === 'project-event-sources') {
-      phase = 'project-event-sources-scenario'
-      assert.ok(
-        desktopScenario,
-        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
-      )
-      await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -1834,6 +1845,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
         appBundlePath,
@@ -1925,6 +1944,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
       console.log(`Wework desktop worktree-status E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1950,6 +1971,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
           restartDesktopApp,
           userDataDirectory: electronUserDataDirectory,
+        })
+      }
+      if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
+        phase = 'plugin-composer-network-isolation'
+        await verifyComposerPluginNetworkIsolation({
+          blockingNetworkProxy,
+          codexHome,
+          control,
+          marketplacePath: marketplacePluginPath,
+          restartDesktopApp,
+          workspacePath,
         })
       }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
@@ -2272,6 +2304,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
         restartDesktopApp,
       })
+      phase = 'pending-task-across-tabs'
+      await verifyPendingTaskAcrossTabs({ control, workspacePath })
     }
 
     phase = 'secondary-project-create'
@@ -2743,6 +2777,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
+        })
+        phase = 'late-bound-project-space-attachment-tools'
+        control.setScenario('late_bound_project_space')
+        const lateBoundRequestCount =
+          control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
+        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        await control.awaitScenarioRequestCount(
+          'late_bound_project_space',
+          lateBoundRequestCount + 4
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         await writeFile(
           join(resultDir, 'model-requests.json'),
@@ -4258,6 +4305,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
 
       phase = 'attachment-only-sidebar'
+      await verifyAttachmentComposerClearsOnSubmit({
+        composerSelector,
+        control,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({

@@ -111,15 +111,17 @@ executor 二进制不包含 Claude Code，因此通过 npm、基础镜像或其�
 运行设备镜像时通过环境变量传入 executor 连接信息，不要把 token 写入镜像：
 
 ```bash
+DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 docker run -d --platform linux/amd64 \
   --name wegent-device \
-  -p 17888:17888 \
+  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
+  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \
   ghcr.io/wecode-ai/wegent-device:<version>
 ```
 
-`WEGENT_BACKEND_URL` 是 Executor 使用的 HTTP API 地址。17888 端口提供带 token 校验的设备会话网关；需要确保根据 `client_origin` 生成的地址能被用户浏览器访问。可以通过 Dockerfile 的构建参数选择公开的软件包和系统镜像源，无需修改 Dockerfile。
+`WEGENT_BACKEND_URL` 是 Executor 使用的 HTTP API 地址。`DEVICE_SESSION_GATEWAY_PORT` 控制带 token 校验的设备会话网关端口，默认值为 `17888`；宿主机映射端口和容器端口必须保持一致。Backend 会用它为设备观测到的地址拼出浏览器访问地址，因此该端口需要能被用户浏览器访问。可以通过 Dockerfile 的构建参数选择公开的软件包和系统镜像源，无需修改 Dockerfile。
 
 交互会话功能可以在容器启动时独立关闭，两个开关默认均为 `true`：
 
@@ -169,6 +171,7 @@ Backend 会在 Cloud/Remote 设备首次注册时固定 `runtimeInstanceId`。�
 生成的命令会包含类似参数：
 
 ```bash
+DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
@@ -180,13 +183,13 @@ docker run -d \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN=<generated-api-key> \
-  -e DEVICE_PUBLIC_BASE_URL=http://device.example.com:17888 \
-  -p 17888:17888 \
+  -e DEVICE_SESSION_GATEWAY_PORT="$DEVICE_SESSION_GATEWAY_PORT" \
+  -p "$DEVICE_SESSION_GATEWAY_PORT:$DEVICE_SESSION_GATEWAY_PORT" \
   -v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor \
   ghcr.io/wecode-ai/wegent-device:latest
 ```
 
-生成接口继续兼容可选的 `client_origin`，并依次使用它、请求来源或 Backend 地址生成 `DEVICE_PUBLIC_BASE_URL`。`WEGENT_AUTH_TOKEN` 每次生成命令时都会新建一把 remote device API Key，只出现在生成命令中。
+启动命令将 `DEVICE_SESSION_GATEWAY_PORT` 默认设置为 `17888`；执行命令前可以导出其他端口值，命令会同时更新容器环境变量和端口映射。IDE 会话的浏览器访问地址由 Backend 生成：Backend 使用它观测到的设备地址加上 Executor 上报的网关端口，因此设备需要能在不隐藏自身地址的前提下访问 Backend。观测不到可用地址时，可以在命令中额外加上 `-e RUNTIME_TRANSFER_HOST=<设备可达地址>` 手动指定。`WEGENT_AUTH_TOKEN` 每次生成命令时都会新建一把 remote device API Key，只出现在生成命令中。
 
 `-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` 会把 Docker 命名卷 `wegent-remote-device-home` 挂载到 Executor home。该卷持久化工作区、下载的能力、配置和运行数据，使容器删除并按同名命令重建后仍能复用这些数据。`WEGENT_EXECUTOR_HOME_ID` 将该卷固定到逻辑设备；`WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` 表示这条启动命令已经提供并验证稳定卷、固定绝对挂载路径和单写约束，Executor 才会向 Wework 开放 Remote Worktree。不要在临时目录、匿名卷或未完成持久化验收的部署中设置该值。`DEVICE_ID` 和连接 token 来自启动命令的环境变量，不由该卷保存。为避免卷中旧二进制阻碍升级，容器每次启动都会用当前镜像内的 Executor 刷新卷中的 `bin/wegent-executor`，其他数据保持不变。删除容器不会删除命名卷；只有显式执行 `docker volume rm wegent-remote-device-home` 才会清除它。
 
@@ -201,9 +204,9 @@ WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> 
 
 如需同时验收镜像升级，可再设置 `WEGENT_REMOTE_DEVICE_REBUILD_IMAGE=<new-version-or-digest>`。脚本会使用独立命名卷完成首个容器启动、真实 Executor Runtime Instance 初始化、Worktree capability 持久化证明、真实 Executor Worktree prepare/list/delete RPC、第二写入者拒绝、容器删除、镜像重建、同卷身份与 Runtime Instance 校验、二进制刷新、错误设备身份拒绝、再次恢复验证和清理。没有 Docker CLI、daemon 不可用或任一不变量失败时，脚本都会以非零状态退出，不会跳过。诊断时可设置 `WEGENT_ACCEPTANCE_KEEP_ARTIFACTS=1` 保留容器和卷。
 
-目标主机的内网防火墙需要允许浏览器访问 17888，但不能把该端口开放到公网。17888 只提供带短期会话 token 的 IDE 访问；session gateway 校验 token 后设置 HttpOnly Cookie，并从重定向 URL 中移除 token，不提供匿名 code-server 入口。
+目标主机的内网防火墙需要允许浏览器访问配置的 session gateway 端口（默认 `17888`），但不能把该端口开放到公网。该端口只提供带短期会话 token 的 IDE 访问；session gateway 校验 token 后设置 HttpOnly Cookie，并从重定向 URL 中移除 token，不提供匿名 code-server 入口。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过自动探测地址对应的 session gateway 访问，因此探测到的设备 IP 必须能从用户浏览器访问。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过设备上报的 session gateway 端口访问，Backend 负责补上浏览器可达的地址，因此 Backend 观测到的设备地址必须能从用户浏览器访问。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 只监听容器回环地址并使用 `auth: none`，session gateway 在外层校验短期 token，浏览器不会直接访问 code-server。

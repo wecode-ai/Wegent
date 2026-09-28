@@ -7,6 +7,41 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn inject_session_headers_adds_plain_header_for_direct_providers() {
+    let mut headers = vec![("user".to_owned(), "alice".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(!headers
+        .iter()
+        .any(|(key, _)| key == "X-Wegent-Upstream-Header-wecode-session-id"));
+}
+
+#[test]
+fn inject_session_headers_adds_upstream_variant_for_gateway() {
+    let mut headers = vec![("X-Wegent-Model-Type".to_owned(), "public".to_owned())];
+    inject_session_headers(&mut headers, "123");
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
+    assert!(headers
+        .iter()
+        .any(|(key, value)| key == "X-Wegent-Upstream-Header-wecode-session-id" && value == "123"));
+}
+
+#[test]
+fn inject_session_headers_skips_empty_task_id_and_overrides_stale_value() {
+    let mut headers = vec![("wecode-session-id".to_owned(), "explicit".to_owned())];
+    inject_session_headers(&mut headers, "");
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "explicit");
+    inject_session_headers(&mut headers, "123");
+    assert_eq!(headers.len(), 1);
+    assert_eq!(headers[0].1, "123");
+}
+
+#[test]
 fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     assert_eq!(
         windows_codex_router_auth_script(),
@@ -514,6 +549,17 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     assert!(config
         .config_overrides
         .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn codex_app_server_uses_codex_home_as_working_directory() {
+    let codex_home = unique_test_path("wework-codex-app-server-cwd");
+    let command = codex_app_server_command("codex", &codex_home, &CodexLaunchConfig::default());
+
+    assert_eq!(
+        command.as_std().get_current_dir(),
+        Some(codex_home.as_path())
+    );
 }
 
 #[test]
@@ -1664,6 +1710,43 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
 }
 
 #[test]
+fn built_in_provider_does_not_emit_reserved_model_provider_overrides() {
+    let _lock = crate::test_env::lock();
+    let request = ExecutionRequest {
+        task_id: "project-ai-task".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-6-luna",
+            "model_provider": "openai",
+            "default_headers": {
+                "X-Custom-Header": "custom-value"
+            },
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": true,
+                    "configured": true
+                }
+            }
+        }),
+        extra: json!({
+            "project_id": "project-1"
+        })
+        .as_object()
+        .expect("extra must be an object")
+        .clone(),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|value| value.starts_with("model_providers.openai.")));
+}
+
+#[test]
 fn configured_inference_provider_reads_the_unmodified_user_config() {
     let root = unique_test_path("configured-inference-provider");
     fs::create_dir_all(&root).expect("test directory should be created");
@@ -1825,6 +1908,43 @@ fn configured_inference_provider_rejects_the_internal_catalog_provider() {
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn header_overrides_do_not_redefine_builtin_codex_providers() {
+    for provider in ["openai", "amazon-bedrock", "ollama", "lmstudio"] {
+        assert!(
+            header_overrides(
+                provider,
+                Some(&json!({"X-Wegent-Test": "test-value"})),
+                Some("42"),
+                "task-1",
+            )
+            .is_empty(),
+            "built-in provider {provider} must not receive model_providers overrides"
+        );
+    }
+}
+
+#[test]
+fn header_overrides_preserve_custom_provider_headers() {
+    let overrides = header_overrides(
+        "openai-custom",
+        Some(&json!({"X-Wegent-Test": "test-value"})),
+        Some("42"),
+        "task-1",
+    );
+
+    assert!(overrides
+        .iter()
+        .any(|value| value
+            == "model_providers.openai-custom.http_headers.X-Wegent-Test=\"test-value\""));
+    assert!(overrides
+        .iter()
+        .any(|value| value == "model_providers.openai-custom.http_headers.wecode-project=\"42\""));
+    assert!(overrides.iter().any(|value| {
+        value == "model_providers.openai-custom.http_headers.wecode-session-id=\"task-1\""
+    }));
 }
 
 #[test]
@@ -3054,6 +3174,28 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 }
 
 #[test]
+fn single_collaboration_mode_disables_codex_native_subagents() {
+    let mut request = ExecutionRequest {
+        model_config: json!({"model_id": "gpt-5.5-codex"}),
+        ..ExecutionRequest::default()
+    };
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2=false".to_owned()));
+    assert!(codex_collaboration_mode_payload(&request, &CodexLaunchConfig::default()).is_none());
+}
+
+#[test]
 fn turn_start_params_includes_client_user_message_id() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -4238,6 +4380,34 @@ fn codex_thread_binds_project_space_through_context_grant() {
     assert!(!serialized.contains("runtime-task-1"));
     assert!(!serialized.contains("space-1"));
     assert!(!serialized.contains("issue-1"));
+}
+
+#[test]
+fn codex_thread_exposes_project_space_to_issue_automation_executor() {
+    let mut request = ExecutionRequest {
+        task_id: "runtime-executor-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "origin".to_owned(),
+        json!({
+            "type": "project_automation",
+            "cloudProjectId": "space-1",
+            "loopItemId": "issue-1",
+            "run_id": "run-1",
+        }),
+    );
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
+    );
 }
 
 #[test]

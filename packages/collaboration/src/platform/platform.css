@@ -2872,6 +2872,62 @@
   background: #fff;
 }
 
+.collaboration-group-roster {
+  display: grid;
+  gap: 8px;
+}
+
+.collaboration-group-roster-item {
+  min-width: 0;
+}
+
+.collaboration-group-roster-heading {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.collaboration-group-roster-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-group-roster-identity > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-group-roster-identity > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.collaboration-group-roster-identity > span > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-group-roster-identity > span > small {
+  overflow: hidden;
+  color: rgb(var(--color-text-tertiary));
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-group-person-card > .collaboration-group-person-responsibility {
+  margin-top: 8px;
+}
+
 .collaboration-group-people-editor.is-compact .collaboration-group-person-card {
   padding: 8px 10px;
 }
@@ -2963,18 +3019,6 @@
   background: #fff;
   font: inherit;
   font-size: 12px;
-}
-
-.collaboration-group-person-toolbar {
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.collaboration-group-person-card[data-leader="true"]
-  .collaboration-group-person-toolbar {
-  grid-template-columns: minmax(140px, 1fr) auto;
 }
 
 .collaboration-group-person-actions {
@@ -3161,15 +3205,8 @@
 }
 
 @media (max-width: 767px) {
-  .collaboration-group-person-toolbar,
-  .collaboration-group-person-card[data-leader="true"]
-    .collaboration-group-person-toolbar {
+  .collaboration-group-roster-heading {
     grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .collaboration-group-person-responsibility {
-    grid-column: 1 / -1;
-    grid-row: 2;
   }
 
   .collaboration-platform-app .collaboration-group-people-action {

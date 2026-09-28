@@ -4258,6 +4258,7 @@ def _build_direct_wework_runtime_execution_request(
     )
     model_config = dict(request.runtime_model_config or runtime_model_config or {})
     first_bot = request.bot[0] if request.bot else {}
+    origin = request.origin if isinstance(request.origin, dict) else {}
     execution_request = ExecutionRequest(
         task_id=task_id,
         subtask_id=f"{task_id}-assistant",
@@ -4299,6 +4300,16 @@ def _build_direct_wework_runtime_execution_request(
             subtask_id=0,
             user_id=user.id,
             user_name=user.user_name,
+            dispatch_id=str(origin.get("dispatchId") or origin.get("dispatch_id") or "")
+            or None,
+            dispatch_role=str(
+                origin.get("dispatchRole") or origin.get("dispatch_role") or ""
+            )
+            or None,
+            manager_agent_id=str(
+                origin.get("managerAgentId") or origin.get("manager_agent_id") or ""
+            )
+            or None,
         ),
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,

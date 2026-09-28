@@ -63,14 +63,14 @@ def _member(
     resource_type: str,
     resource_id: int | str,
     *,
-    role: str = "Reporter",
+    role: str | None = None,
     status: str = "approved",
 ) -> ResourceMember:
     member = ResourceMember.create(
         resource_type=resource_type,
         resource_id=int(resource_id),
         entity_id=str(user.id),
-        role=role,
+        role=role or ("Reporter" if resource_type == "Workspace" else "Viewer"),
         status=status,
     )
     db.add(member)
@@ -119,9 +119,7 @@ def test_visible_projects_include_parent_without_expanding_workspace_permissions
                 "public_id": workspace.public_id,
                 "name": workspace.name,
             }
-            assert item["access_role"] == (
-                "RestrictedAnalyst" if source == "public" else "Reporter"
-            )
+            assert item["access_role"] == "Viewer"
 
     detail = test_client.get(f"/api/v1/cloud-projects/{project.id}", headers=headers)
     assert detail.status_code == 200, detail.text
@@ -182,10 +180,19 @@ def test_overlapping_grants_deduplicate_and_preserve_project_role(
     assert items[0].access_role.value == "Maintainer"
     test_db.delete(explicit)
     test_db.commit()
-    assert list_project_responses(test_db, viewer)[0].access_role.value == "Reporter"
+    assert list_project_responses(test_db, viewer)[0].access_role.value == "Viewer"
     kind = test_db.get(Kind, workspace.id)
     kind.is_active = False
-    project.metadata_json = {**project.metadata_json, "visibility": "private"}
+    public_grant = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "CloudProject",
+            ResourceMember.resource_id == project.id,
+            ResourceMember.entity_type == "authenticated_users",
+        )
+        .one()
+    )
+    test_db.delete(public_grant)
     test_db.commit()
     assert list_project_responses(test_db, viewer) == []
 
@@ -213,7 +220,7 @@ def _selects(db: Session) -> Generator[list[str], None, None]:
         event.remove(engine, "before_cursor_execute", record)
 
 
-def test_project_list_uses_two_queries_as_project_count_grows(
+def test_project_list_uses_three_queries_as_project_count_grows(
     test_db: Session,
     test_user: User,
     viewer: User,
@@ -228,7 +235,7 @@ def test_project_list_uses_two_queries_as_project_count_grows(
         with _selects(test_db) as statements:
             items = list_project_responses(test_db, viewer)
         assert len(items) == size
-        assert len(statements) == 2
+        assert len(statements) == 3
 
 
 def test_workspace_list_batches_counts_and_keeps_empty_spaces(

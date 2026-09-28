@@ -125,7 +125,7 @@ function deferred<T>() {
 
 function project(
   id: string,
-  visibility: "private" | "public_restricted" | "public",
+  visibility: "private" | "public",
   version = 1,
 ): ProjectManageProject {
   return {
@@ -271,7 +271,7 @@ describe("ProjectManageView project scope", () => {
       user_id: 2,
       user_name: "member",
       email: null,
-      role: "Reporter" as const,
+      role: "Viewer" as const,
       capability_description: "",
     };
     const user = {
@@ -302,14 +302,14 @@ describe("ProjectManageView project scope", () => {
       tree = renderView(api, host, currentProject, vi.fn());
 
       findByTestId(tree, "cloud-member-role").props.onChange({
-        target: { value: "Reporter" },
+        target: { value: "Viewer" },
       });
       tree = renderView(api, host, currentProject, vi.fn());
       findByTestId(tree, "cloud-member-result-2").props.onClick();
       await flushPromises();
       tree = renderView(api, host, currentProject, vi.fn());
 
-      expect(api.addMember).toHaveBeenCalledWith("project-a", 2, "Reporter");
+      expect(api.addMember).toHaveBeenCalledWith("project-a", 2, "Viewer");
       expect(api.listMembers).toHaveBeenCalledTimes(2);
       expect(findByTestId(tree, "cloud-project-member-2")).toBeTruthy();
     } finally {
@@ -401,48 +401,64 @@ describe("ProjectManageView project scope", () => {
     ).not.toContain("bg-background");
   });
 
-  it("offers related-task visibility for built-in projects", async () => {
+  it("separates public role from issue security", async () => {
     const api = createApi();
     const host = createHost();
     vi.mocked(api.updateProject).mockResolvedValue(
-      project("project-a", "public_restricted", 2),
+      project("project-a", "public", 2),
     );
 
     let tree = renderView(api, host, project("project-a", "private"), vi.fn());
     findByTestId(
       tree,
-      "cloud-project-manage-visibility-public-restricted",
+      "cloud-project-manage-visibility-public",
     ).props.onClick();
     await flushPromises();
-    tree = renderView(
-      api,
-      host,
-      project("project-a", "public_restricted", 2),
-      vi.fn(),
-    );
+    tree = renderView(api, host, project("project-a", "public", 2), vi.fn());
 
     expect(api.updateProject).toHaveBeenCalledWith("project-a", {
       version: 1,
-      visibility: "public_restricted",
+      visibility: "public",
     });
     expect(
-      findByTestId(tree, "cloud-project-manage-visibility-public-restricted")
-        .props.className,
+      findByTestId(tree, "cloud-project-manage-visibility-public").props
+        .className,
     ).toContain("bg-background");
+    expect(
+      findByTestId(tree, "cloud-project-public-access-role"),
+    ).not.toBeNull();
+    expect(
+      findByTestId(tree, "cloud-project-default-issue-security"),
+    ).not.toBeNull();
   });
 
-  it("does not offer related-task visibility for external projects", () => {
+  it("offers the same access settings for external projects", () => {
     const api = createApi();
     const host = createHost();
     const externalProject = {
-      ...project("project-a", "private"),
+      ...project("project-a", "public"),
       task_provider: "github",
     };
 
     const tree = renderView(api, host, externalProject, vi.fn());
 
     expect(
-      findByTestId(tree, "cloud-project-manage-visibility-public-restricted"),
+      findByTestId(tree, "cloud-project-default-issue-security"),
+    ).not.toBeNull();
+  });
+
+  it("uses DingTalk permissions for table records", () => {
+    const tree = renderView(
+      createApi(),
+      createHost(),
+      { ...project("project-a", "public"), task_provider: "dingtalk_aitable" },
+      vi.fn(),
+    );
+    expect(
+      findByTestId(tree, "cloud-project-public-access-role"),
+    ).not.toBeNull();
+    expect(
+      findByTestId(tree, "cloud-project-default-issue-security"),
     ).toBeNull();
   });
 });

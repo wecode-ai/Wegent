@@ -270,7 +270,7 @@ export function ProjectIssueTable({
                 {assignmentSourceLabel ? (
                   <td>
                     {currentAssignment
-                      ? currentAssignment.workflow_step || manualAssignmentLabel
+                      ? currentAssignment.body || manualAssignmentLabel
                       : "—"}
                   </td>
                 ) : null}

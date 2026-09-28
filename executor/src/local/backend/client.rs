@@ -66,7 +66,7 @@ where
     pub(super) transport: T,
     running_tasks: LocalRunningTaskTracker,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
-    runtime_capacity: Arc<Mutex<Option<Value>>>,
+    runtime_transfer_port: Arc<Mutex<Option<u16>>>,
 }
 
 impl<T> LocalBackendClient<T>
@@ -107,7 +107,7 @@ where
             transport,
             running_tasks,
             capability_reporter: Arc::new(capability_reporter),
-            runtime_capacity: Arc::new(Mutex::new(None)),
+            runtime_transfer_port: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -153,18 +153,9 @@ where
     }
 
     pub async fn pull_runtime_work(&self, timeout: Duration) -> Result<RuntimeWorkPull, String> {
-        let runtime_capacity = self
-            .runtime_capacity
-            .lock()
-            .expect("runtime capacity lock should not be poisoned")
-            .clone();
         let response = self
             .transport
-            .call(
-                RUNTIME_TASK_PULL_EVENT,
-                json!({"runtime_capacity": runtime_capacity}),
-                timeout,
-            )
+            .call(RUNTIME_TASK_PULL_EVENT, json!({}), timeout)
             .await?;
         let payload = ack_payload(&response);
         if payload
@@ -335,14 +326,18 @@ where
         self.running_tasks.set(task_ids);
     }
 
-    pub fn set_runtime_capacity(&self, capacity: Option<Value>) {
+    pub fn set_runtime_transfer_port(&self, port: Option<u16>) {
         *self
-            .runtime_capacity
+            .runtime_transfer_port
             .lock()
-            .expect("runtime capacity lock should not be poisoned") = capacity;
+            .expect("runtime transfer port lock should not be poisoned") = port;
     }
 
     fn registration_payload(&self) -> Value {
+        let runtime_transfer_port = *self
+            .runtime_transfer_port
+            .lock()
+            .expect("runtime transfer port lock should not be poisoned");
         json!({
             "device_id": self.config.device_id,
             "runtime_instance_id": self.config.runtime_instance_id,
@@ -352,6 +347,7 @@ where
             "executor_version": self.config.executor_version,
             "client_ip": self.config.client_ip,
             "runtime_transfer_host": self.config.runtime_transfer_host,
+            "runtime_transfer_port": runtime_transfer_port,
             "app_device_id": self.config.app_device_id,
             "runtime_features": runtime_features(),
         })
@@ -359,15 +355,13 @@ where
 
     pub(super) fn heartbeat_payload(&self) -> Value {
         let running_task_ids = self.running_tasks.running_task_ids();
-        let runtime_capacity = self
-            .runtime_capacity
+        let runtime_transfer_port = *self
+            .runtime_transfer_port
             .lock()
-            .expect("runtime capacity lock should not be poisoned")
-            .clone();
+            .expect("runtime transfer port lock should not be poisoned");
         json!({
             "device_id": self.config.device_id,
             "runtime_instance_id": self.config.runtime_instance_id,
-            "runtime_capacity": runtime_capacity,
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
@@ -376,6 +370,7 @@ where
                 &crate::agents::wework_codex_home()
             ),
             "runtime_transfer_host": self.config.runtime_transfer_host,
+            "runtime_transfer_port": runtime_transfer_port,
         })
     }
 }

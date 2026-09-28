@@ -100,6 +100,9 @@ describe('Wework Issue home task composer', () => {
     const owner = screen.getByTestId('collaboration-issue-owner')
     expect(owner.tagName).toBe('BUTTON')
     expect(owner).not.toHaveTextContent('未分配')
+    await userEvent.type(screen.getByTestId('collaboration-home-issue-content'), '@')
+    await userEvent.click(await screen.findByTestId('collaboration-home-mention-member-8'))
+    await waitFor(() => expect(owner).toHaveTextContent('王芳'))
     await act(async () =>
       ref.current!.setValue(
         '[$@王芳](wework-member://p1/8) 负责，[$@李明](wework-member://p1/7) 参与'
@@ -111,6 +114,34 @@ describe('Wework Issue home task composer', () => {
     expect(owner).toHaveTextContent('李明')
     await userEvent.click(screen.getByTestId('collaboration-home-create-issue'))
     expect(onSubmit).toHaveBeenCalledWith('@王芳 负责，@李明 参与', { kind: 'user', id: '7' }, [])
+  })
+
+  test('commits the mention-derived owner before the imperative editor update returns', () => {
+    const ref = createRef<import('@wegent/collaboration/composer').ComposerInputHandle>()
+    render(
+      <IssueHomeComposer
+        ref={ref}
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn(async () => true)}
+        pending={false}
+        members={[]}
+        groups={[{ id: 'group-1', name: '交付小队' }]}
+        projects={createProps().projects}
+        projectId="p1"
+        onSelectProject={vi.fn()}
+        translate={createCollaborationTranslator('zh-CN')}
+        placeholder="描述工作"
+        projectLabel="项目"
+        memberLabel="成员"
+        error={null}
+        renderTaskComposer={props => <WeworkIssueHomeComposer {...props} />}
+      />
+    )
+
+    ref.current!.insertReference('[$@交付小队](wework-group://p1/group-1)')
+
+    expect(screen.getByTestId('collaboration-issue-owner')).toHaveTextContent('交付小队')
   })
   test('renders the approved centered home and keeps guides from submitting', async () => {
     const props = createProps()

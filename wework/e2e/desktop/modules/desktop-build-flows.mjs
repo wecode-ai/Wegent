@@ -90,6 +90,8 @@ import {
   writeFile,
 } from './shared.mjs'
 
+const BUILTIN_CODEX_PROVIDER_IDS = new Set(['openai', 'amazon-bedrock', 'ollama', 'lmstudio'])
+
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import {
@@ -342,14 +344,19 @@ async function writeCodexConfig(
   scenarioConfigToml = '',
   upstreamApiFormat = 'openai-responses',
   providerConfigToml = '',
-  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"'
+  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"',
+  modelProviderId = MODEL_PROVIDER_ID,
+  modelId = DEFAULT_MODEL_ID
 ) {
   await mkdir(codexHome, { recursive: true })
   const configPath = join(codexHome, 'config.toml')
   const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
+  const customProviderConfig = BUILTIN_CODEX_PROVIDER_IDS.has(modelProviderId)
+    ? ''
+    : `\n[model_providers.${modelProviderId}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`
   await writeFile(
     temporaryConfigPath,
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`,
+    `model_provider = "${modelProviderId}"\nmodel = "${modelId}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}${customProviderConfig}`,
     'utf8'
   )
   await rename(temporaryConfigPath, configPath)

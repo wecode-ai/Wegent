@@ -1,5 +1,4 @@
 import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
-import { isProjectAutomationManagerRuntimeTask } from '@/features/workbench/runtimeTaskOrigin'
 
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
@@ -112,9 +111,7 @@ export function getRuntimeSidebarTaskItems(
 export function getRuntimeChatSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
-  return getRuntimeSidebarTaskItems(workspaces.filter(isRuntimeChatWorkspace)).filter(
-    ({ task }) => !isProjectAutomationManagerRuntimeTask(task)
-  )
+  return getRuntimeSidebarTaskItems(workspaces.filter(isRuntimeChatWorkspace))
 }
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {

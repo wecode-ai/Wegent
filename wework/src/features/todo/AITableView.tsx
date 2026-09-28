@@ -335,6 +335,7 @@ function FieldHeader({ displayName, column, context }: IHeaderParams<AITableReco
           }}
           className="shrink-0 text-text-muted hover:text-destructive"
           title="删除字段"
+          aria-label="删除字段"
         >
           <Trash2 className="h-3 w-3" />
         </button>
@@ -360,6 +361,7 @@ function RecordActions({ data, context }: ICellRendererParams<AITableRecord>) {
       onClick={() => void actionContext.removeRecord(record)}
       className="text-text-muted hover:text-destructive"
       title="删除记录"
+      aria-label="删除记录"
     >
       <Trash2 className="h-3.5 w-3.5" />
     </button>

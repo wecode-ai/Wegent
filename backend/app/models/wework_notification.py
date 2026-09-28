@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 
 from app.db.base import Base
@@ -55,7 +56,7 @@ class WeworkNotification(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         comment="Creation time in UTC",
     )
     is_read = Column(
@@ -68,7 +69,7 @@ class WeworkNotification(Base):
     read_status_changed_at = Column(
         DateTime,
         nullable=False,
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         comment="Read state transition time in UTC",
     )
 

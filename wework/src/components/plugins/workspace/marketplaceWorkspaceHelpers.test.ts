@@ -9,12 +9,18 @@ import {
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
   requiredConnectionNames,
+  resolveCloudMarketplaceRevalidateIntervalMs,
   resolveMarketplaceUninstallId,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
 }))
+
+test('keeps production marketplace polling at sixty seconds while accelerating E2E', () => {
+  expect(resolveCloudMarketplaceRevalidateIntervalMs(false)).toBe(60_000)
+  expect(resolveCloudMarketplaceRevalidateIntervalMs(true)).toBe(5_000)
+})
 
 const emptyComponents = {
   skills: [],

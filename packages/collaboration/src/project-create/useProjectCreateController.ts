@@ -85,11 +85,19 @@ export function useProjectCreateController({
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
   const [visibility, setVisibility] = useState<ProjectVisibility>("private");
+  const [publicAccessRole, setPublicAccessRole] = useState<
+    "Viewer" | "Developer"
+  >("Viewer");
+  const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
+    "open" | "related"
+  >("open");
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
   const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
+  const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
+  const defaultAgentResourceIdsKey = defaultAgentResourceIds.join("\0");
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
     useState<number[]>(() =>
       defaultExecutionEnvironmentDeviceIds(
@@ -97,7 +105,9 @@ export function useProjectCreateController({
       ),
     );
   const executionEnvironmentSelectionChanged = useRef(false);
-  const [leaderId, setLeaderId] = useState("");
+  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft | null
+  >(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -127,10 +137,11 @@ export function useProjectCreateController({
   }, [resourceSetup?.executionEnvironments]);
 
   useEffect(() => {
-    if (taskProvider !== "local" && visibility === "public_restricted") {
-      setVisibility("private");
-    }
-  }, [taskProvider, visibility]);
+    if (!defaultAgentResourceIdsKey) return;
+    setAgentResourceIds((current) => [
+      ...new Set([...defaultAgentResourceIds, ...current]),
+    ]);
+  }, [defaultAgentResourceIdsKey]);
 
   async function submit() {
     if (!canSubmit) return;
@@ -159,14 +170,31 @@ export function useProjectCreateController({
         description: description.trim(),
         taskProvider,
         providerConfig,
-        ...(location === "cloud" ? { visibility } : {}),
+        ...(location === "cloud"
+          ? {
+              visibility,
+              ...(visibility === "public"
+                ? { publicAccess: { role: publicAccessRole } }
+                : {}),
+              ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
+            }
+          : {}),
+        ...(location === "local" && resourceSetup
+          ? {
+              includeDefaultAgent:
+                defaultAgentResourceIds.length === 0 ||
+                defaultAgentResourceIds.some((id) =>
+                  agentResourceIds.includes(id),
+                ),
+            }
+          : {}),
       });
       if (resourceSetup) {
         await resourceSetup.configure(project, {
           memberUserIds,
           agentResourceIds,
           executionEnvironmentDeviceIds,
-          leaderId,
+          collaborationGroupDraft,
         });
       }
       host?.track?.("created");
@@ -186,6 +214,8 @@ export function useProjectCreateController({
       location,
       taskProvider,
       visibility,
+      publicAccessRole,
+      defaultIssueSecurity,
       repositoryAddress,
       token,
       aitableUrl,
@@ -198,7 +228,7 @@ export function useProjectCreateController({
       memberUserIds,
       agentResourceIds,
       executionEnvironmentDeviceIds,
-      leaderId,
+      collaborationGroupDraft,
     },
     commands: {
       setName,
@@ -206,6 +236,8 @@ export function useProjectCreateController({
       setLocation,
       setTaskProvider,
       setVisibility,
+      setPublicAccessRole,
+      setDefaultIssueSecurity,
       setRepositoryAddress,
       setToken,
       setAitableUrl,
@@ -215,7 +247,7 @@ export function useProjectCreateController({
         executionEnvironmentSelectionChanged.current = true;
         setExecutionEnvironmentDeviceIds(deviceIds);
       },
-      setLeaderId,
+      setCollaborationGroupDraft,
       clearError: () => setError(null),
       submit,
     },

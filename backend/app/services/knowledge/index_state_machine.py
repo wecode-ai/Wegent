@@ -503,14 +503,18 @@ _INDEX_SUCCEEDED_ALLOWED_STATUSES = {
 def _finalize_external_source_on_success(
     document: KnowledgeDocument,
 ) -> None:
-    """Record import completion without inferring source health from indexing."""
+    """Record when the copy last imported and which body that success served.
+
+    Source health is never inferred from indexing here.
+    """
     if not document.has_external_identity:
         return
 
     external = document.external_source_config
     sync = external.get("sync")
     updates: dict[str, object] = {
-        "last_success_at": datetime.now(timezone.utc).isoformat()
+        "last_success_at": datetime.now(timezone.utc).isoformat(),
+        "last_success_attachment_id": document.attachment_id,
     }
     if isinstance(sync, dict) and sync.get("enabled"):
         sync = dict(sync)
@@ -623,6 +627,88 @@ def mark_document_index_succeeded(
     return True
 
 
+def _load_active_index_attempt(
+    db: Session, document_id: int, generation: int
+) -> Optional[KnowledgeDocument]:
+    """Lock the document when this attempt still owns the active generation.
+
+    Returns ``None`` after rolling back when the attempt lost its write right
+    (the document is gone, or a newer generation took over), so no caller ever
+    finalizes a state it no longer owns.
+    """
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        return None
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        document.index_generation != generation
+        or current_status not in ACTIVE_INDEX_STATUSES
+    ):
+        db.rollback()
+        return None
+    return document
+
+
+def _persist_attempt_failure(
+    document: KnowledgeDocument,
+    generation: int,
+    candidate: DocumentProcessingError,
+) -> DocumentProcessingError:
+    """Store the attempt's failure for the user and return what was stored."""
+    persisted_error = _normalize_processing_error(candidate, generation)
+    document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
+    document.updated_at = _utcnow()
+    return persisted_error
+
+
+def _normalize_processing_error(
+    candidate: DocumentProcessingError,
+    generation: int,
+) -> DocumentProcessingError:
+    """Stamp a failure with this attempt's identity, falling back when unusable."""
+    try:
+        persisted_error = DocumentProcessingError.model_validate(
+            {
+                **candidate.model_dump(),
+                "generation": generation,
+                "occurred_at": datetime.now(timezone.utc),
+            }
+        )
+    except (AttributeError, TypeError, ValidationError):
+        persisted_error = generic_processing_error(
+            generation=generation,
+            stage=DocumentProcessingStage.SYSTEM,
+        )
+    return persisted_error
+
+
+def _serves_previously_indexed_body(document: KnowledgeDocument) -> bool:
+    """Whether the copy still holds the body its last successful import indexed.
+
+    A refresh only replaces the attached body once the new one lands, so an
+    attempt that failed before that leaves the attachment the last successful
+    import indexed in place, and only that body's index is still in service.
+    Legacy copies record their served attachment before a refresh begins, so
+    a timestamp alone never makes an unindexed replacement look successful.
+    """
+    external = document.external_source_config
+    if not document.attachment_id or not external:
+        return False
+    indexed_attachment_id = external.get("last_success_attachment_id")
+    return (
+        indexed_attachment_id is not None
+        and indexed_attachment_id == document.attachment_id
+    )
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_failed",
     tracer_name="knowledge.state_machine",
@@ -642,46 +728,19 @@ def mark_document_index_failed(
     """Persist a failed processing result for the active generation.
 
     The document itself is never deleted by a failure, so the user can retry
-    the initial import on the same record. A synchronized document can keep a
-    previously successful active index when only its remote source disappeared.
+    the initial import on the same record. A copy that still serves a body
+    keeps serving it: a synchronized refresh restores the body it replaced,
+    and a copy whose last successful body is still attached keeps that body's
+    index while only the source's own health moves.
     """
-    document = (
-        db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.id == document_id)
-        .with_for_update()
-        .populate_existing()
-        .first()
-    )
+    document = _load_active_index_attempt(db, document_id, generation)
     if document is None:
-        db.rollback()
-        return False
-
-    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if (
-        document.index_generation != generation
-        or current_status not in ACTIVE_INDEX_STATUSES
-    ):
-        db.rollback()
         return False
 
     candidate = error or generic_processing_error(
         generation=generation,
         stage=DocumentProcessingStage.SYSTEM,
     )
-    try:
-        persisted_error = DocumentProcessingError.model_validate(
-            {
-                **candidate.model_dump(),
-                "generation": generation,
-                "occurred_at": datetime.now(timezone.utc),
-            }
-        )
-    except (AttributeError, TypeError, ValidationError):
-        persisted_error = generic_processing_error(
-            generation=generation,
-            stage=DocumentProcessingStage.SYSTEM,
-        )
-
     cleanup_attachment_ids = restore_external_refresh_snapshot(
         document,
         generation=generation,
@@ -698,20 +757,35 @@ def mark_document_index_failed(
         and sync.get("enabled")
         and sync.get("indexed_version")
     )
-    if not snapshot_restored:
+    # A copy imported before a synchronized version was recorded still serves
+    # the body its last successful import indexed, so an attempt that fetched
+    # no replacement leaves that body and its index in service and reports the
+    # failure on the source instead.
+    keeps_served_body = bool(
+        not snapshot_restored
+        and preserve_active_sync_index
+        and not has_active_sync_index
+        and _serves_previously_indexed_body(document)
+    )
+    if snapshot_restored:
+        # The restored snapshot already carries the previous body's outcome;
+        # this attempt only reports what it learned about the source.
+        persisted_error = _normalize_processing_error(candidate, generation)
+        document.updated_at = _utcnow()
+    else:
+        persisted_error = _persist_attempt_failure(document, generation, candidate)
         if has_active_sync_index:
             document.clear_processing_error_payload()
             document.index_status = DocumentIndexStatus.SUCCESS
+        elif keeps_served_body:
+            document.index_status = DocumentIndexStatus.SUCCESS
+            document.is_active = True
         else:
-            document.set_processing_error_payload(
-                persisted_error.model_dump(mode="json")
-            )
             document.index_status = DocumentIndexStatus.FAILED
-    if not has_active_sync_index:
-        document.updated_at = _utcnow()
     if document.has_external_identity and (
         snapshot_restored
         or has_active_sync_index
+        or keeps_served_body
         or persisted_error.code
         in {"external_source_unavailable", "external_source_missing"}
     ):
@@ -737,19 +811,19 @@ def mark_document_index_failed(
             owner_user_id=document.user_id,
             attachment_ids=cleanup_attachment_ids,
         )
+    if snapshot_restored:
+        reason = "external_refresh_snapshot_restored"
+    elif keeps_served_body:
+        reason = "served_body_kept"
+    elif has_active_sync_index:
+        reason = "source_unavailable_active_index_preserved"
+    else:
+        reason = "finalized"
     _record_transition(
         "knowledge.index.finalize.failed",
         document_id=document_id,
         generation=generation,
-        reason=(
-            "external_refresh_snapshot_restored"
-            if snapshot_restored
-            else (
-                "source_unavailable_active_index_preserved"
-                if has_active_sync_index
-                else "finalized"
-            )
-        ),
+        reason=reason,
     )
     return True
 

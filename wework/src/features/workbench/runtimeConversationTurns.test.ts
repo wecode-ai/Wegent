@@ -3062,3 +3062,27 @@ describe('runtimeConversationTurns', () => {
     expect(mergeRuntimeConversationTurns(local, snapshot)[0].items).toEqual(snapshot[0].items)
   })
 })
+
+test('turn completion does not claim an unfinished context compaction succeeded', () => {
+  const blocks: ProcessingBlock[] = ['pending', 'done', 'error'].map((status, index) => ({
+    id: `compact-${index}`,
+    subtaskId: 'turn',
+    type: 'tool',
+    toolName: 'context_compaction',
+    status: status as 'pending' | 'done' | 'error',
+    createdAt: 1,
+  }))
+  const turns = reduceRuntimeConversationTurns(
+    [
+      {
+        id: 'turn',
+        status: 'streaming',
+        items: blocks.map(block => ({ id: block.id, type: 'block', block })),
+      },
+    ],
+    { type: 'assistant_done', subtaskId: 'turn' }
+  )
+  expect(
+    turns[0].items.filter(item => item.type === 'block').map(item => item.block.status)
+  ).toEqual(['error', 'done', 'error'])
+})

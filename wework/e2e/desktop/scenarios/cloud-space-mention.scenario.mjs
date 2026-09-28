@@ -456,23 +456,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture(control, 'cloud-space-mention-03-consecutive-moves-stable.png')
 
-      await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
-      await control.command(
-        'waitFor',
-        `[data-testid="cloud-todo-card-progress-popup-${WEBSITE_TODO.id}"]`,
-        {
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-card-open-task-${WEBSITE_TODO.id}"]`,
-        {
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -483,6 +470,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       const detailSnapshot = await snapshot(control)
+      assert.equal(
+        detailSnapshot.testIds.includes(`cloud-todo-card-progress-popup-${WEBSITE_TODO.id}`),
+        false,
+        'The collaboration card opened a task progress popup instead of the Issue drawer'
+      )
+      assert.equal(
+        detailSnapshot.testIds.includes(`cloud-todo-card-open-task-${WEBSITE_TODO.id}`),
+        false,
+        'The collaboration card still exposed the task page shortcut'
+      )
       assert.ok(
         detailSnapshot.text.includes(WEBSITE_TODO.title),
         'The shared Issue detail lost the selected cloud Issue context'

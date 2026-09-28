@@ -10,7 +10,6 @@ import { ChevronDown, Code2, ImageIcon, MessageCircle, Monitor, Video } from 'lu
 import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
-  simpleChoiceCardBaseClass,
   simpleChoiceCardSelectedClass,
   simpleChoiceCardUnselectedClass,
 } from '@/components/common/simple-choice-card-styles'
@@ -65,7 +64,7 @@ export default function TeamBindModeCards({ value, onChange }: TeamBindModeCards
       <label
         key={option.value}
         className={cn(
-          simpleChoiceCardBaseClass,
+          'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors',
           checked ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
         )}
         data-testid={`simple-bind-mode-${option.value}-card`}
@@ -76,12 +75,9 @@ export default function TeamBindModeCards({ value, onChange }: TeamBindModeCards
           aria-label={t(option.titleKey)}
           data-testid={`simple-bind-mode-${option.value}-checkbox`}
         />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-sm font-medium">
-            <Icon className="h-4 w-4 text-primary" />
-            <span>{t(option.titleKey)}</span>
-          </div>
-          <p className="mt-0.5 text-xs leading-5 text-text-secondary">{t(option.descriptionKey)}</p>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
+          <Icon className="h-4 w-4 text-primary" />
+          <span>{t(option.titleKey)}</span>
         </div>
       </label>
     )
@@ -89,9 +85,7 @@ export default function TeamBindModeCards({ value, onChange }: TeamBindModeCards
 
   return (
     <div className="space-y-2">
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {commonOptions.map(renderOption)}
-      </div>
+      <div className="grid gap-2 sm:grid-cols-3">{commonOptions.map(renderOption)}</div>
 
       <Collapsible
         open={showAdvancedModes}
@@ -99,9 +93,7 @@ export default function TeamBindModeCards({ value, onChange }: TeamBindModeCards
         className="space-y-2"
       >
         <CollapsibleContent>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {advancedOptions.map(renderOption)}
-          </div>
+          <div className="grid gap-2 sm:grid-cols-2">{advancedOptions.map(renderOption)}</div>
         </CollapsibleContent>
         <CollapsibleTrigger asChild>
           <button

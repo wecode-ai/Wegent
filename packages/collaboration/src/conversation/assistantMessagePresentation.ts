@@ -1,6 +1,7 @@
 import {
   nestWorkbenchProcessingBlocks,
   projectWorkbenchSubagentActivity,
+  settleWorkbenchProcessingBlock,
 } from "@wegent/chat-core";
 import type {
   WorkbenchMessage,
@@ -149,10 +150,8 @@ export function getDisplayProcessingBlocks(
     projectWorkbenchSubagentActivity(
       blocks
         .map((block) =>
-          settleForCancelledTurn &&
-          block.status !== "done" &&
-          block.status !== "error"
-            ? { ...block, status: "done" as const }
+          settleForCancelledTurn
+            ? settleWorkbenchProcessingBlock(block)
             : block,
         )
         .filter((block) => {

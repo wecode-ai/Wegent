@@ -50,9 +50,15 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.name_required': 'Agent name is required',
         'common:team.requires_workspace': 'Requires repository',
         'common:team.requires_workspace_hint': 'Common repository hint.',
-        'settings:team.simple.advanced_toggle': 'Advanced mode',
-        'settings:team.simple.advanced_toggle_description': 'Use full configuration.',
         'settings:team.simple.advanced_title': 'Advanced',
+        'settings:team.simple.agent_description_label': 'Agent description',
+        'settings:team.simple.agent_description_placeholder': 'Briefly describe this agent',
+        'settings:team.simple.capability.additional_summary': '{{count}} selected',
+        'settings:team.simple.capability.additional_title': 'Additional capabilities',
+        'settings:team.simple.capability.base_description': 'Use standard capabilities.',
+        'settings:team.simple.capability.base_title': 'Use standard capabilities',
+        'settings:team.simple.capability.disabled': 'Disabled',
+        'settings:team.simple.capability.enabled': 'Enabled',
         'settings:team.simple.core.mcp_description': 'Connect MCP services.',
         'settings:team.simple.core.knowledge_description':
           'New chats start with these knowledge bases.',
@@ -60,23 +66,25 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.core.prompt_description': 'Defines the agent behavior.',
         'settings:team.simple.core.skills_description': 'Adds tool capabilities.',
         'settings:team.simple.execution.bind_mode_description': 'Controls entry points.',
-        'settings:team.simple.execution.executor_description': 'Controls runtime.',
+        'settings:team.simple.execution.requires_workspace_title': 'Bind coding repository',
         'settings:team.simple.execution.requires_workspace_description':
           'Settings repository hint.',
         'settings:team.simple.sections.basic': 'Basic settings',
         'settings:team.simple.sections.capability': 'Capabilities',
         'settings:team.simple.sections.execution': 'Mode settings',
+        'settings:team.simple.sections.advanced': 'More settings',
         'settings:team.simple.sections.prompt': 'Prompt',
+        'settings:team.simple.name_required': 'Enter an agent name',
         'settings:team.simple.bind_mode.chat.description': 'Use for conversation.',
         'settings:team.simple.bind_mode.chat.title': 'Chat',
         'settings:team.simple.bind_mode.code.description': 'Use for repository tasks.',
         'settings:team.simple.bind_mode.code.title': 'Code',
         'settings:team.simple.bind_mode.task.description': 'Use for device tasks.',
         'settings:team.simple.bind_mode.task.title': 'Device',
-        'settings:team.simple.bind_mode.advanced_title': 'Advanced settings',
-        'settings:team.simple.bind_mode.available_modules': 'Available modules',
-        'settings:team.simple.bind_mode.automatic': 'Automatic (based on how it runs)',
-        'settings:team.simple.bind_mode.selected': 'Selected',
+        'settings:team.simple.bind_mode.advanced_title': 'Available entry points',
+        'settings:team.simple.bind_mode.available_modules': 'Entry points',
+        'settings:team.simple.bind_mode.automatic': 'Default entry points',
+        'settings:team.simple.bind_mode.selected': 'Custom entry points',
         'settings:team.simple.bind_mode.automatic_hint': 'Leave empty to choose automatically.',
         'settings:team.simple.bind_mode.summary_separator': ', ',
         'settings:team.simple.bind_mode.more_modes': 'More modes',
@@ -88,7 +96,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.complex.description':
           'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
         'settings:team.simple.executor.complex.title': 'Complex',
-        'settings:team.simple.executor.coding_runtime_label': 'Coding engine',
+        'settings:team.simple.executor.coding_runtime_label': 'Execution engine',
+        'settings:team.simple.executor.coding_runtime_description':
+          'Choose an engine that matches the model.',
         'settings:team.simple.executor.codex.description': 'Codex description.',
         'settings:team.simple.executor.codex.title': 'Codex',
         'settings:team.simple.executor.claude_code.description': 'Claude Code description.',
@@ -105,7 +115,6 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.simple.title': 'Simple',
         'settings:team.simple.executor.title': 'Executor',
         'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
-        'settings:team.simple.open_advanced': 'Open full configuration',
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
         'common:teams.edit_title': 'Edit agent',
@@ -403,7 +412,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('defaults new agents to automatic modules and keeps the module picker collapsed', async () => {
+  it('defaults new agents to chat, code, and device locations', async () => {
     render(
       <TeamEditDialog
         open
@@ -417,23 +426,46 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    expect(await screen.findByRole('radio', { name: /simple/i })).toBeChecked()
+    expect(await screen.findByRole('radio', { name: /complex/i })).toBeChecked()
+    fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
-      'Automatic (based on how it runs) · Chat'
+      'Custom entry points · Chat, Code, Device'
     )
-    expect(screen.queryByRole('checkbox', { name: /chat/i })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
-
-    expect(screen.getByRole('checkbox', { name: /chat/i })).not.toBeChecked()
-    expect(screen.getByRole('checkbox', { name: /code/i })).not.toBeChecked()
-    expect(screen.getByRole('checkbox', { name: /device/i })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /chat/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /code/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /device/i })).toBeChecked()
     const scrollContent = screen.getByTestId('team-edit-scroll-content')
     expect(scrollContent).toContainElement(screen.getByTestId('team-publish-scope-section'))
     expect(scrollContent).not.toContainElement(screen.getByRole('button', { name: /save/i }))
     expect(screen.getByTestId('capability-scope-personal')).toBeInTheDocument()
     expect(screen.getByTestId('capability-scope-team')).toBeInTheDocument()
     expect(screen.getByTestId('capability-scope-marketplace')).toBeInTheDocument()
+  })
+
+  it('allows switching the default complex use case to everyday questions', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const everydayOption = await screen.findByTestId('simple-executor-simple-card')
+    fireEvent.click(everydayOption)
+
+    expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
+
+    fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Custom entry points · Chat'
+    )
   })
 
   it('shows example conversations when a new agent is first published to marketplace', async () => {
@@ -456,7 +488,7 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByTestId('team-marketplace-example-conversations-add')).toBeInTheDocument()
   })
 
-  it('loads LLM models for the default chat bind mode', async () => {
+  it('loads LLM models for the default coding executor', async () => {
     render(
       <TeamEditDialog
         open
@@ -472,7 +504,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        'Chat',
+        'ClaudeCode',
         false,
         'personal',
         undefined,
@@ -659,7 +691,7 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        'Chat',
+        'ClaudeCode',
         false,
         'personal',
         undefined,
@@ -667,13 +699,16 @@ describe('Simple TeamEditDialog', () => {
       )
     })
 
-    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
+    fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
     fireEvent.click(screen.getByTestId('team-bind-mode-more-toggle'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-chat-card'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-code-card'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-task-card'))
     fireEvent.click(screen.getByTestId(`simple-bind-mode-${mode}-card`))
 
     await waitFor(() => {
       expect(mockedGetUnifiedModels).toHaveBeenCalledWith(
-        'Chat',
+        'ClaudeCode',
         false,
         'personal',
         undefined,
@@ -746,14 +781,13 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    fireEvent.click(await screen.findByTestId('simple-bind-mode-settings-toggle'))
-    fireEvent.click(screen.getByRole('checkbox', { name: /code/i }))
+    fireEvent.click(await screen.findByTestId('simple-section-advanced-trigger'))
 
     expect(await screen.findByText('Settings repository hint.')).toBeInTheDocument()
     expect(screen.queryByText('Common repository hint.')).not.toBeInTheDocument()
   })
 
-  it('collapses and expands the basic settings section from its header', async () => {
+  it('keeps the basic settings visible as the primary creation flow', async () => {
     render(
       <TeamEditDialog
         open
@@ -767,20 +801,9 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
-    expect(await screen.findByLabelText(/^Name/)).toBeInTheDocument()
-
-    const basicSectionTrigger = screen.getByTestId('simple-section-basic-trigger')
-    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'true')
-
-    fireEvent.click(basicSectionTrigger)
-
-    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByLabelText(/^Name/)).not.toBeInTheDocument()
-
-    fireEvent.click(basicSectionTrigger)
-
-    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'true')
-    expect(await screen.findByLabelText(/^Name/)).toBeInTheDocument()
+    expect(await screen.findByLabelText('Display name')).toBeInTheDocument()
+    expect(screen.getByTestId('simple-section-basic-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('simple-section-basic-trigger')).not.toBeInTheDocument()
   })
 
   it('saves a new simple solo agent through bot and team payloads', async () => {
@@ -802,7 +825,10 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'new-agent' } })
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'New agent' },
+    })
+    fireEvent.click(screen.getByTestId('simple-additional-capabilities-toggle'))
     fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
     fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
     fireEvent.click(screen.getByRole('button', { name: 'Add knowledge' }))
@@ -814,8 +840,8 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedCreateBot).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'new-agent-bot',
-          shell_name: 'Chat',
+          name: expect.stringMatching(/^agent-.+-bot$/),
+          shell_name: 'ClaudeCode',
           system_prompt: 'Answer with context.',
           inherit_base_capabilities: true,
           capability_mode: 'manual',
@@ -834,9 +860,10 @@ describe('Simple TeamEditDialog', () => {
       )
       expect(mockedCreateTeam).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'new-agent',
+          name: expect.stringMatching(/^agent-/),
+          displayName: 'New agent',
           workflow: { mode: 'solo', leader_bot_id: 42 },
-          bind_mode: ['chat'],
+          bind_mode: ['chat', 'code', 'task'],
           bots: [{ bot_id: 42, bot_prompt: '', role: 'leader' }],
         })
       )
@@ -844,7 +871,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('automatically saves code and device modules for a complex executor', async () => {
+  it('saves all default display locations for the default complex executor', async () => {
     render(
       <TeamEditDialog
         open
@@ -859,11 +886,13 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
-    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Code agent' },
+    })
+    fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
 
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
-      'Automatic (based on how it runs) · Code, Device'
+      'Custom entry points · Chat, Code, Device'
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -871,7 +900,7 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => {
       expect(mockedCreateTeam).toHaveBeenCalledWith(
         expect.objectContaining({
-          bind_mode: ['code', 'task'],
+          bind_mode: ['chat', 'code', 'task'],
         })
       )
     })
@@ -892,13 +921,16 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
-    fireEvent.change(await screen.findByLabelText(/^Name/), {
-      target: { value: 'device-agent' },
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Device agent' },
     })
-    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
-    fireEvent.click(screen.getByTestId('simple-bind-mode-task-card'))
+    fireEvent.click(screen.getByTestId('simple-section-advanced-trigger'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-chat-card'))
+    fireEvent.click(screen.getByTestId('simple-bind-mode-code-card'))
 
-    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent('Selected · Device')
+    expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
+      'Custom entry points · Device'
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -932,14 +964,13 @@ describe('Simple TeamEditDialog', () => {
     )
 
     expect(await screen.findByTestId('simple-bind-mode-summary')).toHaveTextContent(
-      'Selected · Code'
+      'Custom entry points · Code'
     )
-    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
     expect(screen.getByRole('checkbox', { name: /code/i })).toBeChecked()
 
     fireEvent.click(screen.getByTestId('simple-bind-mode-code-card'))
     expect(screen.getByTestId('simple-bind-mode-summary')).toHaveTextContent(
-      'Automatic (based on how it runs) · Code, Device'
+      'Default entry points · Code, Device'
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -971,9 +1002,8 @@ describe('Simple TeamEditDialog', () => {
     )
 
     expect(await screen.findByTestId('simple-bind-mode-summary')).toHaveTextContent(
-      'Automatic (based on how it runs) · Chat'
+      'Default entry points · Chat'
     )
-    fireEvent.click(screen.getByTestId('simple-bind-mode-settings-toggle'))
     expect(screen.getByRole('checkbox', { name: /chat/i })).not.toBeChecked()
   })
 
@@ -1338,6 +1368,7 @@ describe('Simple TeamEditDialog', () => {
       />
     )
 
+    fireEvent.click(await screen.findByTestId('simple-additional-capabilities-toggle'))
     await waitFor(() => {
       expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
         scope: 'group',
@@ -1534,9 +1565,12 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Code agent' },
+    })
     fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
     fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))
+    fireEvent.click(screen.getByTestId('simple-additional-capabilities-toggle'))
     fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
     fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -1559,7 +1593,7 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
-  it('keeps Claude Code as the default coding engine', async () => {
+  it('keeps Claude Code as the default execution engine', async () => {
     render(
       <TeamEditDialog
         open
@@ -1575,7 +1609,9 @@ describe('Simple TeamEditDialog', () => {
 
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Code agent' },
+    })
     fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 

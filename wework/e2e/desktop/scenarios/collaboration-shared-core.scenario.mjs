@@ -4,8 +4,16 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
+import {
+  verifyIssueActivityTimeline,
+  verifyCommentExecutionStatus,
+} from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
-import { selectCollaborationDomain } from '../modules/workspace-flows.mjs'
+import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import {
+  initializeFirstProjectExecutionEnvironment,
+  selectCollaborationDomain,
+} from '../modules/workspace-flows.mjs'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作共享核心空间'
 const PROJECT_NAME = '协作共享核心验收'
@@ -74,6 +82,7 @@ export function createDesktopScenario({
   let project = null
   let issue = null
   let agent = null
+  let cloudEnvironment = null
   let fixtureArchived = false
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
@@ -130,8 +139,18 @@ export function createDesktopScenario({
       await request('/api/admin/setup-complete', { method: 'POST' })
     },
 
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
+    },
+
     async verify(control) {
       assert.ok(owner?.id, 'The collaboration owner fixture is missing')
+      assert.ok(cloudEnvironment, 'The real cloud environment was not attached to the scenario')
+      const remoteDevice = await cloudEnvironment.waitForDeviceType(
+        REMOTE_DOCKER_DEVICE_ID,
+        'remote'
+      )
+      assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
 
       try {
         await ensureExperimentalFeaturesEnabled(control)
@@ -230,6 +249,12 @@ export function createDesktopScenario({
           scoped('[data-testid="collaboration-project-description-input"]'),
           { value: 'Created through Workspace → Project in the native Wework module.' }
         )
+        await control.command('click', scoped('[data-testid="cloud-project-visibility-public"]'))
+        await control.command('click', scoped('[data-testid="cloud-project-public-access-viewer"]'))
+        await control.command(
+          'click',
+          scoped('[data-testid="cloud-project-default-issue-security-related"]')
+        )
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-create-confirm"]')
@@ -244,6 +269,9 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(project.name, projectName)
+        assert.equal(project.visibility, 'public')
+        assert.equal(project.public_access?.role, 'Viewer')
+        assert.equal(project.default_issue_security, 'related')
         const persistedWorkspace = await request(`/api/v1/workspaces/${workspace.id}`)
         assert.equal(persistedWorkspace.project_count, 1)
         const persistedProjects = await request(`/api/v1/workspaces/${workspace.id}/projects`)
@@ -287,6 +315,13 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
 
+        await initializeFirstProjectExecutionEnvironment(
+          control,
+          ACTIVE_WORKBENCH_SELECTOR,
+          uiTimeoutMs,
+          remoteDevice.id
+        )
+        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,
@@ -343,7 +378,10 @@ export function createDesktopScenario({
           text: COMMENT_BODY,
           timeoutMs: uiTimeoutMs,
         })
-        const replyComposerSelector = scoped('[data-testid^="cloud-task-activity-card-composer-"]')
+        await control.command('click', scoped('[data-testid^="cloud-task-activity-reply-toggle-"]'))
+        const replyComposerSelector = scoped(
+          '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+        )
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
@@ -353,6 +391,7 @@ export function createDesktopScenario({
           text: '在动态卡片内回复',
           timeoutMs: uiTimeoutMs,
         })
+        await verifyIssueActivityTimeline(control, scoped, uiTimeoutMs)
 
         await request(`/api/v1/loop-items/${issue.id}/assignments`, {
           method: 'POST',
@@ -399,7 +438,11 @@ export function createDesktopScenario({
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
           backendUrl,
@@ -407,6 +450,7 @@ export function createDesktopScenario({
           projectId: project.id,
           agentId: agent.id,
         })
+        await verifyCommentExecutionStatus(control, scoped, uiTimeoutMs)
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)

@@ -14,7 +14,6 @@ from app.services.device.remote_device_startup import (
 def _context() -> RemoteDeviceCommandContext:
     return RemoteDeviceCommandContext(
         container_name="remote-device-1",
-        client_origin="https://app.example.com",
         request_scheme="https",
         request_netloc="backend.example.com",
         request_headers={"host": "backend.example.com"},

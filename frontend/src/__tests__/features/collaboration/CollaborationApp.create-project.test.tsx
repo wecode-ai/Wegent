@@ -133,6 +133,8 @@ describe('CollaborationApp shared project creation', () => {
           token: 'gitlab-secret',
         },
         visibility: 'public',
+        publicAccess: { role: 'Viewer' },
+        defaultIssueSecurity: 'open',
       })
     )
     expect(navigate).toHaveBeenCalledWith({
@@ -142,12 +144,14 @@ describe('CollaborationApp shared project creation', () => {
     })
   })
 
-  it('creates a built-in project with related-task visibility', async () => {
+  it('creates a public built-in project with related issue security', async () => {
     const create = jest.fn().mockResolvedValue({
       ...createdProject,
       task_provider: 'local',
       provider_config: {},
-      visibility: 'public_restricted',
+      visibility: 'public',
+      public_access: { role: 'Viewer' },
+      default_issue_security: 'related',
     })
     const api = {
       projects: {
@@ -163,7 +167,8 @@ describe('CollaborationApp shared project creation', () => {
     fireEvent.change(screen.getByTestId('collaboration-project-name-input'), {
       target: { value: ' Related tasks ' },
     })
-    fireEvent.click(screen.getByTestId('cloud-project-visibility-public-restricted'))
+    fireEvent.click(screen.getByTestId('cloud-project-visibility-public'))
+    fireEvent.click(screen.getByTestId('cloud-project-default-issue-security-related'))
     fireEvent.click(screen.getByTestId('collaboration-project-create-confirm'))
 
     await waitFor(() =>
@@ -172,23 +177,23 @@ describe('CollaborationApp shared project creation', () => {
         description: '',
         taskProvider: 'local',
         providerConfig: {},
-        visibility: 'public_restricted',
+        visibility: 'public',
+        publicAccess: { role: 'Viewer' },
+        defaultIssueSecurity: 'related',
       })
     )
   })
 
-  it('hides related-task visibility for external providers', async () => {
+  it('keeps issue security available for GitHub projects', async () => {
     render(<CollaborationApp api={homeApi()} host={homeHost()} locale="zh-CN" pollIntervalMs={0} />)
 
     fireEvent.click(await screen.findByTestId('collaboration-project-create'))
     fireEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
-    expect(screen.getByTestId('cloud-project-visibility-public-restricted')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-default-issue-security-related')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-project-task-provider-github'))
 
-    expect(
-      screen.queryByTestId('cloud-project-visibility-public-restricted')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-default-issue-security-related')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-visibility-private')).toHaveAttribute(
       'aria-pressed',
       'true'

@@ -72,6 +72,24 @@ class TestVerifyTaskToken:
         assert info.user_id == 300
         assert info.user_name == "validuser"
 
+    def test_verify_dispatch_manager_scope(self):
+        token = create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=300,
+            user_name="manager",
+            dispatch_id="dispatch-1",
+            dispatch_role="manager",
+            manager_agent_id="agent-1",
+        )
+
+        info = verify_task_token(token)
+
+        assert info is not None
+        assert info.dispatch_id == "dispatch-1"
+        assert info.dispatch_role == "manager"
+        assert info.manager_agent_id == "agent-1"
+
     def test_verify_invalid_token(self):
         """Test verification of an invalid token."""
         info = verify_task_token("invalid-token")

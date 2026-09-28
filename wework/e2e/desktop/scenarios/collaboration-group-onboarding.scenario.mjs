@@ -7,7 +7,6 @@ const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="fal
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const PROJECT_NAME = `协作小组上手验收-${process.pid}`
 const GROUP_NAME = `项目推进小组-${process.pid}`
-const ISSUE_NAME = `验证小组分配-${process.pid}`
 
 function scoped(selector) {
   return `${ACTIVE_WORKBENCH_SELECTOR} ${selector}`
@@ -21,11 +20,11 @@ async function snapshot(control, selector = ACTIVE_WORKBENCH_SELECTOR) {
   return JSON.parse(await control.command('snapshot', selector))
 }
 
-async function waitForTestId(control, prefix, timeoutMs) {
+async function waitForTestId(control, prefix, timeoutMs, selector = ACTIVE_WORKBENCH_SELECTOR) {
   const deadline = Date.now() + timeoutMs
   let lastTestIds = []
   while (Date.now() < deadline) {
-    lastTestIds = (await snapshot(control)).testIds
+    lastTestIds = (await snapshot(control, selector)).testIds
     const testId = lastTestIds.find(candidate => candidate.startsWith(prefix))
     if (testId) return testId
     await new Promise(resolve => setTimeout(resolve, 200))
@@ -92,6 +91,20 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         0,
         'The local workspace settings exposed the cloud-only member tab'
       )
+      await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
+        text: '当前设备智能体',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid^="project-agent-archive-"]')
+          )
+        ),
+        0,
+        'The default local Agent could still be removed from the local workspace'
+      )
       await control.command('click', `${localWorkspaceTree} .collaboration-workspace-identity`)
       await control.command(
         'click',
@@ -119,19 +132,43 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         initialDialog.text.includes('我'),
         'Project creation did not include the current user'
       )
+      await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
+        text: '当前设备智能体',
+        timeoutMs: uiTimeoutMs,
+      })
 
       await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
         value: PROJECT_NAME,
       })
+      await control.command('click', scoped('[aria-label="取消 当前设备智能体"]'))
+      assert.equal(
+        Number(
+          await control.command('getElementCount', scoped('[aria-label="取消 当前设备智能体"]'))
+        ),
+        0,
+        'The default local Agent could not be removed from the new project'
+      )
       await control.command(
         'click',
         scoped('[data-testid="collaboration-project-create-add-collaborator"]')
       )
-      await control.command(
-        'clickWhenEnabled',
-        '[data-testid="collaboration-project-create-default-agent"]',
-        { timeoutMs: uiTimeoutMs }
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="collaboration-project-create-default-agent"]'
+          )
+        ),
+        0,
+        'Project creation still exposed manual default collaboration-group creation'
       )
+      const defaultAgentOptionTestId = await waitForTestId(
+        control,
+        'collaboration-project-create-agent-',
+        uiTimeoutMs,
+        'body'
+      )
+      await control.command('click', `[data-testid="${defaultAgentOptionTestId}"]`)
       await control.command('waitFor', scoped('.collaboration-project-create-collaborator-token'), {
         text: '当前设备智能体',
         timeoutMs: uiTimeoutMs,
@@ -167,6 +204,24 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command(
         'click',
+        scoped('[data-testid="collaboration-participants-tab-agents"]')
+      )
+      await control.command('waitFor', scoped('[data-testid^="project-agent-row-"]'), {
+        text: '当前设备智能体',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid^="project-agent-archive-"]')
+          )
+        ),
+        0,
+        'The default local Agent could still be archived from the project'
+      )
+      await control.command(
+        'click',
         scoped('[data-testid="collaboration-participants-tab-groups"]')
       )
       await control.command(
@@ -174,10 +229,16 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         scoped('[data-testid="collaboration-participants-tab-groups"][aria-selected="true"]'),
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('waitFor', scoped('[data-testid^="collaboration-group-"]'), {
-        text: '默认协作小组',
-        timeoutMs: uiTimeoutMs,
-      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid^="collaboration-group-detail-"]')
+          )
+        ),
+        0,
+        'Creating a local project still created a default collaboration group'
+      )
 
       await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
       await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
@@ -216,7 +277,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'collaboration-group-create-member-agent-',
         uiTimeoutMs
       )
-      const agentId = agentMemberTestId.slice('collaboration-group-create-member-agent-'.length)
       await control.command('click', `[data-testid="${agentMemberTestId}"]`)
       const humanMemberTestId = await waitForTestId(
         control,
@@ -241,47 +301,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'collaboration-group-detail-local-group-',
         uiTimeoutMs
       )
-      const groupId = groupDetailTestId.slice('collaboration-group-detail-'.length)
-
-      await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
+      await control.command('waitFor', scoped(`[data-testid="${groupDetailTestId}"]`), {
+        text: GROUP_NAME,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
-        value: ISSUE_NAME,
-      })
-      await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-create-assignee-option-group:${groupId}"]`
-      )
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-create-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The collaboration group could not be selected during Issue creation'
-      )
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="cloud-todo-create-confirm"]'),
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="cloud-todo-detail-assignee"]'),
-          { value: 'data-value' }
-        ),
-        `group:${groupId}`,
-        'The created Issue did not retain its collaboration group assignee'
-      )
     },
 
     diagnostics() {

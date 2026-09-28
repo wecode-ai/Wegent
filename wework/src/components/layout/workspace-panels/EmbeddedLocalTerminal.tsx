@@ -151,12 +151,16 @@ export function EmbeddedLocalTerminal({
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
     let terminalInputReady = false
+    let pendingTerminalInput = ''
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
     }
     const writeTerminalInput = (data: string) => {
-      if (!terminalInputReady) return
+      if (!terminalInputReady) {
+        pendingTerminalInput += data
+        return
+      }
       inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
     }
@@ -230,6 +234,10 @@ export function EmbeddedLocalTerminal({
             if (disposed) return
             if (source === 'snapshot') {
               terminalInputReady = true
+              if (pendingTerminalInput) {
+                writeTerminalInput(pendingTerminalInput)
+                pendingTerminalInput = ''
+              }
               refreshXterm(terminal)
             }
           })

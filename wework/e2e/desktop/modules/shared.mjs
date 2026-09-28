@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
+import { reservePort } from '../port-reservation.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -216,6 +217,10 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
 const CHECKPOINT_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK: create a completed task for downstream checkpoints.'
 const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE'
+const LATE_BOUND_PROJECT_SPACE_PROMPT =
+  'WEWORK_DESKTOP_E2E_LATE_BOUND_PROJECT_SPACE: inspect the bound Issue attachments.'
+const LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_LATE_BOUND_PROJECT_SPACE_COMPLETE'
 const MESSAGE_EDIT_ORIGINAL_PROMPT =
   'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL: answer before this message is edited.'
 const MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL_COMPLETE'
@@ -1030,18 +1035,6 @@ async function runChecked(command, args, options = {}) {
   })
 }
 
-async function reservePort() {
-  const server = createServer()
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolvePromise)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-  await new Promise(resolvePromise => server.close(resolvePromise))
-  return address.port
-}
-
 class BlockingNetworkProxy {
   constructor() {
     this.requests = []
@@ -1438,12 +1431,11 @@ async function selectE2EModel(
   control,
   modelIds = DEFAULT_MODEL_ID,
   modelLabels = DEFAULT_MODEL_LABEL,
-  composerSelector = ''
+  composerSelector = '',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
-  const expectedProviderId = expectedModelProviderId(modelIds)
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
-  await control.command('scrollIntoView', modelSelectorButton)
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     visible: true,
@@ -1565,6 +1557,7 @@ export {
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_CONTROL_SERVER_PORT,
+  MODEL_REQUEST_TIMEOUT_MS,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   COMPOSER_READY_STABILITY_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
@@ -1659,6 +1652,8 @@ export {
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   CHECKPOINT_TASK_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_UPDATED_PROMPT,

@@ -1554,10 +1554,23 @@ function finalizeBlocks<TFileChanges>(
       return block
     }
 
-    return withBlockCompletionTime(block, {
-      ...block,
-      status: finalStatus
-    } as WorkbenchProcessingBlock<TFileChanges>)
+    return settleWorkbenchProcessingBlock(block, finalStatus)
+  })
+}
+
+export function settleWorkbenchProcessingBlock<TFileChanges>(
+  block: WorkbenchProcessingBlock<TFileChanges>,
+  finalStatus: 'done' | 'error' = 'done'
+): WorkbenchProcessingBlock<TFileChanges> {
+  if (block.status === 'done' || block.status === 'error') return block
+
+  // Only the compaction completion event proves that context was compacted.
+  return withBlockCompletionTime(block, {
+    ...block,
+    status:
+      block.type === 'tool' && block.toolName === 'context_compaction'
+        ? 'error'
+        : finalStatus
   })
 }
 

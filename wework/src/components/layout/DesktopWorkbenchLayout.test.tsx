@@ -79,14 +79,19 @@ const paneSessionMockRef = vi.hoisted(() => ({
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const runtimeMocks = vi.hoisted(() => ({ electron: false }))
+const deviceExecuteCommandMock = vi.hoisted(() => vi.fn())
 const deliveryApiMock = vi.hoisted(() => ({
   available: false,
+  runtimePortAvailable: false,
   listCloudProjects: vi.fn(),
   listCloudFiles: vi.fn(),
   listLoopItems: vi.fn(),
   listDeliveries: vi.fn(),
+  listTaskBindings: vi.fn(),
   findCloudContextForTask: vi.fn(),
   trackProjectTask: vi.fn(),
+  findRuntimeContext: vi.fn(),
+  findRuntimeIssue: vi.fn(),
 }))
 const sharedWorkspaceApiMock = {
   workspaces: {
@@ -885,13 +890,19 @@ describe('DesktopWorkbenchLayout', () => {
     experimentalFeatures.enabled = true
     runtimeMocks.electron = false
     vi.clearAllMocks()
+    deviceExecuteCommandMock.mockReset()
+    deviceExecuteCommandMock.mockRejectedValue(new Error('Device command is not configured'))
     deliveryApiMock.available = false
+    deliveryApiMock.runtimePortAvailable = false
     deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
     deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
     deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
+    deliveryApiMock.listTaskBindings.mockResolvedValue([])
     deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
     deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
+    deliveryApiMock.findRuntimeContext.mockRejectedValue(new Error('Context not found'))
+    deliveryApiMock.findRuntimeIssue.mockRejectedValue(new Error('Issue not found'))
     deviceSurfaceExtensionMock.available = false
     deviceSurfaceExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1449,6 +1460,7 @@ describe('DesktopWorkbenchLayout', () => {
           listDevices: vi.fn(async () => []),
           listSkills: vi.fn(async () => []),
           readWorkspaceFileChunk: vi.fn(),
+          executeCommand: deviceExecuteCommandMock,
         },
         ...(deliveryApiMock.available
           ? {
@@ -1457,10 +1469,19 @@ describe('DesktopWorkbenchLayout', () => {
                 listCloudFiles: deliveryApiMock.listCloudFiles,
                 listLoopItems: deliveryApiMock.listLoopItems,
                 listDeliveries: deliveryApiMock.listDeliveries,
+                listTaskBindings: deliveryApiMock.listTaskBindings,
                 findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
                 trackProjectTask: deliveryApiMock.trackProjectTask,
               },
               sharedWorkspaceApi: sharedWorkspaceApiMock,
+              ...(deliveryApiMock.runtimePortAvailable
+                ? {
+                    workspaceRuntimePort: {
+                      findCloudContextForTask: deliveryApiMock.findRuntimeContext,
+                      findIssueForTask: deliveryApiMock.findRuntimeIssue,
+                    },
+                  }
+                : {}),
             }
           : {}),
         attachmentApi: {
@@ -3178,6 +3199,82 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
+  test('restores delivery context when an opened runtime task is absent from runtime work', async () => {
+    experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.runtimePortAvailable = true
+    const project = {
+      id: 'project-1',
+      public_id: 'public-project-1',
+      project_key: 'PROJECT',
+      name: 'Dispatch project',
+      description: '',
+      project_store: 'backend',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-09-24T00:00:00Z',
+      updated_at: '2026-09-24T00:00:00Z',
+    }
+    const issue = {
+      id: 'PROJECT-2',
+      cloud_project_id: project.id,
+      sequence_number: 2,
+      parent_id: 'PROJECT-1',
+      root_item_id: 'PROJECT-1',
+      title: '汇总三条反馈',
+      description: '汇总三条反馈并提交可核验交付。',
+      status: 'in_progress',
+      priority: 'medium',
+      assignee_user_id: 1,
+      tags: [],
+      sort_order: 0,
+      version: 2,
+      created_at: '2026-09-24T00:00:00Z',
+      updated_at: '2026-09-24T00:00:00Z',
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    deliveryApiMock.findRuntimeContext.mockResolvedValue({
+      project,
+      issueId: issue.id,
+    })
+    deliveryApiMock.findRuntimeIssue.mockResolvedValue(issue)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+          currentRuntimeTask: runtimeTask,
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
+
+    await waitFor(() =>
+      expect(deliveryApiMock.findRuntimeContext).toHaveBeenCalledWith(runtimeTask)
+    )
+    expect(deliveryApiMock.findRuntimeIssue).toHaveBeenCalledWith(runtimeTask)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(await screen.findByTestId('environment-delivery-button')).toHaveTextContent('交付')
+  })
+
   test('shows the existing local task data in the board presentation', async () => {
     const titlebarActionsPortal = document.createElement('div')
     titlebarActionsPortal.id = TITLEBAR_ACTIONS_PORTAL_ID
@@ -3217,7 +3314,6 @@ describe('DesktopWorkbenchLayout', () => {
           hasRunningTasks: false,
           preferences: {
             ...defaultAppPreferences,
-            taskCompletionNotificationsEnabled: true,
           },
           markRuntimeTaskRead,
           items: [],
@@ -3230,8 +3326,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('runtime-task-view-board'))
 
     expect(await screen.findByTestId('task-board-surface')).toHaveTextContent('本地看板任务')
-    expect(screen.getByTestId('cloud-board-horizontal-scrollbar')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-scrollbar')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-scroll')).toHaveClass('overflow-x-auto')
+    expect(screen.getByTestId('cloud-todo-column-dropzone-in_review-viewport')).toHaveClass(
+      'overflow-y-auto'
+    )
     expect(screen.getByTestId('task-view-board-transition')).toHaveClass('task-view-board-enter')
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent('本地看板任务')
     expect(
@@ -4400,10 +4498,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
-    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
-      'title',
-      '打开项目 IDE'
-    )
+    const codeServerButton = screen.getByTestId('open-code-server-titlebar-button')
+    expect(codeServerButton).not.toHaveAttribute('title')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).not.toHaveAttribute('title')
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).not.toHaveAttribute('title')
     const bottomPanelTooltip = screen.getByText('切换底部面板显示').closest('[role="tooltip"]')
@@ -11141,8 +11237,38 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('renders the environment commit menu as the compact commit or push panel', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    deviceExecuteCommandMock.mockResolvedValue({ success: true, stdout: [] })
     const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     const onPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/github_wegent',
+              repoUrl: 'https://github.com/wecode-ai/Wegent.git',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: activeProjectRuntimeTask.taskId,
+                  workspacePath: activeProjectRuntimeTask.workspacePath,
+                  title: 'Runtime project task',
+                  runtime: 'codex',
+                  gitInfo: {
+                    currentBranch: 'fix/change-request-refresh',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
 
     render(
       <DesktopWorkbenchLayout
@@ -11152,6 +11278,7 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
+          runtimeWork,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -11172,6 +11299,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(1))
     const popover = await screen.findByTestId('environment-info-popover')
     const commitMenuButton = await screen.findByTestId('environment-commit-button')
     expect(commitMenuButton).toHaveTextContent('提交或推送')
@@ -11214,17 +11342,22 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
     await waitFor(() =>
       expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
-        null,
+        expect.objectContaining({ id: 1 }),
         'keep this',
         activeProjectRuntimeTarget
       )
     )
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
 
     await userEvent.click(screen.getByTestId('environment-commit-button'))
     await userEvent.click(screen.getByTestId('environment-push-button'))
     await waitFor(() =>
-      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeProjectRuntimeTarget)
+      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1 }),
+        activeProjectRuntimeTarget
+      )
     )
+    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(3))
   }, 10_000)
 
   test('shows the environment commit progress row while generating a message', async () => {
@@ -11457,6 +11590,7 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('shows a partial branch result before environment loading finishes', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    deviceExecuteCommandMock.mockImplementation(() => new Promise(() => {}))
     let publishPartialInfo: ((info: EnvironmentInfo) => void) | undefined
     const onLoadEnvironmentInfo = vi.fn(
       (
@@ -11469,10 +11603,77 @@ describe('DesktopWorkbenchLayout', () => {
       }
     )
 
+    const pullRequest = {
+      provider: 'github' as const,
+      number: 2875,
+      url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+      title: 'Cached pull request',
+      state: 'open' as const,
+      draft: false,
+      checks: 'success' as const,
+      mergeability: 'mergeable' as const,
+      mergeQueue: 'not_queued' as const,
+      headBranch: 'fix/fast-branch-status',
+    }
+    const changeRequestTarget = {
+      deviceId: 'device-1',
+      taskId: 'runtime-project-1',
+      workspacePath: '/workspace/github_wegent',
+      remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+      branch: 'fix/fast-branch-status',
+    }
+    localStorage.setItem(
+      'wework:change-request-snapshots:v2',
+      JSON.stringify({
+        snapshots: {
+          ['device-1\u0000https://github.com/wecode-ai/Wegent.git\u0000fix/fast-branch-status']: {
+            target: changeRequestTarget,
+            changeRequest: pullRequest,
+            provider: 'github',
+            lookupState: 'found',
+            fetchedAt: new Date().toISOString(),
+          },
+        },
+      })
+    )
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/github_wegent',
+              repoUrl: changeRequestTarget.remoteUrl,
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: changeRequestTarget.taskId,
+                  workspacePath: changeRequestTarget.workspacePath,
+                  title: 'Runtime project task',
+                  runtime: 'codex',
+                  gitInfo: {
+                    currentBranch: changeRequestTarget.branch,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          runtimeWork,
+        }}
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
       />
     )
@@ -11480,31 +11681,16 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(publishPartialInfo).toBeTypeOf('function'))
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
 
-    const cachedPullRequest: EnvironmentInfo = {
+    const partialEnvironmentInfo: EnvironmentInfo = {
       additions: '+7',
       deletions: '-2',
       executionTarget: 'local',
       deviceId: 'device-1',
       workspacePath: '/workspace/github_wegent',
       branchName: 'fix/fast-branch-status',
-      changeRequest: {
-        provider: 'github',
-        state: 'found',
-        changeRequest: {
-          provider: 'github',
-          number: 2875,
-          url: 'https://github.com/wecode-ai/Wegent/pull/2875',
-          title: 'Cached pull request',
-          state: 'open',
-          draft: false,
-          checks: 'success',
-          mergeability: 'mergeable',
-          mergeQueue: 'not_queued',
-        },
-      },
     }
     act(() => {
-      publishPartialInfo?.(cachedPullRequest)
+      publishPartialInfo?.(partialEnvironmentInfo)
     })
 
     expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
@@ -11618,66 +11804,67 @@ describe('DesktopWorkbenchLayout', () => {
         },
       },
     }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
-        state={{
-          ...baseProps.state,
-          currentProject: null,
-          currentRuntimeTask: {
-            deviceId: 'runtime-device',
-            workspacePath: '/workspace/project-alpha',
-            taskId: 'runtime-1',
-          },
-          projects: [
-            {
-              id: 2,
-              name: 'fallback',
-              tasks: [],
-              config: {
-                mode: 'workspace',
-                execution: {
-                  targetType: 'local',
-                  deviceId: 'fallback-device',
-                },
-                workspace: {
-                  source: 'local_path',
-                  localPath: '/workspace/fallback',
-                },
-              },
+    const runtimeState = {
+      ...baseProps.state,
+      currentProject: null,
+      currentRuntimeTask: {
+        deviceId: 'runtime-device',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-1',
+      },
+      projects: [
+        {
+          id: 2,
+          name: 'fallback',
+          tasks: [],
+          config: {
+            mode: 'workspace' as const,
+            execution: {
+              targetType: 'local' as const,
+              deviceId: 'fallback-device',
             },
-            runtimeProject,
-          ],
-          runtimeWork: {
-            projects: [
+            workspace: {
+              source: 'local_path' as const,
+              localPath: '/workspace/fallback',
+            },
+          },
+        },
+        runtimeProject,
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: runtimeProject.id, name: runtimeProject.name },
+            deviceWorkspaces: [
               {
-                project: { id: runtimeProject.id, name: runtimeProject.name },
-                deviceWorkspaces: [
+                id: 91,
+                deviceId: 'runtime-device',
+                workspacePath: '/workspace/project-alpha',
+                available: true,
+                mapped: true,
+                tasks: [
                   {
-                    id: 91,
-                    deviceId: 'runtime-device',
-                    workspacePath: '/workspace/project-alpha',
-                    available: true,
-                    mapped: true,
-                    tasks: [
-                      {
-                        taskId: 'runtime-1',
-                        workspacePath: '/workspace/worktrees/8/project-alpha',
-                        title: 'Runtime task',
-                        runtime: 'codex',
-                      },
-                    ],
+                    taskId: 'runtime-1',
+                    workspacePath: '/workspace/worktrees/8/project-alpha',
+                    title: 'Runtime task',
+                    runtime: 'codex',
                   },
                 ],
               },
             ],
-            chats: [],
-            totalTasks: 1,
           },
-        }}
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    }
+
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={runtimeState}
       />
     )
 
@@ -11697,6 +11884,18 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={structuredClone(runtimeState)}
+      />
+    )
+
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
   })
 
   test('refreshes environment info after a runtime task finishes', async () => {

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schema tests for board assignment strategies and AI managers."""
+"""Schema tests for explicit project automation dispatch targets."""
 
 from datetime import datetime
 
@@ -19,84 +19,57 @@ from app.schemas.project_automation import (
 def _base_create() -> dict[str, object]:
     return {
         "name": "Board automation",
-        "prompt": "Choose the best project robot.",
+        "prompt": "Dispatch the project work.",
         "cronExpression": "0 3 * * *",
+        "targetKind": "agent",
+        "targetId": "agent-1",
     }
 
 
-@pytest.mark.parametrize(
-    ("configuration", "mode", "manager"),
-    [
-        ({"assignmentMode": "manual", "agentId": "agent-1"}, "manual", None),
-        (
-            {
-                "assignmentMode": "ai_managed",
-                "managerType": "custom",
-                "runtimeSource": "fixed_profile",
-                "runtimeProfileId": "runtime-1",
-            },
-            "ai_managed",
-            "custom",
-        ),
-        (
-            {
-                "assignmentMode": "ai_managed",
-                "managerType": "wegent",
-                "wegentTeamId": 42,
-            },
-            "ai_managed",
-            "wegent",
-        ),
-    ],
-)
-def test_create_accepts_two_assignment_modes_and_two_manager_sources(
-    configuration: dict[str, object], mode: str, manager: str | None
-) -> None:
-    value = ProjectAutomationCreate.model_validate({**_base_create(), **configuration})
+def test_create_requires_explicit_dispatch_target() -> None:
+    values = _base_create()
+    values.pop("targetId")
 
-    assert value.assignment_mode == mode
-    assert value.manager_type == manager
+    with pytest.raises(ValidationError, match="targetId"):
+        ProjectAutomationCreate.model_validate(values)
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("executorType", "custom"),
-        ("wegentTeamName", "shared-agent"),
-        ("wegentTeamNamespace", "default"),
-    ],
-)
-def test_create_rejects_removed_executor_contract(field: str, value: str) -> None:
+def test_create_rejects_removed_manager_contract() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ProjectAutomationCreate.model_validate(
             {
                 **_base_create(),
-                "assignmentMode": "manual",
-                "agentId": "agent-1",
-                field: value,
+                "assignmentMode": "ai_managed",
+                "managerType": "custom",
             }
         )
 
 
-def test_manual_assignment_rejects_manager_configuration() -> None:
-    with pytest.raises(ValidationError, match="manager_type is only valid"):
+def test_human_target_rejects_execution_device() -> None:
+    with pytest.raises(ValidationError, match="human targets"):
         ProjectAutomationCreate.model_validate(
             {
                 **_base_create(),
-                "assignmentMode": "manual",
-                "managerType": "custom",
-                "agentId": "agent-1",
+                "targetKind": "human",
+                "targetId": "42",
+                "executionDeviceId": "device-b",
             }
         )
 
 
-def test_partial_update_does_not_require_assignment_configuration() -> None:
+def test_partial_update_does_not_require_target_change() -> None:
     update = ProjectAutomationUpdate.model_validate({"version": 2, "enabled": False})
 
-    assert update.assignment_mode is None
+    assert update.target_kind is None
+    assert update.target_id is None
 
 
-def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> None:
+def test_partial_update_requires_target_pair() -> None:
+    with pytest.raises(ValidationError, match="must be changed together"):
+        ProjectAutomationUpdate.model_validate({"version": 2, "targetKind": "agent"})
+
+
+def test_workflow_trigger_accepts_explicit_target_without_schedule_fields() -> None:
     value = ProjectAutomationCreate.model_validate(
         {
             "name": "Workflow · Development robot",
@@ -104,8 +77,8 @@ def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> N
             "triggerType": "workflow",
             "eventType": None,
             "cronExpression": None,
-            "assignmentMode": "manual",
-            "agentId": "agent-1",
+            "targetKind": "agent",
+            "targetId": "agent-1",
         }
     )
 
@@ -113,45 +86,23 @@ def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> N
     assert value.cron_expression is None
 
 
-def test_partial_update_allows_changing_execution_device_without_assignment_mode() -> (
-    None
-):
-    update = ProjectAutomationUpdate.model_validate(
-        {"version": 2, "executionDeviceId": "device-b"}
-    )
-
-    assert update.assignment_mode is None
-    assert update.execution_device_id == "device-b"
-
-
-def test_ai_managed_requires_manager_source() -> None:
-    with pytest.raises(ValidationError, match="manager_type is required"):
-        ProjectAutomationUpdate.model_validate(
-            {"version": 2, "assignmentMode": "ai_managed"}
-        )
-
-
-def test_views_accept_managed_wegent_environment_and_queued_run() -> None:
-    now = datetime(2026, 8, 13)
+def test_views_accept_explicit_target_and_queued_run() -> None:
+    now = datetime(2026, 9, 25)
     rule = ProjectAutomationView.model_validate(
         {
             "id": "rule-1",
             "projectId": "project-1",
-            "name": "Wegent manager rule",
-            "prompt": "Choose a robot.",
+            "name": "Agent rule",
+            "prompt": "Dispatch work.",
             "triggerType": "schedule",
             "eventType": None,
             "eventConfig": {},
-            "assignmentMode": "ai_managed",
-            "managerType": "wegent",
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
-            "agentId": None,
-            "wegentTeamId": 42,
-            "model": None,
-            "agentName": "Shared agent",
-            "executionEnvironment": "managed",
             "executionDeviceId": None,
+            "targetKind": "agent",
+            "targetId": "agent-1",
+            "targetName": "Agent one",
             "enabled": True,
             "nextRunAt": now,
             "lastRunAt": None,
@@ -179,6 +130,6 @@ def test_views_accept_managed_wegent_environment_and_queued_run() -> None:
         }
     )
 
-    assert rule.manager_type == "wegent"
-    assert rule.execution_environment == "managed"
+    assert rule.target_kind == "agent"
+    assert rule.target_id == "agent-1"
     assert run.status == "queued"

@@ -19,6 +19,7 @@ export {
   projectWorkbenchSubagentActivity,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
+  settleWorkbenchProcessingBlock,
   resolveStreamingThinkingContent
 } from './workbench-message-reducer'
 export type {

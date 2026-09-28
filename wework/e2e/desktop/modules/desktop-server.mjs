@@ -150,6 +150,8 @@ import {
   LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
   LOCAL_MODEL_SWITCH_INITIAL_PROMPT,
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
@@ -404,10 +406,11 @@ function readyPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
-const HELD_WORKTREE_SCENARIOS = new Set([
+const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
+  'attachment_submit_cleanup',
 ])
 
 class DesktopE2EServer {
@@ -831,7 +834,8 @@ class DesktopE2EServer {
         'reconnect',
         'model_proxy_restart',
         'checkpoint_task',
-        ...HELD_WORKTREE_SCENARIOS,
+        'late_bound_project_space',
+        ...HELD_RESPONSE_SCENARIOS,
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -867,7 +871,7 @@ class DesktopE2EServer {
 
   holdScenarioResponse(scenario) {
     assert.ok(
-      HELD_WORKTREE_SCENARIOS.has(scenario),
+      HELD_RESPONSE_SCENARIOS.has(scenario),
       `Scenario "${scenario}" does not support held responses`
     )
     let release
@@ -1243,7 +1247,15 @@ class DesktopE2EServer {
       pathname: url.pathname,
     })
     if (await this.handleControlRoute(request, response, url)) return
-    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    try {
+      if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+    } catch (error) {
+      console.error(
+        `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
+        error
+      )
+      throw error
+    }
 
     if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
       const rawBody = await readRawRequestBody(request)
@@ -1278,14 +1290,6 @@ class DesktopE2EServer {
         email: 'desktop-e2e@wework.local',
         preferences: this.userPreferences,
       })
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-    ) {
-      json(response, 200, null)
       return
     }
 
@@ -3014,7 +3018,8 @@ class DesktopE2EServer {
       const tool = selectShellToolCommand(
         body,
         `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
-        this.cloudWorkspacePath
+        this.cloudWorkspacePath,
+        { yieldTimeMs: 10_000 }
       )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'
@@ -3933,11 +3938,95 @@ class DesktopE2EServer {
       return
     }
 
-    if (HELD_WORKTREE_SCENARIOS.has(this.scenario)) {
+    if (this.scenario === 'late_bound_project_space') {
+      this.recordScenarioRequest('late_bound_project_space', modelRequest)
+      const requestNumber = this.scenarioRequests.get('late_bound_project_space').length
+      const requestText = JSON.stringify(body)
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(LATE_BOUND_PROJECT_SPACE_PROMPT),
+          'The late-bound project-space prompt was lost'
+        )
+        const search = selectToolSearch(
+          body,
+          'wework_space get_current_context list_item_attachments'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents('late-bound-project-space-search', search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, 'wework_space', 'get_current_context', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-context',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestNumber === 3) {
+        const currentContextOutput = toolOutputText(body, 'late-bound-project-space-context') ?? ''
+        assert.equal(
+          requestContainsToolOutput(body, 'late-bound-project-space-context'),
+          true,
+          'The late-bound Issue context did not return through the real MCP tool loop'
+        )
+        assert.ok(
+          currentContextOutput.includes('space_id') &&
+            !/"bound"\s*:\s*false/u.test(currentContextOutput),
+          `The late-bound MCP context was not scoped to the selected Issue: ${currentContextOutput}`
+        )
+        const tool = selectMcpTool(body, 'wework_space', 'list_item_attachments', {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'late-bound-project-space-attachments',
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(requestNumber, 4, `Unexpected late-bound project-space request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, 'late-bound-project-space-attachments'),
+        true,
+        'The bound Issue attachment list did not return through the real MCP tool loop'
+      )
+      const attachmentOutput = toolOutputText(body, 'late-bound-project-space-attachments') ?? ''
+      assert.ok(
+        !attachmentOutput.includes('is required') && !attachmentOutput.includes('"error"'),
+        `The bound Issue attachment list failed: ${attachmentOutput}`
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (HELD_RESPONSE_SCENARIOS.has(this.scenario)) {
       const scenario = this.scenario
       const held = this.heldScenarioResponses.get(scenario)
       assert.ok(held, `The ${scenario} response was not held before the task started`)
       this.recordScenarioRequest(scenario, modelRequest)
+      if (scenario === 'attachment_submit_cleanup') {
+        assert.ok(
+          JSON.stringify(body).includes(ATTACHMENT_ONLY_FILENAME),
+          'The attachment cleanup request did not contain the selected file'
+        )
+      }
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
@@ -3948,12 +4037,11 @@ class DesktopE2EServer {
       response.write(createSse([responseCreated(responseId)]))
       await held.promise
       if (!response.writableEnded && !response.destroyed) {
-        response.end(
-          createSse([
-            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
-            responseCompleted(responseId),
-          ])
-        )
+        const completionText =
+          scenario === 'attachment_submit_cleanup'
+            ? `${ATTACHMENT_ONLY_COMPLETION_TEXT}_SUBMIT_CLEANUP`
+            : `${scenario.toUpperCase()}_COMPLETE`
+        response.end(createSse([assistantMessage(completionText), responseCompleted(responseId)]))
       }
       return
     }

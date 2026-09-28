@@ -147,6 +147,98 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('restores a queued draft that was published before submission', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queued, setQueued] = useState('')
+      const [replaceDraftKey, setReplaceDraftKey] = useState(0)
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setValue(queued)
+              setReplaceDraftKey(current => current + 1)
+            }}
+          >
+            Edit queued message
+          </button>
+          <span data-testid="published-draft">{value}</span>
+          <BufferedChatInput
+            value={value}
+            replaceDraftKey={replaceDraftKey}
+            onChange={setValue}
+            onSubmit={message => {
+              setQueued(message)
+              return true
+            }}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'queued follow-up')
+    await waitFor(() =>
+      expect(screen.getByTestId('published-draft')).toHaveTextContent('queued follow-up')
+    )
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(screen.getByTestId('published-draft')).toBeEmptyDOMElement())
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('queued follow-up')
+    )
+  }, 30_000)
+
+  test('ignores acknowledgements from before a queued draft is restored', async () => {
+    const acknowledgements: Array<() => void> = []
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queued, setQueued] = useState('')
+      const [replaceDraftKey, setReplaceDraftKey] = useState(0)
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setValue(queued)
+              setReplaceDraftKey(current => current + 1)
+            }}
+          >
+            Edit queued message
+          </button>
+          <BufferedChatInput
+            value={value}
+            replaceDraftKey={replaceDraftKey}
+            onChange={nextValue => {
+              acknowledgements.push(() => setValue(nextValue))
+            }}
+            onSubmit={message => {
+              setQueued(message)
+              return true
+            }}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'queued follow-up')
+    await waitFor(() => expect(acknowledgements).toHaveLength(1))
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(acknowledgements).toHaveLength(2))
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
+    expect(input).toHaveValue('queued follow-up')
+
+    act(() => acknowledgements[0]?.())
+    act(() => acknowledgements[1]?.())
+    expect(input).toHaveValue('queued follow-up')
+  }, 30_000)
+
   test('keeps the submitted draft when an async send is rejected', async () => {
     let resolveSubmission: (accepted: boolean) => void = () => undefined
     const onDraftEdit = vi.fn()
@@ -180,7 +272,7 @@ describe('BufferedChatInput', () => {
     expect(onDraftEdit).not.toHaveBeenCalled()
 
     await userEvent.type(screen.getByTestId('chat-message-input'), ' updated')
-    expect(onDraftEdit).toHaveBeenCalled()
+    expect(onDraftEdit).toHaveBeenLastCalledWith(' updatedretry this message')
   })
 
   test('restores the submitted draft when an async send promise rejects', async () => {
@@ -704,8 +796,6 @@ describe('BufferedChatInput', () => {
         </div>
       </>
     )
-    dispatchPendingWorkbenchComposerFocusRequest()
-
     await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
   })
 

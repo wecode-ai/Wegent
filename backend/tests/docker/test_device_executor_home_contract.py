@@ -79,7 +79,6 @@ def _run_entrypoint(
         "LOCAL_WORKSPACE_ROOT": str(
             local_workspace_root or executor_home / "workspace"
         ),
-        "DEVICE_PUBLIC_BASE_URL": "http://127.0.0.1:17888",
     }
     if home_id is not None:
         env["WEGENT_EXECUTOR_HOME_ID"] = home_id
@@ -103,6 +102,7 @@ def test_device_image_keeps_all_runtime_state_under_stable_executor_home():
         "ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"
         in dockerfile
     )
+    assert "DEVICE_PUBLIC_BASE_URL" not in dockerfile
     for persisted_path in (
         '"$WEGENT_EXECUTOR_HOME/runtime-work"',
         '"$WEGENT_EXECUTOR_HOME/capabilities"',

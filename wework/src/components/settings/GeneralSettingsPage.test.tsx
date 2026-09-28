@@ -26,7 +26,6 @@ const defaultPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: true,
   telemetryEnabled: true,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -95,7 +94,6 @@ vi.mock('@/desktop/appPreferences', () => ({
     experimentalFeaturesEnabled: false,
     telemetryConsentAsked: true,
     telemetryEnabled: true,
-    taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
@@ -665,8 +663,8 @@ describe('GeneralSettingsPage', () => {
       within(runtimeSection).getByTestId('general-prevent-sleep-while-tasks-running-toggle')
     ).toBeInTheDocument()
     expect(
-      within(runtimeSection).getByTestId('general-task-completion-notifications-toggle')
-    ).toBeInTheDocument()
+      within(runtimeSection).queryByTestId('general-task-completion-notifications-toggle')
+    ).not.toBeInTheDocument()
     expect(within(runtimeSection).getByTestId('general-tray-running-toggle')).toBeInTheDocument()
     expect(
       within(basicSection).queryByTestId('general-close-to-tray-toggle')
@@ -736,9 +734,9 @@ describe('GeneralSettingsPage', () => {
     expect(
       await screen.findByText('workbench.general_settings_tray_display_content')
     ).toBeInTheDocument()
-    const notificationToggle = screen.getByTestId('general-task-completion-notifications-toggle')
-    await waitFor(() => expect(notificationToggle).toBeEnabled())
-    expect(notificationToggle).toHaveAttribute('aria-checked', 'false')
+    expect(
+      screen.queryByTestId('general-task-completion-notifications-toggle')
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('general-tray-unread-toggle')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('general-tray-running-toggle')).toHaveAttribute(
       'aria-pressed',
@@ -752,16 +750,12 @@ describe('GeneralSettingsPage', () => {
     expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
     expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
 
-    await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-running-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-usage-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-wegent-usage-toggle'))
 
     await waitFor(() => {
-      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        taskCompletionNotificationsEnabled: true,
-      })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUnreadEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayRunningEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })

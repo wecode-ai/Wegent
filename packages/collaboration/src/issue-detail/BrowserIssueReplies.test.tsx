@@ -57,6 +57,24 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
   let api: Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'issues'>
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [],
+    })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect(),
+    })
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -172,12 +190,13 @@ describe('browser card replies through the actual shared queue and HTTP bridge',
   }
   async function send(text: string) {
     await act(async () => {
-      const input = container.querySelector('textarea')!
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
-        input,
-        text
+      const input = container.querySelector<HTMLElement & { value: string }>(
+        '[data-testid="collaboration-chat-reply-input-root"]'
+      )!
+      input.value = text
+      input.dispatchEvent(
+        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true })
       )
-      input.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await act(async () =>
       (

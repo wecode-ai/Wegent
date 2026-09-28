@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 from llama_index.core.base.embeddings.base import BaseEmbedding
 from sqlalchemy.orm import Session
 
+from app.schemas.kind import ModelCategoryType, resolve_model_category
 from knowledge_engine.embedding.capabilities import (
     embedding_supports_image_input,
     normalize_additional_input_modalities,
@@ -73,15 +74,9 @@ def create_embedding_model_from_crd(
     # Extract modelConfig
     model_config = spec.get("modelConfig", {})
 
-    # Validate modelType - support both new format (spec.modelType) and old format (spec.modelConfig.modelType)
-    # New format: modelType is at spec.modelType (e.g., "embedding")
-    # Old format: modelType is at spec.modelConfig.modelType (e.g., "embedding")
-    model_type = spec.get("modelType")
-    if model_type is None:
-        # Fallback to old format: check modelConfig.modelType
-        model_type = model_config.get("modelType", "llm")
-
-    if model_type != "embedding":
+    # Validate modelType through the shared CRD resolution.
+    model_type = resolve_model_category(spec)
+    if model_type != ModelCategoryType.EMBEDDING.value:
         raise ValueError(
             f"Model '{model_name}' is not an embedding model (modelType='{model_type}')"
         )

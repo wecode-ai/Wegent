@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-
 impl RuntimeWorkRpcHandler {
     pub(super) fn begin_active_codex_transcript(
         &self,
@@ -155,9 +154,16 @@ impl RuntimeWorkRpcHandler {
         ) {
             return;
         }
-        let item = notification_item(notification.params);
+        let mut item = notification_item(notification.params);
         if !item.is_object() {
             return;
+        }
+        if is_codex_context_compaction_item_type(&item_type(&item)) {
+            item["status"] = json!(if notification.method == "item/completed" {
+                "done"
+            } else {
+                "pending"
+            });
         }
         let Some(item_id) = string_field(&item, "id") else {
             return;
@@ -901,6 +907,13 @@ fn take_pending_codex_notifications(
 fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
     let params = message.get("params").unwrap_or(message);
     let item = params.get("item").unwrap_or(params);
+    if item_type(item) == "subagentactivity" {
+        return string_field(item, "agentThreadId")
+            .or_else(|| string_field(item, "agent_thread_id"))
+            .filter(|thread_id| !thread_id.trim().is_empty())
+            .into_iter()
+            .collect();
+    }
     if item_type(item) != "collabagenttoolcall"
         || string_field(item, "tool").as_deref() != Some("spawnAgent")
     {

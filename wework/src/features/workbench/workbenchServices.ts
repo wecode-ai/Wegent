@@ -220,6 +220,19 @@ export interface WorkbenchServices {
       modelOptions?: ModelOptions
     }) => Promise<string>
   }
+  textGenerationApi?: {
+    generateText: (data: {
+      prompt: string
+      title?: string
+      deviceId?: string | null
+      modelId: string
+      modelType?: ModelType | null
+      modelOptions?: ModelOptions
+      outputSchema?: Record<string, unknown>
+      onProgress?: (phase: 'preparing' | 'generating') => void
+      onDelta?: (delta: string) => void
+    }) => Promise<string>
+  }
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']

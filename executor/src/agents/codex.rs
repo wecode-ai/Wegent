@@ -73,6 +73,8 @@ const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
 const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
+const CODEX_DISABLE_MULTI_AGENT_OVERRIDE: &str = "features.multi_agent=false";
+const CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE: &str = "features.multi_agent_v2=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -120,8 +122,9 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For AI-managed board automation, act as the board steward, not a task executor. Use `get_board_item` for the current Issue, `get_assignment_candidates` for eligible members and robots, then call `submit_workflow_plan` with independently verifiable child tasks. The platform binds the active planning scope; do not discover, guess, or send `stage_id`. Do not assign the original Issue or execute its work yourself.
-- For a child task created by an AI-managed workflow, complete the assigned work and call `report_workflow_outcome` with `passed` or `needs_rework` plus concise evidence before finishing."#;
+- For a manager-bound Issue, call `get_board_item` and `get_assignment_candidates` to inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
+- Manager and member runs are automatically recorded in the Issue activity. When the manager calls `update_issue_status`, its `comment` field is optional and is the only extra status explanation to publish. Do not duplicate the same result with `add_board_item_comment`.
+"#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -132,8 +135,6 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
-#[path = "codex/coordinate.rs"]
-mod coordinate;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 #[path = "codex/diagnostics.rs"]
@@ -681,8 +682,7 @@ impl CodexAppServerClient {
         last_turn_id: &str,
         request: &ExecutionRequest,
     ) -> Result<Value, String> {
-        let mut request = request.clone();
-        coordinate::prepare_catalog(&mut request).await?;
+        let request = request.clone();
         let launch_config = build_codex_launch_config_for_fork(&request, thread_id)?;
         let mut params = thread_fork_params(thread_id, thread_path, &request, &launch_config);
         params["lastTurnId"] = Value::String(last_turn_id.to_owned());
@@ -821,6 +821,15 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
+        if let Err(error) = self.release_thread_subscription(thread_id).await {
+            log_executor_event(
+                "codex shared thread unsubscribe failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
+        }
+    }
+
+    async fn release_thread_subscription(&self, thread_id: &str) -> Result<(), String> {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
@@ -830,13 +839,7 @@ impl CodexAppServerClient {
         }
         drop(_lifecycle_guard);
 
-        let result = self.request_thread_unsubscribe(thread_id).await;
-        if let Err(error) = result {
-            log_executor_event(
-                "codex shared thread unsubscribe failed",
-                &[("thread_id", thread_id.to_owned()), ("error", error)],
-            );
-        }
+        self.request_thread_unsubscribe(thread_id).await
     }
 
     async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<(), String> {
@@ -1649,6 +1652,28 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
+fn project_space_resume_thread_id(thread_plan: &CodexThreadPlan) -> Option<&str> {
+    let CodexThreadStart::Request {
+        operation: "thread/resume",
+        params,
+    } = &thread_plan.start
+    else {
+        return None;
+    };
+    let has_project_space_config =
+        params
+            .get("config")
+            .and_then(Value::as_object)
+            .is_some_and(|config| {
+                config
+                    .keys()
+                    .any(|key| key.starts_with("mcp_servers.wework_space."))
+            });
+    has_project_space_config
+        .then(|| params.get("threadId").and_then(Value::as_str))
+        .flatten()
+}
+
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1735,6 +1760,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = project_space_resume_thread_id(&thread_plan) {
+            client.release_thread_subscription(thread_id).await?;
+        }
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -3117,7 +3145,17 @@ fn spawn_codex_app_server(
     let resolved_binary = resolve_codex_binary(binary);
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
-    let mut command = Command::new(&resolved_binary);
+    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+        .spawn()
+        .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn codex_app_server_command(
+    resolved_binary: &str,
+    codex_home: &Path,
+    launch_config: &CodexLaunchConfig,
+) -> Command {
+    let mut command = Command::new(resolved_binary);
     for key in EXECUTOR_INTERNAL_ENV_KEYS
         .iter()
         .chain(TASK_SCOPED_ENV_KEYS.iter())
@@ -3131,7 +3169,8 @@ fn spawn_codex_app_server(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
-    command.env(CODEX_HOME_ENV, &codex_home);
+    command.env(CODEX_HOME_ENV, codex_home);
+    command.current_dir(codex_home);
     command.env(
         "PATH",
         process_environment::normalized_process_path(
@@ -3144,9 +3183,8 @@ fn spawn_codex_app_server(
         .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))
+        .stderr(Stdio::inherit());
+    command
 }
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
@@ -3417,6 +3455,9 @@ fn build_codex_launch_config_with_route_scope(
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
+        .extend(codex_collaboration_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
     launch_config
         .config_overrides
@@ -3436,6 +3477,8 @@ fn build_codex_launch_config_with_route_scope(
             &inference_provider,
             runtime_proxy_url(&request.model_config),
         ) {
+            let mut upstream = upstream;
+            inject_session_headers(&mut upstream.default_headers, &request.task_id);
             log_executor_event(
                 "codex model route selected",
                 &[
@@ -3456,7 +3499,7 @@ fn build_codex_launch_config_with_route_scope(
                 upstream,
                 model.clone(),
                 request_model_switched(request),
-                vision_sidecar_upstream(&request.model_config)?,
+                vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
             );
         } else {
             log_executor_event(
@@ -3478,11 +3521,14 @@ fn build_codex_launch_config_with_route_scope(
                 &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
+                &request.task_id,
             ));
         }
     } else if let Some(upstream) =
         local_model_proxy::upstream_from_model_config(&request.model_config)
     {
+        let mut upstream = upstream;
+        inject_session_headers(&mut upstream.default_headers, &request.task_id);
         log_executor_event(
             "codex model route selected",
             &[
@@ -3503,7 +3549,7 @@ fn build_codex_launch_config_with_route_scope(
             upstream,
             model.clone(),
             request_model_switched(request),
-            vision_sidecar_upstream(&request.model_config)?,
+            vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
         );
     } else {
         let inference_provider = inference_model_provider(&request.model_config);
@@ -3521,7 +3567,13 @@ fn build_codex_launch_config_with_route_scope(
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        launch_config.model_provider = Some(inference_provider);
+        launch_config.model_provider = Some(inference_provider.clone());
+        launch_config.config_overrides.extend(header_overrides(
+            &inference_provider,
+            request.model_config.get("default_headers"),
+            project_id.as_deref(),
+            &request.task_id,
+        ));
     }
 
     launch_config
@@ -3544,8 +3596,6 @@ fn build_codex_launch_config_with_route_scope(
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
-
-    coordinate::configure(request, &mut launch_config)?;
 
     Ok(launch_config)
 }
@@ -3680,6 +3730,17 @@ fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarU
     }))
 }
 
+/// Resolve the vision sidecar and attach the session (task) id headers.
+fn vision_sidecar_with_session_headers(
+    model_config: &Value,
+    task_id: &str,
+) -> Result<Option<VisionSidecarUpstream>, String> {
+    Ok(vision_sidecar_upstream(model_config)?.map(|mut sidecar| {
+        inject_session_headers(&mut sidecar.default_headers, task_id);
+        sidecar
+    }))
+}
+
 fn shell_path_config_override() -> String {
     let path = process_environment::normalized_process_path(
         env::var("PATH").ok().as_deref().unwrap_or_default(),
@@ -3739,6 +3800,16 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
         ]))
     ));
     overrides
+}
+
+fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single")) {
+        return vec![
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE.to_owned(),
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
+        ];
+    }
+    Vec::new()
 }
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
@@ -4213,6 +4284,13 @@ fn is_internal_codex_provider(provider: &str) -> bool {
     provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
 }
 
+fn is_builtin_codex_provider(provider: &str) -> bool {
+    matches!(
+        provider,
+        "openai" | "amazon-bedrock" | "ollama" | "lmstudio"
+    )
+}
+
 fn sanitize_provider_id(value: &str) -> String {
     let mut sanitized = String::new();
     let mut last_was_separator = false;
@@ -4262,9 +4340,17 @@ fn header_overrides(
     model_provider: &str,
     default_headers: Option<&Value>,
     project_id: Option<&str>,
+    task_id: &str,
 ) -> Vec<String> {
+    // Codex owns its built-in providers and rejects any
+    // `model_providers.<builtin>.*` override as a reserved provider conflict.
+    if is_builtin_codex_provider(model_provider) {
+        return Vec::new();
+    }
+
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let headers = parse_header_map(default_headers);
+        let mut headers = parse_header_map(default_headers);
+        inject_session_headers(&mut headers, task_id);
         return if headers.is_empty() {
             Vec::new()
         } else {
@@ -4285,6 +4371,7 @@ fn header_overrides(
     insert_missing_header(&mut headers, "wecode-action", "wegent");
     insert_missing_header(&mut headers, "wecode-source", "wegent-local");
     insert_missing_header(&mut headers, "wecode-executor", "codex");
+    inject_session_headers(&mut headers, task_id);
     insert_header(&mut headers, "wecode-project", project_id);
 
     headers
@@ -4335,6 +4422,32 @@ fn insert_missing_header(headers: &mut Vec<(String, String)>, key: &str, value: 
         return;
     }
     headers.push((key.to_owned(), value.to_owned()));
+}
+
+/// Attach the Wegent session (task) id to model call headers.
+///
+/// Direct providers receive the plain `wecode-session-id` header. When the
+/// headers target the backend LLM gateway (marked by `X-Wegent-Model-Type`),
+/// the gateway only forwards `X-Wegent-Upstream-Header-*` entries upstream, so
+/// the session id is additionally emitted in that prefixed form.
+fn inject_session_headers(headers: &mut Vec<(String, String)>, task_id: &str) {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return;
+    }
+    // The request's task id is authoritative; replace any value coming from
+    // provider configuration so session correlation never points at a stale id.
+    insert_header(headers, "wecode-session-id", task_id);
+    let targets_gateway = headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("X-Wegent-Model-Type"));
+    if targets_gateway {
+        insert_header(
+            headers,
+            "X-Wegent-Upstream-Header-wecode-session-id",
+            task_id,
+        );
+    }
 }
 
 fn insert_header(headers: &mut Vec<(String, String)>, key: &str, value: &str) {
@@ -4811,9 +4924,7 @@ async fn prepare_codex_execution_request(
         ensure_codex_mcp_endpoints().await?;
     }
     let prepare_request = async {
-        let mut request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
-        coordinate::prepare_catalog(&mut request).await?;
-        Ok::<_, String>(request)
+        Ok::<_, String>(super::runtime_capabilities::prepare_runtime_attachments(request).await)
     };
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
@@ -5751,6 +5862,7 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
         .extra
         .get("collaborationMode")
         .or_else(|| request.extra.get("collaboration_mode"))
+        .or_else(|| request.extra.get("collaboration_model"))
         .and_then(Value::as_str)
 }
 

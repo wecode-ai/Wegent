@@ -1775,7 +1775,8 @@ class KnowledgeOrchestrator:
 
         Creates the attachment from the provider-fetched body, then lands it on
         the document through a guarded write (see ``_land_external_content``).
-        The user's own name and folder are never overwritten.
+        The user's own folder is never overwritten; a DingTalk copy's name
+        follows its source title (see ``_land_external_content``).
 
         Args:
             db: Database session
@@ -1931,8 +1932,6 @@ class KnowledgeOrchestrator:
         document_id = document.id
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Refresh the provider-owned source metadata; never touch the user's
-        # own document name or folder.
         existing_external = document.external_source_config
         incoming_external = dict(content.metadata or {})
         existing_sync = existing_external.get("sync")
@@ -1946,6 +1945,11 @@ class KnowledgeOrchestrator:
         }
         # Reading the source succeeded even if later conversion/indexing fails.
         merged_external.pop("last_error", None)
+        merged_sync = merged_external.get("sync")
+        if isinstance(merged_sync, dict):
+            merged_sync = dict(merged_sync)
+            merged_sync.pop("last_error_code", None)
+            merged_external["sync"] = merged_sync
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
         # A conversion belongs to the previous body, never to its replacement.
@@ -1964,7 +1968,13 @@ class KnowledgeOrchestrator:
             KnowledgeDocument.updated_at: now,
         }
         sync_config = merged_external.get("sync")
-        if isinstance(sync_config, dict) and sync_config.get("enabled"):
+        follows_source_title = document.external_provider == "dingtalk" or (
+            isinstance(sync_config, dict) and sync_config.get("enabled")
+        )
+        if follows_source_title and content.name.strip():
+            # A copy's name follows its source title on every landed body; a
+            # blank source title never replaces the current name, and the
+            # folder always stays the user's own.
             update_fields[KnowledgeDocument.name] = content.name[:255]
 
         updated = (

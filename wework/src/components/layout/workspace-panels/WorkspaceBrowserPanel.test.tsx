@@ -575,7 +575,9 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() =>
       expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
     )
-    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('workspace-browser-annotation-close-button')
+    ).toBeInTheDocument()
     expect(input).toHaveValue('https://example.com/')
   })
 

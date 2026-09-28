@@ -2612,6 +2612,14 @@ class TestOpenAPIResponsesDelete:
 class TestOpenAPIResponsesHelpers:
     """Test helper functions used in openapi_responses."""
 
+    def test_model_category_reads_a_legacy_nested_category(self):
+        """A Model that nests its category in modelConfig must not read as LLM."""
+        model = SimpleNamespace(
+            json={"spec": {"modelConfig": {"modelType": "embedding"}}}
+        )
+
+        assert _model_category_from_kind(model) == "embedding"
+
     def test_parse_model_string_two_parts(self):
         """Test parsing model string with namespace and team name."""
         from app.services.openapi.helpers import parse_model_string

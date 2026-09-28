@@ -21,8 +21,8 @@ export function canCommentCollaborationIssue(
   if (issue.can_view_detail === false) return false;
   const role =
     project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
-  return role !== "RestrictedAnalyst";
+    (project.project_store === "local" ? "Owner" : "Viewer");
+  return role === "Owner" || role === "Maintainer" || role === "Developer";
 }
 
 export function canAssignCollaborationIssue(
@@ -30,7 +30,7 @@ export function canAssignCollaborationIssue(
 ): boolean {
   const role =
     project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
+    (project.project_store === "local" ? "Owner" : "Viewer");
   return role === "Owner" || role === "Maintainer";
 }
 
@@ -51,7 +51,12 @@ export function getCollaborationIssueActionPermissions(
   project: Pick<CollaborationProject, "access_role" | "project_store">,
   issue: Pick<CollaborationIssue, "can_edit" | "can_view_detail">,
 ): CollaborationIssueActionPermissions {
-  const canStartWork = canStartWorkOnCollaborationIssue(issue);
+  const role =
+    project.access_role ??
+    (project.project_store === "local" ? "Owner" : "Viewer");
+  const canStartWork =
+    canStartWorkOnCollaborationIssue(issue) &&
+    (role === "Owner" || role === "Maintainer" || role === "Developer");
   return {
     canEdit: canEditCollaborationIssue(issue),
     canComment: canCommentCollaborationIssue(project, issue),
@@ -67,8 +72,13 @@ export function canAccessCollaborationProjectView(
 ): boolean {
   const accessRole =
     project.access_role ??
-    (project.project_store === "local" ? "Owner" : "RestrictedAnalyst");
+    (project.project_store === "local" ? "Owner" : "Viewer");
   if (view === "board" || view === "table") return true;
-  if (view === "files") return accessRole !== "RestrictedAnalyst";
+  if (view === "files")
+    return (
+      accessRole === "Owner" ||
+      accessRole === "Maintainer" ||
+      accessRole === "Developer"
+    );
   return accessRole === "Owner" || accessRole === "Maintainer";
 }

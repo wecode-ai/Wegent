@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
 from app.models.kind import Kind
-from app.schemas.device import DeviceType
+from app.schemas.device import DeviceRegisterPayload, DeviceType
 
 
 @pytest.mark.asyncio
@@ -91,9 +91,33 @@ async def test_new_app_identity_registers_with_independent_record_route(
     assert len(persisted) == 2
     assert original.json["spec"]["runtimeInstanceId"] == "runtime-original"
     assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-other"
+    assert replacement.json["spec"]["runtimeTransferPort"] == 17888
     assert save_session.await_args.args[1]["device_id"] == replacement_route
+    assert save_session.await_args.args[1]["runtime_transfer_port"] == 17888
     assert enter_room.await_count == 2
     assert set_online.await_args.kwargs["device_id"] == replacement_route
+    assert set_online.await_args.kwargs["runtime_transfer_port"] == 17888
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({}, 17888),
+        ({"runtime_transfer_port": None}, None),
+        ({"runtime_transfer_port": 23456}, 23456),
+    ],
+)
+def test_registration_gateway_port_distinguishes_legacy_and_reported_values(
+    data,
+    expected,
+):
+    payload = DeviceRegisterPayload(
+        device_id="device-1",
+        name="Device 1",
+        **data,
+    )
+
+    assert device_namespace._registration_runtime_transfer_port(payload) == expected
 
 
 def test_register_device_reads_display_name_before_session_closes(
@@ -281,6 +305,9 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
         client_ip="198.51.100.31",
         executor_device_id=runtime_device_id,
         runtime_instance_id="runtime-instance-first",
+        runtime_transfer_host="10.185.18.119",
+        runtime_transfer_port=23456,
+        update_runtime_transfer_port=True,
     )
 
     test_db.expire_all()
@@ -296,6 +323,8 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
     )
     assert matched == (logical_device_id, False, None)
     assert persisted.json["spec"]["runtimeInstanceId"] == "runtime-instance-first"
+    assert persisted.json["spec"]["runtimeTransferHost"] == "10.185.18.119"
+    assert persisted.json["spec"]["runtimeTransferPort"] == 23456
 
 
 @pytest.mark.asyncio
@@ -412,6 +441,7 @@ async def test_remote_runtime_mismatch_is_not_hidden_by_registration_debounce(
             device_type=DeviceType.REMOTE.value,
             bind_shell="claudecode",
             runtime_transfer_host="",
+            runtime_transfer_port=17888,
             runtime_instance_id="runtime-instance-original",
             app_device_id="",
         ),

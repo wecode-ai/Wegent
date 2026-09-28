@@ -37,6 +37,7 @@ import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
+import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
@@ -745,6 +746,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <GlobalIconButtonTooltip />
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <div className="pointer-events-none fixed inset-0 z-system-popover">

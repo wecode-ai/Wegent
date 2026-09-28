@@ -510,10 +510,14 @@ impl TaskRuntime {
         &self,
         project_id: &str,
         task_id: &str,
+        activity_sequence: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.mark_task_read(project_id, task_id),
+            TaskProviderKind::Local => {
+                self.local_store
+                    .mark_task_read(project_id, task_id, activity_sequence)
+            }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -618,27 +622,6 @@ impl TaskRuntime {
         self.local_store.list_chat_agents(project_id)
     }
 
-    pub fn local_automation_assignment_candidates(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .local_automation_assignment_candidates(project_id, task_id, run_id)
-    }
-
-    pub fn submit_local_automation_workflow_plan(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        run_id: &str,
-        plan: &Value,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.local_store
-            .submit_local_automation_workflow_plan(project_id, task_id, run_id, plan)
-    }
-
     pub fn create_chat_agent(
         &self,
         project_id: &str,
@@ -721,6 +704,14 @@ impl TaskRuntime {
             .list_executions(project_id, agent_id, status, include_terminal)
     }
 
+    pub fn execution_by_runtime_task_id(
+        &self,
+        runtime_task_id: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store
+            .execution_by_runtime_task_id(runtime_task_id)
+    }
+
     pub fn list_comments(
         &self,
         project_id: &str,
@@ -768,6 +759,15 @@ impl TaskRuntime {
             payload,
             trigger_message_id,
         )
+    }
+
+    pub fn submit_collaboration_round(
+        &self,
+        manager_runtime_task_id: &str,
+        plan: &serde_json::Value,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.local_store
+            .submit_collaboration_round(manager_runtime_task_id, plan)
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {
@@ -1615,6 +1615,8 @@ mod tests {
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )
@@ -1719,6 +1721,8 @@ mod tests {
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
                     assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
                     workflow: None,
                 },
             )

@@ -25,13 +25,13 @@ Project settings keep collaboration organization separate from runtime resources
 
 - **Collaboration members** presents project participants in the order **Agents → Project members → Collaboration groups**. A collaboration group is a reusable organization whose members and leader may be humans or Agents. Workflow stages belong to the collaboration group.
 - **Automatic processing** defines trigger rules only. Issue creation, Tag changes, external events, or schedules route work to a project member, Agent, or collaboration group. A rule never binds a device.
-- **Execution environments** manages the project's authorized device pool. Agent creation does not select a device. Manual assignments and automatic processing resolve a device from this pool when a Run is claimed.
+- **Execution environments** manages the project's authorized device pool. Agent creation does not select a device. An idle Executor pulls Runs that match its project, Agent, and collaboration-group permissions.
 
 A Mention never changes the assignee; explicitly mentioning an available agent can trigger comment execution. Assignment, Mention, Subscription, and Run have independent semantics. Explicit assignment changes ownership and creates a Run when the target is an Agent or collaboration group.
 
-Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If model or workspace configuration is missing, the execution remains in `waiting_runtime` and uses the unified runtime-configuration entrypoint; the device itself is bound when the Run is claimed.
+Model identity and provider options remain opaque dictionaries and are not subject to API field case conversion. Device presence comes from connection heartbeats. If model or workspace configuration is missing, the execution remains in `waiting_runtime` and uses the unified runtime-configuration entrypoint; a device is bound only after an Executor successfully claims the Run.
 
-Successful planning and assignment by the coordinator does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing model or workspace configuration keeps an execution in `waiting_runtime`; **Configure and continue** completes that existing execution's profile. If no device currently satisfies authorization and capacity constraints, the Run remains queued for device claim instead of requiring a device binding on the Agent. Completing runtime configuration does not change project or Agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
+Successful planning and assignment by the manager does not mean the Issue is complete. Parent steps and child details display the child's execution state. Missing model or workspace configuration keeps an execution in `waiting_runtime`; **Configure and continue** completes that existing execution's profile. If no authorized Executor can claim it, the Run remains queued. Backend does not push work according to capacity and does not pre-bind a device to an Agent. Completing runtime configuration does not change project or Agent defaults and preserves manual approval requirements. Workflow progress counts steps only after acceptance.
 
 Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
 
@@ -111,281 +111,99 @@ inbox → pending → in_progress → in_review → completed
 
 Completed TODOs may be reopened into `in_progress`. Updates carry a `version` value and use optimistic locking.
 
-### Board execution by Bots and Agents
+### Issue dispatch and Executor ownership
 
-A board assignee is either a project member or a project Bot (`ProjectChatAgent`). A Wegent Agent (`Kind(kind=Team)`) is runtime configuration for that Bot, not an assignee: the user creates a Bot in the board, selects Wegent as its execution environment, and binds one runnable Team. The binding lives in the Bot's existing `metadata_json`; no table is created.
+A board Issue can be assigned to a project member, an Agent, or a collaboration group. Manual UI, API, automation, and AI-manager entry points create the same root-Issue dispatch intent. They do not start a Runtime or manage device capacity.
 
-#### Automation execution connection graph
+Backend owns only durable root-Issue state and presentation: assignee, queue, claim, lease, status, activity, comments, attachments, and deliveries. It validates project, Agent, collaboration-group, and device permissions, exposes task-scoped board MCP tools, and accepts explicit status, comment, and delivery updates from an Executor or human. Backend does not choose an idle device, push work to devices, track Executor capacity, or run a collaboration group's manager loop, member fan-out, concurrent batch, or barrier.
 
-```mermaid
-flowchart LR
-    API[User/API create or assign] --> ASSIGN[Unified task assignment service]
-    ARCHIVE[Delete/archive project space] --> CLEAN[Disable and soft-delete every automation rule]
-    CLEAN -.->|Remove from schedule and event candidates| TIMER
-    TIMER[Scheduled/event automation] --> MANAGER[Automation manager execution]
-    MCP[Manager wework_space tool] --> AUTO[Automation assignment orchestration]
-    MANAGER --> MCP
-    AUTO --> ASSIGN
+Local and cloud Executors use the same claim protocol and board data model. When an Executor has a free execution slot, it pulls a root Issue that the current device is authorized to run, claims it atomically, starts the Runtime, and renews the lease. Multiple authorized devices compete for different Runs; one Run has exactly one owner while its lease is valid. Another Executor may recover an expired lease, and an Executor that lost its lease can no longer write results.
 
-    ASSIGN --> ITEM[(loop_items<br/>assignee truth)]
-    ASSIGN --> EXEC[(loop_item_executions<br/>execution truth)]
-    ASSIGN --> BOT[ProjectChatAgent<br/>live Bot configuration]
-    EXEC --> ROUTER{Bot runtime activation}
-    ITEM --> INPUT[One visible user input<br/>canonical IDs + task URI + execution prompt]
-    EXEC --> INPUT
-    BOT --> INPUT
+#### Three assignment loops
 
-    ROUTER -->|Wework local| PULL[Device pull]
-    ROUTER -->|Wework cloud| CONSUMER[Cloud queue consumer]
-    INPUT -.-> PULL
-    INPUT -.-> CONSUMER
-    PULL --> RUNTIME[Wework Runtime]
-    CONSUMER --> RUNTIME
-    SETTINGS[Project-space settings<br/>per-device total concurrency] --> DEVICEAPI[Backend Device Runtime Settings API]
-    SETTINGS --> GLOBALAUTO[Cross-project automation console<br/>disable rules / stop active runs]
-    GLOBALAUTO -->|Reuse per-project automation APIs| TIMER
-    DEVICEAPI -->|Set and read capacity through Runtime RPC| RUNTIME
-    RUNTIME -.->|Heartbeat projection: slot_used / slot_max| SETTINGS
+For a human assignment, Backend sends an in-app notification and notifications to connected IM channels. The member creates a personal task from the notification and submits a Delivery, which updates the root Issue. When the human task belongs to a collaboration-group round, the Delivery also releases that round's barrier and wakes the manager.
 
-    ROUTER -->|Wegent| JOB[Post-commit dispatch job]
-    INPUT -.-> JOB
-    JOB --> NATIVE[(Native Task/Subtask)]
-    JOB -.->|Persist terminal dispatch failure| EXEC
-    NATIVE --> BUILD[Backend ExecutionRequest builder]
-    BUILD -->|Detect board Task labels| INJECT[Inject Backend board MCP<br/>task-scoped authentication]
-    INJECT --> CHAT[ChatShell]
-    INJECT --> CODE[Executor: ClaudeCode/Codex/Agno]
-    CHAT --> MCPREAD[Backend board MCP<br/>canonical tool contract]
-    CODE --> MCPREAD
-    MCPREAD --> ITEM
+For a direct Agent assignment, an Executor claims the root Issue and starts a Runtime session for the assigned Agent. Results are persisted as activity and delivery evidence; success moves the root Issue to `in_review` for user confirmation. Backend never creates or owns the internal Runtime session.
 
-    RUNTIME --> LOCALMCP[Wework native local Space MCP]
-    LOCALMCP -->|Local/cloud space routing| ITEM
+For a collaboration-group assignment, the Executor still claims only one root Issue. All later coordination stays inside that Executor:
 
-    COMMENT[User replies to a Wegent board comment] --> CONTINUE[Backend continuation resolver]
-    CONTINUE -->|Verify execution + Task + Team + Bot| NATIVE
-    CONTINUE -->|Create User/Assistant Subtasks in the same native Task| TEAM
-    TEAM --> FOLLOWUP[Continuation terminal projector]
-    FOLLOWUP --> VIEW
+1. The Executor starts a fresh manager session. Project collaboration rules and the optional workflow are visible in that turn, and the manager reads the Issue and eligible members through board MCP tools.
+2. The manager can update the root Issue state with an optional comment through MCP, or submit one round of assignments. Every assignment contains a task title, an assignee, and a workflow stage when the project defines a workflow.
+3. The Executor starts isolated Runtime sessions for all Agent assignments in the round and runs them concurrently. Human assignments send notifications and wait for Delivery.
+4. The Executor owns the round barrier locally. Only after every Agent result and human Delivery arrives does it start a fresh manager session with the complete round results.
+5. The manager either submits another round or explicitly updates the root Issue to `in_review`, `completed`, or another target state through MCP, optionally with a comment. Member completion never advances the root Issue by itself.
 
-    STOP[Wegent UI/API stop] --> CANCEL[Persist cancellation intent]
-    CANCEL -->|Task CANCELLING| NATIVE
-    CANCEL -->|execution cancel_requested| EXEC
-    CANCEL -->|Send and await Runtime ACK| TEAM
-
-    RUNTIME --> EVENTS[Runtime events/heartbeats/terminal]
-    TEAM --> COMPLETE[TaskCompletedEvent]
-    EVENTS --> EXEC
-    COMPLETE --> FENCE[Verify execution/task/subtask/team labels]
-    FENCE --> EXEC
-    EXEC --> VIEW[Queue/card/activity]
-```
-
-Every edge has one owner:
-
-| Edge                                      | Sole responsibility                                                                                                                                                                                                                             | Current code owner                                                       |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Entry → assignment                        | Validate member/Bot and persist assignee                                                                                                                                                                                                        | `loop_items/service.py`, `external_provider.py`                          |
-| Assignment → execution truth              | Cancel the old attempt and create a new one                                                                                                                                                                                                     | `loop_item_executions/service.py`                                        |
-| Automation → runtime activation           | Activate the new execution after assignment commit                                                                                                                                                                                              | `project_automation_execution.py`                                        |
-| Project archive → automation cleanup      | Disable and soft-delete every rule and clear its next trigger in the project-archive transaction                                                                                                                                                | `cloud_projects/service.py`, `project_automations.py`                    |
-| Wework activation                         | Local device pull or cloud consumer claim                                                                                                                                                                                                       | `robot_queue_tasks.py`, Wework local puller                              |
-| Settings → device total concurrency       | Persist and immediately apply each scheduler limit through authenticated Runtime RPC; `slot_used/slot_max` are capacity projections only                                                                                                        | `devices.py`, `runtime_rpc_service.py`, Rust `runtime.settings.*`        |
-| Wegent activation                         | Create Task/Subtask by execution ID and enter Team pipeline                                                                                                                                                                                     | `board_team_execution.py`, `project_automation_tasks.py`                 |
-| Wegent board MCP injection                | Backend detects board execution from native Task labels and injects the Backend MCP URL plus task-scoped authentication into the same `ExecutionRequest` used by ChatShell and Executor; it must not depend on a caller-owned temporary boolean | `execution/request_builder.py`, `mcp_server/server.py`                   |
-| Backend board MCP → domain services       | Expose the canonical local-Space-MCP tool names and operate through existing Backend CloudProject, LoopItem, file, attachment, delivery, and assignment services; never invoke the Wework local stdio MCP                                       | `mcp_server/tools/wework_space.py` and the corresponding domain services |
-| Wework local MCP                          | Started only by the Wework Runtime for local project-space and local-path capabilities; it must not replace the remote board MCP injected for a Wegent Runtime                                                                                  | `executor/src/task_runtime/mcp.rs`                                       |
-| Board execution → all runtime inputs      | Local, cloud, and Wegent share one visible user input containing canonical IDs, the task URI, and the Bot execution prompt; the runtime reads task content through MCP                                                                          | `loop_item_executions/profile.py`, `board_team_execution.py`             |
-| Wegent terminal → execution truth         | Project terminal state after strict identity checks                                                                                                                                                                                             | `board_team_completion.py`                                               |
-| Wegent comment → native continuation      | Resolve the exact `backend_task_id` from the reply target and create Subtasks in the same Task; project the result only to that reply without rewriting the terminal execution                                                                  | `board_team_continuation.py`, `project_automation_tasks.py`              |
-| Wegent user stop → cancellation intent    | Persist Task `CANCELLING` and execution `cancel_requested`, then send the Runtime cancellation command                                                                                                                                          | `chat_namespace.py`, `board_team_completion.py`                          |
-| Runtime cancellation ACK → terminal truth | After process-stop confirmation, persist Task/Subtask `CANCELLED` and project board `cancelled` through the unified terminal projector                                                                                                          | Rust executor, `status_updating.py`, `board_team_completion.py`          |
-
-The Backend board MCP exposes the complete Backend cloud-board domain surface: `get_current_context`; space `list/create/update`; board-item `list/search/create/get/update/reorder`; assignment candidates and `assign`; provider comments; space-file `list/read`; item-attachment `list/upload/read/delete`; and delivery `list/read`. The remote MCP transfers file contents as inline text or Base64 and never accepts a Runtime-local file path. DingTalk AI Table dynamic field/record tools remain a Wework-local provider route and must not be faked when no Backend provider service exists.
-
-The 2026-08-15 queue defect was a missing edge: HTTP assignment invoked Wegent activation, while an automation manager's internal assignment only created a `queued` execution. Consequently `claimed_at` and `backend_task_id` stayed empty, and device consumers correctly ignored records whose `execution_environment=wegent`. The fix must add the automation-to-runtime-activation edge. It must not send Wegent rows to a Wework device consumer or infer execution from the queue UI.
-
-#### Automation assignment and execution sequence
-
-```mermaid
-sequenceDiagram
-    participant E as Event/scheduler
-    participant M as Automation manager
-    participant A as Assignment orchestration
-    participant L as LoopItem assignment service
-    participant X as loop_item_executions
-    participant R as Runtime activator
-    participant Q as Celery dispatch job
-    participant T as Wegent Task/Subtask
-    participant B as Backend request builder
-    participant P as Backend board MCP
-    participant W as Wegent Team executor
-    participant C as Terminal projector
-    participant U as Wegent user
-
-    E->>M: Create automation run and task carrier
-    M->>A: Select a board Bot through wework_space
-    A->>L: assign(agent_id, automation_run_id)
-    L->>X: Cancel old attempt and create new execution
-    L-->>A: Commit assignee and queued execution
-    A->>R: Activate runtime by new execution_id
-    alt runtime = Wegent
-        alt Activation message enqueued
-            R->>Q: Enqueue execution_id after commit
-            Q->>X: Lock and revalidate queued/Team/owner
-            alt Validation and native Task dispatch succeed
-                Q->>T: Create native Task/Subtask
-                Note over Q,T: User input carries only canonical IDs, the task URI, and the Bot execution prompt; MCP reads task data
-                Q->>X: Persist backend_task_id
-                Note over X,T: Native Task labels and execution binding commit atomically
-                Q->>B: Build ExecutionRequest from Task labels
-                B->>B: Inject board MCP URL + Task Token
-                B->>W: Dispatch to ChatShell or Executor
-                W->>P: Call canonical board tools with injected auth
-                P->>X: Verify Task labels and project role, then read/write board truth
-                alt Team completes or Runtime terminates
-                    W->>T: Persist native terminal state
-                    W-->>C: TaskCompletedEvent
-                    C->>X: Verify execution/task/subtask/team and persist terminal state
-                else User stops the task in Wegent
-                    U->>T: chat:cancel
-                    T->>X: Atomically persist Task CANCELLING and execution cancel_requested
-                    T->>W: Send Runtime cancellation command
-                    alt Runtime confirms process stop
-                        W-->>T: CANCELLED callback
-                        T->>T: Persist Task/Subtask CANCELLED
-                        T-->>C: TaskCompletedEvent(CANCELLED)
-                        C->>X: Verify every identity and persist cancelled
-                    else Cancellation command is not delivered
-                        T-->>U: Return failure without inventing CANCELLED
-                        Note over T,X: Keep CANCELLING/cancel_requested to express uncertainty and permit retry
-                    end
-                end
-            else Worker activation fails
-                Q->>X: Persist failed instead of leaving queued
-            end
-        else Activation message enqueue fails
-            R->>X: Persist failed instead of leaving queued
-        end
-    else runtime = Wework cloud/local
-        R-->>X: Leave execution claimable by the device queue
-        Note over X: Cloud consumer or local puller claims before Runtime start
-    end
-    X-->>A: Queue, card, and activity only project execution truth
-```
-
-Review the sequence against these invariants, in order:
-
-1. `LoopItem.assignee_agent_id` is always the board Bot; the Wegent Team exists only in Bot configuration and execution `team_id`.
-2. Runtime activation occurs only after assignee and execution commit, so consumers can always read the execution.
-3. Wegent dispatch locks an exact `execution_id` and idempotently checks `backend_task_id`; native Task labels and the execution binding commit together while the lock is held, so it never guesses the latest task or releases the lock before binding.
-4. `queued` only means execution intent is durable. The UI cannot show running before a `backend_task_id` or Runtime acceptance event exists.
-5. Automation run, Bot execution, and native Wegent Task keep separate state boundaries. Only the unified projector may write board terminal truth after verifying every identity label; Runtime events and user stops both invoke it.
-6. Manual, API, scheduled, and AI-manager assignment converge on one runtime activator. New entry points must not copy dispatch logic.
-7. Failure to enqueue activation, or activation failure in the worker, must persist an explicit `failed` terminal state; an execution with no remaining consumer must never stay `queued`.
-8. A Wegent UI/API stop first writes only `CANCELLING/cancel_requested`. Both sides become `CANCELLED/cancelled` only after a Runtime ACK or trustworthy `CANCELLED` callback. Delivery failure cannot invent terminal truth, and the frontend must await and display the server ACK.
-9. All three runtimes use the same visible user input: canonical `project_id`, `task_id`, and `execution_id`, the task `cloud://` URI, and the user-configured Bot execution prompt. The execution prompt never enters a Team/Ghost/Bot system prompt or hidden application context; MCP reads the latest task title, description, and state.
-10. A Wegent comment continuation resolves the native Task from the reply target's exact `execution_id` and `backend_task_id`, then revalidates the thread-bound project Bot and original execution Team. It never infers a session from the latest execution, a device runtime list, or frontend memory. Each turn creates Subtasks in the same Task, preserves the execution's terminal state, and uses the reply comment only as that turn's display projection. A native Task may have at most one `pending` or `streaming` continuation at a time so concurrent requests cannot overwrite the active Subtask label or cross-write projections.
-11. Whenever native Wegent Task labels identify a board execution or board automation, Backend injects the board MCP on every request build. ChatShell and Executor consume the same injection result, and continuations never depend on MCP state left in a previous container.
-12. The Backend board MCP and Wework's native local Space MCP are separate runtime boundaries. Backend owns the former with Task Token authentication; Wework Runtime starts the latter locally. They share canonical tool names and domain semantics but never fall back to or overwrite each other.
-13. The Task Token's `task_id/subtask_id` and native Task labels jointly scope the current board space. The model may operate on other items inside that space, but the current item, automation run, and execution identities are resolved by the server and are never guessed, and a Task Token cannot cross the current space boundary.
-14. A project cannot be archived while it has an active automation run; Settings provides the cross-project stop control. Project archival and rule cleanup then commit in one transaction. Every rule is disabled, soft-deleted, and stripped of its next trigger; schedule scans only select rules whose parent project remains `active`. Historical terminal runs remain as audit records and can never create new executions.
-15. Device-wide concurrency belongs to each Runtime scheduler and is separate from Bot concurrency. Settings updates each device through authenticated Runtime RPC; an offline device cannot report a fabricated saved result. The sum of device `slot_max` values is capacity display only and never becomes execution-state truth.
-
-#### Wegent board comment continuation sequence
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as Wework board
-    participant B as Comment continuation service
-    participant M as project_chat_messages
-    participant T as Native Wegent Task
-    participant Q as Celery dispatch
-    participant R as Team executor
-    participant P as Continuation terminal projector
-
-    U->>UI: Reply to a Wegent Bot comment
-    UI->>M: Persist the user comment
-    UI->>B: trigger_message_id + agent_id
-    B->>M: Lock the user comment and read its reply target
-    B->>B: Verify project/task/execution/agent/team/backend_task_id
-    B->>T: Create User/Assistant Subtasks in the same Task
-    B->>M: Create one pending Bot reply bound to the Subtask
-    B->>Q: Enqueue the persisted continuation
-    Q->>M: pending -> streaming
-    Q->>R: Dispatch the exact Task/Subtask
-    R-->>P: TaskCompletedEvent(task_id, subtask_id)
-    P->>P: Verify Task labels, Subtask, and comment binding
-    P->>M: Persist completed/failed/cancelled and the result
-    M-->>UI: Push this turn's reply
-    Note over B,T: Do not create a local-device Runtime Task or mutate the terminal board execution
-```
+Every manager turn is a fresh Runtime session, and member sessions are isolated. A later round receives only structured assignments, results, and deliveries. It never reuses a member conversation, and Backend never guesses the manager's next action.
 
 ```mermaid
 flowchart LR
-    TEAM[Global Wegent Team] -->|bound only in Bot configuration| BOT[Board ProjectChatAgent]
-    UI[Wework board] -->|assignee_type=agent| API[LoopItem assignment API]
-    API --> ITEM[(loop_items.assignee_agent_id)]
-    ITEM --> BOT
-    API --> EXEC[(loop_item_executions: agent_id + team_id)]
-    EXEC --> TASK[(existing tasks / subtasks)]
-    TASK --> PIPELINE[Native Wegent Team pipeline]
-    PIPELINE --> EVENT[TaskCompletedEvent]
-    EVENT --> EXEC
-    EXEC --> VIEW[Board card / queue / activity]
+    TRIGGER[Manual / API / automation] --> ASSIGN[Unified root-Issue assignment]
+    ASSIGN --> ROOT[(Root-Issue queue and activity)]
+    ROOT --> CLAIM[Idle Executor pulls claim + lease]
+    CLAIM --> KIND{Assignment type}
+    KIND -->|Human| NOTICE[In-app / IM notification]
+    NOTICE --> PERSONAL[Member personal task]
+    PERSONAL --> DELIVERY[Submit Delivery]
+    DELIVERY --> ROOT
+    KIND -->|Agent| AGENT[Executor starts Agent Runtime]
+    AGENT --> RESULT[Result / delivery]
+    RESULT --> REVIEW[Root Issue enters review]
+    KIND -->|Collaboration group| MANAGER[Executor starts fresh manager session]
+    MANAGER --> PLAN{Manager decision}
+    PLAN -->|Assign one round| BATCH[Concurrent Agents + human notifications]
+    BATCH --> BARRIER[Executor-local barrier]
+    BARRIER --> MANAGER
+    PLAN -->|Explicit MCP update| STATUS[State + optional comment]
+    STATUS --> ROOT
 ```
 
-`loop_item_executions` is the sole source of truth for board execution state, while native `tasks/subtasks` own Team-internal execution. `backend_task_id` and labels containing the execution, Subtask, and Team identities fence the two records together. Messages and activity rows are presentation projections and never override execution truth.
+#### Collaboration-group execution sequence
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant B as Board API
-    participant E as loop_item_executions
-    participant T as Wegent Task
-    participant R as Team executor
-    participant C as Terminal projector
+    participant U as User/automation
+    participant B as Backend
+    participant E as Executor
+    participant M as Manager Runtime
+    participant A as Agent Runtime
+    participant H as Human member
 
-    U->>B: Assign task to board Bot
-    B->>B: Read Bot runtime and validate its bound Team
-    B->>E: Create queued execution
-    B->>T: Create native Task/Subtask with identity labels
-    B->>E: Persist backend_task_id
-    B-->>U: Return queued state projected from E
-    R->>T: Atomically claim pending Subtask
-    R->>E: queued -> running (CAS)
-    alt E was cancelled or reassigned
-        R->>T: Cancel the claimed Subtask
-        R-->>R: Do not route the stale run
-    else E is still running
-        R->>R: Execute the Team's Bots and collaboration mode
-        alt Runtime completes naturally
-            R->>T: Persist terminal state
-            T-->>C: TaskCompletedEvent
-            C->>E: Verify every identity and persist the same terminal state
-        else User stops the native Wegent task
-            U->>B: chat:cancel
-            B->>T: Persist Task CANCELLING
-            B->>E: Persist cancel_requested in the same transaction
-            B->>R: Request native execution stop
-            alt Runtime confirms stop
-                R-->>B: CANCELLED callback
-                B->>T: Persist Task/Subtask CANCELLED
-                B-->>C: TaskCompletedEvent(CANCELLED)
-                C->>E: Verify every identity and persist cancelled
-                B-->>U: chat:cancel ACK success
-            else Runtime rejects or cannot receive cancellation
-                B-->>U: chat:cancel ACK error
-                Note over T,E: Keep CANCELLING/cancel_requested and do not claim the process stopped
-            end
-        end
+    U->>B: Assign root Issue to collaboration group
+    B->>B: Persist queued state and assignment activity
+    E->>B: Pull and claim root Issue
+    B-->>E: Return task snapshot, rules, candidates, and lease
+    E->>B: Report running
+    E->>M: Start a fresh manager session
+    M->>B: Read Issue and candidates through MCP
+    M-->>E: Submit tasks, assignees, and optional workflow stages
+    par Agent assignments run concurrently
+        E->>A: Start isolated member session
+        A-->>E: Return result and evidence
+    and Human assignments wait for delivery
+        E->>B: Create human assignment and notification
+        B-->>H: In-app / IM notification
+        H->>B: Create personal task and submit Delivery
+        B-->>E: Delivery event releases barrier
+    end
+    E->>E: Wait for every result in the round
+    E->>M: Start a fresh manager session with round results
+    alt More work is needed
+        M-->>E: Submit the next round
+    else Work can finish
+        M->>B: Explicit MCP state update and optional comment
     end
 ```
 
-A board-originated reassignment or stop first moves board truth to `cancel_requested` when a process may exist, or `cancelled` when execution provably has not started, then routes cancellation to the device Runtime or native Team Task. A native Wegent stop atomically persists Task `CANCELLING` and board execution `cancel_requested`. Only after the Runtime actually stops and calls back may Task/Subtask become `CANCELLED`; the unified terminal event then advances the board execution to `cancelled`. A UI click or delivered HTTP request is not a substitute for Runtime ACK. A delayed worker must recheck board execution truth after claiming and cannot start a cancelled run.
+Implementation and review must preserve these invariants:
 
-Execution scope remains owned by the board Bot. `agent_id` determines queue columns, assignment history, and concurrency identity; `team_id` records only the actual Wegent runtime target. Different board tasks may still enter the native Team pipeline concurrently, where Team collaboration configuration controls internal parallelism.
+1. Backend owns only the root Issue queue, claim, lease, status, and presentation projections. There is no Backend manager loop, member fan-out, barrier, or automatic continuation after completion.
+2. Local and cloud execution use the same claim protocol. A device is selected by a successful Executor pull, never by Backend push or reported-capacity scheduling.
+3. The Executor that claims the root Issue creates every collaboration-group manager and member session. Backend provides only MCP domain operations and persistence.
+4. Agent assignments in one round may run concurrently and use separate Runtime sessions. The next manager turn waits for every Agent result and human Delivery.
+5. A manager assigns only one round at a time. Member completion produces a result but never mutates root-Issue state automatically; only an explicit manager MCP call changes it, with an optional comment.
+6. Human Delivery is a first-class round result. A collaboration-group human delivery wakes the manager without asking Backend to start or maintain a manager loop.
+7. Activity records show real events: who assigned which task to which Agent or member, execution results, Deliveries, and manager state changes. UI copy must not replace a child-task title with the root Issue title.
+8. Backend board MCP and Wework's local Space MCP share domain semantics but keep separate authentication and transport boundaries. Remote MCP never accepts a Runtime-local file path.
 
 ### LoopItemTaskBinding
 
@@ -499,10 +317,10 @@ The Wework Composer encodes cloud projects, directories, files, TODOs, and deliv
 
 ## Project members and comment execution
 
-Agent configuration visibility controls whether members can select an agent. Collaboration on an already authorized Issue uses project permissions and the comment thread's execution binding. A Developer can reply without gaining access to the executor's personal devices, models, or credentials.
+Agent configuration visibility controls whether members can select an Agent. Collaboration on an already authorized Issue uses project permissions. A Developer can reply without gaining access to an Executor's personal devices, models, or credentials.
 
-- A reply to an AI thread continues its original execution identity and session, even after the Issue is reassigned.
-- A new top-level comment uses an explicitly mentioned available agent, or the Issue's assigned agent. The existing execution queue starts an independent session and preserves approval and configuration-waiting states.
+- A reply to an AI thread saves a reference to the original activity but does not require Backend to continue the old Runtime session. When execution is requested, it creates a new root-Issue Run for an Executor to claim.
+- A new top-level comment uses an explicitly mentioned available Agent, or the Issue's assigned Agent. The root-Issue queue creates an independent Run and preserves approval and configuration-waiting states.
 - Without an assigned or mentioned agent, the comment is saved without execution. Retrying that request after reassignment does not start AI unexpectedly.
 - Mentioning another agent still requires picker visibility. Comments do not change the Issue assignee.
 
@@ -511,20 +329,17 @@ flowchart TD
     UI[Web or desktop client] --> Save[Save member comment]
     Save --> Execute[Project comment execution service]
     Execute --> Auth[Check project role and comment author]
-    Auth --> Kind{Existing AI thread?}
-    Kind -->|Yes| Binding[Resolve execution record or TaskBinding]
-    Binding --> Continue[Continue original owner and session]
-    Kind -->|No| Agent{Mentioned or assigned agent?}
+    Auth --> Agent{Mentioned or assigned Agent?}
     Agent -->|Yes| Queue[Queue an independent session]
     Agent -->|No| Comment[Save comment only]
-    Continue --> Activity[Project status and results into the thread]
-    Queue --> Activity
+    Queue --> Claim[Executor pull + claim]
+    Claim --> Activity[Project status and results into the thread]
     Activity --> UI
 ```
 
-Clients send project, Issue, saved comment, and attachment IDs through `wework:project_chat:comment:execute`. Execution identity and device configuration are resolved on the server. Comment/thread locks and existing response records prevent duplicate dispatch. Execution failures are surfaced without resending saved comments. A follow-up creates its own activity and does not inherit or reopen a completed automation run.
+Clients send project, Issue, saved comment, and attachment IDs through `wework:project_chat:comment:execute`; they do not send device configuration. Comment locks and existing response records prevent duplicate Runs. Execution failures are surfaced without resending saved comments. Backend persists only a claimable execution intent, and the claiming Executor creates the Runtime session.
 
-Focused checks cover hidden admin agents, independent root sessions, reassignment, duplicate requests, device rejection, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
+Focused checks cover hidden admin Agents, independent root Runs, reassignment, duplicate requests, comment-only behavior, and cross-project, read-only, and other-author rejection. Desktop regression coverage belongs to the existing `collaboration-shared-core` scenario; E2E runs require an explicit request.
 
 ### Reading project execution sessions
 

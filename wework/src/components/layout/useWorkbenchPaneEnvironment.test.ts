@@ -352,35 +352,26 @@ describe('applySharedChangeRequestSnapshot', () => {
     expect(result.changeRequest).toEqual({ provider: 'github', state: 'not_found' })
   })
 
-  test('keeps the fresh Environment result when the shared task snapshot is stale', () => {
-    const result = applySharedChangeRequestSnapshot(
-      {
-        ...environmentInfo,
-        changeRequest: {
-          provider: 'github',
-          state: 'unavailable',
-          hint: 'Install GitHub CLI',
-        },
+  test('maps a stale shared CLI failure to an unavailable Environment result', () => {
+    const result = applySharedChangeRequestSnapshot(environmentInfo, {
+      target: {
+        deviceId: 'local',
+        taskId: 'runtime-48',
+        workspacePath: '/workspace',
+        remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+        branch: 'fix/shared-pr-state',
       },
-      {
-        target: {
-          deviceId: 'local',
-          taskId: 'runtime-48',
-          workspacePath: '/workspace',
-          remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
-          branch: 'fix/shared-pr-state',
-        },
-        changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
-        fetchedAt: '2026-08-21T00:00:00Z',
-        stale: true,
-        error: 'GitHub CLI is unavailable',
-      }
-    )
+      changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
+      fetchedAt: '2026-08-21T00:00:00Z',
+      provider: 'github',
+      lookupState: 'unavailable',
+      stale: true,
+      error: 'GitHub CLI is unavailable',
+    })
 
     expect(result.changeRequest).toEqual({
       provider: 'github',
       state: 'unavailable',
-      hint: 'Install GitHub CLI',
     })
   })
 

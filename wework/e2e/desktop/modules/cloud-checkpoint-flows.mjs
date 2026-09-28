@@ -128,7 +128,9 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
-  await control.command('click', '[data-testid="remote-project-source-existing"]')
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',

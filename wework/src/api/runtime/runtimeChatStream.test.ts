@@ -271,7 +271,7 @@ describe('createRuntimeChatStream', () => {
         projectName: '运营项目',
         itemId: 'WEG-12',
         itemTitle: '准备周报',
-        assignerName: 'Alice',
+        actorName: 'Alice',
       },
     })
 

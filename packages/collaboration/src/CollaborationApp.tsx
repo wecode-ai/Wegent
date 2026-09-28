@@ -65,7 +65,7 @@ export interface CollaborationIssueDetailRenderContext {
   defaultAssistant?: CollaborationHostAdapter["defaultAssistant"];
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
-  onCreateTask?(workflowStep?: string): void;
+  onCreateTask?(): void;
   /** Present only when the host enabled Issue deletion. */
   onDelete?(): void;
 }
@@ -87,11 +87,7 @@ interface CollaborationAppProps {
    * and its message is shown in the confirmation dialog.
    */
   onPrepareIssueDelete?(issue: CollaborationIssue): Promise<void>;
-  onCreateTask?(
-    project: CollaborationProject,
-    issue: CollaborationIssue,
-    workflowStep?: string,
-  ): void;
+  onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
@@ -190,6 +186,30 @@ export function CollaborationApp({
     api,
     project,
   });
+  const requestIssueCreate = async () => {
+    if (!project) return;
+    const readiness =
+      environmentReadiness.kind === "ready"
+        ? environmentReadiness
+        : await environmentReadiness.refresh();
+    if (readiness.kind !== "ready") {
+      host.notify?.(
+        translate(
+          "todo.issue_environment_create_blocked",
+          "请先完成项目执行环境初始化，再创建 Issue。",
+        ),
+        "error",
+      );
+      host.navigate({
+        projectId: project.id,
+        issueId: null,
+        view: "manage",
+        projectSettingsSection: "environments",
+      });
+      return;
+    }
+    setCreateIssueOpen(true);
+  };
   useEffect(() => {
     host.onProjectsChange?.(projects);
   }, [host, projects]);
@@ -430,7 +450,7 @@ export function CollaborationApp({
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
                       data-testid={collaborationTestIds.createIssue}
-                      onClick={() => setCreateIssueOpen(true)}
+                      onClick={requestIssueCreate}
                     >
                       <span aria-hidden="true">＋</span>
                       {showLabels ? messages.createIssue : null}
@@ -451,171 +471,182 @@ export function CollaborationApp({
                 </>
               )}
               slots={{
-                board:
-                  issues.length === 0 ? (
-                    <div
-                      data-testid={collaborationTestIds.board}
-                      className="relative flex min-h-0 flex-1"
-                    >
-                      <button
-                        className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-                        data-testid="collaboration-board-settings"
-                        onClick={() => setBoardSettingsOpen(true)}
-                        type="button"
-                      >
-                        {translate("todo.board_settings", "看板设置")}
-                      </button>
+                board: (
+                  <div className="relative flex min-h-0 min-w-0 flex-1">
+                    {issues.length === 0 ? (
                       <div
-                        className="collaboration-empty-project"
-                        data-testid="collaboration-empty-project"
+                        data-testid={collaborationTestIds.board}
+                        className="relative flex min-h-0 flex-1"
                       >
-                        <div className="collaboration-empty-project-content">
-                          <span className="collaboration-empty-project-icon">
-                            ◇
-                          </span>
-                          <span className="collaboration-empty-project-progress">
-                            {messages.emptyProjectProgress}
-                          </span>
-                          <h2>{messages.emptyProjectTitle}</h2>
-                          <p>{messages.emptyProjectHint}</p>
-                          <button
-                            type="button"
-                            className="collaboration-primary-button"
-                            data-testid="collaboration-empty-project-create"
-                            onClick={() => setCreateIssueOpen(true)}
-                          >
-                            {messages.createIssue}
-                          </button>
-                          <div className="collaboration-empty-project-flow">
-                            {[
-                              [
-                                messages.emptyProjectStepIssue,
-                                messages.emptyProjectStepIssueHint,
-                              ],
-                              [
-                                messages.emptyProjectStepAssign,
-                                messages.emptyProjectStepAssignHint,
-                              ],
-                              [
-                                messages.emptyProjectStepDeliver,
-                                messages.emptyProjectStepDeliverHint,
-                              ],
-                            ].map(([title, hint]) => (
-                              <div key={title}>
-                                <strong>{title}</strong>
-                                <small>{hint}</small>
-                              </div>
-                            ))}
+                        <button
+                          className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                          data-testid="collaboration-board-settings"
+                          onClick={() => setBoardSettingsOpen(true)}
+                          type="button"
+                        >
+                          {translate("todo.board_settings", "看板设置")}
+                        </button>
+                        <div
+                          className="collaboration-empty-project"
+                          data-testid="collaboration-empty-project"
+                        >
+                          <div className="collaboration-empty-project-content">
+                            <span className="collaboration-empty-project-icon">
+                              ◇
+                            </span>
+                            <span className="collaboration-empty-project-progress">
+                              {messages.emptyProjectProgress}
+                            </span>
+                            <h2>{messages.emptyProjectTitle}</h2>
+                            <p>{messages.emptyProjectHint}</p>
+                            <button
+                              type="button"
+                              className="collaboration-primary-button"
+                              data-testid="collaboration-empty-project-create"
+                              onClick={requestIssueCreate}
+                            >
+                              {messages.createIssue}
+                            </button>
+                            <div className="collaboration-empty-project-flow">
+                              {[
+                                [
+                                  messages.emptyProjectStepIssue,
+                                  messages.emptyProjectStepIssueHint,
+                                ],
+                                [
+                                  messages.emptyProjectStepAssign,
+                                  messages.emptyProjectStepAssignHint,
+                                ],
+                                [
+                                  messages.emptyProjectStepDeliver,
+                                  messages.emptyProjectStepDeliverHint,
+                                ],
+                              ].map(([title, hint]) => (
+                                <div key={title}>
+                                  <strong>{title}</strong>
+                                  <small>{hint}</small>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <ProjectBoardAdapter
-                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
-                      runtime={api.runtime}
-                      previewDisabled={Boolean(selectedIssue)}
-                      translate={translate}
-                      agents={agents ?? []}
-                      boardError={error}
-                      project={project}
-                      issues={issues}
-                      members={members ?? []}
-                      statuses={projectStatuses(project, messages, translate)}
-                      taskBindings={taskBindings}
-                      labels={{
-                        noIssues: messages.noIssues,
-                        noPriority: translate("todo.priority_none", "无优先级"),
-                        search: messages.searchIssues,
-                        groupBy: messages.groupBy,
-                        groupStatus: messages.groupStatus,
-                        groupPriority: messages.groupPriority,
-                        groupAssignee: messages.groupAssignee,
-                        groupTag: messages.groupTag,
-                        unassigned: messages.unassigned,
-                        noTag: messages.noTag,
-                      }}
-                      onOpen={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "board",
-                        })
-                      }
-                      onMove={async (issue, mutation) => {
-                        if (mutation.kind === "status") {
-                          await commands.reorderIssue({
-                            issue,
-                            status: mutation.status,
-                            laneIds: mutation.laneIds,
-                            optimisticItems: mutation.optimisticItems,
-                          });
-                          return;
+                    ) : (
+                      <ProjectBoardAdapter
+                        onMarkRead={(issue) =>
+                          void commands.markIssueRead(issue)
                         }
-                        if (
-                          mutation.kind === "assignee" &&
-                          mutation.assigneeType
-                        ) {
-                          await commands.assignIssue(
-                            String(project.id),
-                            issue.id,
-                            {
-                              version: issue.version,
-                              assigneeType: mutation.assigneeType,
-                              assigneeId: mutation.assigneeId!,
-                              notifyAssignee: true,
-                            },
-                          );
-                          return;
-                        }
-                        await commands.updateIssue(
-                          issue.id,
-                          mutation.kind === "priority"
-                            ? {
-                                version: issue.version,
-                                priority:
-                                  mutation.priority as CollaborationIssue["priority"],
-                              }
-                            : mutation.kind === "tag"
-                              ? { version: issue.version, tags: mutation.tags }
-                              : {
-                                  version: issue.version,
-                                  assigneeUserId: null,
-                                  assigneeAgentId: null,
-                                  assigneeTeamId: null,
-                                },
-                          { throwOnError: true },
-                        );
-                      }}
-                      onCreateIssue={() => setCreateIssueOpen(true)}
-                      onOpenBoardSettings={() => setBoardSettingsOpen(true)}
-                      onDeleteIssue={
-                        issueDeleteAvailable ? requestIssueDelete : undefined
-                      }
-                      onGroupByChange={(groupBy) =>
-                        commands.changeProjectGroup({
-                          project,
-                          groupBy,
-                          defaultStatuses: projectStatuses(
-                            project,
-                            messages,
-                            translate,
+                        runtime={api.runtime}
+                        previewDisabled={Boolean(selectedIssue)}
+                        translate={translate}
+                        agents={agents ?? []}
+                        boardError={error}
+                        project={project}
+                        issues={issues}
+                        members={members ?? []}
+                        statuses={projectStatuses(project, messages, translate)}
+                        taskBindings={taskBindings}
+                        labels={{
+                          noIssues: messages.noIssues,
+                          noPriority: translate(
+                            "todo.priority_none",
+                            "无优先级",
                           ),
-                        })
-                      }
-                      renderIssueCard={
-                        renderBoardIssueCard
-                          ? (context) =>
-                              renderBoardIssueCard({
-                                ...context,
-                                onMarkRead: async () => {
-                                  await commands.markIssueRead(context.issue);
-                                },
-                              })
-                          : undefined
-                      }
-                    />
-                  ),
+                          search: messages.searchIssues,
+                          groupBy: messages.groupBy,
+                          groupStatus: messages.groupStatus,
+                          groupPriority: messages.groupPriority,
+                          groupAssignee: messages.groupAssignee,
+                          groupTag: messages.groupTag,
+                          unassigned: messages.unassigned,
+                          noTag: messages.noTag,
+                        }}
+                        onOpen={(issue) =>
+                          host.navigate({
+                            projectId: project.id,
+                            issueId: issue.id,
+                            view: "board",
+                          })
+                        }
+                        onMove={async (issue, mutation) => {
+                          if (mutation.kind === "status") {
+                            await commands.reorderIssue({
+                              issue,
+                              status: mutation.status,
+                              laneIds: mutation.laneIds,
+                              optimisticItems: mutation.optimisticItems,
+                            });
+                            return;
+                          }
+                          if (
+                            mutation.kind === "assignee" &&
+                            mutation.assigneeType
+                          ) {
+                            await commands.assignIssue(
+                              String(project.id),
+                              issue.id,
+                              {
+                                version: issue.version,
+                                assigneeType: mutation.assigneeType,
+                                assigneeId: mutation.assigneeId!,
+                                notifyAssignee: true,
+                              },
+                            );
+                            return;
+                          }
+                          await commands.updateIssue(
+                            issue.id,
+                            mutation.kind === "priority"
+                              ? {
+                                  version: issue.version,
+                                  priority:
+                                    mutation.priority as CollaborationIssue["priority"],
+                                }
+                              : mutation.kind === "tag"
+                                ? {
+                                    version: issue.version,
+                                    tags: mutation.tags,
+                                  }
+                                : {
+                                    version: issue.version,
+                                    assigneeUserId: null,
+                                    assigneeAgentId: null,
+                                    assigneeTeamId: null,
+                                  },
+                            { throwOnError: true },
+                          );
+                        }}
+                        onCreateIssue={requestIssueCreate}
+                        onOpenBoardSettings={() => setBoardSettingsOpen(true)}
+                        onDeleteIssue={
+                          issueDeleteAvailable ? requestIssueDelete : undefined
+                        }
+                        onGroupByChange={(groupBy) =>
+                          commands.changeProjectGroup({
+                            project,
+                            groupBy,
+                            defaultStatuses: projectStatuses(
+                              project,
+                              messages,
+                              translate,
+                            ),
+                          })
+                        }
+                        renderIssueCard={
+                          renderBoardIssueCard
+                            ? (context) =>
+                                renderBoardIssueCard({
+                                  ...context,
+                                  onMarkRead: async () => {
+                                    await commands.markIssueRead(context.issue);
+                                  },
+                                })
+                            : undefined
+                        }
+                      />
+                    )}
+                  </div>
+                ),
                 table: (
                   <div className="collaboration-project-content">
                     <ProjectIssueTable
@@ -649,7 +680,7 @@ export function CollaborationApp({
                           (candidate) => candidate.id === status,
                         )?.name ?? status
                       }
-                      onCreate={() => setCreateIssueOpen(true)}
+                      onCreate={requestIssueCreate}
                       onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,
@@ -906,8 +937,7 @@ export function CollaborationApp({
                 },
                 onChange: commands.replaceIssue,
                 onCreateTask: onCreateTask
-                  ? (workflowStep) =>
-                      onCreateTask(project, selectedIssue, workflowStep)
+                  ? () => onCreateTask(project, selectedIssue)
                   : undefined,
                 onDelete:
                   issueDeleteAvailable &&
@@ -950,8 +980,7 @@ export function CollaborationApp({
                 }}
                 onCreateTask={
                   onCreateTask
-                    ? (workflowStep) =>
-                        onCreateTask(project, selectedIssue, workflowStep)
+                    ? () => onCreateTask(project, selectedIssue)
                     : undefined
                 }
                 onDelete={

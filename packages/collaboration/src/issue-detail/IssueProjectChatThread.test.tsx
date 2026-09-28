@@ -37,6 +37,17 @@ describe("shared Issue threads", () => {
   let container: HTMLDivElement;
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -68,7 +79,7 @@ describe("shared Issue threads", () => {
     ]);
   });
 
-  it("renders Markdown, bot avatar, reply row and separate execution events in the same thread", () => {
+  it("renders Markdown, bot avatar, reply row and distinct execution event status", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -92,11 +103,104 @@ describe("shared Issue threads", () => {
     ).not.toBeNull();
     expect(card.querySelector(".task-detail-run-events")).toBeNull();
     expect(
-      container.querySelector(".task-detail-run-events")?.textContent,
-    ).toContain("1 条运行动态");
+      container.querySelectorAll(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).toHaveLength(1);
     expect(
-      container.querySelector(".task-detail-run-event")?.textContent,
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      )?.textContent,
     ).toContain("已完成");
+    expect(
+      container.querySelector(
+        '[data-testid="task-activity-run-execution-badge-root"]',
+      )?.textContent,
+    ).toContain("已完成");
+  });
+
+  it("renders a manager assignment as a compact dispatch event", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "",
+              metadata: {
+                dispatch_role: "manager",
+                dispatch_assignments: [
+                  {
+                    task_title: "采集运行证据",
+                    agent_name: "诊断智能体",
+                  },
+                  {
+                    task_title: "独立复核结论",
+                    human_user_name: "复核成员",
+                  },
+                ],
+                run_status: "running",
+              },
+              status: "streaming",
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const event = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(event?.textContent).toContain("Codex 负责人");
+    expect(event?.textContent).toContain("分配任务：");
+    expect(event?.textContent).toContain("采集运行证据 → 诊断智能体");
+    expect(event?.textContent).toContain("独立复核结论 → 复核成员");
+    expect(container.querySelector(".task-detail-ai-run-card")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).toBeNull();
+  });
+
+  it("renders an optional manager status comment as comment content", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              content: "负责人已综合证据，将 Issue 提交待确认。",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_status_comment",
+                target_status: "in_review",
+                run_status: "succeeded",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "负责人已综合证据，将 Issue 提交待确认。",
+    );
+    expect(comment?.textContent).not.toContain("已完成任务规划");
   });
 
   it("keeps a failed reply draft and submits with the real root id", async () => {
@@ -104,7 +208,7 @@ describe("shared Issue threads", () => {
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(message);
-    act(() =>
+    await act(async () =>
       root.render(
         <IssueProjectChatThread
           thread={{ root: message, replies: [] }}
@@ -115,13 +219,14 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    const input = container.querySelector("textarea")!;
+    const input = container.querySelector<HTMLElement>(
+      '[data-testid="collaboration-chat-reply-input-root"]',
+    )!;
     act(() => {
-      Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!.call(input, "Please check");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      (input as HTMLElement & { value: string }).value = "Please check";
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "k", bubbles: true }),
+      );
     });
     await act(async () => {
       container
@@ -153,7 +258,22 @@ describe("shared Issue threads", () => {
         />,
       ),
     );
-    expect(container.querySelector("textarea")).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-chat-reply-input-root"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="cloud-task-activity-execution-badge-root"]',
+      ),
+    ).not.toBeNull();
   });
 
   it("uses the desktop run disclosure and execution action for web messages", () => {

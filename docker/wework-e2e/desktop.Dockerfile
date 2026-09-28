@@ -28,11 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
     libxss1 \
+    mysql-server \
     openbox \
     python3 \
     python3-venv \
     redis-server \
+    skopeo \
     sqlite3 \
+    umoci \
     x11-utils \
     xvfb \
     zstd \
@@ -56,5 +59,8 @@ RUN node --version \
   && pnpm --version \
   && python3 --version \
   && uv --version \
+  && mysqld --version \
+  && skopeo --version \
+  && umoci --version \
   && rustc --version \
   && cargo --version

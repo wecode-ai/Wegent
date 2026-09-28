@@ -58,30 +58,39 @@ export async function verifyCollaborationIssueHome(
   )
 
   await openComposer()
-  const environmentNotice = scoped('[data-testid="issue-execution-environment-notice"]')
-  await control.command('waitFor', environmentNotice, { text: 'Issue 仍可创建' })
-  await control.command(
-    'click',
-    scoped('[data-testid="issue-execution-environment-notice-action"]')
-  )
-  await control.command(
-    'waitFor',
-    scoped('[data-testid="collaboration-project-settings-environments"]')
-  )
   assert.equal(
-    await control.command(
-      'getAttribute',
-      scoped('[data-testid="collaboration-project-settings-environments"]'),
-      { value: 'aria-current' }
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid="issue-execution-environment-notice"]')
+      )
     ),
-    'page',
-    'The environment notice action did not open project execution environment settings'
+    0,
+    'The initialized project still showed an execution environment warning'
   )
 
   const cases = [
-    { kind: 'member', id: String(owner.id), field: 'assignee_user_id', icon: 'member' },
-    { kind: 'agent', id: String(agent.id), field: 'assignee_agent_id', icon: 'agent' },
-    { kind: 'group', id: String(group.id), field: 'assignee_group_id', icon: 'group' },
+    {
+      kind: 'member',
+      id: String(owner.id),
+      name: owner.user_name,
+      field: 'assignee_user_id',
+      icon: 'member',
+    },
+    {
+      kind: 'agent',
+      id: String(agent.id),
+      name: agent.name,
+      field: 'assignee_agent_id',
+      icon: 'agent',
+    },
+    {
+      kind: 'group',
+      id: String(group.id),
+      name: group.name,
+      field: 'assignee_group_id',
+      icon: 'group',
+    },
   ]
   for (const target of cases) {
     await openComposer()
@@ -102,10 +111,7 @@ export async function verifyCollaborationIssueHome(
       `[data-testid="collaboration-home-mention-${target.kind}-${target.id}"]`
     )
     await control.command('waitFor', `${input} [data-composer-reference-kind="${target.icon}"]`)
-    assert.ok(
-      (await control.command('getText', ownerButton)).trim(),
-      'First mention did not select an owner'
-    )
+    await control.command('waitFor', ownerButton, { text: target.name })
 
     await control.command('click', scoped('[data-testid="collaboration-issue-reference_issue"]'))
     await control.command('waitFor', `[data-testid="collaboration-home-mention-issue-${issue.id}"]`)
@@ -121,7 +127,10 @@ export async function verifyCollaborationIssueHome(
     )
     await control.command('click', `[data-testid="collaboration-home-mention-issue-${issue.id}"]`)
     await control.command('waitFor', `${input} [data-composer-reference-kind="issue"]`)
-    await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-home-create-issue"]'))
+    await control.command(
+      'clickWhenEnabled',
+      scoped('[data-testid="collaboration-home-create-issue"]')
+    )
     await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
       text: project.name,
     })
@@ -151,7 +160,12 @@ export async function verifyCollaborationIssueHome(
   await control.command('click', '[data-testid="collaboration-issue-owner-none"]')
   assert.equal((await control.command('getText', ownerButton)).trim(), '')
   await control.command('fill', input, { value: '' })
+  const issueCard = scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
   await control.command('click', projectRow)
-  await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+  await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+    text: project.name,
+  })
+  await control.command('waitFor', issueCard)
+  await control.command('click', issueCard)
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'))
 }

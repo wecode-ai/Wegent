@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
+import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
 import { generateMessageId } from '@wegent/chat-core'
 
 export function mergeIssueChatMessages(
@@ -18,9 +18,13 @@ export function mergeIssueChatMessages(
 export function useIssueProjectChat(
   client: ProjectChatClient | undefined,
   projectId: string,
-  issueId: string
+  issueId: string,
+  revision = 0
 ) {
-  const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
+  const owner = useMemo(
+    () => ({ client, projectId, issueId, revision }),
+    [client, projectId, issueId, revision]
+  )
   const empty = useMemo(
     () => ({
       owner,
@@ -41,7 +45,10 @@ export function useIssueProjectChat(
       if (!active) return
       setSnapshot(previous => {
         const state = previous.owner === owner ? previous : empty
-        return { ...state, messages: mergeIssueChatMessages(state.messages, [message]) }
+        return {
+          ...state,
+          messages: mergeIssueChatMessages(state.messages, [message]),
+        }
       })
     }
     void client
@@ -97,7 +104,10 @@ export function useIssueProjectChat(
   const merge = (incoming: ProjectChatMessage[]) =>
     setSnapshot(previous =>
       previous.owner === owner
-        ? { ...previous, messages: mergeIssueChatMessages(previous.messages, incoming) }
+        ? {
+            ...previous,
+            messages: mergeIssueChatMessages(previous.messages, incoming),
+          }
         : previous
     )
   const messages = useMemo(
@@ -108,7 +118,11 @@ export function useIssueProjectChat(
     ...current,
     messages,
     merge,
-    async send(text: string, replyToMessageId?: string) {
+    async send(
+      text: string,
+      replyToMessageId?: string,
+      mentions?: ProjectChatMention[]
+    ): Promise<ProjectChatMessage> {
       if (!client) throw new Error('Project chat is unavailable')
       const message = await client.send({
         projectId,
@@ -116,6 +130,7 @@ export function useIssueProjectChat(
         clientMessageId: generateMessageId('user'),
         text,
         replyToMessageId,
+        ...(mentions && mentions.length ? { mentions } : {}),
       })
       merge([message])
       return message

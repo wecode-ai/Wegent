@@ -2328,65 +2328,6 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('hides project automation manager sessions from standalone tasks', () => {
-    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-14/automation'
-
-    renderSidebar({
-      projects: [],
-      runtimeWork: {
-        projects: [],
-        chats: [
-          {
-            deviceId: 'local-device',
-            deviceName: 'Local Mac',
-            deviceStatus: 'online',
-            available: true,
-            workspacePath: chatPath,
-            workspaceKind: 'chat',
-            tasks: [
-              {
-                taskId: 'automation-manager',
-                workspacePath: chatPath,
-                workspaceKind: 'chat',
-                title: 'Automation manager',
-                runtime: 'codex',
-                runtimeHandle: {
-                  origin: {
-                    type: 'project_automation',
-                    automationRole: 'manager',
-                    run_id: 'run-1',
-                  },
-                },
-              },
-              {
-                taskId: 'project-robot',
-                workspacePath: chatPath,
-                workspaceKind: 'chat',
-                title: 'Project robot',
-                runtime: 'codex',
-                runtimeHandle: {
-                  origin: {
-                    type: 'project_automation',
-                    run_id: 'run-1',
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        totalTasks: 2,
-      },
-      onOpenRuntimeTask: vi.fn(),
-    })
-
-    expect(
-      screen.queryByTestId('runtime-local-task-row-automation-manager')
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-row-project-robot')).toHaveTextContent(
-      'Project robot'
-    )
-  })
-
   test('sweeps a runtime task title after it is updated', async () => {
     const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-06/title-update'
     const runtimeWork = (title: string) => ({
@@ -5283,6 +5224,8 @@ describe('DesktopSidebar', () => {
   test('opens away reminder controls from the account IM message button', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
+    const openNotificationSettings = vi.fn()
+    window.addEventListener('wework:open-notification-settings', openNotificationSettings)
 
     renderSidebar({
       imNotificationSettings: {
@@ -5322,7 +5265,9 @@ describe('DesktopSidebar', () => {
     )
     await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
-    expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+    expect(openNotificationSettings).toHaveBeenCalledTimes(1)
+    expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
+    window.removeEventListener('wework:open-notification-settings', openNotificationSettings)
   })
 
   test('shows global IM notifications while experimental features are disabled', () => {

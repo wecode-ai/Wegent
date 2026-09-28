@@ -356,14 +356,6 @@ export function createWeworkPlatformApi(
       async runNow(projectId, automationId) {
         return (await projectAutomations(projectId)).runNow(projectId, automationId)
       },
-      async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-        return (await projectAutomations(projectId)).runWorkflowNode(
-          projectId,
-          issueId,
-          workflowNodeId,
-          automationId
-        )
-      },
       async listRuns(projectId, automationId) {
         return (await projectAutomations(projectId)).listRuns(projectId, automationId)
       },
@@ -428,10 +420,10 @@ export function createWeworkPlatformApi(
           ? localApi.issues.reorder(projectId, input)
           : cloudApi.issues.reorder(projectId, input)
       },
-      async markRead(issueId) {
+      async markRead(issueId, activitySequence) {
         return (await issueLocation(issueId)) === 'local'
-          ? localApi.issues.markRead(issueId)
-          : cloudApi.issues.markRead(issueId)
+          ? localApi.issues.markRead(issueId, activitySequence)
+          : cloudApi.issues.markRead(issueId, activitySequence)
       },
     },
     resources: {

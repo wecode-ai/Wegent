@@ -1613,6 +1613,7 @@ export function ProjectExecutionEnvironments({
                       : "shrink-0 text-sm font-medium text-text-primary"
                   }
                   data-testid={`${testIdPrefix}-completion-status`}
+                  data-state={hasReadyDevice ? "ready" : "pending"}
                   role="status"
                 >
                   {hasReadyDevice

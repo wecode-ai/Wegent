@@ -71,6 +71,18 @@ const mocks = vi.hoisted(() => {
     startDeviceCodeServer: vi.fn(),
     createRemoteTerminalClient: vi.fn(),
   }
+  const localProjectChatClient = {
+    reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]),
+  }
+  const localProjectSpaceDetailServices = {
+    deliveryApi: { source: 'local' },
+    projectChatClient: localProjectChatClient,
+    projectChatAgentApi: { source: 'local' },
+    loopItemExecutionApi: { source: 'local' },
+    deviceApi: { source: 'local' },
+    modelApi: { source: 'local' },
+    teamApi: { source: 'local' },
+  }
 
   const localServices = {
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -123,6 +135,9 @@ const mocks = vi.hoisted(() => {
 
   const localOnlyServices = {
     ...localServices,
+    projectSpaceDetailServices: {
+      local: localProjectSpaceDetailServices,
+    },
     runtimeWorkApi: {
       ...localServices.runtimeWorkApi,
       createRuntimeTask: vi.fn().mockResolvedValue({ taskId: 'local-project-task' }),
@@ -233,6 +248,8 @@ const mocks = vi.hoisted(() => {
     localArchiveProjectConversations,
     cloudArchiveProjectConversations,
     cloudWorkspaceSessionApi,
+    localProjectChatClient,
+    localProjectSpaceDetailServices,
     localServices,
     localOnlyServices,
     cloudServices,
@@ -841,6 +858,23 @@ describe('createHybridWorkbenchServices', () => {
     info.mockRestore()
   })
 
+  it('loads the cloud catalog even when the local catalog fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
+    const services = createServices()
+
+    const initial = await services.modelApi.listModels()
+    expect(initial.data).toEqual([])
+
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
+    })
+
+    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    warning.mockRestore()
+  })
+
   it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void
@@ -1014,6 +1048,22 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
     expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps local project activity on the Executor-owned project stream', () => {
+    const services = createServices()
+    const localDetailServices = services.projectSpaceDetailServices?.local
+
+    expect(localDetailServices?.projectChatClient).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatClient
+    )
+    expect(localDetailServices?.deliveryApi).toBe(mocks.localProjectSpaceDetailServices.deliveryApi)
+    expect(localDetailServices?.projectChatAgentApi).toBe(
+      mocks.localProjectSpaceDetailServices.projectChatAgentApi
+    )
+    expect(localDetailServices?.loopItemExecutionApi).toBe(
+      mocks.localProjectSpaceDetailServices.loopItemExecutionApi
+    )
   })
 
   it('keeps local project execution available when cloud device discovery fails', async () => {

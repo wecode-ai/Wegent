@@ -1459,6 +1459,7 @@ export function createHybridWorkbenchServices(
     },
   }
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const localProjectSpaceDetailServices = localProjectServices.projectSpaceDetailServices?.local
   const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
     async listPlugins(deviceId: string) {
       const cloudPlugins = (
@@ -1486,6 +1487,7 @@ export function createHybridWorkbenchServices(
       },
     },
     branchNameApi: localServices.branchNameApi,
+    textGenerationApi: localServices.textGenerationApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localExecutionServices: localProjectServices,
@@ -1499,7 +1501,7 @@ export function createHybridWorkbenchServices(
       defaultLocation: 'cloud',
     },
     projectSpaceDetailServices: {
-      local: localProjectServices.projectSpaceDetailServices?.local,
+      local: localProjectSpaceDetailServices,
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,
@@ -1521,8 +1523,14 @@ export function createHybridWorkbenchServices(
     },
     modelApi: {
       async listModels(): Promise<UnifiedModelListResponse> {
-        const localModels = await localServices.modelApi.listModels()
+        // Start the cloud catalog before awaiting the local one: the local
+        // catalog depends on the local executor and the desktop preferences,
+        // and a failure there must never keep the cloud models from loading.
         loadCloudModelsInBackground()
+        const localModels = await localServices.modelApi.listModels().catch(error => {
+          console.warn('[Wework] Failed to list local models', error)
+          return { data: [] }
+        })
         return {
           data: mergeModelCatalogs(annotateLocalModels(localModels.data), rememberedCloudModels),
         }

@@ -1,6 +1,7 @@
 import { GitBranch, Info, Link2 } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { Tooltip } from '@/components/ui/tooltip'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
 import type {
@@ -191,17 +192,23 @@ export function EnvironmentInfoPopover({
 
   return (
     <div ref={rootRef}>
-      <button
-        type="button"
-        data-testid="environment-info-button"
-        onClick={handleToggleOpen}
-        className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
-        aria-expanded={open}
-        aria-label={taskSummaryToggleLabel}
-        title={taskSummaryToggleLabel}
+      <Tooltip
+        label={taskSummaryToggleLabel}
+        side="bottom"
+        align="end"
+        testId="environment-info-button-tooltip"
       >
-        <Info />
-      </button>
+        <button
+          type="button"
+          data-testid="environment-info-button"
+          onClick={handleToggleOpen}
+          className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
+          aria-expanded={open}
+          aria-label={taskSummaryToggleLabel}
+        >
+          <Info />
+        </button>
+      </Tooltip>
 
       {open &&
         popoverPortalContainer &&

@@ -53,6 +53,7 @@ class BaseDeviceProvider(ABC):
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Register a device.
 
@@ -69,6 +70,7 @@ class BaseDeviceProvider(ABC):
             capabilities: List of capability tags
             client_ip: Device's client IP address
             runtime_transfer_host: Host peers should use for direct transfers
+            runtime_transfer_port: Executor session gateway port
 
         Returns:
             Dict containing device info including 'id' and 'is_default'
@@ -143,6 +145,7 @@ class BaseDeviceProvider(ABC):
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
     ) -> bool:
@@ -153,6 +156,7 @@ class BaseDeviceProvider(ABC):
             device_id: Device unique identifier
             running_task_ids: List of currently running task IDs
             executor_version: Executor version string
+            runtime_transfer_port: Executor session gateway port
             runtime_instance_id: Stable Runtime installation ID
             runtime_capacity: Live Runtime scheduler capacity
 

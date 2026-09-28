@@ -43,6 +43,7 @@ vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
 
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
+import { collaborationTestIds } from "./testIds";
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
@@ -127,9 +128,12 @@ function createApi(): SharedWorkspaceApi {
   } as unknown as SharedWorkspaceApi;
 }
 
-function renderApp(host: CollaborationHostAdapter) {
+function renderApp(
+  host: CollaborationHostAdapter,
+  api: SharedWorkspaceApi = createApi(),
+) {
   return CollaborationApp({
-    api: createApi(),
+    api,
     host,
   });
 }
@@ -309,6 +313,108 @@ describe("CollaborationApp API boundary", () => {
     expect(firstSettings?.key).toContain("project-1");
     expect(refreshedSettings?.key).toBe(firstSettings?.key);
     expect(refreshedSettings?.props.project.version).toBe(2);
+  });
+
+  it("blocks Issue creation and opens environment settings before initialization", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        project_store: "local",
+        access_role: "Owner",
+      }),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    expect(createButton).toBeDefined();
+    await createButton?.props.onClick();
+
+    expect(host.notify).toHaveBeenCalledWith(
+      "请先完成项目执行环境初始化，再创建 Issue。",
+      "error",
+    );
+    expect(host.navigate).toHaveBeenCalledWith({
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+      projectSettingsSection: "environments",
+    });
+  });
+
+  it("rechecks a newly initialized environment before blocking Issue creation", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    const project = {
+      ...createProject(1),
+      access_role: "Owner" as const,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "",
+        devices: {
+          "device-21": {
+            status: "ready" as const,
+            workspace_path: "/workspace/project-1",
+          },
+        },
+      },
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(project),
+    );
+    const api = createApi();
+    api.projects.listExecutionEnvironments = vi.fn(async () => [
+      {
+        id: "environment-21",
+        device_id: 21,
+        device_key: "device-21",
+        name: "Device",
+        kind: "local_device",
+        coding_tools: ["codex"],
+        owner_type: "user",
+        owner_id: "1",
+        owner_name: "Owner",
+        status: "online",
+        updated_at: "2026-09-26T00:00:00Z",
+      },
+    ]);
+
+    const shell = findByType(
+      renderApp(host, api),
+      CollaborationProjectViewShell,
+    );
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    await createButton?.props.onClick();
+
+    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith(
+      "project-1",
+    );
+    expect(host.notify).not.toHaveBeenCalled();
+    expect(host.navigate).not.toHaveBeenCalled();
   });
 
   it("uses the shared project settings content as the vertical scroller", () => {

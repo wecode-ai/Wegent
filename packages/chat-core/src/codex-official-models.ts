@@ -34,8 +34,10 @@ export interface CodexOfficialModelList {
 export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.6-sol'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
-const CODEX_PICKER_MODELS = [
+const CODEX_MODEL_PRESENTATION = [
   { modelId: 'gpt-6-astra', label: 'GPT-6 Astra' },
+  { modelId: 'gpt-6-sol', label: 'GPT-6 Sol' },
+  { modelId: 'gpt-6-luna', label: 'GPT-6 Luna' },
   { modelId: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
   { modelId: 'gpt-5.6-terra', label: 'GPT 5.6 Terra' },
   { modelId: 'gpt-5.6-luna', label: 'GPT 5.6 Luna' },
@@ -45,9 +47,7 @@ const CODEX_PICKER_MODELS = [
   { modelId: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
 ] as const
 
-const CODEX_PICKER_MODEL_IDS: ReadonlySet<string> = new Set(
-  CODEX_PICKER_MODELS.map(model => model.modelId)
-)
+const PROMOTED_HIDDEN_MODEL_IDS: ReadonlySet<string> = new Set(['gpt-6-astra'])
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -84,14 +84,16 @@ function normalizedModelId(modelId: string): string {
 
 export function codexModelPickerLabel(modelId: string): string {
   return (
-    CODEX_PICKER_MODELS.find(model => model.modelId === normalizedModelId(modelId))?.label ??
+    CODEX_MODEL_PRESENTATION.find(model => model.modelId === normalizedModelId(modelId))?.label ??
     modelId
   )
 }
 
 export function codexModelPickerSortOrder(modelId: string): number {
-  const index = CODEX_PICKER_MODELS.findIndex(model => model.modelId === normalizedModelId(modelId))
-  return index >= 0 ? index : CODEX_PICKER_MODELS.length
+  const index = CODEX_MODEL_PRESENTATION.findIndex(
+    model => model.modelId === normalizedModelId(modelId)
+  )
+  return index >= 0 ? index : CODEX_MODEL_PRESENTATION.length
 }
 
 function reasoningEffortValue(value: unknown): string | null {
@@ -155,7 +157,8 @@ function isVisibleCodexPickerModel(model: CodexOfficialModel | null): model is C
   return (
     model !== null &&
     (model.providerType === 'provider' ||
-      CODEX_PICKER_MODEL_IDS.has(normalizedModelId(model.modelId)))
+      !model.hidden ||
+      PROMOTED_HIDDEN_MODEL_IDS.has(normalizedModelId(model.modelId)))
   )
 }
 

@@ -452,9 +452,13 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
     assert_config_arg(args, "model=gpt-5.5");
     assert_no_config_arg(args, "forced_login_method=api");
     assert_no_config_arg(args, "model_provider=wecode-openai");
-    assert_config_arg(
-        args,
-        "model_providers.openai.http_headers.wecode-project=\"42\"",
+    assert!(
+        !args.iter().any(|value| {
+            value
+                .as_str()
+                .is_some_and(|value| value.starts_with("model_providers.openai."))
+        }),
+        "built-in OpenAI provider must not receive model_providers overrides; args={args:?}"
     );
     assert_eq!(messages[0]["env"]["HTTP_PROXY"], "socks5://127.0.0.1:7890");
     assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "socks5://127.0.0.1:7890");

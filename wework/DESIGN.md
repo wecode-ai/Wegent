@@ -1824,13 +1824,22 @@ flowchart LR
   stays vertically centered as text and row height change.
   Sort entries within each category by event time, newest first. Cloud category
   counts and pagination must be computed by the server, not inferred from the
-  first page. Cloud `assignment` and `human_work` events belong to Collaboration;
-  every other cloud kind belongs to Other notifications until given an explicit
-  category in the product contract.
+  first page. Cloud `assignment`, `mention`, `execution` and
+  `issue_dispatch_assignment` events
+  belong to Collaboration; every other cloud kind belongs to Other notifications
+  until given an explicit category in the product contract.
 - Keep source-specific navigation and
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not
   mark anything read. “Mark all read” acknowledges every available source.
+- The bell's settings view is the single notification-preference surface.
+  Preferences are account-scoped and grouped by Task updates, Collaboration,
+  and Other notifications. Each category exposes only channels that it can
+  actually deliver: in-app, system, and IM independently. Disabling in-app
+  delivery prevents new unread items and acknowledges existing unread items in
+  that category without deleting notification history. The sidebar IM control
+  may open this settings view or select an IM target, but must not maintain a
+  second notification toggle.
 - Preserve the current local task list and read actions while disconnected.
   Show cloud unavailability in the popover rather than disabling the whole bell.
   Never discard already loaded cloud items because a refresh fails.

@@ -194,5 +194,22 @@ describe('AuthGuard', () => {
         expect(getByText('Shared Knowledge')).toBeInTheDocument()
       })
     })
+
+    it('should allow access to the Wework handoff page without authentication', async () => {
+      ;(usePathname as jest.Mock).mockReturnValue('/open-wework')
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+
+      const { getByText } = render(
+        <AuthGuard>
+          <div>Wework Handoff</div>
+        </AuthGuard>
+      )
+
+      await waitFor(() => {
+        expect(userApis.isAuthenticated).not.toHaveBeenCalled()
+        expect(mockRouter.replace).not.toHaveBeenCalled()
+        expect(getByText('Wework Handoff')).toBeInTheDocument()
+      })
+    })
   })
 })

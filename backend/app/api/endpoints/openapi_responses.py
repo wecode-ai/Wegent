@@ -30,7 +30,7 @@ from app.core.rate_limit import get_limiter
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Task, Team
+from app.schemas.kind import Bot, Task, Team, resolve_model_category
 from app.schemas.openapi_response import (
     ResponseCreateInput,
     ResponseDeletedObject,
@@ -258,11 +258,8 @@ def _exception_message(exc: HTTPException) -> str:
 def _model_category_from_kind(model: Any) -> str:
     """Return the normalized model category stored in a Model CRD."""
     model_json = model.json if model and isinstance(model.json, dict) else {}
-    spec = model_json.get("spec") if isinstance(model_json, dict) else {}
-    if not isinstance(spec, dict):
-        return "llm"
-    model_type = spec.get("modelType") or "llm"
-    return str(getattr(model_type, "value", model_type)).strip().lower()
+    spec = model_json.get("spec") if isinstance(model_json, dict) else None
+    return resolve_model_category(spec)
 
 
 def _resolve_requested_model(

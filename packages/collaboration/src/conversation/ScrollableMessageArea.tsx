@@ -40,6 +40,7 @@ function ScrollableMessagePaneContent({
   onVirtualMeasurement,
   renderVisualization,
   messages,
+  renderGapAfterMessage,
   turns,
   loading = false,
   isWaitingForAssistant = false,
@@ -915,7 +916,13 @@ function ScrollableMessagePaneContent({
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 virtualAnchorToEnd={!showScrollButton}
                 bottomOrigin={bottomOrigin}
-                renderGapAfterMessage={renderTranscriptGapAfterMessage}
+                renderGapAfterMessage={(message, nextMessage) => {
+                  const transcriptGap = renderTranscriptGapAfterMessage?.(message, nextMessage)
+                  const customGap = renderGapAfterMessage?.(message, nextMessage)
+                  if (!transcriptGap) return customGap
+                  if (!customGap) return transcriptGap
+                  return <>{transcriptGap}{customGap}</>
+                }}
               />
               {contentFooter ? (
                 <div

@@ -25,6 +25,9 @@ use sha2::{Digest, Sha256};
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
+mod diagnostics;
+use diagnostics::measure_stage;
+
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
@@ -335,15 +338,17 @@ impl WorktreeManager {
         git_ref: Option<&str>,
     ) -> Result<WorktreePlan, String> {
         self.ensure_persistent_storage_verified()?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+        let _guard = measure_stage(worktree_id, "plan_lock", || {
+            self.mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())
+        })?;
         validate_worktree_id(worktree_id)?;
         let state = self.load();
         let root = PathBuf::from(&state.settings.resolved_worktree_root);
-        let preflight = worktree_preflight(source_path, git_ref, &root);
-        let repository = validated_repository_from_preflight(&preflight)?;
+        let repository = measure_stage(worktree_id, "plan_preflight", || {
+            validated_repository_from_preflight(&worktree_preflight(source_path, git_ref, &root))
+        })?;
         let repository_name = repository
             .repo_root
             .file_name()
@@ -467,13 +472,16 @@ impl WorktreeManager {
             "worktree_target_conflict: Planned worktree path is required".to_owned()
         })?;
         let worktree_lock = self.worktree_lock(planned_path)?;
-        let _worktree_guard = worktree_lock
-            .lock()
-            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+        let _worktree_guard = measure_stage(worktree_id, "prepare_worktree_lock", || {
+            worktree_lock
+                .lock()
+                .map_err(|_| "Worktree operation lock is unavailable".to_owned())
+        })?;
+        let _guard = measure_stage(worktree_id, "prepare_mutation_lock", || {
+            self.mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())
+        })?;
         validate_worktree_id(worktree_id)?;
         let mut state = self.load();
         let root = planned_path
@@ -481,8 +489,9 @@ impl WorktreeManager {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .ok_or_else(|| format!("Invalid planned worktree path {}", planned_path.display()))?;
-        let preflight = worktree_preflight(source_path, git_ref, &root);
-        let repository = validated_repository_from_preflight(&preflight)?;
+        let repository = measure_stage(worktree_id, "prepare_preflight", || {
+            validated_repository_from_preflight(&worktree_preflight(source_path, git_ref, &root))
+        })?;
         if expected_repo_root_fingerprint
             .is_some_and(|expected| expected != repository.repo_root_fingerprint)
         {
@@ -526,7 +535,7 @@ impl WorktreeManager {
         record.last_error = None;
         state.records.insert(key.clone(), record.clone());
         remember_root(&mut state.known_roots, &root);
-        self.save(&state)?;
+        measure_stage(worktree_id, "persist_preparing", || self.save(&state))?;
 
         let prepared = (|| {
             fs::create_dir_all(&root)
@@ -544,7 +553,9 @@ impl WorktreeManager {
                         format!("Failed to create {}: {error}", parent.display())
                     })?;
                 }
-                add_git_worktree(&source_path, path, git_ref)?;
+                measure_stage(worktree_id, "git_worktree_add", || {
+                    add_git_worktree(&source_path, path, git_ref)
+                })?;
                 validate_existing_worktree_identity(
                     &source_path,
                     path,
@@ -562,7 +573,7 @@ impl WorktreeManager {
                 record.updated_at = now_ms();
                 record.last_error = None;
                 state.records.insert(key, record.clone());
-                self.save(&state)?;
+                measure_stage(worktree_id, "persist_active", || self.save(&state))?;
                 Ok(record)
             }
             Err(error) => {

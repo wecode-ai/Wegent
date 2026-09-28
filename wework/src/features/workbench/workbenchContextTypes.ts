@@ -96,6 +96,8 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  attachments?: Attachment[]
+  preserveAttachments?: boolean
   runtime?: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -111,6 +113,7 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  onRuntimeTaskOptimisticRemoved?: (address: RuntimeTaskAddress) => void
   prepareRuntimeTask?: (
     address: RuntimeTaskAddress
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>

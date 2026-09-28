@@ -22,6 +22,7 @@ from knowledge_engine.readers import ExcelSourceReader
 from knowledge_engine.storage.base import (
     BaseStorageBackend,
     resolve_display_text,
+    resolve_retrieval_text,
 )
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
@@ -278,6 +279,7 @@ class DocumentIndexer:
             )
 
         chunk_metadata.apply_to_nodes(nodes)
+        nodes = self._indexable_nodes(nodes)
 
         add_span_event(
             "rag.indexer.documents.split",
@@ -353,3 +355,12 @@ class DocumentIndexer:
             "qa_pair_count": qa_pair_count if parser_subtype == "qa_pair" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _indexable_nodes(nodes: List[BaseNode]) -> List[BaseNode]:
+        """Keep the nodes that carry retrieval text; metadata alone is not content."""
+        return [
+            node
+            for node in nodes
+            if resolve_retrieval_text(node.metadata, fallback=node.text or "").strip()
+        ]

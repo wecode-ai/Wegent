@@ -15,6 +15,18 @@ from app.schemas.knowledge import (
 
 logger = logging.getLogger(__name__)
 
+# Sanitized indexing messages keyed by the stable engine error code.
+_DIMENSION_MISMATCH_MESSAGES = {
+    "embedding_dimension_mismatch": (
+        "The embedding model returned an unexpected vector dimension. "
+        "Check the model configuration and rebuild the document index."
+    ),
+    "collection_dimension_mismatch": (
+        "The document index stores a different vector dimension than the "
+        "embedding model declares. Rebuild the document index to match the model."
+    ),
+}
+
 
 def build_processing_error(
     *,
@@ -154,16 +166,14 @@ def map_indexing_exception(
     exc: Exception, *, generation: int
 ) -> DocumentProcessingError:
     """Map an indexing exception without exposing its raw message."""
-    if getattr(exc, "code", None) == "embedding_dimension_mismatch":
+    dimension_message = _DIMENSION_MISMATCH_MESSAGES.get(getattr(exc, "code", None))
+    if dimension_message is not None:
         details = getattr(exc, "details", None) or {}
         model = details.get("model")
         return build_processing_error(
             stage=DocumentProcessingStage.INDEXING,
-            code="embedding_dimension_mismatch",
-            message=(
-                "The embedding model returned an unexpected vector dimension. "
-                "Check the model configuration and rebuild the document index."
-            ),
+            code=str(exc.code),
+            message=dimension_message,
             retryable=False,
             generation=generation,
             model=model if isinstance(model, str) else None,

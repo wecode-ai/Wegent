@@ -37,6 +37,7 @@ import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { ReanalyzeMultimodalDialog } from '@/features/knowledge/multimodal/components/ReanalyzeMultimodalDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { useExternalDocumentSync } from '../hooks/useExternalDocumentSync'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { KnowledgeDocumentTreeGrid } from './knowledge-document-tree-grid'
@@ -504,11 +505,8 @@ export function DocumentList({
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
-  const [syncingDocIds, setSyncingDocIds] = useState<Set<number>>(() => new Set())
-  const isSyncingDocument = useCallback(
-    (documentId: number) => syncingDocIds.has(documentId),
-    [syncingDocIds]
-  )
+  // Manual source refresh of imported external documents (DingTalk copies).
+  const { isSyncing: isSyncingDocument, syncDocument } = useExternalDocumentSync()
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
   // Track document being moved
@@ -990,26 +988,11 @@ export function DocumentList({
   }
 
   const handleSyncDocument = async (doc: KnowledgeDocument) => {
-    setSyncingDocIds(current => new Set(current).add(doc.id))
-    try {
-      const { synchronizeExternalDocument } = await import('@/apis/knowledge')
-      await synchronizeExternalDocument(doc.id)
-      toast({ description: t('document.document.resyncSuccess') })
-      await refresh()
-      onDocumentsChanged?.()
-    } catch (err) {
-      toast({
-        variant: 'destructive',
-        description:
-          err instanceof Error && err.message ? err.message : t('document.document.resyncFailed'),
-      })
-    } finally {
-      setSyncingDocIds(current => {
-        const next = new Set(current)
-        next.delete(doc.id)
-        return next
-      })
-    }
+    // The hook owns the request and its error reporting; the list only decides
+    // whether the queued refresh should be reflected right away.
+    if (!(await syncDocument(doc))) return
+    await refresh()
+    onDocumentsChanged?.()
   }
 
   const longSummary = effectiveSummary || getKnowledgeBasePreviewSummary(knowledgeBase.summary)
@@ -1751,6 +1734,10 @@ export function DocumentList({
         isOrganization={isOrganization}
         allowDownload={allowDownload}
         watermarkText={documentProtection.watermark_text}
+        onDocumentSynced={() => {
+          refresh()
+          onDocumentsChanged?.()
+        }}
       />
       <DocumentUpload
         knowledgeBaseId={knowledgeBase.id}

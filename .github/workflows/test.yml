@@ -387,14 +387,28 @@ jobs:
       - name: Prepare Wework Electron dependencies
         run: pnpm --filter wework prepare:electron
 
-      - name: Run wework tests
+      - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
-        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests --shard=${{ matrix.shard }}/2
+        run: |
+          pnpm --filter wework exec vitest run \
+            --coverage \
+            --passWithNoTests \
+            --shard=${{ matrix.shard }}/2 &
+          vitest_pid=$!
 
-      - name: Run Wework Electron tests
-        if: matrix.shard == 1
-        run: pnpm --dir wework/electron test
+          electron_pid=
+          if [[ "${{ matrix.shard }}" == "1" ]]; then
+            pnpm --dir wework/electron test &
+            electron_pid=$!
+          fi
+
+          status=0
+          wait "$vitest_pid" || status=$?
+          if [[ -n "$electron_pid" ]]; then
+            wait "$electron_pid" || status=$?
+          fi
+          exit "$status"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

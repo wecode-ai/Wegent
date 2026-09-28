@@ -40,6 +40,7 @@ class BaseRole(str, Enum):
     Maintainer = "Maintainer"
     Developer = "Developer"
     Reporter = "Reporter"
+    Viewer = "Viewer"
     RestrictedAnalyst = "RestrictedAnalyst"
 
 
@@ -50,7 +51,8 @@ ROLE_HIERARCHY: dict[str, int] = {
     BaseRole.Maintainer.value: 1,
     BaseRole.Developer.value: 2,
     BaseRole.Reporter.value: 3,
-    BaseRole.RestrictedAnalyst.value: 4,
+    BaseRole.Viewer.value: 4,
+    BaseRole.RestrictedAnalyst.value: 5,
 }
 
 

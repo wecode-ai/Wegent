@@ -4,6 +4,7 @@ import { captureVerificationScreenshot } from './workspace-flows.mjs'
 const BOTTOM_PANEL_SELECTOR = '[data-testid="bottom-workspace-panel"]'
 const BOTTOM_PANEL_TOGGLE_SELECTOR = '[data-testid="toggle-bottom-workspace-panel-button"]'
 const LOCAL_TERMINAL_SELECTOR = '[data-testid="embedded-local-terminal"]'
+const LOCAL_TERMINAL_READY_TIMEOUT_MS = 30_000
 const TERMINAL_PRESERVATION_MARKER = 'WEWORK_LOCAL_BOARD_TERMINAL_PRESERVED'
 
 async function waitForElementCount(control, selector, expected) {
@@ -32,12 +33,14 @@ async function ensureLocalTerminalOpen(control) {
   }
   await control.command('waitFor', LOCAL_TERMINAL_SELECTOR, {
     visible: true,
+    timeoutMs: LOCAL_TERMINAL_READY_TIMEOUT_MS,
   })
 }
 
 async function assertLocalTerminalPreserved(control, sessionId, stage) {
   await control.command('waitFor', LOCAL_TERMINAL_SELECTOR, {
     visible: true,
+    timeoutMs: LOCAL_TERMINAL_READY_TIMEOUT_MS,
   })
   assert.equal(
     await control.command('getAttribute', LOCAL_TERMINAL_SELECTOR, {

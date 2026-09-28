@@ -28,6 +28,9 @@ const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "cloudProjectId",
     "cloud_project_id",
+    "cloudCollaborationRound",
+    "collaborationManagerContext",
+    "collaborationDispatchTaskId",
     "cloudTranscript",
     "executionRequest",
     "execution_request",

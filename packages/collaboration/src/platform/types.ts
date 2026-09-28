@@ -12,6 +12,13 @@ import type {
   CollaborationWorkspace,
 } from "../types";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
+import type {
+  ProjectCreateCollaborationGroupDraft,
+  ProjectCreateCollaborationGroupDraftInput,
+  ProjectCreateCollaborationGroupGenerationEvent,
+  ProjectCreateGenerationModelCatalog,
+  ProjectCreateGenerationProgressPhase,
+} from "../project-create/types";
 
 export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationDomain = "local" | "cloud";
@@ -94,4 +101,10 @@ export interface CollaborationPlatformHostAdapter {
     namespace: string;
   }>;
   projectAgentConfiguration?: ProjectAgentConfigurationHost;
+  generateProjectCollaborationGroupDraft?(
+    input: ProjectCreateCollaborationGroupDraftInput,
+    onProgress?: (phase: ProjectCreateGenerationProgressPhase) => void,
+    onEvent?: (event: ProjectCreateCollaborationGroupGenerationEvent) => void,
+  ): Promise<ProjectCreateCollaborationGroupDraft>;
+  loadProjectCollaborationGroupGenerationModels?(): Promise<ProjectCreateGenerationModelCatalog>;
 }

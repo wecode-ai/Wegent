@@ -9,6 +9,7 @@ import {
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
   IMAGE_ARTIFACT_BASE64,
+  MODEL_REQUEST_TIMEOUT_MS,
   PASTED_PATH_COMPLETION_TEXT,
   PASTED_PATH_FILE_NAME,
   PASTED_PATH_FOLDER_NAME,
@@ -854,7 +855,7 @@ async function verifySideChatAttachmentIsolation({
     )
   }
   control.releaseSideChatGuidanceResponse()
-  await control.awaitScenarioRequestCount('side_chat_guidance', 5)
+  await control.awaitScenarioRequestCount('side_chat_guidance', 5, MODEL_REQUEST_TIMEOUT_MS)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),

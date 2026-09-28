@@ -1,11 +1,13 @@
-import { useIssueMentionGroups } from './useIssueMentionGroups'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import type { CollaborationTranslate } from '../i18n'
+import type { ProjectChatMention } from '@wegent/chat-core'
 import type { SharedWorkspaceAttachmentsApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationAgent, CollaborationComment, CollaborationMember } from '../types'
 import type { AttachmentImageServices } from './AttachmentImageView'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
+import type { IssueMentionOption } from './issueCommentMentions'
 import {
   issueCommentBody,
   useIssueCommentAttachments,
@@ -52,7 +54,7 @@ export function IssueWebCommentComposer({
   members: CollaborationMember[]
   agents: CollaborationAgent[]
   translate: CollaborationTranslate
-  send(body: string): Promise<CollaborationComment | void>
+  send(body: string, mentions?: ProjectChatMention[]): Promise<CollaborationComment | void>
   onSent(comment: CollaborationComment): void
   onError(): void
   settings?: ComponentProps<typeof IssueMainCommentComposer>['settings']
@@ -72,14 +74,14 @@ export function IssueWebCommentComposer({
       active.current = false
     }
   }, [])
-  const mentionGroups = useIssueMentionGroups(members, agents, translate)
+  const mentionCandidates = useIssueMentionCandidates(members, agents, translate)
 
-  async function submit() {
+  async function submit(body: string, mentions: IssueMentionOption[]) {
     if (
       !canComment ||
       loading ||
       submitting.current ||
-      !draft.trim() ||
+      !body ||
       !selection.isAttachmentReadyToSend
     )
       return
@@ -87,7 +89,10 @@ export function IssueWebCommentComposer({
     setSending(true)
     setError(null)
     try {
-      const comment = await send(issueCommentBody(draft.trim(), selection.attachments))
+      const comment = await send(
+        issueCommentBody(body, selection.attachments),
+        ...(mentions.length ? [mentions] : [])
+      )
       if (!active.current) return
       if (comment) onSent(comment)
       setDraft('')
@@ -106,7 +111,7 @@ export function IssueWebCommentComposer({
     <IssueMainCommentComposer
       value={draft}
       onChange={setDraft}
-      onSubmit={() => void submit()}
+      onSubmit={(body, mentions) => void submit(body, mentions)}
       disabled={!canComment || loading}
       sending={sending}
       uploading={!selection.isAttachmentReadyToSend}
@@ -134,7 +139,8 @@ export function IssueWebCommentComposer({
         />
       }
       settings={settings}
-      mentionGroups={mentionGroups}
+      mentionCandidates={mentionCandidates}
+      translate={translate}
       testIds={{
         form: 'collaboration-issue-comment-form',
         input: 'collaboration-issue-comment',
@@ -142,7 +148,6 @@ export function IssueWebCommentComposer({
         settings: 'collaboration-comment-settings-toggle',
         file: 'collaboration-comment-attach-input',
         attach: 'collaboration-comment-attach',
-        mentions: 'collaboration-issue-mention-popup',
       }}
     />
   )

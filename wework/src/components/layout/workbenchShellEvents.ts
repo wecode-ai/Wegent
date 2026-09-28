@@ -18,15 +18,18 @@ export function requestOpenCloudDeviceSettings() {
 }
 
 export function useWorkbenchShellEventHandlers({
+  enabled,
   onCreateProjectMode,
   onBindProjectWorkspace,
   onOpenCloudDeviceSettings,
 }: {
+  enabled: boolean
   onCreateProjectMode: (mode: ProjectCreateMode) => void
   onBindProjectWorkspace: (projectId: number) => void
   onOpenCloudDeviceSettings: () => void
 }) {
   useEffect(() => {
+    if (!enabled) return
     const handleOpenProjectCreate = (event: Event) => {
       const mode = (event as CustomEvent<{ mode?: ProjectCreateMode }>).detail?.mode
       if (mode) {
@@ -49,5 +52,5 @@ export function useWorkbenchShellEventHandlers({
       window.removeEventListener(BIND_PROJECT_WORKSPACE_EVENT, handleBindProjectWorkspace)
       window.removeEventListener(OPEN_CLOUD_DEVICE_SETTINGS_EVENT, onOpenCloudDeviceSettings)
     }
-  }, [onBindProjectWorkspace, onCreateProjectMode, onOpenCloudDeviceSettings])
+  }, [enabled, onBindProjectWorkspace, onCreateProjectMode, onOpenCloudDeviceSettings])
 }

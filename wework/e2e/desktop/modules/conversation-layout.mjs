@@ -1071,7 +1071,7 @@ async function verifyWorktreeCreationStatus({
   await captureVerificationScreenshot(control, 'worktree-status-01-project-ready.png')
 
   await control.command('click', '[data-testid="execution-mode-button"]')
-  await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="execution-mode-git-worktree-button"]')
   await control.command('waitFor', '[data-testid="execution-mode-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1106,11 +1106,6 @@ async function verifyWorktreeCreationStatus({
     )
     await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
 
-    await withTimeout(
-      scenarioRequest,
-      DEFAULT_STEP_TIMEOUT_MS,
-      'The worktree task did not reach the model service after creation'
-    )
     const waitingSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -1129,6 +1124,13 @@ async function verifyWorktreeCreationStatus({
       'The held worktree response completed before the thinking state was verified'
     )
     await captureVerificationScreenshot(control, 'worktree-status-04-waiting-for-assistant.png')
+    // Check the creation-to-waiting transition before model startup can mask it.
+    // Cold Codex/MCP startup has its own runtime readiness budget.
+    await withTimeout(
+      scenarioRequest,
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The worktree task did not reach the model service after creation'
+    )
   } finally {
     control.releaseScenarioResponse(scenario)
   }
@@ -1220,7 +1222,12 @@ async function verifyWorktreeCreationStatus({
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeFork,
+    '',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const currentForkTask = currentRuntimeTaskFromDebugSnapshot(forkDebugSnapshot)

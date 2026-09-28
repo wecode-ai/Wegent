@@ -68,6 +68,24 @@ describe('browser main comment with the PC execution pipeline', () => {
   const onMessages = vi.fn()
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    // jsdom has no text-range geometry; ProseMirror reads it when restoring selection.
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [],
+    })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect(),
+    })
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
     vi.stubGlobal('matchMedia', () => ({
       matches: false,
       addEventListener() {},
@@ -172,8 +190,18 @@ describe('browser main comment with the PC execution pipeline', () => {
     vi.unstubAllGlobals()
   })
   const element = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
-  const input = () => element('collaboration-issue-comment') as HTMLTextAreaElement
-  async function mount(agents = [agent]) {
+  const input = () =>
+    element('collaboration-issue-comment') as HTMLElement & { value: string }
+  async function mount(
+    members: {
+      id: number
+      user_id: number
+      user_name: string
+      email: null
+      role: 'Developer'
+    }[] = [],
+    agents = [agent]
+  ) {
     await act(async () =>
       root.render(
         <BrowserTaskDrafts runtime={runtime}>
@@ -185,7 +213,7 @@ describe('browser main comment with the PC execution pipeline', () => {
               project={project}
               issue={issue}
               agents={agents}
-              members={[]}
+              members={members}
               messages={[]}
               canComment
               canAttach
@@ -200,11 +228,10 @@ describe('browser main comment with the PC execution pipeline', () => {
   }
   async function type(text: string) {
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
-        input(),
-        text
+      input().value = text
+      input().dispatchEvent(
+        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true })
       )
-      input().dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
   async function click(id: string) {
@@ -214,7 +241,7 @@ describe('browser main comment with the PC execution pipeline', () => {
     client.executeTaskComment = vi.fn().mockResolvedValue([message])
     vi.mocked(runtime.listDevices).mockResolvedValue([])
     vi.mocked(runtime.listModels).mockResolvedValue([])
-    await mount([])
+    await mount([], [])
     await type('Run pwd')
     await click('collaboration-issue-comment-submit')
     expect(client.executeTaskComment).toHaveBeenCalledWith({
@@ -260,6 +287,27 @@ describe('browser main comment with the PC execution pipeline', () => {
     )
     expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
     expect(input().value).toBe('')
+  })
+  it('sends the structured target for a project member mention', async () => {
+    await mount([
+      { id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' },
+    ])
+    await type('@')
+    const option = element('collaboration-issue-mention-member-8')
+    expect(option).not.toBeNull()
+    await act(async () => option.click())
+    expect(input().value).toBe('[$@bob](wework-member://8) ')
+    await type('[$@bob](wework-member://8) please review')
+    await click('collaboration-issue-comment-submit')
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '@bob please review',
+        mentions: [
+          { type: 'agent', id: agent.id, label: agent.name },
+          { type: 'user', id: '8', label: 'bob' },
+        ],
+      })
+    )
   })
   it('uses actual uploaded runtime IDs and imports them for durable Issue links', async () => {
     await mount()
