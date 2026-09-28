@@ -230,7 +230,7 @@ fn combined_text_result_repeats_action_guidance_after_inspect() {
 fn inspect_text_result_flags_login_wall_urls() {
     let text = inspect_text_result(&json!({
         "kind": "browser.inspect",
-        "inspectText": "Page: 登录 - 微博\nURL: https://passport.weibo.com/sso/signin\n[0] button \"登录/注册\""
+        "inspectText": "Page: Sign in\nURL: https://passport.example.com/sso/signin\n[0] button \"Sign in\""
     }))
     .unwrap();
     assert!(text.contains("Auth warning:"));
@@ -253,7 +253,7 @@ fn combined_text_result_flags_login_wall_urls() {
         "wait": { "ok": true, "reason": "load_finished" },
         "inspect": {
             "kind": "browser.inspect",
-            "inspectText": "Page: 微博\nURL: https://weibo.com/newlogin?tabtype=\n[0] button \"登录/注册\""
+            "inspectText": "Page: Feed\nURL: https://feed.example.com/newlogin?tabtype=\n[0] button \"Sign in\""
         }
     }))
     .unwrap();
