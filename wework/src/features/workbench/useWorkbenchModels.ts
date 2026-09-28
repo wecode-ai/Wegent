@@ -41,6 +41,7 @@ interface UseWorkbenchModelsOptions {
 }
 
 const DEFAULT_MODEL_SCOPE_KEY = 'default'
+const EMPTY_MODEL_OPTIONS: ModelOptions = Object.freeze({})
 
 function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
@@ -103,7 +104,7 @@ export function useWorkbenchModels({
     Record<string, ModelOptions>
   >({})
   const selectedModel = selectedModelByScope[scopeKey] ?? null
-  const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? {}
+  const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? EMPTY_MODEL_OPTIONS
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
@@ -456,7 +457,7 @@ export function useWorkbenchModels({
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])
   const getSelectedModelOptions = useCallback(
-    () => selectedModelOptionsRef.current[scopeKey] ?? {},
+    () => selectedModelOptionsRef.current[scopeKey] ?? EMPTY_MODEL_OPTIONS,
     [scopeKey]
   )
   const hasSelectionForScope = useCallback(

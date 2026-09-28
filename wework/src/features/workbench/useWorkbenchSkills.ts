@@ -13,6 +13,10 @@ interface UseWorkbenchSkillsOptions {
 }
 
 const DEFAULT_SKILL_SCOPE_KEY = 'default'
+const EMPTY_SKILLS: UnifiedSkill[] = []
+const EMPTY_SELECTED_SKILLS: SkillRef[] = []
+Object.freeze(EMPTY_SKILLS)
+Object.freeze(EMPTY_SELECTED_SKILLS)
 
 function isSameSkill(left: SkillRef, right: SkillRef): boolean {
   return (
@@ -32,10 +36,7 @@ export function useWorkbenchSkills({
   const [selectedSkillsByScope, setSelectedSkillsByScope] = useState<Record<string, SkillRef[]>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
-  const selectedSkills = useMemo(
-    () => selectedSkillsByScope[scopeKey] ?? [],
-    [scopeKey, selectedSkillsByScope]
-  )
+  const selectedSkills = selectedSkillsByScope[scopeKey] ?? EMPTY_SELECTED_SKILLS
 
   useEffect(() => {
     if (!enabled) return
@@ -114,7 +115,7 @@ export function useWorkbenchSkills({
   )
 
   return {
-    skills: enabled ? skills : [],
+    skills: enabled ? skills : EMPTY_SKILLS,
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,

@@ -793,6 +793,21 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModelOptions).toEqual({})
   })
 
+  test('keeps empty model options stable when another scope changes', () => {
+    const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
+    const { result, rerender } = renderHook(() =>
+      useWorkbenchModels({ api, locked: false, enabled: false, scopeKey: 'current' })
+    )
+    const emptyOptions = result.current.selectedModelOptions
+
+    rerender()
+    expect(result.current.selectedModelOptions).toBe(emptyOptions)
+    expect(result.current.getSelectedModelOptions()).toBe(emptyOptions)
+
+    act(() => result.current.setSelectionForScope('other', null, { reasoning: 'high' }))
+    expect(result.current.selectedModelOptions).toBe(emptyOptions)
+  })
+
   test('does not replace an unavailable configured task model with the default model', async () => {
     const deepseekModel: UnifiedModel = {
       name: 'deepseek-v4-flash-responses(公网)',
@@ -922,6 +937,30 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedSkills).toEqual([
       { name: 'project-summary', namespace: 'default', is_public: false },
     ])
+  })
+
+  test('keeps empty skills stable when disabled and another scope changes', () => {
+    const api = { listSkills: vi.fn().mockResolvedValue([]) }
+    const { result, rerender } = renderHook(() =>
+      useWorkbenchSkills({ api, locked: false, enabled: false, scopeKey: 'current' })
+    )
+    const emptySkills = result.current.skills
+    const emptySelection = result.current.selectedSkills
+    const emptyNames = result.current.selectedSkillNames
+
+    rerender()
+    expect(result.current.skills).toBe(emptySkills)
+    expect(result.current.selectedSkills).toBe(emptySelection)
+    expect(result.current.selectedSkillNames).toBe(emptyNames)
+
+    act(() =>
+      result.current.setSelectedSkillsForScope('other', [
+        { name: 'project-summary', namespace: 'default', is_public: false },
+      ])
+    )
+    expect(result.current.skills).toBe(emptySkills)
+    expect(result.current.selectedSkills).toBe(emptySelection)
+    expect(result.current.selectedSkillNames).toBe(emptyNames)
   })
 
   test('uploads, removes, and resets attachments', async () => {

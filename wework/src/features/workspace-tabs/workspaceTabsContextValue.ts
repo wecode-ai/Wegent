@@ -18,6 +18,8 @@ export interface WorkspaceTabsContextValue {
 }
 
 export const WorkspaceTabsContext = createContext<WorkspaceTabsContextValue | null>(null)
+export type WorkspaceTabActivity = (tabId: string) => boolean
+export const WorkspaceTabActivityContext = createContext<WorkspaceTabActivity | null>(null)
 
 export function useWorkspaceTabs(): WorkspaceTabsContextValue {
   const context = useContext(WorkspaceTabsContext)
@@ -27,4 +29,8 @@ export function useWorkspaceTabs(): WorkspaceTabsContextValue {
 
 export function useOptionalWorkspaceTabs(): WorkspaceTabsContextValue | null {
   return useContext(WorkspaceTabsContext)
+}
+
+export function useOptionalWorkspaceTabActivity(): WorkspaceTabActivity | null {
+  return useContext(WorkspaceTabActivityContext)
 }
