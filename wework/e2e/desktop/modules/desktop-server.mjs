@@ -1902,7 +1902,11 @@ class DesktopE2EServer {
       assert.equal(typeof ready.windowLabel, 'string', 'Desktop control window label is required')
       assert.ok(ready.windowLabel.length > 0, 'Desktop control window label cannot be empty')
       const previousClientId = this.controlClientsByWindow.get(ready.windowLabel)
-      this.activeControlClientId = ready.clientId
+      // Registration discovers a window; only explicit selection changes the command target.
+      // A selected window keeps ownership when its renderer reconnects.
+      if (!this.activeControlClientId || this.activeControlClientId === previousClientId) {
+        this.activeControlClientId = ready.clientId
+      }
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
