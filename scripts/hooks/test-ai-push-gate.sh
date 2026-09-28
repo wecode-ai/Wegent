@@ -245,16 +245,16 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 2 --shard=1/2$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 2 --shard=2/2$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=1/2$' "$CALL_LOG" ||
+    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=2/2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files and use two shards."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests in 2 shards with 2 workers each' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to use two two-worker shards by default."
+if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to stay within two workers across both shards."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi

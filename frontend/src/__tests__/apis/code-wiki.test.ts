@@ -10,6 +10,8 @@ jest.mock('@/apis/client', () => ({
   default: {
     get: jest.fn(),
     post: jest.fn(),
+    put: jest.fn(),
+    delete: jest.fn(),
   },
 }))
 
@@ -62,5 +64,31 @@ describe('codeWikiApi', () => {
       '/knowledge-bases/12/code-wiki/generations/7/cancel',
       {}
     )
+  })
+
+  it('reads, configures, and removes the scheduled update', async () => {
+    ;(client.get as jest.Mock).mockResolvedValue({ enabled: false })
+    ;(client.put as jest.Mock).mockResolvedValue({ enabled: true })
+    ;(client.delete as jest.Mock).mockResolvedValue(undefined)
+    const schedule = {
+      enabled: true,
+      cadence: 'daily' as const,
+      interval_days: 1,
+      weekday: 0,
+      hour: 9,
+      minute: 0,
+      timezone: 'Asia/Shanghai',
+    }
+
+    await codeWikiApi.scheduledUpdate(12)
+    await codeWikiApi.configureScheduledUpdate(12, schedule)
+    await codeWikiApi.deleteScheduledUpdate(12)
+
+    expect(client.get).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/scheduled-update')
+    expect(client.put).toHaveBeenCalledWith(
+      '/knowledge-bases/12/code-wiki/scheduled-update',
+      schedule
+    )
+    expect(client.delete).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/scheduled-update')
   })
 })

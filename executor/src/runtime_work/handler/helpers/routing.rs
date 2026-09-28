@@ -521,7 +521,7 @@ fn runtime_project_workspace_path(
 fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     let mut params = json!({
         "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-        "sortKey": "updated_at",
+        "sortKey": "recency_at",
         "sortDirection": "desc",
         "sourceKinds": CODEX_THREAD_SOURCE_KINDS,
         "archived": archived,

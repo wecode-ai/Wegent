@@ -67,8 +67,8 @@ describe('desktop resource migration', () => {
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
-    expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:codex', '--materialize']")
+    expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
     expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
     expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
@@ -122,6 +122,8 @@ describe('desktop resource migration', () => {
 
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(packageApp).toContain('prepareSharedElectronZip({')
+    expect(packageApp).toContain('electronZipDir,')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
     expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
@@ -197,6 +199,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
     expect(source).toContain('resolveHarnessRuntimeCachePaths(')
+    expect(source).toContain("join(harnessRuntimeMaterializedRoot, 'runtimes.json')")
+    expect(source).not.toContain(
+      "join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json')"
+    )
     expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
     expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
     expect(harnessRuntimeSource).not.toContain(
@@ -329,6 +335,21 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("['run', 'prepare:dws']")
     expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
     expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
+  })
+
+  test('allows the packaged CI build to opt into a prebuilt executor', async () => {
+    const [buildSource, packageSource] = await Promise.all([
+      readFile(join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+    ])
+
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_PATH')
+    expect(buildSource).toContain('WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_PATH: resolve(prebuiltExecutorPath)')
+    expect(buildSource).toContain('WEWORK_EXECUTOR_WAIT_SECONDS: prebuiltExecutorWaitSeconds')
+    expect(packageSource).toContain('waitForConfiguredExecutor(')
+    expect(packageSource).toContain('process.env.WEWORK_EXECUTOR_WAIT_SECONDS')
+    expect(packageSource).toContain('await delay(250)')
   })
 
   test.each([

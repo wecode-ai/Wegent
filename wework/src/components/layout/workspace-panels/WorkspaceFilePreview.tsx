@@ -122,7 +122,7 @@ interface WorkspaceFilePreviewProps {
   onRetry: () => void
   targetLineStart?: number
   targetLineEnd?: number
-  onAddCodeComment: (context: CodeCommentContext) => void
+  onAddCodeComment?: (context: CodeCommentContext) => void
   editing?: boolean
   editedContent?: string
   onEditedContentChange?: (content: string) => void
@@ -164,6 +164,7 @@ const DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION: Record<string, string> = {
 function workspaceFileViewerType(name: string, mimeType: string): string | undefined {
   const extension = name.split('.').pop()?.toLowerCase() ?? ''
   return (
+    ({ csv: 'csv', tsv: 'csv', xlsm: 'xlsx' } as Record<string, string>)[extension] ??
     DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION[extension] ??
     FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
   )
@@ -218,6 +219,8 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     [file.traceId, viewerType]
   )
 
+  if (/\.(mp4|ogv|webm)$/i.test(file.name)) return <WorkspaceVideoPreview file={file.file} />
+
   if (/\.xmind$/i.test(file.name)) {
     return (
       <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
@@ -253,6 +256,29 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   )
 })
 
+function WorkspaceVideoPreview({ file }: { file: File }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const value = URL.createObjectURL(file)
+    video.src = value
+    return () => {
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(value)
+    }
+  }, [file])
+  return (
+    <video
+      data-testid="workspace-video-preview"
+      ref={videoRef}
+      controls
+      className="h-full min-h-0 w-full flex-1 bg-background"
+    />
+  )
+}
+
 interface SelectionState {
   filePath: string
   targetKey: string
@@ -280,7 +306,7 @@ interface WorkspaceFilePreviewContentProps {
   themeType: 'light' | 'dark'
   targetLineStart?: number
   targetLineEnd?: number
-  onAddCodeComment: (context: CodeCommentContext) => void
+  onAddCodeComment?: (context: CodeCommentContext) => void
 }
 
 function isHtmlFile(file: WorkspaceTextFileResponse) {
@@ -476,7 +502,7 @@ function WorkspaceFilePreviewContent({
   )
 
   const addComment = () => {
-    if (!file || !activeCommentSelection || !comment.trim()) return
+    if (!file || !activeCommentSelection || !comment.trim() || !onAddCodeComment) return
     onAddCodeComment({
       id: `code-comment-${Date.now()}`,
       filePath: file.path,
@@ -564,7 +590,7 @@ function WorkspaceFilePreviewContent({
           {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
         </div>
       )}
-      {activeCommentSelection && (
+      {activeCommentSelection && onAddCodeComment && (
         <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-background p-3 shadow-xl">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
             <MessageSquare className="h-4 w-4" />

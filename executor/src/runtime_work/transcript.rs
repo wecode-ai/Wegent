@@ -213,7 +213,12 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.project_file_change(item, summary);
             }
             item_type if is_codex_context_compaction_item_type(item_type) => {
-                self.push_workbench_block(item)
+                let mut block =
+                    context_compaction_block(item, item_timestamp(item).unwrap_or(self.created_at));
+                if block["status"] == "pending" && self.assistant_status != "streaming" {
+                    block["status"] = json!("error");
+                }
+                self.assistant.blocks.push(block);
             }
             "agentmessage" | "agentmessageevent" if !self.project_subagent_message(item) => {
                 self.project_assistant_message(item, has_later_process);
@@ -247,8 +252,13 @@ impl<'a> TurnTranscriptProjector<'a> {
         if is_internal_turn_abort_message(item) {
             return;
         }
-        let is_guidance = self.assistant_segment_index > 0 || self.assistant.has_non_file_output();
-        self.emit_assistant(false);
+        let context_compaction_before_prompt = self.assistant_segment_index == 0
+            && self.assistant.has_only_context_compaction_output();
+        let is_guidance = self.assistant_segment_index > 0
+            || (self.assistant.has_non_file_output() && !context_compaction_before_prompt);
+        if !context_compaction_before_prompt {
+            self.emit_assistant(false);
+        }
         let pushed_user = push_user_message_once(
             self.messages,
             item,
@@ -1225,7 +1235,8 @@ fn context_compaction_block(item: &Value, timestamp: i64) -> Value {
         "type": "tool",
         "tool_use_id": block_id,
         "tool_name": "context_compaction",
-        "status": "done",
+        // Provider history contains completed compactions; live cache items carry lifecycle status.
+        "status": string_field(item, "status").unwrap_or_else(|| "done".to_owned()),
         "timestamp": timestamp,
     })
 }

@@ -18,6 +18,8 @@ use toml_edit::{value, DocumentMut, Item};
 
 use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
+use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
+
 mod support;
 
 use support::*;
@@ -351,6 +353,7 @@ pub struct PluginSyncSpec {
     pub name: String,
     key: String,
     installed_plugin_id: Option<i64>,
+    cloud_plugin_id: Option<i64>,
     pub marketplace: String,
     pub enabled: bool,
     version: String,
@@ -377,11 +380,18 @@ impl PluginSyncSpec {
         let version = value_string(value.get("version")).unwrap_or_else(|| "latest".to_owned());
         let installed_plugin_id =
             value_i64(value.get("installed_plugin_id").or_else(|| value.get("id")));
+        let cloud_plugin_id = value_i64(
+            value
+                .get("cloud_plugin_id")
+                .or_else(|| value.get("cloudPluginId"))
+                .or_else(|| source.and_then(|source| source.get("catalogItemId"))),
+        );
         let key = format!("{name}@{marketplace}");
         Ok(Self {
             name,
             key,
             installed_plugin_id,
+            cloud_plugin_id,
             marketplace,
             enabled: value
                 .get("enabled")
@@ -414,6 +424,7 @@ impl PluginSyncSpec {
                 .unwrap_or_else(|| key.to_owned()),
             key: key.to_owned(),
             installed_plugin_id: value_i64(plugin.get("installed_plugin_id")),
+            cloud_plugin_id: value_i64(plugin.get("cloud_plugin_id")),
             marketplace: value_string(plugin.get("marketplace"))
                 .or_else(|| {
                     key.split_once('@')
@@ -527,6 +538,38 @@ impl GlobalCapabilityStore {
         self
     }
 
+    fn personal_marketplace_dir(&self) -> PathBuf {
+        self.manifest
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("bundled-marketplaces")
+            .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE)
+    }
+
+    fn claude_marketplace_dir(&self, marketplace: &str) -> PathBuf {
+        if marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            return self.personal_marketplace_dir();
+        }
+        self.plugins_dir.join("marketplaces").join(marketplace)
+    }
+
+    fn codex_marketplace_dir(&self, marketplace: &str) -> PathBuf {
+        if marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            return self.personal_marketplace_dir();
+        }
+        self.codex_plugins_dir
+            .join("marketplaces")
+            .join(marketplace)
+    }
+
+    fn marketplace_plugin_name(&self, spec: &PluginSyncSpec, for_claude: bool) -> String {
+        if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE || !for_claude {
+            return spec.name.clone();
+        }
+        plugin_codex_link_name(spec)
+    }
+
     pub fn record_skill(&self, skill: Value) -> Result<(), CapabilitySyncError> {
         let mut manifest = self.manifest.load()?;
         let name = value_string(skill.get("name"))
@@ -564,6 +607,7 @@ impl GlobalCapabilityStore {
                     .unwrap_or_else(|| key.clone()),
                 key: key.clone(),
                 installed_plugin_id: value_i64(plugin.get("installed_plugin_id")),
+                cloud_plugin_id: value_i64(plugin.get("cloud_plugin_id")),
                 marketplace: value_string(plugin.get("marketplace"))
                     .or_else(|| {
                         key.split_once('@')
@@ -765,6 +809,36 @@ impl GlobalCapabilityStore {
         store_path: &Path,
         manifest: &mut Value,
     ) -> Result<(), CapabilitySyncError> {
+        let _personal_marketplace_lock = if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            Some(
+                acquire_personal_marketplace_lock(&self.personal_marketplace_dir())
+                    .map_err(CapabilitySyncError::invalid_payload)?,
+            )
+        } else {
+            None
+        };
+        if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            let personal_plugin_path = self
+                .personal_marketplace_dir()
+                .join("plugins")
+                .join(&spec.name);
+            let existing_is_same_managed_install = manifest
+                .get("plugins")
+                .and_then(|plugins| plugins.get(&spec.key))
+                .is_some_and(|plugin| {
+                    plugin.get("managed").and_then(Value::as_bool) == Some(true)
+                        && plugin.get("installed_plugin_id").and_then(Value::as_i64)
+                            == spec.installed_plugin_id
+                });
+            if (personal_plugin_path.exists() || personal_plugin_path.is_symlink())
+                && !existing_is_same_managed_install
+            {
+                return Err(CapabilitySyncError::invalid_payload(format!(
+                    "Personal marketplace plugin {} is owned by a local or bundled source",
+                    spec.name
+                )));
+            }
+        }
         let runtime_link = self.plugin_runtime_link(spec);
         let codex_link = self.plugin_codex_link(spec);
         let previous_runtime = manifest
@@ -785,14 +859,8 @@ impl GlobalCapabilityStore {
                 "Managed Claude plugin runtime path is outside the plugin directory",
             ));
         }
-        let claude_marketplace_dir = self
-            .plugins_dir
-            .join("marketplaces")
-            .join(&spec.marketplace);
-        let codex_marketplace_dir = self
-            .codex_plugins_dir
-            .join("marketplaces")
-            .join(&spec.marketplace);
+        let claude_marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
+        let codex_marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
         let file_paths = [
             self.plugins_dir.join("known_marketplaces.json"),
             self.plugins_dir.join("installed_plugins.json"),
@@ -813,8 +881,10 @@ impl GlobalCapabilityStore {
             codex_link.clone(),
             claude_marketplace_dir
                 .join("plugins")
-                .join(plugin_codex_link_name(spec)),
-            codex_marketplace_dir.join("plugins").join(&spec.name),
+                .join(self.marketplace_plugin_name(spec, true)),
+            codex_marketplace_dir
+                .join("plugins")
+                .join(self.marketplace_plugin_name(spec, false)),
         ];
         if let Some(path) = &previous_runtime_link {
             moved_paths.push(path.clone());
@@ -895,11 +965,10 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
-        let marketplace_dir = self
-            .codex_plugins_dir
-            .join("marketplaces")
-            .join(&spec.marketplace);
-        let marketplace_link = marketplace_dir.join("plugins").join(&spec.name);
+        let marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
+        let marketplace_link = marketplace_dir
+            .join("plugins")
+            .join(self.marketplace_plugin_name(spec, false));
         link_or_copy_dir(store_path, &marketplace_link)?;
 
         let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
@@ -1023,12 +1092,10 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
-        let marketplace_dir = self
-            .plugins_dir
-            .join("marketplaces")
-            .join(&spec.marketplace);
+        let marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
-        let marketplace_link = marketplace_plugins_dir.join(plugin_codex_link_name(spec));
+        let marketplace_plugin_name = self.marketplace_plugin_name(spec, true);
+        let marketplace_link = marketplace_plugins_dir.join(&marketplace_plugin_name);
         link_or_copy_dir(store_path, &marketplace_link)?;
 
         let marketplace_source = json!({
@@ -1074,7 +1141,7 @@ impl GlobalCapabilityStore {
             json!({
                 "description": "",
                 "name": spec.name,
-                "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                "source": format!("./plugins/{marketplace_plugin_name}"),
                 "version": spec.version,
             }),
         )?;
@@ -1092,7 +1159,7 @@ impl GlobalCapabilityStore {
                 "name": spec.name,
                 "source": {
                     "source": "local",
-                    "path": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                    "path": format!("./plugins/{marketplace_plugin_name}"),
                 },
                 "policy": {
                     "installation": "AVAILABLE",
@@ -1617,6 +1684,18 @@ where
             return Ok(());
         }
 
+        let _personal_marketplace_lock = if stale.iter().any(|(key, plugin)| {
+            PluginSyncSpec::from_manifest_entry(key, plugin).marketplace
+                == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+        }) {
+            Some(
+                acquire_personal_marketplace_lock(&self.store.personal_marketplace_dir())
+                    .map_err(CapabilitySyncError::invalid_payload)?,
+            )
+        } else {
+            None
+        };
+
         let stale_keys = stale
             .iter()
             .map(|(key, _)| key.clone())
@@ -1737,38 +1816,19 @@ where
     }
 
     fn personal_shared_marketplace_manifest_paths(&self) -> Vec<PathBuf> {
-        let claude = self
-            .store
-            .plugins_dir
-            .join("marketplaces")
-            .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
-        let codex = self
-            .store
-            .codex_plugins_dir
-            .join("marketplaces")
-            .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE);
+        let marketplace = self.store.personal_marketplace_dir();
         vec![
-            claude.join(".claude-plugin/marketplace.json"),
-            claude.join(".agents/plugins/marketplace.json"),
-            codex.join(".agents/plugins/marketplace.json"),
+            marketplace.join(".claude-plugin/marketplace.json"),
+            marketplace.join(".agents/plugins/marketplace.json"),
         ]
     }
 
     fn personal_shared_marketplace_plugin_paths(&self, spec: &PluginSyncSpec) -> Vec<PathBuf> {
-        vec![
-            self.store
-                .plugins_dir
-                .join("marketplaces")
-                .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE)
-                .join("plugins")
-                .join(plugin_codex_link_name(spec)),
-            self.store
-                .codex_plugins_dir
-                .join("marketplaces")
-                .join(PERSONAL_SHARED_PLUGIN_MARKETPLACE)
-                .join("plugins")
-                .join(&spec.name),
-        ]
+        vec![self
+            .store
+            .personal_marketplace_dir()
+            .join("plugins")
+            .join(&spec.name)]
     }
 
     fn remove_personal_shared_marketplace_plugin(

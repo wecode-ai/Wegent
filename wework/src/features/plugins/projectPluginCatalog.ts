@@ -15,11 +15,15 @@ export function buildProjectPluginCatalog(
   codexApps: LocalDeviceApp[] = []
 ): RuntimeProjectPluginRef[] {
   const appNames = new Map<string, string>()
+  const appDescriptions = new Map<string, string>()
   codexApps.forEach(app => {
     const aliases = [app.pluginKey, app.id, ...(app.pluginDisplayNames ?? [])]
     aliases.forEach(alias => {
       const key = normalized(alias)
-      if (key) appNames.set(key, app.name.trim() || alias || '')
+      if (key) {
+        appNames.set(key, app.name.trim() || alias || '')
+        if (app.description?.trim()) appDescriptions.set(key, app.description.trim())
+      }
     })
   })
 
@@ -27,7 +31,16 @@ export function buildProjectPluginCatalog(
     buildInstalledPluginProjectCatalog(installedPlugins).map(ref => {
       const appName =
         appNames.get(normalized(ref.pluginName)) || appNames.get(normalized(ref.displayName))
-      return { ...ref, displayName: appName || ref.displayName }
+      const appDescription =
+        appDescriptions.get(normalized(ref.pluginName)) ||
+        appDescriptions.get(normalized(ref.displayName))
+      return {
+        ...ref,
+        displayName: appName || ref.displayName,
+        ...(appDescription || ref.description
+          ? { description: appDescription || ref.description }
+          : {}),
+      }
     })
   )
 }

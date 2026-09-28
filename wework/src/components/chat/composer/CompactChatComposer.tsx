@@ -15,6 +15,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useCallback,
@@ -177,6 +179,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
     const [canExpandInput, setCanExpandInput] = useState(false)
     const [hasText, setHasText] = useState(value.trim().length > 0)
+    const [phraseError, setPhraseError] = useState<string | null>(null)
 
     useImperativeHandle(
       ref,
@@ -198,6 +201,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             ? fullscreenComposerRef.current
             : composerRef.current
           return activeHandle?.getValue() ?? value
+        },
+        insertReference: reference => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.insertReference(reference)
         },
         setValue: (nextValue, selectionOffset) => {
           const activeHandle = fullscreenInputOpen
@@ -255,28 +264,27 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       window.requestAnimationFrame(() => textareaRef.current?.focus())
     }
     const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
-      onClearPlanMode?.()
-      onCancelGoalDraft?.()
-      if (phrase.mode === 'plan') onSetPlanMode?.()
-      if (phrase.mode === 'goal') onSetGoal?.()
-      const currentValue = getLiveValue()
-      const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
       const activeComposer = fullscreenInputOpen
         ? fullscreenComposerRef.current
         : composerRef.current
-      activeComposer?.setValue(phraseValue, phraseValue.length)
+      if (!activeComposer) return
+      setPhraseError(null)
+      applyQuickPhrase(phrase, activeComposer, {
+        clearPlan: onClearPlanMode,
+        cancelGoal: onCancelGoalDraft,
+        setPlan: onSetPlanMode,
+        setGoal: onSetGoal,
+      })
       if (phrase.attachmentPaths?.length && onFileSelect) {
         void resolveStoredWorkspacePaths(
           phrase.attachmentPaths,
           workspaceTarget?.workspaceSource === 'remote'
-        ).then(transfer =>
-          applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
         )
+          .then(transfer =>
+            applyWorkspacePathTransfer(getLiveValue(), transfer, handleComposerChange, onFileSelect)
+          )
+          .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-      window.requestAnimationFrame(() => {
-        activeComposer?.setValue(phraseValue, phraseValue.length)
-        ;(fullscreenInputOpen ? fullscreenInputRef.current : textareaRef.current)?.focus()
-      })
     }
 
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -310,7 +318,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
 
     return (
       <div className="w-full">
+        <ComposerErrorBanner error={phraseError} />
         <AttachmentBadges
+          workspacePath={workspaceTarget?.path}
           attachments={attachments}
           uploadingFiles={uploadingFiles}
           errors={attachmentErrors}

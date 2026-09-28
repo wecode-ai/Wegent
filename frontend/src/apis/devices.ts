@@ -101,10 +101,10 @@ export interface DeviceCommandRequest {
   max_output_bytes?: number
 }
 
-export interface DeviceCommandResponse {
+export interface DeviceCommandResponse<Output = string | string[]> {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[]
+  stdout: Output
   stderr: string
   duration: number
   timed_out?: boolean
@@ -199,10 +199,10 @@ export const deviceApis = {
    *
    * The backend only accepts command keys registered in its command registry.
    */
-  async executeCommand(
+  async executeCommand<Output = string | string[]>(
     deviceId: string,
     request: DeviceCommandRequest
-  ): Promise<DeviceCommandResponse> {
+  ): Promise<DeviceCommandResponse<Output>> {
     return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/commands`, request)
   },
 }

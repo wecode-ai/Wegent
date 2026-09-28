@@ -1,29 +1,5 @@
-import { hexToRgbTriplet } from './color'
-import { darkPalette, lightPalette } from './presets'
-import type { AppearanceConfig, ResolvedAppearanceMode, ThemePalette } from './types'
-import { resolveUiTypographyVariables } from './typography'
-
-const PALETTE_VARIABLES: Record<keyof ThemePalette, string> = {
-  bgBase: '--color-bg-base',
-  bgSurface: '--color-bg-surface',
-  bgMuted: '--color-muted',
-  bgHover: '--color-bg-hover',
-  sidebar: '--color-sidebar',
-  sidebarActive: '--color-sidebar-active',
-  sidebarHover: '--color-sidebar-hover',
-  sidebarTextPrimary: '--color-sidebar-text-primary',
-  sidebarTextSecondary: '--color-sidebar-text-secondary',
-  sidebarTextMuted: '--color-sidebar-text-muted',
-  mobileDrawer: '--color-mobile-drawer',
-  border: '--color-border',
-  textPrimary: '--color-text-primary',
-  textSecondary: '--color-text-secondary',
-  textMuted: '--color-text-muted',
-  primary: '--color-primary',
-  primaryContrast: '--color-primary-contrast',
-  popover: '--color-popover',
-  codeBg: '--color-code-bg',
-}
+import { resolveThemeVariables } from '@wegent/collaboration/theme'
+import type { AppearanceConfig, ResolvedAppearanceMode } from './types'
 
 export function resolveAppearanceMode(mode: AppearanceConfig['mode']): ResolvedAppearanceMode {
   if (mode === 'light' || mode === 'dark') return mode
@@ -40,40 +16,13 @@ export function applyAppearance(
   resolvedMode = resolveAppearanceMode(appearance.mode)
 ) {
   if (typeof document === 'undefined') return
-
   const root = document.documentElement
-  const defaultPalette = resolvedMode === 'dark' ? darkPalette : lightPalette
-  const palette = {
-    ...(resolvedMode === 'dark' ? appearance.dark : appearance.light),
-    primary: hexToRgbTriplet(appearance.accentColor),
-  }
-
-  if (!palette.mobileDrawer || palette.mobileDrawer.includes('/')) {
-    palette.mobileDrawer = defaultPalette.mobileDrawer
-  }
-
   root.dataset.theme = resolvedMode
   root.dataset.appearanceMode = appearance.mode
   root.dataset.sidebarTranslucent = String(appearance.sidebarTranslucent)
   root.classList.toggle('dark', resolvedMode === 'dark')
   root.style.colorScheme = resolvedMode
-
-  Object.entries(PALETTE_VARIABLES).forEach(([key, variable]) => {
-    root.style.setProperty(variable, palette[key as keyof ThemePalette])
+  Object.entries(resolveThemeVariables(resolvedMode, appearance)).forEach(([variable, value]) => {
+    root.style.setProperty(variable, value)
   })
-
-  root.style.setProperty('--font-ui', appearance.uiFont)
-  root.style.setProperty('--font-code', appearance.codeFont)
-  root.style.setProperty('--font-size-ui', `${appearance.uiFontSize}px`)
-  root.style.setProperty('--font-size-code', `${appearance.codeFontSize}px`)
-  root.style.setProperty('--text-chat', `${appearance.uiFontSize}px`)
-  root.style.setProperty('--text-code', `${appearance.codeFontSize}px`)
-  root.style.setProperty('--text-code-sm', `${Math.max(8, appearance.codeFontSize - 1)}px`)
-  root.style.setProperty('--diffs-font-size', `${appearance.codeFontSize}px`)
-  Object.entries(resolveUiTypographyVariables(appearance.uiFontSize)).forEach(
-    ([variable, value]) => {
-      root.style.setProperty(variable, value)
-    }
-  )
-  root.style.setProperty('--appearance-contrast', String(appearance.contrast))
 }

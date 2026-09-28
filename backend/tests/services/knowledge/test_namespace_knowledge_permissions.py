@@ -1603,6 +1603,60 @@ def test_owner_can_migrate_personal_knowledge_base_to_group(
     assert migrated_kb.namespace == namespace.name
 
 
+@pytest.mark.unit
+def test_migrating_a_code_wiki_retargets_its_scheduled_update(
+    test_db: Session,
+) -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.schemas.knowledge import CodeWikiScheduledUpdateRequest
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        configure_scheduled_update,
+        scheduled_update_for,
+    )
+
+    owner = _create_user(test_db, "owner-code-wiki-migrate")
+    namespace = _create_namespace(test_db, owner, "code-wiki-target-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="migrate-wiki", namespace="default"),
+    )
+    wiki = _get_kind(test_db, knowledge_base_id)
+    wiki.json["spec"]["kbType"] = "code_wiki"
+    flag_modified(wiki, "json")
+    test_db.commit()
+    plan = configure_scheduled_update(
+        test_db,
+        knowledge_base=wiki,
+        data=CodeWikiScheduledUpdateRequest(
+            enabled=False,
+            cadence="daily",
+            interval_days=1,
+            weekday=0,
+            hour=9,
+            minute=0,
+            timezone="Asia/Shanghai",
+        ),
+    )
+
+    KnowledgeService.migrate_knowledge_base_to_group(
+        test_db, knowledge_base_id, owner.id, namespace.name
+    )
+
+    migrated_wiki = _get_kind(test_db, knowledge_base_id)
+    test_db.refresh(plan)
+    assert scheduled_update_for(test_db, migrated_wiki).id == plan.id
+    assert plan.namespace == namespace.name
+    assert plan.json["spec"]["codeWikiRef"] == {
+        "id": migrated_wiki.id,
+        "name": migrated_wiki.name,
+        "namespace": migrated_wiki.namespace,
+        "userId": migrated_wiki.user_id,
+    }
+
+
 def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 

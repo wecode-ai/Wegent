@@ -9,6 +9,7 @@ import {
   cancelMainWindowClose,
   closeMainWindowToTray,
   installRuntimeTaskCloseGuard,
+  quitApplication,
 } from '@/desktop/runtimeTaskCloseGuard'
 
 export function RuntimeTaskCloseGuard() {
@@ -49,9 +50,9 @@ export function RuntimeTaskCloseGuard() {
       closing={closing}
       title={t('workbench.close_to_tray_hint_title')}
       description={t('workbench.close_to_tray_hint_description')}
-      cancelLabel={t('workbench.close_to_tray_hint_keep_open')}
-      confirmLabel={t('workbench.close_to_tray_hint_action')}
-      onCancel={async () => {
+      quitLabel={t('workbench.close_to_tray_hint_quit_action')}
+      backgroundLabel={t('workbench.close_to_tray_hint_background_action')}
+      onDismiss={async () => {
         if (closing) return
         setCloseDialogOpen(false)
         try {
@@ -60,7 +61,18 @@ export function RuntimeTaskCloseGuard() {
           console.error('Failed to cancel close-to-tray confirmation:', error)
         }
       }}
-      onConfirm={async () => {
+      onQuit={async () => {
+        setClosing(true)
+        setCloseDialogOpen(false)
+        try {
+          await quitApplication()
+        } catch (error) {
+          console.error('Failed to quit from close-to-tray confirmation:', error)
+          setCloseDialogOpen(true)
+          setClosing(false)
+        }
+      }}
+      onKeepInBackground={async () => {
         setClosing(true)
         setCloseDialogOpen(false)
         try {
@@ -80,10 +92,11 @@ interface RuntimeTaskCloseConfirmDialogProps {
   closing: boolean
   title: string
   description: string
-  cancelLabel: string
-  confirmLabel: string
-  onCancel: () => Promise<void>
-  onConfirm: () => Promise<void>
+  quitLabel: string
+  backgroundLabel: string
+  onDismiss: () => Promise<void>
+  onQuit: () => Promise<void>
+  onKeepInBackground: () => Promise<void>
 }
 
 function RuntimeTaskCloseConfirmDialog({
@@ -91,13 +104,14 @@ function RuntimeTaskCloseConfirmDialog({
   closing,
   title,
   description,
-  cancelLabel,
-  confirmLabel,
-  onCancel,
-  onConfirm,
+  quitLabel,
+  backgroundLabel,
+  onDismiss,
+  onQuit,
+  onKeepInBackground,
 }: RuntimeTaskCloseConfirmDialogProps) {
   useEscapeKey(() => {
-    if (!closing) void onCancel()
+    if (!closing) void onDismiss()
   }, open && !closing)
 
   if (!open) return null
@@ -127,10 +141,10 @@ function RuntimeTaskCloseConfirmDialog({
             data-testid="runtime-task-close-cancel-button"
             disabled={closing}
             onClick={() => {
-              void onCancel()
+              void onQuit()
             }}
           >
-            {cancelLabel}
+            {quitLabel}
           </Button>
           <Button
             type="button"
@@ -138,10 +152,10 @@ function RuntimeTaskCloseConfirmDialog({
             data-testid="runtime-task-close-confirm-button"
             disabled={closing}
             onClick={() => {
-              void onConfirm()
+              void onKeepInBackground()
             }}
           >
-            {confirmLabel}
+            {backgroundLabel}
           </Button>
         </div>
       </div>

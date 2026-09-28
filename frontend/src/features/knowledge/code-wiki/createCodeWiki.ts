@@ -15,6 +15,10 @@ interface CreateCodeWikiParams {
   data: CodeWikiFormData
 }
 
+export type CreateCodeWikiResult = CodeWikiSummary & {
+  scheduledUpdateError?: string
+}
+
 /**
  * Send the shared knowledge-base form through Code Wiki's creation boundary.
  *
@@ -26,7 +30,7 @@ interface CreateCodeWikiParams {
 export async function createCodeWiki({
   namespace,
   data,
-}: CreateCodeWikiParams): Promise<CodeWikiSummary> {
+}: CreateCodeWikiParams): Promise<CreateCodeWikiResult> {
   const {
     name,
     description,
@@ -37,6 +41,7 @@ export async function createCodeWiki({
     execution_model_ref,
     resolved_name,
     resolved_description,
+    scheduled_update,
     ...knowledgeBaseData
   } = data
 
@@ -44,7 +49,7 @@ export async function createCodeWiki({
     throw new Error('Code Wiki creation requires a repository and execution model')
   }
 
-  return codeWikiApi.create({
+  const created = await codeWikiApi.create({
     ...knowledgeBaseData,
     name: name || resolved_name || '',
     description: description || resolved_description,
@@ -53,4 +58,15 @@ export async function createCodeWiki({
     source_url,
     execution_model_ref,
   })
+  if (scheduled_update) {
+    try {
+      await codeWikiApi.configureScheduledUpdate(created.id, scheduled_update)
+    } catch (error) {
+      return {
+        ...created,
+        scheduledUpdateError: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+  return created
 }

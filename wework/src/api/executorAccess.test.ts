@@ -216,6 +216,76 @@ describe('executor access layer', () => {
     expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })
 
+  test('uses the local IPC route status when the cloud route is offline', async () => {
+    const routedDevice = createDevice({
+      status: 'offline',
+      device_type: 'local',
+      runtime_routes: [
+        {
+          kind: 'local-ipc',
+          device_id: 'device-1',
+          runtime_device_id: 'device-1',
+          device_type: 'local',
+          name: 'Local Executor',
+          status: 'online',
+        },
+        {
+          kind: 'cloud-relay',
+          device_id: 'cloud-device-1',
+          runtime_device_id: 'device-1',
+          device_type: 'cloud',
+          name: 'Cloud Relay',
+          status: 'offline',
+        },
+      ],
+    })
+    const { deviceApi, runtimeWorkApi } = createApis([routedDevice])
+    const client = createExecutorClientFromApis({
+      transportKind: 'local-ipc',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(client.commands.getHomeDirectory('device-1')).resolves.toBe('/Users/me')
+    expect(deviceApi.getHomeDirectory).toHaveBeenCalledWith('device-1')
+  })
+
+  test('keeps the cloud relay offline when only the local IPC route is online', async () => {
+    const routedDevice = createDevice({
+      status: 'online',
+      device_type: 'cloud',
+      runtime_routes: [
+        {
+          kind: 'local-ipc',
+          device_id: 'local-device-1',
+          runtime_device_id: 'device-1',
+          device_type: 'local',
+          name: 'Local Executor',
+          status: 'online',
+        },
+        {
+          kind: 'cloud-relay',
+          device_id: 'device-1',
+          runtime_device_id: 'device-1',
+          device_type: 'cloud',
+          name: 'Cloud Relay',
+          status: 'offline',
+        },
+      ],
+    })
+    const { deviceApi, runtimeWorkApi } = createApis([routedDevice])
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(client.commands.getHomeDirectory('device-1')).rejects.toThrow(
+      'executor-offline:device-1'
+    )
+    expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
+  })
+
   test('passes aggregate runtime work calls to the runtime transport', async () => {
     const { runtimeWorkApi, deviceApi } = createApis()
     const client = createExecutorClientFromApis({

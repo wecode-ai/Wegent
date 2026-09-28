@@ -340,18 +340,19 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     CONCURRENT_MEMORY_TASK_COUNT,
     'The sidebar did not expose ten tasks'
   )
-  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
-
   const samples = await captureStableTotalMemorySamples(control, 'running')
-  const peak = samples.reduce((largest, sample) =>
+  // Leading samples capture post-navigation cleanup, not the stable footprint
+  // of the ten running tasks measured by this scenario.
+  const settledWindow = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const peak = settledWindow.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
-  const settledWindow = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
   const settled = medianMemorySample(settledWindow)
   assert.ok(settled, 'The concurrent memory E2E did not capture a settled sample window')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledSampleRangeKiB = memorySampleRangeKiB(settledWindow)
+  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>

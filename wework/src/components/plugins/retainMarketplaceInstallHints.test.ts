@@ -202,6 +202,27 @@ describe('retainMarketplaceInstallHints', () => {
     expect(retained.installed).toEqual([])
   })
 
+  test('does not retain a stale installed row after authoritative reconciliation', () => {
+    const previousItem = item({
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'github@openai-curated-remote',
+      enabled: true,
+    })
+
+    const retained = retainMarketplaceInstalledState({
+      previousItems: [previousItem],
+      nextItems: [item()],
+      previousInstalled: [installedItem()],
+      nextInstalled: [],
+      previousStateMatchesScope: true,
+      authoritativeInstalledState: true,
+    })
+
+    expect(retained.items).toEqual([item()])
+    expect(retained.installed).toEqual([])
+  })
+
   test('does not retain installed state from a different cache scope', () => {
     const previousItem = item({
       installed: true,

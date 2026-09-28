@@ -19,11 +19,17 @@ from app.services.channels.dingtalk.card_binding import (
     CardBinding,
     load_binding,
 )
+from app.services.channels.dingtalk.card_execution import CardTaskExecution
 from app.services.channels.dingtalk.card_images import (
     download_card_images,
     parse_image_urls,
 )
-from app.services.channels.dingtalk.card_inbox import CardActionInbox, CardActionRecord
+from app.services.channels.dingtalk.card_inbox import (
+    SUBMISSION_LOCK_SECONDS,
+    SUBMISSION_TIMEOUT_SECONDS,
+    CardActionInbox,
+    CardActionRecord,
+)
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from shared.telemetry.decorators import trace_async
 
@@ -213,53 +219,140 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             async with self.inbox.claim(event_id) as acquired:
                 if not acquired:
                     return
-                record = await self.inbox.load(event_id)
-                if record is None:
-                    return
-                if record.state == "running":
-                    await self._report_error(
-                        self._reply_binding(record.binding, record.actor_staff_id),
-                        "追问处理曾中断，执行结果待确认。请先查看会话记录，避免重复提交。",
-                    )
-                    record.state = "uncertain"
-                elif record.state == "pending":
-                    config = self.handler.chat_card_config
-                    if (
-                        not config
-                        or not self.handler._use_ai_card
-                        or not config.follow_up_enabled
-                    ):
-                        await self._report_error(
-                            self._reply_binding(record.binding, record.actor_staff_id),
-                            "该机器人已停用卡片追问",
-                        )
-                        record.state = "failed"
-                        await self.inbox.save(record)
-                        await self.inbox.settle(record)
-                        return
-                    record.state = "running"
-                    await self.inbox.save(record)
-                    try:
-                        await self._update_status(record, "sending")
-                    except Exception:
-                        logger.exception("[DingTalkCard] Could not show sending state")
-                    ok = await self._run(
-                        record.binding,
-                        CardFollowUp(
-                            record.text, record.image_urls, record.actor_staff_id
-                        ),
-                        event_id,
-                    )
-                    record.state = "completed" if ok else "failed"
-                # Save terminal state before UI/network work so recovery cannot
-                # dispatch a successfully submitted turn a second time.
-                await self.inbox.save(record)
-                await self._update_status(
-                    record, "sent" if record.state == "completed" else "failed"
+                record, execution = await asyncio.wait_for(
+                    self._submit_record(event_id), timeout=SUBMISSION_TIMEOUT_SECONDS
                 )
-                await self.inbox.settle(record)
+            if record is None:
+                return
+            # Neither receipt nor task submission locks span model execution.
+            # Claiming the persisted turn also fences competing recovery workers.
+            if execution is not None and execution.claim():
+                await self._execute(record, execution)
+            await self._update_status(
+                record, "sent" if record.state == "completed" else "failed"
+            )
+            await self.inbox.settle(record)
         except Exception:
             logger.exception("[DingTalkCard] Action receipt retained for recovery")
+
+    async def _submit_record(
+        self, event_id: str
+    ) -> tuple[CardActionRecord | None, CardTaskExecution | None]:
+        record = await self.inbox.load(event_id)
+        if record is None:
+            return None, None
+        execution = None
+        if record.state in ("running", "completed"):
+            recovered = self._recover_submission(record)
+            if recovered is not None:
+                execution = (
+                    recovered if isinstance(recovered, CardTaskExecution) else None
+                )
+                record.state = "completed"
+            elif record.state == "running":
+                await self._report_error(
+                    self._reply_binding(record.binding, record.actor_staff_id),
+                    "追问处理曾中断，执行结果待确认。请先查看会话记录，避免重复提交。",
+                )
+                record.state = "uncertain"
+        elif record.state == "pending":
+            config = self.handler.chat_card_config
+            if (
+                not config
+                or not self.handler._use_ai_card
+                or not config.follow_up_enabled
+            ):
+                await self._report_error(
+                    self._reply_binding(record.binding, record.actor_staff_id),
+                    "该机器人已停用卡片追问",
+                )
+                record.state = "failed"
+            else:
+                record.state = "running"
+                await self.inbox.save(record)
+                try:
+                    await self._update_status(record, "sending")
+                except Exception:
+                    logger.exception("[DingTalkCard] Could not show sending state")
+                result = await self._run(
+                    record.binding,
+                    CardFollowUp(record.text, record.image_urls, record.actor_staff_id),
+                    event_id,
+                )
+                execution = result if isinstance(result, CardTaskExecution) else None
+                record.state = "completed" if result else "failed"
+        # A completed receipt means submitted, not that the model has finished.
+        await self.inbox.save(record)
+        return record, execution
+
+    async def _execute(
+        self, record: CardActionRecord, execution: CardTaskExecution
+    ) -> None:
+        try:
+            await execution.run(self.handler)
+        except Exception:
+            logger.exception(
+                "[DingTalkCard] Submitted execution failed task=%s subtask=%s",
+                execution.task_id,
+                execution.subtask_id,
+            )
+            try:
+                await self._report_error(
+                    self._reply_binding(record.binding, record.actor_staff_id),
+                    "追问执行失败，请查看任务状态后重试",
+                )
+            except Exception:
+                logger.exception("[DingTalkCard] Could not report execution failure")
+
+    def _recover_submission(
+        self, record: CardActionRecord
+    ) -> CardTaskExecution | bool | None:
+        from app.models.subtask import SubtaskRole, SubtaskStatus
+        from app.services.im.task_continuation_service import build_existing_task_params
+        from app.stores.tasks import subtask_store, task_store
+
+        binding = record.binding
+        if binding.runtime_task or not isinstance(binding.task_id, int):
+            return None
+        with SessionLocal() as db:
+            message = subtask_store.get_user_by_task_source_message(
+                db,
+                task_id=binding.task_id,
+                channel_type="dingtalk",
+                channel_id=binding.channel_id,
+                message_id=record.event_id,
+            )
+            if message is None:
+                return None
+            subtask = subtask_store.get_by_task_parent_id_and_role(
+                db,
+                task_id=message.task_id,
+                parent_id=message.message_id,
+                role=SubtaskRole.ASSISTANT,
+            )
+            if subtask is None:
+                return None
+            if subtask.status != SubtaskStatus.PENDING:
+                return True
+            task = task_store.get_by_id(db, task_id=message.task_id)
+            if task is None:
+                return None
+            context = self._context(
+                record.binding, message.prompt, record.event_id, record.actor_staff_id
+            )
+            params = build_existing_task_params(
+                task, message=message.prompt, message_source=message.result["source"]
+            )
+            params.client_origin = task.client_origin
+            params.is_group_chat = task.is_group_chat
+            return CardTaskExecution(
+                task_id=task.id,
+                subtask_id=subtask.id,
+                user_subtask_id=message.id,
+                user_id=message.sender_user_id or message.user_id,
+                context=context,
+                params=params,
+            )
 
     async def _update_status(self, record: CardActionRecord, status: str) -> None:
         if not record.binding.config.follow_up_status_key:
@@ -281,7 +374,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
     )
     async def _run(
         self, binding: CardBinding, follow_up: CardFollowUp, event_id: str
-    ) -> bool:
+    ) -> CardTaskExecution | bool:
         log_dingtalk_message(
             logger,
             "card_follow_up_started",
@@ -303,7 +396,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             redis = await cache_manager._get_client()
             lock = redis.lock(
                 f"dingtalk:card_task:{binding.task_id}",
-                timeout=3600,
+                timeout=SUBMISSION_LOCK_SECONDS,
                 blocking=False,
             )
             acquired = await lock.acquire()
@@ -388,7 +481,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
 
     async def _continue_task(
         self, db: Any, user: Any, binding: CardBinding, context: Any
-    ) -> bool:
+    ) -> CardTaskExecution:
         from app.services.chat.storage.task_manager import (
             check_task_status,
             create_task_and_subtasks,
@@ -415,6 +508,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
         team = get_task_team(db, task)
         source = {
             **self.handler._build_message_source_metadata(),
+            "channel_id": binding.channel_id,
             "message_id": context.extra_data["message_id"],
         }
         params = build_existing_task_params(
@@ -430,29 +524,23 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             params=params,
             task_id=task.id,
             should_trigger_ai=True,
+            commit=False,
         )
+        self._persist_images(db, user.id, result.user_subtask.id, context, commit=False)
+        # Recovery may start this turn as soon as its source event is visible.
+        # Commit the user message, assistant and attachments together.
+        db.commit()
         if joined:
-            await notify_card_task_joined(db, result.task, user.id, binding.user_id)
-        try:
-            self._persist_images(db, user.id, result.user_subtask.id, context)
-        except Exception:
-            db.rollback()
-            self.handler._mark_private_im_task_response_failed(
-                db,
-                task=result.task,
-                assistant_subtask=result.assistant_subtask,
-                error_message="追问图片保存失败",
-            )
-            raise
-        return await self.handler._trigger_private_im_task_response(
-            db=db,
-            task=result.task,
-            assistant_subtask=result.assistant_subtask,
-            team=team,
-            user=user,
+            try:
+                await notify_card_task_joined(db, result.task, user.id, binding.user_id)
+            except Exception:
+                logger.exception("[DingTalkCard] Could not notify task collaboration")
+        return CardTaskExecution(
+            task_id=result.task.id,
+            subtask_id=result.assistant_subtask.id,
             user_subtask_id=result.user_subtask.id,
-            message=context.content,
-            message_context=context,
+            user_id=user.id,
+            context=context,
             params=params,
         )
 
@@ -491,7 +579,13 @@ class DingTalkCardCallbackHandler(CallbackHandler):
             context.content = "请查看图片"
 
     def _persist_images(
-        self, db: Any, user_id: int, subtask_id: int, context: Any
+        self,
+        db: Any,
+        user_id: int,
+        subtask_id: int,
+        context: Any,
+        *,
+        commit: bool = True,
     ) -> list[int]:
         if not context.images:
             return []
@@ -503,7 +597,8 @@ class DingTalkCardCallbackHandler(CallbackHandler):
                 images=context.images,
                 strict=True,
             )
-            db.commit()
+            if commit:
+                db.commit()
         except Exception as exc:
             db.rollback()
             raise ValueError("追问图片保存失败，请重新发送") from exc

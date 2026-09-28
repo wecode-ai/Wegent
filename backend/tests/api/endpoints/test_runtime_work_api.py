@@ -437,6 +437,10 @@ def test_runtime_transcript_endpoint_dispatches_address(
             "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
+            "turns": [{"id": "turn-1", "items": [], "status": "done"}],
+            "running": False,
+            "historyUnavailable": False,
+            "turnNavigation": [{"turnId": "turn-1", "messageIndex": 0}],
             "messages": [],
         }
     )
@@ -457,6 +461,9 @@ def test_runtime_transcript_endpoint_dispatches_address(
     )
 
     assert response.status_code == 200
+    assert response.json()["turns"][0]["id"] == "turn-1"
+    assert response.json()["running"] is False
+    assert response.json()["turnNavigation"][0]["turnId"] == "turn-1"
     assert response.json()["taskId"] == "codex-1"
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
     assert service_mock.await_args.kwargs["address"].limit == 25

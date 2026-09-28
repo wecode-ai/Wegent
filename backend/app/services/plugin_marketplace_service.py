@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 from fastapi import HTTPException
 from packaging.version import Version
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -176,15 +176,32 @@ class PluginMarketplaceService:
             return 0
 
         changed = 0
-        by_key: dict[str, list[Kind]] = {}
+        by_key: dict[tuple[str, str], list[Kind]] = {}
         for row in rows:
             payload = row.json if isinstance(row.json, dict) else {}
             spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
             source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
+            if source.get("type") != "marketplace":
+                continue
             plugin_key = str(source.get("pluginKey") or "").strip()
             if not plugin_key:
                 continue
-            by_key.setdefault(plugin_key.lower(), []).append(row)
+            matched = self._matching_published_plugin(
+                db,
+                user_id=user_id,
+                plugin_key=plugin_key,
+                plugin_id=spec.get("pluginId"),
+                marketplace=str(source.get("marketplace") or ""),
+            )
+            identity = (
+                ("plugin", str(matched.id))
+                if matched
+                else (
+                    str(source.get("marketplace") or "").lower(),
+                    plugin_key.lower(),
+                )
+            )
+            by_key.setdefault(identity, []).append(row)
 
         # Drop duplicates before remapping so device-install resets are not deleted
         # out from under the SQLAlchemy session.
@@ -208,7 +225,7 @@ class PluginMarketplaceService:
             if not plugin_key:
                 continue
             if self._reconcile_installed_kind_catalog_ref(
-                db, row=row, plugin_key=plugin_key
+                db, row=row, user_id=user_id, plugin_key=plugin_key
             ):
                 changed += 1
 
@@ -3051,33 +3068,66 @@ class PluginMarketplaceService:
             plugin_id
         )
 
-    def _published_plugin_by_key(self, db: Session, plugin_key: str) -> Plugin | None:
+    def _published_plugin_by_key(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        plugin_key: str,
+        marketplace: str,
+    ) -> Plugin | None:
         normalized = plugin_key.strip()
         if not normalized:
             return None
-        plugin = (
+        candidates = (
             db.query(Plugin)
             .filter(
                 Plugin.status == "published",
-                Plugin.catalog_namespace.in_(
-                    [ENTERPRISE_CATALOG_NAMESPACE, OFFICIAL_CATALOG_NAMESPACE]
-                ),
-                Plugin.name == normalized,
+                Plugin.visibility.in_(["personal", "workspace", "public"]),
+                or_(Plugin.name == normalized, Plugin.slug == normalized),
             )
-            .first()
+            .order_by(Plugin.id.desc())
+            .all()
         )
-        if plugin:
-            return plugin
-        return (
-            db.query(Plugin)
-            .filter(
-                Plugin.status == "published",
-                Plugin.catalog_namespace.in_(
-                    [ENTERPRISE_CATALOG_NAMESPACE, OFFICIAL_CATALOG_NAMESPACE]
-                ),
-                Plugin.slug == normalized,
-            )
-            .first()
+        normalized_marketplace = marketplace.strip().lower()
+        for plugin in candidates:
+            if (
+                normalized_marketplace
+                and marketplace_name_for_visibility(plugin.visibility)
+                != normalized_marketplace
+            ):
+                continue
+            if self._can_access_plugin(db, plugin=plugin, user_id=user_id):
+                return plugin
+        return None
+
+    def _matching_published_plugin(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        plugin_key: str,
+        plugin_id: Any,
+        marketplace: str,
+    ) -> Plugin | None:
+        plugin = db.get(Plugin, plugin_id) if isinstance(plugin_id, int) else None
+        normalized_key = plugin_key.strip().lower()
+        if plugin and normalized_key in {
+            plugin.name.lower(),
+            (plugin.slug or "").lower(),
+        }:
+            if (
+                plugin.status == "published"
+                and plugin.visibility in {"personal", "workspace", "public"}
+                and self._can_access_plugin(db, plugin=plugin, user_id=user_id)
+            ):
+                return plugin
+            return None
+        return self._published_plugin_by_key(
+            db,
+            user_id=user_id,
+            plugin_key=plugin_key,
+            marketplace=marketplace,
         )
 
     def _installed_kind_catalog_score(
@@ -3100,16 +3150,24 @@ class PluginMarketplaceService:
         return (1 if key_ok else 0, 1 if release_ok else 0, row.id)
 
     def _reconcile_installed_kind_catalog_ref(
-        self, db: Session, *, row: Kind, plugin_key: str
+        self, db: Session, *, row: Kind, user_id: int, plugin_key: str
     ) -> bool:
         payload = row.json if isinstance(row.json, dict) else {}
         spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
         source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
+        if source.get("type") != "marketplace":
+            return False
         plugin_id = spec.get("pluginId")
         release_id = spec.get("releaseId")
         plugin = db.get(Plugin, plugin_id) if plugin_id else None
         release = db.get(PluginRelease, release_id) if release_id else None
-        matched = self._published_plugin_by_key(db, plugin_key)
+        matched = self._matching_published_plugin(
+            db,
+            user_id=user_id,
+            plugin_key=plugin_key,
+            plugin_id=plugin_id,
+            marketplace=str(source.get("marketplace") or ""),
+        )
         key_mismatch = bool(
             plugin
             and plugin_key.lower()
@@ -3125,10 +3183,17 @@ class PluginMarketplaceService:
         )
         if matched:
             target_release = self._latest_release(db, matched)
-            if release and release.plugin_id == matched.id:
+            if (
+                release
+                and release.plugin_id == matched.id
+                and release.status == "ready"
+                and release.scan_status == "passed"
+            ):
                 target_release = release
             if not target_release:
-                return False
+                self._deactivate_orphaned_catalog_install(row)
+                self._clear_device_installations(db, installed_kind_id=row.id)
+                return True
             expected_marketplace = marketplace_name_for_visibility(matched.visibility)
             if (
                 not needs_repair
@@ -3145,10 +3210,11 @@ class PluginMarketplaceService:
                 db, installed_kind_id=row.id, release_id=target_release.id
             )
             return True
-        if not (needs_repair or plugin_id or release_id):
+        if not (needs_repair or plugin_id or release_id or source.get("catalogItemId")):
             return False
-        # Catalog entry is gone after reimport; detach cloud IDs so sync stops 404ing.
-        self._detach_stale_catalog_ref_from_installed_kind(row)
+        # No accessible package can satisfy this cloud install. Deactivate the
+        # orphan so full desired-state sync stops recreating it on every device.
+        self._deactivate_orphaned_catalog_install(row)
         self._clear_device_installations(db, installed_kind_id=row.id)
         return True
 
@@ -3228,6 +3294,17 @@ class PluginMarketplaceService:
         spec["sourcePayload"] = source_payload
         payload["spec"] = spec
         row.json = payload
+        flag_modified(row, "json")
+
+    def _deactivate_orphaned_catalog_install(self, row: Kind) -> None:
+        self._detach_stale_catalog_ref_from_installed_kind(row)
+        payload = dict(row.json) if isinstance(row.json, dict) else {}
+        spec = dict(payload.get("spec") or {})
+        spec["enabled"] = False
+        spec["installState"] = "uninstalled"
+        payload["spec"] = spec
+        row.json = payload
+        row.is_active = False
         flag_modified(row, "json")
 
     def _deactivate_duplicate_installed_kind(self, db: Session, row: Kind) -> bool:

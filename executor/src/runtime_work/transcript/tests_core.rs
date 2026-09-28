@@ -386,6 +386,28 @@ fn completed_mcp_tool_updates_preserve_structured_content() {
 }
 
 #[test]
+fn mcp_tool_blocks_preserve_plugin_provenance() {
+    let params = json!({
+        "item": {
+            "id": "call-plugin",
+            "type": "mcpToolCall",
+            "pluginId": "openai-developers@openai-official",
+            "server": "openai-api-key-local-confirmation",
+            "tool": "confirm_openai_api_key_local_destination",
+            "arguments": {},
+            "status": "inProgress"
+        }
+    });
+
+    let block =
+        workbench_block_from_notification(&params, "turn-1", "device-1", "/tmp", Some("pending"))
+            .expect("MCP tool block");
+
+    assert_eq!(block["plugin_id"], "openai-developers@openai-official");
+    assert_eq!(block["mcp_server"], "openai-api-key-local-confirmation");
+}
+
+#[test]
 fn transcript_marks_image_view_without_status_as_done() {
     let thread = json!({
         "id": "thread-1",
@@ -672,6 +694,7 @@ fn transcript_unwraps_codex_response_item_and_event_msg_items() {
     assert_eq!(messages[2]["content"], "inspect runtime");
     assert_eq!(messages[3]["role"], "assistant");
     assert_eq!(messages[3]["content"], "Done.");
+    assert_eq!(messages[3]["createdAt"], 1_780_000_005_000_i64);
     assert_eq!(messages[3]["blocks"][0]["type"], "text");
     assert_eq!(
         messages[3]["blocks"][0]["content"],
@@ -1221,4 +1244,54 @@ fn transcript_projects_collab_agent_calls_as_subagent_activity() {
     assert_eq!(blocks[0]["status"], "done");
     assert_eq!(blocks[0]["agent_status"], "done");
     assert_eq!(blocks[0]["children"][0]["content"], "hello");
+}
+
+#[test]
+fn context_compaction_history_keeps_provider_completion_after_turn_interruption() {
+    let messages = transcript_messages(
+        &json!({
+            "turns": [{
+                "id": "turn-1", "status": "interrupted",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        }),
+        "device-1",
+    );
+    assert_eq!(messages[0]["status"], "cancelled");
+    assert_eq!(messages[0]["blocks"][0]["status"], "done");
+}
+
+#[test]
+fn context_compaction_before_user_stays_in_the_user_response_turn() {
+    let messages = transcript_messages(
+        &json!({
+            "turns": [{
+                "id": "turn-1",
+                "status": "completed",
+                "items": [
+                    {"id": "compact-1", "type": "contextCompaction"},
+                    {
+                        "id": "user-1",
+                        "clientId": "client-user-1",
+                        "type": "userMessage",
+                        "content": [{"type": "input_text", "text": "Continue"}]
+                    },
+                    {
+                        "id": "assistant-1",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done"
+                    }
+                ]
+            }]
+        }),
+        "device-1",
+    );
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["clientUserMessageId"], "client-user-1");
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["content"], "Done");
+    assert_eq!(messages[1]["blocks"][0]["tool_name"], "context_compaction");
 }

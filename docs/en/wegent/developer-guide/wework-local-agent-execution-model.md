@@ -2,460 +2,172 @@
 sidebar_position: 34
 ---
 
-# Wework Local Agent Execution Model
+# Wework local projects and agent execution
 
-Building on the
-[Cloud Collaboration Domain Model](./cloud-collaboration-domain-model.md), this
-document defines the relationship between local Wework, Codex, Plugins,
-Executors, LocalTask, and cloud Issue/Run.
+Wework stores and drives local projects independently of Wegent Backend. Projects,
+issues, comments, agents, collaboration groups, processing rules, and execution
+records belong to the current device. Model inference uses locally configured
+providers or runtime authentication; backend independence does not imply offline
+model inference.
 
-The goal is not to force every local conversation into the cloud. It is to make
-local execution that participates in a collaboration Project use the same Agent
-definition, Run protocol, and capability snapshot as Wegent cloud execution.
+## Ownership and entry points
 
-## Product hosting boundary
+| Object                       | Local project                                     | Cloud project                              |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------------ |
+| Projects, issues, comments   | Executor SQLite                                   | Backend                                    |
+| Agents                       | Local ProjectChatAgent                            | Cloud resources and project bindings       |
+| Models, Skills, MCP, Plugins | Local configuration and installed resources       | Cloud definitions and selected environment |
+| Rules and run history        | Project metadata, automation_run, execution queue | Backend                                    |
+| Execution                    | Current Wework runtime                            | Selected cloud or local runtime            |
 
-The collaboration management UI has one implementation owned by Wegent Web.
-Like the fixed Agent tab, the fixed Collaboration tab in Wework opens Wegent
-Web in the built-in browser:
+The UI reuses `packages/collaboration`. Wework selects the API from the project's
+`project_store`, never from whether an API request happened to succeed. Local
+agent creation and editing use IPC directly, without creating or resolving a
+cloud Team.
 
-```text
-Wework fixed Collaboration tab
-→ Wegent Web /collaboration
-→ Workspace / Project / Issue / Member / Agent / Execution Environment
+```mermaid
+flowchart LR
+    UI[Shared collaboration UI] --> Owner{Project ownership}
+    Owner -->|local| API[Local project API / IPC]
+    API --> DB[(Local SQLite)]
+    DB --> Rules[Local rule triggers]
+    Rules --> Queue[Existing execution queue and sequential workflow]
+    Queue --> App[Wework local dispatcher]
+    App --> Runtime[Local Codex / Claude Code]
+    Runtime --> DB
+    DB --> UI
+    Owner -->|backend| Backend[Cloud project API]
+    Backend --> CloudQueue[Cloud execution queue]
 ```
 
-Wework no longer implements the all-workspaces or workspace-resource
-management pages. Its local surface retains only execution-domain capabilities:
+## Reused implementation
 
-- the system-default My Tasks board view inside the Tasks tab;
-- notifications and Issue deep links;
-- the local execution entry for a concrete Issue;
-- LocalTask creation, Issue/Run binding, execution, and deliverable sync.
+- `localDelivery.ts`: local project, issue, agent, and execution APIs.
+- `localWorkspaceApi.ts`: shared UI adapter, including agents in board refreshes.
+- `ProjectChatAgentEditor.tsx`: reuses the shared Agent form for local runtime,
+  model, prompt, capability source, Skills, MCP, and Plugin configuration.
+- `LocalTaskStore`: SQLite, optimistic versions, execution identity, claim leases,
+  cancellation, and durable status updates.
+- `local_automation.rs`: compiles rules into the existing queue or sequential workflow.
+- `localRobotQueueDispatcher.ts`: claims work and submits it to Runtime. Local and
+  cloud claim loops are independent; failed or hanging cloud requests cannot
+  block local dispatch.
 
-The fixed Collaboration tab therefore uses the cloud page, while a concrete
-project task opened from My Work or a notification can still use the Wework
-local execution surface. Both paths use the same cloud data and
-`packages/collaboration` domain components rather than duplicating Workspace
-management state.
+Local projects receive a service instance without `cloudModelGateway` or cloud
+Team materialization. Requests carry `origin.projectStore = local`; the executor
+removes Backend credentials and skips connection injection. Transcript responses
+carry the stored origin so reading local history does not report state to Backend.
 
-## Current execution path
+## Agent editor loading boundaries
 
-The current local board-robot path is approximately:
+The editor waits only for the local Agent record. Model options load independently;
+the installed-plugin catalog loads on demand. Neither blocks editing the name,
+instructions, or workspace. Catalog errors remain visible, and catalog retries
+preserve the draft. An unavailable saved model stays visible and blocks saving
+until the user explicitly chooses an available model or the runtime default.
+The runtime default can be saved while the model catalog is still loading.
 
-```text
-ProjectChatAgent
-→ WeworkExecutionProfile
-→ RuntimeTaskCreateRequest V2
-→ LoopItemExecution.execution_payload
-→ Wework Executor claim
-→ LocalTask
-→ Codex app-server thread/turn
+```mermaid
+sequenceDiagram
+    participant UI as Agent editor
+    participant DB as Local SQLite
+    participant Catalog as Local model catalog
+    participant Plugins as Installed plugins
+    par Agent record
+        UI->>DB: Read Agent
+        DB-->>UI: Show editable form
+    and Model options
+        UI->>Catalog: Read available models
+        Catalog-->>UI: Update options or show error
+    end
+    opt User chooses plugins
+        UI->>Plugins: Load installed plugins
+        Plugins-->>UI: Update options or show error
+    end
+    UI->>DB: Save selected settings and version
 ```
 
-This path already provides reusable foundations:
+Installed-plugin selection reads the installed inventory without requesting the online app catalog for display-name enrichment.
 
-- `LoopItemExecution` stores execution state, device,
-  `runtime_instance_id`, local `runtime_task_id`, and immutable execution
-  intent.
-- `RuntimeTaskCreateRequest V2` carries model, Plugin, Skill, workspace,
-  attachment, and goal configuration.
-- Wework Executor supports local claims, Codex app-server, Plugin
-  materialization, Skill deployment, event reporting, and device capability
-  synchronization.
-- `LocalTask` has the stable identity `deviceId + localTaskId`.
-- Codex transcript data is sourced from thread, turn, and item APIs.
+## Processing and state
 
-The primary break is that `WeworkExecutionProfile` synthesizes a Bot with
-`shell_type = Codex` from `ProjectChatAgent` configuration and separately reads
-Project Plugins instead of consuming the unified
-Team → Bot → Ghost → Shell definition. Local and Wegent execution therefore
-have separate Agent configuration sources.
-
-## Target relationship
-
-```text
-Workspace Agent
-└── Team
-    └── Bot
-        ├── Ghost
-        │   ├── Prompt
-        │   ├── Skills
-        │   ├── MCP Servers
-        │   └── Plugins
-        ├── Shell = Codex
-        └── Model
-
-Project
-└── Issue
-    └── Run
-        ├── Agent Snapshot
-        ├── Runtime Selection
-        ├── Execution Workspace
-        └── Backend Binding
-            └── LocalTask
-                └── Codex Thread
+```mermaid
+sequenceDiagram
+    participant UI as Wework
+    participant DB as Local SQLite
+    participant Rule as Local rules
+    participant Queue as Local dispatcher
+    participant Run as Codex / Claude Code
+    UI->>DB: Create issue / add tag
+    DB->>Rule: Match rules within the transaction
+    Rule->>DB: Save automation_run and execution intent
+    DB-->>UI: Return durable issue
+    Queue->>DB: Claim and persist stable runtime identity
+    Queue->>Run: Start local task
+    Run->>DB: Execution events and reconciliation
+    UI->>DB: Reopen, refresh, or read history
+    DB-->>UI: Return durable execution facts
 ```
 
-Local Wework and cloud Wegent no longer represent different Agent types. They
-represent different Runtimes and Executors:
+Supported triggers are issue creation, addition of a matching tag, status changes
+through the issue update API, and schedules. Human targets update local assignment;
+agent targets enqueue work; collaboration groups compile their ordered stages into
+the existing workflow. Run state derives from durable execution records and pending
+workflow stages. A pending human stage cannot be reported as success. Invalid
+rules or archived agents produce failed runs without losing the issue.
 
-```text
-The same Agent
-├── Wework Local Runtime
-└── Wegent Cloud Runtime
+Schedules reuse the existing Cron/timezone implementation and persist their cursor
+in project metadata. Restarting does not dispatch a consumed occurrence twice;
+missed periods are coalesced into one occurrence after recovery. Wework drives the
+dispatcher; no new work starts while the application is fully exited.
+
+Cancellation fences workflow advancement before cancelling executions. Unstarted
+work cancels immediately; delivered work remains cancellation-requested until the
+runtime confirms its result. A late completion cannot launch the next stage.
+Retry creates a new run and preserves the previous failed or cancelled record.
+
+External Webhook ingress and cloud membership remain cloud capabilities. Local
+processing hides unavailable external-event triggers. Legacy cloud workflow
+migration operations do not simulate success locally.
+
+## Local execution activity
+
+Enqueueing an execution creates its activity card in the same transaction. Rules,
+assignments, comments, and group stages share this entry point. Before dispatch,
+the store persists the task binding and activity runtime address, so a short run
+finishing before acceptance cannot lose its task link. Codex intermediate replies
+update the card; final results and errors persist with execution state. Late
+progress cannot overwrite terminal results.
+
+```mermaid
+sequenceDiagram
+    participant Rule as Rule / assignment / comment
+    participant DB as Local SQLite
+    participant Run as Local runtime
+    participant UI as Shared activity components
+    Rule->>DB: Create execution and pending activity atomically
+    UI->>DB: Read activity
+    DB-->>UI: Pending card
+    DB->>DB: Persist start request, task binding, and runtime address
+    DB->>Run: Dispatch execution
+    Run->>DB: Intermediate reply, final result, or failure
+    UI->>DB: Refresh activity and task bindings
+    DB-->>UI: Reply card, run state, and task link
 ```
 
-## Agent definition and execution snapshot
-
-Before a Run is queued, Backend resolves Team, Bot, Ghost, Shell, Model, and
-Plugin into an immutable `AgentExecutionSnapshot`:
-
-```text
-AgentExecutionSnapshot
-├── agent_id / team_id
-├── agent_revision
-├── bots
-│   ├── bot_id
-│   ├── ghost_revision
-│   ├── effective_prompt
-│   ├── shell_type
-│   ├── model_selection
-│   └── effective_capabilities
-│       ├── skills
-│       ├── mcp_servers
-│       └── plugins
-└── collaboration_mode
-```
-
-The snapshot enters `LoopItemExecution.execution_payload`. Changes to Team,
-Ghost, Plugin, or model defaults after enqueue must not affect an existing Run.
-
-The current `WeworkExecutionProfile` should become only an execution-snapshot
-compiler or be removed:
-
-- Bot name and Shell no longer come from a synthesized `ProjectChatAgent`.
-- Model defaults come from Bot/Model; Project or Workflow may override them
-  explicitly.
-- Plugin defaults come from Ghost; Project and Run may append permitted
-  overrides.
-- `ProjectChatAgent` provides only a Project Agent Binding and runtime-policy
-  overrides.
-
-For Codex Shell, a Workflow may leave the model name unspecified. The Run can
-still enter the execution queue, and the local Codex Runtime uses its current
-default model. Backend requires a complete model configuration at enqueue and
-claim time only when the Run explicitly selects a model.
-
-## Codex Shell
-
-Codex becomes an official Shell type instead of a hard-coded string in a
-Wework-only branch:
-
-```text
-Shell
-├── Chat
-├── ClaudeCode
-├── Codex
-├── Agno
-├── Dify
-└── ...
-```
-
-Codex Shell defines its protocol and requirements:
-
-```text
-Codex Shell
-├── provider protocol: app-server
-├── required capabilities
-├── supported models
-├── supported Plugin format
-├── cancellation capability
-├── continuation capability
-└── transcript capability
-```
-
-Wework Executor is one local implementation of Codex Shell. A cloud Executor
-may implement the same Shell later without changing the Agent definition.
-
-## Plugin resolution and materialization
-
-Ghost stores desired capabilities, while device installation state stores
-actual capabilities:
-
-```text
-Ghost Plugin refs
-→ AgentExecutionSnapshot
-→ Runtime capability match
-→ PluginDeviceInstallation
-→ Executor materialization
-→ Codex plugin cache
-```
-
-Responsibilities are:
-
-| Layer | Responsibility |
-| --- | --- |
-| Ghost | Declares required Plugins, versions, configuration, and permissions |
-| Workspace/Account | Stores Plugin installation grants and sharing policy |
-| Project | Selects allowed Plugins and non-secret Project overrides |
-| Runtime | Reports supported and materialized Plugin capabilities |
-| Executor | Downloads, verifies, installs, and activates Plugins for a Run |
-| Codex Shell | Loads Run Plugins through the Codex Plugin protocol |
-
-Skills and MCP servers discovered inside a Plugin enter the common effective
-capability manifest. Duplicate declarations are deduplicated by stable identity.
-Version or configuration conflicts fail explicitly during enqueue or Runtime
-matching.
-
-The Wework-managed Plugin Manifest is authoritative for installed managed
-capabilities. Even when Codex has not generated `installed_plugins.json`, the
-Executor scans the Manifest's `codex_link` or `store_path` and reports the
-Plugin's Skills. Locally installed Plugins remain in the same report and are
-deduplicated against managed Plugins by Plugin identity.
-
-Device-only authorization and secrets do not enter Ghost and are not persisted
-in Run. Run stores references and permission requirements; the selected Device
-materializes them at startup.
-
-## Runtime and device selection
-
-The existing `runtime_instance_id` remains the Runtime instance identity. A
-Runtime exposes at least:
-
-```text
-Runtime
-├── runtime_instance_id
-├── device_id
-├── executor_kind
-├── supported_shells
-├── capabilities
-├── online_status
-├── capacity
-├── owner
-└── access_policy
-```
-
-Scheduling inputs separate requirements from preferences:
-
-```text
-requirements
-├── shell = Codex
-├── required_plugins
-├── required_skills
-├── workspace_access
-└── platform constraints
-
-preferences
-├── preferred_runtime_id
-├── preferred_device_id
-└── local | cloud preference
-```
-
-Only a local directory, private credentials, or device-specific capability
-creates a hard binding. Normal Git repository work should allow the scheduler
-to choose from matching Runtimes.
-
-One execution environment may expose a resource-record ID, an app-device ID,
-and a Runtime-reported ID. Backend resolves them into the same authenticated
-device identity set before validating the claim target and workspace source. It
-must not compare the raw strings directly, or one device can be rejected as a
-cross-device execution.
-
-## Execution Workspace
-
-Long-lived Project resources and the directory used by one Run are separate:
-
-```text
-Project Resource
-├── Git Repository
-└── Device Local Directory Binding
-
-Run Execution Workspace
-├── local_directory
-├── git_checkout
-├── git_worktree
-└── standalone
-```
-
-- `local_directory` is pinned to the Device that owns the directory.
-- `git_checkout` lets the Runtime prepare an isolated checkout.
-- `git_worktree` lets the Runtime create an isolated worktree from a repository.
-- `standalone` is a local Codex conversation directory outside a collaboration
-  Project.
-
-The existing local `Project` display group does not become a cloud Project
-identity. It remains derived from `deviceId + workspacePath`, but its product
-name should become local workspace to avoid confusion with collaboration
-Project.
-
-## Run, LocalTask, and Codex Thread
-
-They must not share one identifier:
-
-| Entity | Identity | Source of truth |
-| --- | --- | --- |
-| Run | `run_id` / `LoopItemExecution.id` | Backend |
-| LocalTask | `deviceId + localTaskId` | Wework Executor |
-| Codex Thread | opaque `threadId` | Codex app-server |
-| Turn | provider turn ID / subtask ID | Codex and Executor |
-
-Their relationship is:
-
-```text
-Run 1 ── 1 BackendBinding
-                 N ── 1 LocalTask ── 1 Codex Thread
-                                         └── N Turns
-```
-
-A retry creates a new Run by default. Continuing the previous LocalTask or
-Codex Thread requires an explicit recovery policy and a
-`resumed_from_run_id`; paths, titles, or recent-thread heuristics cannot select
-the session. A resumed Run always creates its own BackendBinding; it may point
-to the previous LocalTask and Codex Thread, so one LocalTask may have multiple
-BackendBindings over time. Events emitted after the resume belong to the new
-Run and its BackendBinding, use that binding's monotonic event sequence, and
-update only the new Run. The previous Run, its binding, and its events remain
-immutable history.
-
-## Two forms of local work
-
-Local tasks distinguish collaboration execution from personal conversations.
-
-### Collaboration execution
-
-```text
-Issue
-→ any Project Member with execution permission selects “Run locally”
-→ Run
-→ Wework Runtime
-→ LocalTask
-→ Codex Thread
-```
-
-Backend Run is the lifecycle source of truth. LocalTask and Codex Thread provide
-device-side execution details. Status, logs, cancellation, deliverables, and
-recovery project back to Run.
-
-Whether the Issue is assigned to the current user does not affect this entry
-point. Assignment controls notifications and work lists, not who may start
-local execution. Run creation records:
-
-```text
-initiated_by = current Member
-agent_id = selected Codex Agent
-trigger = manual
-```
-
-A Project may supply a default Agent, Runtime, and local workspace binding, but
-an authorized user may explicitly override them. When another active Run
-already exists, Wework shows the concurrent-work warning and links to existing
-Runs instead of blocking execution because the user is unassigned.
-
-### Standalone local conversation
-
-```text
-LocalTask
-→ Codex Thread
-```
-
-A standalone conversation may remain device-only and does not require a
-Workspace, Project, Issue, or Run. An Issue/Run relationship is created only
-when the user explicitly adds it to a collaboration Project or the system
-creates an explicit binding. Historical local conversations must not be
-silently uploaded.
-
-## Unified creation and execution protocol
-
-Collaboration execution uses:
-
-```text
-Create Run
-→ persist immutable intent
-→ select Runtime
-→ executor claim
-→ materialize Agent snapshot
-→ prepare Execution Workspace
-→ create/link LocalTask
-→ start/resume Codex Thread
-→ stream normalized events
-→ persist terminal state and Deliverables
-```
-
-The existing `RuntimeTaskCreateRequest V2` can evolve into the common execution
-request, but it must:
-
-1. use `run_id` as the top-level collaboration identity;
-2. source Bot, Ghost, Shell, Model, and Plugin from the Agent snapshot;
-3. materialize secrets only in local or cloud compilers;
-4. expose the same canonical fields to Wework and Wegent Executors;
-5. place backend-specific data in explicit extensions without changing common
-   status and event protocols.
-
-## Status and events
-
-Run uses common states:
-
-```text
-pending_approval
-→ waiting_runtime
-→ queued
-→ claimed
-→ running
-→ completed | failed
-
-claimed | running
-→ cancel_requested
-→ cancelled
-
-pending_approval | waiting_runtime | queued
-→ cancelled
-```
-
-LocalTask, Codex thread, and turn states update Run through a projector and
-cannot be inferred by the frontend. Every event contains at least:
-
-```text
-run_id
-runtime_instance_id
-device_id
-local_task_id
-provider_thread_id
-turn_id
-event_sequence
-event_type
-timestamp
-```
-
-Backend accepts only events that match the current Run, Runtime, and
-BackendBinding and whose sequence increases monotonically.
-
-## Duplicate local paths to remove
-
-Convergence removes:
-
-- duplicate Agent Prompt, Model, Plugin, and complete execution identity from
-  `ProjectChatAgent`;
-- synthesized Bot construction in `WeworkExecutionProfile`;
-- separate local and Wegent Skill, MCP, and Plugin resolution paths;
-- execution identity inferred from `workspacePath`, title, or recent tasks;
-- frontend logic that infers collaboration Run terminal state from LocalTask or
-  transcript;
-- any model that exposes an Executor or Plugin-equipped Device as a
-  collaboration Member.
-
-## Evolution order
-
-1. Add Plugin references and a common effective capability manifest to Ghost.
-2. Add an official Codex Shell and generate existing local Codex requests from
-   that Shell definition.
-3. Compile an immutable `AgentExecutionSnapshot` from Team/Bot/Ghost.
-4. Store `run_id`, Agent snapshot, and a common BackendBinding in
-   LoopItemExecution.
-5. Make Wework Executor consume the common snapshot and execution request
-   directly.
-6. Reduce ProjectChatAgent to ProjectAgentBinding.
-7. Unify local and cloud event, cancellation, recovery, and Deliverable
-   protocols.
-8. Preserve standalone LocalTask mode and provide an explicit “add to
-   collaboration Project” action.
+## Migration and verification
+
+SQLite schema v8 adds missing `execution_payload` columns to existing execution
+tables. It preserves projects, issues, conversations, execution rows, and existing
+payloads. The updated executor applies migration on startup; no manual mutation
+of the user's database is needed.
+
+SQLite schema v9 restores missing activity and task bindings from persisted executions.
+It preserves existing replies, errors, and explicit unlinks without running tasks again.
+Repeated opens must not create duplicate cards.
+
+Focused coverage includes agent create/edit/error recovery, cloud isolation,
+Codex/Claude execution, rule triggers, reopen persistence, group progression and
+cancellation/retry, and v7 migration. The offline desktop scenario belongs to the
+existing CI suite and checks that local operations do not call cloud project APIs.
+E2E and real Electron verification run only when explicitly requested, per repository policy.

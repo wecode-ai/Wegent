@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.trigger.unified import (
+from app.services.chat.trigger.request_preparation import (
     _build_codex_runtime_model_config,
     build_wework_runtime_model_config,
 )
@@ -213,6 +213,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
             "x-wegent-model-type": "user",
             "x-wegent-model-namespace": "default",
             "x-wegent-model-user-id": str(test_user.id),
+            "thread-id": "manager-thread",
+            "x-openai-subagent": "collab_spawn",
         }
     )
 
@@ -245,6 +247,8 @@ async def test_proxy_llm_responses_forwards_to_provider(
     assert sent_request.headers["Content-Type"] == "application/json"
     assert sent_request.headers["Accept"] == "text/event-stream"
     assert sent_request.headers["user"] == test_user.user_name
+    assert sent_request.headers["thread-id"] == "manager-thread"
+    assert sent_request.headers["x-openai-subagent"] == "collab_spawn"
     assert b'"model": "gpt-4-turbo"' in sent_request.content
     assert b'"input": "hello"' in sent_request.content
     assert "x-wegent-model-type" not in sent_request.headers
@@ -498,6 +502,7 @@ def test_cloud_runtime_protocol_comes_from_model_crd(
         assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
     assert config["native_tool_search"] is (expected == "openai-responses")
     assert config["native_namespace_tools"] is (expected == "openai-responses")
+    assert config["tool_profile"] == "custom"
 
 
 def test_cloud_runtime_can_bridge_standard_responses_tools(
@@ -542,7 +547,9 @@ def test_cloud_runtime_rejects_invalid_protocol_before_dispatch(
     api_format: str | None,
 ) -> None:
     from app.core.config import settings
-    from app.services.chat.trigger.unified import _build_cloud_gateway_model_config
+    from app.services.chat.trigger.request_preparation import (
+        _build_cloud_gateway_model_config,
+    )
 
     model = _model_kind(0, protocol=protocol, api_format=api_format)
     test_db.add(model)

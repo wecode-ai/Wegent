@@ -33,6 +33,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       paths.auth.oauth_authorize.getHref(),
       '/shared/task', // Allow public shared task page without authentication
       '/shared/knowledge', // Allow public shared knowledge base page without authentication
+      '/open-wework', // Let notification recipients choose the desktop or web destination
     ]
     // Allow download pages (they handle their own auth checks)
     const isAllowedPath = allowedPaths.includes(pathname) || pathname.startsWith('/download/')

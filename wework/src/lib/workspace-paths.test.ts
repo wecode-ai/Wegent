@@ -1,5 +1,45 @@
-import { describe, expect, test } from 'vitest'
-import { isAbsoluteWorkspacePath, isWindowsDriveAbsolutePath } from './workspace-paths'
+import { describe, expect, test, vi } from 'vitest'
+import {
+  isAbsoluteWorkspacePath,
+  isWindowsDriveAbsolutePath,
+  resolveHomeRelativeWorkspacePath,
+} from './workspace-paths'
+
+describe('resolveHomeRelativeWorkspacePath', () => {
+  test.each(['/Users/me/', 'C:\\Users\\me\\'])(
+    'resolves paths against the addressed device home: %s',
+    async home => {
+      const getHome = vi.fn().mockResolvedValue(home)
+      expect(
+        await resolveHomeRelativeWorkspacePath(
+          '~/.agents/skills/test-skill/SKILL.md',
+          'device-1',
+          getHome
+        )
+      ).toBe(`${home.replace(/\\/g, '/').replace(/\/+$/, '')}/.agents/skills/test-skill/SKILL.md`)
+      expect(getHome).toHaveBeenCalledWith('device-1')
+    }
+  )
+
+  test.each(['/workspace/file.md', 'src/file.ts', '~other/file.md'])(
+    'preserves other paths without querying a home: %s',
+    async path => {
+      const getHome = vi.fn()
+      expect(await resolveHomeRelativeWorkspacePath(path, 'device-1', getHome)).toBe(path)
+      expect(getHome).not.toHaveBeenCalled()
+    }
+  )
+
+  test('propagates home lookup failures and rejects invalid homes', async () => {
+    const getHome = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce('')
+    await expect(
+      resolveHomeRelativeWorkspacePath('~/file.md', 'device-1', getHome)
+    ).rejects.toThrow('offline')
+    await expect(
+      resolveHomeRelativeWorkspacePath('~/file.md', 'device-1', getHome)
+    ).rejects.toThrow('Invalid device home directory')
+  })
+})
 
 describe('isWindowsDriveAbsolutePath', () => {
   test('recognizes forward- and backslash Windows drive-letter paths', () => {

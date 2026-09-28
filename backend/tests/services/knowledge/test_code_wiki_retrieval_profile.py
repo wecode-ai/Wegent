@@ -105,6 +105,40 @@ def test_profile_health_loads_both_references_in_one_query() -> None:
     assert db.query_count == 1
 
 
+def test_profile_health_accepts_a_legacy_nested_embedding_category() -> None:
+    """A Model that nests its category in modelConfig is still embedding."""
+    db = _Db(
+        [
+            SimpleNamespace(
+                kind="Retriever",
+                name="shared-milvus",
+                namespace="default",
+                json={},
+            ),
+            SimpleNamespace(
+                kind="Model",
+                name="shared-embedding",
+                namespace="default",
+                json={"spec": {"modelConfig": {"modelType": "embedding"}}},
+            ),
+        ]
+    )
+
+    health = profile_health(
+        db,  # type: ignore[arg-type]
+        {
+            "retriever_name": "shared-milvus",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "shared-embedding",
+                "model_namespace": "default",
+            },
+        },
+    )
+
+    assert health == {"status": "valid", "fallback_reason": None}
+
+
 def test_profile_health_rejects_incomplete_stored_profile_without_query() -> None:
     db = _Db([])
 

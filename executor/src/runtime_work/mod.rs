@@ -2,16 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-mod automations;
+mod api_context;
+pub(crate) mod automations;
 mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
 mod codex_transcript_page;
+mod collaboration_projects;
 mod connectors;
 mod events;
 pub mod fork_transfer;
 mod handler;
 pub(crate) mod local_connector_auth;
+mod local_execution;
 pub(crate) mod native_transcript;
 mod notification_mapping;
 mod remote_projects;
@@ -24,6 +27,8 @@ mod transcript_page;
 mod util;
 mod worktrees;
 
+pub(crate) use collaboration_projects::sync_local_collaboration_projects;
+pub(crate) use events::CodexNotificationEventMapper;
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;
@@ -31,7 +36,7 @@ pub(crate) use util::runtime_task_title;
 pub(crate) fn runtime_features() -> serde_json::Value {
     let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);
     serde_json::json!({
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {

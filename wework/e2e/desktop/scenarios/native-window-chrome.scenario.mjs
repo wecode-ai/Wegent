@@ -119,7 +119,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+        await control.command('press', 'body', { key: 'Escape' })
       }
 
       await captureScreenshot(control, 'native-window-chrome.png', 'body')

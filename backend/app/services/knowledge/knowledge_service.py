@@ -68,6 +68,7 @@ from app.services.knowledge.content_scope import (
     assert_user_content_is_mutable,
     wiki_pages,
 )
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base as evaluate_direct_knowledge_base_access,
@@ -315,6 +316,7 @@ class KnowledgeService:
                 data.kb_type or KnowledgeBaseType.NOTEBOOK
             ).value,
             "retrievalConfig": _to_json_dict(data.retrieval_config),
+            "dingtalkAutoSyncEnabled": data.dingtalk_auto_sync_enabled,
             "summaryEnabled": data.summary_enabled,
         }
         if data.allow_document_download is not None:
@@ -947,6 +949,9 @@ class KnowledgeService:
                     )
                 spec["retrievalConfig"] = current_retrieval_config
 
+        if data.dingtalk_auto_sync_enabled is not None:
+            spec["dingtalkAutoSyncEnabled"] = data.dingtalk_auto_sync_enabled
+
         # Update summary_enabled if provided
         if data.summary_enabled is not None:
             spec["summaryEnabled"] = data.summary_enabled
@@ -1105,6 +1110,20 @@ class KnowledgeService:
 
         forget_repository(db, knowledge_base_id)
 
+        # The scheduler projection belongs to the wiki. It is deliberately removed
+        # in the same transaction so no due worker can observe an orphaned plan.
+        from app.models.subscription import BackgroundExecution
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            scheduled_update_for,
+        )
+
+        scheduled_update = scheduled_update_for(db, kb)
+        if scheduled_update is not None:
+            db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == scheduled_update.id
+            ).delete(synchronize_session=False)
+            db.delete(scheduled_update)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1131,6 +1150,7 @@ class KnowledgeService:
                 Kind.user_id == knowledge_base.user_id,
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )
@@ -1999,6 +2019,18 @@ class KnowledgeService:
         KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
+            from app.services.knowledge.external_sync_providers import (
+                is_synchronized_external_document,
+            )
+
+            if (
+                doc.external_provider == WIKI_PROVIDER_ID
+                and is_synchronized_external_document(doc)
+                and data.name != doc.name
+            ):
+                raise ValueError(
+                    "Synchronized Wiki document names are managed by the source"
+                )
             doc.name = data.name
 
         if data.status is not None:
@@ -2080,6 +2112,9 @@ class KnowledgeService:
         attachment_id = doc.attachment_id
         # Capture converted attachment ID before deleting the document row
         converted_attachment_id = getattr(doc, "converted_attachment_id", None)
+        retry_orphan_cleanup = (
+            getattr(doc, "external_provider", None) == WIKI_PROVIDER_ID
+        )
         # Use document owner's user_id for context deletion, since delete_context
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.
@@ -2158,6 +2193,7 @@ class KnowledgeService:
                 db=db,
                 owner_user_id=context_owner_user_id,
                 attachment_id=attachment_id,
+                retry_orphan_cleanup=retry_orphan_cleanup,
             )
 
         # Delete converted attachment if exists
@@ -2166,6 +2202,7 @@ class KnowledgeService:
                 db=db,
                 owner_user_id=context_owner_user_id,
                 attachment_id=converted_attachment_id,
+                retry_orphan_cleanup=retry_orphan_cleanup,
             )
 
         return DocumentDeleteResult(success=True, kb_id=kind_id)
@@ -3349,7 +3386,7 @@ class KnowledgeService:
             organization_count=len(org_kbs),
         )
 
-        return AllGroupedKnowledgeResponse(
+        response = AllGroupedKnowledgeResponse(
             personal=AllGroupedPersonal(
                 created_by_me=created_by_me,
                 shared_with_me=shared_with_me,
@@ -3358,6 +3395,7 @@ class KnowledgeService:
             organization=organization,
             summary=summary,
         )
+        return response
 
     @staticmethod
     def can_manage_knowledge_base(

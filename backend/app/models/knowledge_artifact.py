@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -113,14 +113,14 @@ class KnowledgeArtifactRecord(Base):
         DateTime,
         nullable=False,
         default=func.now(),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         comment="Creation time",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=func.now(),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         onupdate=func.now(),
         comment="Last update time",
     )

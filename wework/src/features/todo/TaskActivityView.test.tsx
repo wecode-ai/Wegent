@@ -1,11 +1,19 @@
+import { TaskReplyQueueStore } from '@wegent/collaboration/execution/taskReplyQueue'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cloneElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
-import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
+import {
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationQueuedMessagesByKey,
+  cacheRuntimeConversationQueuedMessagesByKey,
+} from '@/features/workbench/runtimeConversationCache'
+import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { TaskActivityView } from './TaskActivityView'
-import type { Attachment } from '@/types/api'
+import type { Attachment, DeviceInfo } from '@/types/api'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -16,6 +24,7 @@ const updateLoopItem = vi.fn()
 const getLoopItem = vi.fn()
 const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
+const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
@@ -28,10 +37,29 @@ const attachmentSelectionMock = {
   resetAttachments: vi.fn(),
 }
 
-const { runtimeWorkMock, agentsMock, openExternalUrlMock } = vi.hoisted(() => ({
-  runtimeWorkMock: { value: null as unknown },
-  agentsMock: { value: [] as Array<Record<string, unknown>> },
-  openExternalUrlMock: vi.fn().mockResolvedValue(true),
+const { runtimeWorkMock, devicesMock, agentsMock, openExternalUrlMock, lifecycleSnapshotMock } =
+  vi.hoisted(() => ({
+    lifecycleSnapshotMock: { value: { tasks: new Map() } },
+    runtimeWorkMock: { value: null as unknown },
+    devicesMock: { value: [] as DeviceInfo[] },
+    agentsMock: { value: [] as Array<Record<string, unknown>> },
+    openExternalUrlMock: vi.fn().mockResolvedValue(true),
+  }))
+
+const replyQueueStoreMock = vi.hoisted(() => ({ value: null as TaskReplyQueueStore | null }))
+vi.mock('./taskReplyQueue', () => ({
+  get taskReplyQueueStore() {
+    return replyQueueStoreMock.value
+  },
+}))
+
+vi.mock('@/features/workbench/runtimeTaskLifecycle', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/runtimeTaskLifecycle')>()),
+  useRuntimeTaskLifecycleStoreSnapshot: () => lifecycleSnapshotMock.value,
+  useRuntimeTaskLifecycle: (address: { deviceId: string; taskId: string } | undefined) =>
+    address
+      ? (lifecycleSnapshotMock.value.tasks.get(`${address.deviceId}:${address.taskId}`) ?? null)
+      : null,
 }))
 
 vi.mock('@/lib/external-links', async importOriginal => ({
@@ -39,19 +67,33 @@ vi.mock('@/lib/external-links', async importOriginal => ({
   openExternalUrl: openExternalUrlMock,
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
+const workbenchServices = {
+  deliveryApi: {
+    bindTask,
+    updateLoopItem,
+    getLoopItem,
+    approveLoopItemRun,
+    rejectLoopItemRun,
+    unbindTask: vi.fn(),
+  },
+  projectChatAgentApi: { list: vi.fn(async () => agentsMock.value) },
+  projectAutomationApi: { cancelRun: cancelCloudAutomationRun },
+  projectSpaceDetailServices: {
+    local: {
+      localProjectAutomationApi: {},
+    },
+  },
+  modelApi: { listModels },
+}
+
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
   useWorkbenchPaneContext: () => ({
     state: {
       runtimeWork: runtimeWorkMock.value,
-      devices: [],
+      devices: devicesMock.value,
     },
-    services: {
-      deliveryApi: { bindTask, updateLoopItem, getLoopItem, approveLoopItemRun, rejectLoopItemRun },
-      projectChatAgentApi: {
-        list: vi.fn(async () => agentsMock.value),
-      },
-      modelApi: { listModels },
-    },
+    services: workbenchServices,
     createProjectRuntimeTask,
     sendRuntimePaneMessage,
     openRuntimeTask,
@@ -59,9 +101,19 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   }),
 }))
 
+const paneExecution = vi.hoisted(() => ({ running: false }))
+
 vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => ({
-    messages: [],
+    messages: [
+      {
+        id: 'original-user',
+        role: 'user',
+        content: 'Original request',
+        status: 'done',
+        createdAt: '2026-09-17T00:00:00Z',
+      },
+    ],
     queuedMessages: [],
     queuedMessagesPaused: false,
     guidanceMessages: [],
@@ -70,7 +122,10 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
     setInput: vi.fn(),
     error: null,
     status: {
-      taskExecution: { running: false, status: 'completed' },
+      taskExecution: {
+        running: paneExecution.running,
+        status: paneExecution.running ? 'running' : 'completed',
+      },
     },
     sending: false,
     waitingForAssistant: false,
@@ -117,10 +172,6 @@ vi.mock('@/components/layout/useWorkbenchPaneSession', () => ({
   }),
 }))
 
-vi.mock('@/components/chat/ScrollableMessageArea', () => ({
-  ScrollableMessageArea: () => <div data-testid="runtime-execution-transcript">transcript</div>,
-}))
-
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
   useWorkbenchAttachments: () => attachmentSelectionMock,
 }))
@@ -154,7 +205,12 @@ const agentMessage: ProjectChatMessage = {
 
 describe('TaskActivityView', () => {
   beforeEach(() => {
+    paneExecution.running = false
     clearRuntimeConversationCacheForTests()
+    replyQueueStoreMock.value = new TaskReplyQueueStore({
+      read: getRuntimeConversationQueuedMessagesByKey,
+      write: cacheRuntimeConversationQueuedMessagesByKey,
+    })
     agentsMock.value = [
       {
         id: '12',
@@ -177,6 +233,8 @@ describe('TaskActivityView', () => {
       },
     ]
     runtimeWorkMock.value = null
+    devicesMock.value = []
+    lifecycleSnapshotMock.value = { tasks: new Map() }
     createProjectRuntimeTask.mockReset()
     sendRuntimePaneMessage.mockReset()
     sendRuntimePaneMessage.mockResolvedValue(true)
@@ -189,6 +247,7 @@ describe('TaskActivityView', () => {
     getLoopItem.mockReset()
     approveLoopItemRun.mockReset()
     rejectLoopItemRun.mockReset()
+    cancelCloudAutomationRun.mockReset()
     listModels.mockReset()
     attachmentSelectionMock.attachments = []
     attachmentSelectionMock.isAttachmentReadyToSend = true
@@ -218,6 +277,74 @@ describe('TaskActivityView', () => {
     vi.restoreAllMocks()
   })
 
+  it('reloads project activity after the Issue version changes', async () => {
+    const managerComment: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'manager-status-comment',
+      sender: { type: 'agent', id: 'manager-1', name: '当前设备智能体' },
+      content: '负责人已综合智能体证据和人工交付，将 Issue 提交待确认。',
+      metadata: {
+        activity_type: 'manager_status_comment',
+        dispatch_role: 'manager',
+      },
+    }
+    const unsubscribeFirst = vi.fn()
+    const unsubscribeSecond = vi.fn()
+    const client = {
+      subscribe: vi
+        .fn()
+        .mockResolvedValueOnce({
+          snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+          unsubscribe: unsubscribeFirst,
+        })
+        .mockResolvedValueOnce({
+          snapshot: {
+            messages: [managerComment],
+            latestSequence: 3,
+            currentUserId: '1',
+          },
+          unsubscribe: unsubscribeSecond,
+        }),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const project = { id: '11', name: 'Wework' } as never
+    const task = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'in_progress',
+      version: 1,
+    } as never
+    const { rerender } = render(
+      <TaskActivityView client={client} currentUserId={1} project={project} task={task} linear />
+    )
+
+    await waitFor(() => expect(client.subscribe).toHaveBeenCalledOnce())
+
+    rerender(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={project}
+        task={{ ...task, status: 'in_review', version: 2 }}
+        linear
+      />
+    )
+
+    expect(
+      await screen.findByText('负责人已综合智能体证据和人工交付，将 Issue 提交待确认。')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-task-manager-event-manager-status-comment')
+    ).not.toBeInTheDocument()
+    expect(client.subscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribeFirst).toHaveBeenCalledOnce()
+  })
+
   it('starts the assigned AI when a task comment is added without an @ mention', async () => {
     const user = userEvent.setup()
     const client = {
@@ -235,6 +362,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -247,6 +375,7 @@ describe('TaskActivityView', () => {
           {
             id: '11',
             name: 'Wework',
+            location: 'local',
           } as never
         }
         task={
@@ -301,6 +430,62 @@ describe('TaskActivityView', () => {
     expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
   })
 
+  it('sends a structured project member mention from the parent comment composer', async () => {
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = screen.getByTestId('cloud-task-activity-composer')
+    await user.type(input, '请确认 @')
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    expect(input).toHaveValue('请确认 [$@hajimi](wework-member://4) ')
+    await user.click(screen.getByTestId('send-message-button'))
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '请确认 @hajimi',
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
+  })
+
   it('defaults the parent comment execution project to the task page project', async () => {
     runtimeWorkMock.value = {
       projects: [
@@ -334,6 +519,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -379,7 +565,7 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it('does not infer a project from the robot record', async () => {
+  it('does not infer a project from a legacy robot record that still needs rebinding', async () => {
     agentsMock.value = [
       {
         id: '12',
@@ -417,6 +603,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -456,6 +643,391 @@ describe('TaskActivityView', () => {
       )
     )
   })
+
+  it('follows the assigned robot workspace binding for the parent comment project', async () => {
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        executionDeviceId: 'device-1',
+        localProjectId: 92,
+        workspaceBinding: {
+          type: 'backend_project',
+          status: 'ready',
+          projectId: 92,
+          deviceId: 'device-1',
+        },
+      },
+    ]
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    createProjectRuntimeTask.mockImplementation(async (_prompt, options) => {
+      const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.onRuntimeTaskOptimisticOpen(address)
+      return address
+    })
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        localProjects={[
+          { id: 91, name: '运营工作区', tasks: [] },
+          { id: 92, name: '侧项目', tasks: [] },
+        ]}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-work-button')).toHaveTextContent('侧项目')
+    })
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() =>
+      expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+        '继续处理',
+        expect.objectContaining({ project: expect.objectContaining({ id: 92 }) })
+      )
+    )
+  })
+
+  it('keeps the project placeholder when the robot workspace is unavailable here', async () => {
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        executionDeviceId: 'device-9',
+        workspaceBinding: {
+          type: 'backend_project',
+          status: 'ready',
+          projectId: 77,
+          deviceId: 'device-9',
+        },
+      },
+    ]
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    // The robot record is loaded, so the placeholder is a deliberate result
+    // instead of a not-yet-resolved selection.
+    await screen.findByText('Code Reviewer 已进入执行队列，将自动处理并提交结果供你验收。')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
+  })
+
+  it('keeps a manual project choice over the robot workspace binding', async () => {
+    runtimeWorkMock.value = {
+      projects: [
+        { project: { id: 91, name: '运营工作区' }, deviceWorkspaces: [] },
+        { project: { id: 92, name: '侧项目' }, deviceWorkspaces: [] },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        executionDeviceId: 'device-1',
+        workspaceBinding: {
+          type: 'backend_project',
+          status: 'ready',
+          projectId: 92,
+          deviceId: 'device-1',
+        },
+      },
+    ]
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    createProjectRuntimeTask.mockImplementation(async (_prompt, options) => {
+      const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.onRuntimeTaskOptimisticOpen(address)
+      return address
+    })
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        localProjects={[
+          { id: 91, name: '运营工作区', tasks: [] },
+          { id: 92, name: '侧项目', tasks: [] },
+        ]}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-work-button')).toHaveTextContent('侧项目')
+    })
+    await user.click(screen.getByTestId('project-work-button'))
+    await screen.findByTestId('project-work-menu')
+    await user.click(screen.getByTestId('project-option-91'))
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() =>
+      expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+        '继续处理',
+        expect.objectContaining({ project: expect.objectContaining({ id: 91 }) })
+      )
+    )
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
+  })
+
+  it('follows the assigned robot model for the parent comment composer', async () => {
+    listModels.mockResolvedValue({
+      data: [
+        {
+          name: 'gpt-5.5-codex',
+          type: 'runtime',
+          displayName: 'GPT 5.5 Codex',
+          config: { ui: { family: 'codex-official' } },
+        },
+      ],
+    })
+    agentsMock.value = [
+      { ...agentsMock.value[0], model: 'gpt-5.5-codex', modelType: 'runtime', modelOptions: {} },
+    ]
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    createProjectRuntimeTask.mockImplementation(async (_prompt, options) => {
+      const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.onRuntimeTaskOptimisticOpen(address)
+      return address
+    })
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
+    })
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() =>
+      expect(client.send).toHaveBeenCalledWith(
+        expect.objectContaining({ text: '继续处理', model: 'gpt-5.5-codex' })
+      )
+    )
+    await waitFor(() =>
+      expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+        '继续处理',
+        expect.objectContaining({
+          executionModel: expect.objectContaining({ modelId: 'gpt-5.5-codex' }),
+        })
+      )
+    )
+  }, 10_000)
+
+  it('keeps the placeholder model when the robot model is missing from this device', async () => {
+    listModels.mockResolvedValue({
+      data: [
+        {
+          name: 'gpt-5.5-codex',
+          type: 'runtime',
+          displayName: 'GPT 5.5 Codex',
+          config: { ui: { family: 'codex-official' } },
+        },
+      ],
+    })
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        model: 'deepseek-v4-pro-responses',
+        modelType: 'runtime',
+        modelOptions: {},
+      },
+    ]
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    await screen.findByText('Code Reviewer 已进入执行队列，将自动处理并提交结果供你验收。')
+    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('默认')
+  })
+
+  it('keeps a manual model choice when the model catalog refreshes', async () => {
+    listModels.mockResolvedValue({
+      data: [
+        {
+          name: 'gpt-5.5-codex',
+          type: 'runtime',
+          displayName: 'GPT 5.5 Codex',
+          config: { ui: { family: 'codex-official' } },
+        },
+        {
+          name: 'gpt-5.2-codex',
+          type: 'runtime',
+          displayName: 'GPT 5.2 Codex',
+          config: { ui: { family: 'codex-official' } },
+        },
+      ],
+    })
+    agentsMock.value = [
+      { ...agentsMock.value[0], model: 'gpt-5.5-codex', modelType: 'runtime', modelOptions: {} },
+    ]
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
+    })
+    await user.click(screen.getByTestId('model-selector-button'))
+    await user.hover(await screen.findByTestId('model-control-menu-model'))
+    await user.click(await screen.findByTestId('model-option-gpt-5.2-codex'))
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.2 Codex')
+
+    const loadsBeforeRefresh = listModels.mock.calls.length
+    act(() => {
+      window.dispatchEvent(new Event(WORKBENCH_MODELS_CHANGED_EVENT))
+    })
+    await waitFor(() => {
+      expect(listModels.mock.calls.length).toBeGreaterThan(loadsBeforeRefresh)
+    })
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.2 Codex')
+  }, 10_000)
 
   it('shows the project placeholder when nothing binds a project', async () => {
     const client = {
@@ -554,6 +1126,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -635,6 +1208,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -692,7 +1266,7 @@ describe('TaskActivityView', () => {
     )
   }, 10_000)
 
-  it('shows the newest parent comment first without scrolling to the bottom', async () => {
+  it('shows parent comments from oldest to newest without scrolling on load', async () => {
     const older = {
       ...userMessage,
       sequenceNumber: 1,
@@ -753,13 +1327,241 @@ describe('TaskActivityView', () => {
     await screen.findByText('最新评论')
     const cards = list.querySelectorAll('.task-detail-comment-card')
     expect(cards).toHaveLength(2)
-    expect(cards[0]).toHaveTextContent('最新评论')
-    expect(cards[1]).toHaveTextContent('较早评论')
+    expect(cards[0]).toHaveTextContent('较早评论')
+    expect(cards[1]).toHaveTextContent('最新评论')
 
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('scrolls the comment list to the top when a new parent comment is sent', async () => {
+  it('interleaves Issue status changes with complete comment threads and keeps execution status inside the comment', async () => {
+    const user = userEvent.setup()
+    const openTaskConversation = vi.fn()
+    const root = {
+      ...userMessage,
+      content: '请完成接入',
+      createdAt: '2026-08-03T10:00:00Z',
+    }
+    const execution = {
+      ...agentMessage,
+      sender: { type: 'agent' as const, id: 'agent-1', name: 'CPU 验证智能体' },
+      content: '正在处理接入',
+      rootMessageId: root.messageId,
+      status: 'completed' as const,
+      metadata: {
+        dispatch_role: 'member',
+        workflow_task_title: '验证 CPU 检查项',
+        run_status: 'succeeded',
+      },
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      createdAt: '2026-08-03T10:01:00Z',
+    }
+    const followUp = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'message-3',
+      content: '请补充验证',
+      rootMessageId: root.messageId,
+      createdAt: '2026-08-03T10:02:00Z',
+    }
+    const response = {
+      ...agentMessage,
+      sequenceNumber: 4,
+      messageId: 'message-4',
+      content: '验证已补充',
+      rootMessageId: root.messageId,
+      status: 'completed' as const,
+      metadata: { run_status: 'succeeded' },
+      createdAt: '2026-08-03T10:03:00Z',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [response, followUp, execution, root],
+          latestSequence: 4,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => root),
+      startAgentResponse: vi.fn(async () => execution),
+      failAgentResponse: vi.fn(async () => execution),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '接入', status: 'in_progress', version: 1 } as never}
+        issueTimeline
+        linear
+        onOpenTask={openTaskConversation}
+        taskBindings={[
+          { device_id: 'device-1', task_id: 'runtime-task-1', task_title: '完成接入' } as never,
+        ]}
+        projectMembers={[{ user_id: 1, user_name: 'Ada' } as never]}
+        statusHistory={[
+          {
+            from_status: 'pending',
+            from_status_name: '待处理',
+            to_status: 'in_progress',
+            to_status_name: '进行中',
+            trigger: 'user_update',
+            by_user_id: 1,
+            at: '2026-08-03T09:00:00Z',
+          },
+          {
+            from_status: 'in_progress',
+            from_status_name: '进行中',
+            to_status: 'in_review',
+            to_status_name: '待确认',
+            trigger: 'ai_completed',
+            by_user_id: null,
+            at: '2026-08-03T11:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const list = await screen.findByTestId('cloud-task-activity-list')
+    await within(list).findByText('验证已补充')
+    const entries = Array.from(list.children[0].children)
+    expect(entries.map(entry => entry.getAttribute('data-testid') ?? entry.className)).toEqual([
+      'cloud-task-status-event-0',
+      'task-detail-thread is-timeline',
+      'cloud-task-status-event-1',
+    ])
+    const card = screen.getByTestId('cloud-task-activity-card-message-1')
+    expect(card).toHaveTextContent('请完成接入')
+    expect(card).toHaveTextContent('CPU 验证智能体')
+    expect(within(card).getByTestId('cloud-task-activity-task-title-message-2')).toHaveTextContent(
+      '验证 CPU 检查项'
+    )
+    expect(within(card).queryByTestId('cloud-task-activity-role-message-2')).not.toBeInTheDocument()
+    expect(card).not.toHaveTextContent('执行成员')
+    expect(card).toHaveTextContent('请补充验证')
+    expect(card).toHaveTextContent('验证已补充')
+    expect(
+      within(card).queryByTestId('task-activity-events-toggle-message-1')
+    ).not.toBeInTheDocument()
+    const executionButton = within(card).getByTestId(
+      'cloud-task-activity-execution-badge-message-2'
+    )
+    expect(executionButton).toHaveAttribute('data-status', 'succeeded')
+    await user.click(executionButton)
+    expect(openTaskConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ device_id: 'device-1', task_id: 'runtime-task-1' })
+    )
+    expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
+    const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
+    expect(within(card).queryByTestId('cloud-task-activity-open-task-message-2')).toBeNull()
+    const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
+    expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
+    expect(
+      within(card).getByTestId('cloud-task-activity-message-message-1').querySelector('header time')
+    ).toBeNull()
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(card).queryByTestId('cloud-task-activity-card-composer-message-1')).toBeNull()
+    await user.click(replyToggle)
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('回复 Ada')
+    expect(
+      screen.queryByTestId('cloud-task-activity-card-composer-message-1')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-task-activity-composer')).toHaveFocus()
+    await user.click(screen.getByTestId('issue-reply-cancel'))
+    expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
+  })
+
+  it('hides replies while the comment execution is running', async () => {
+    const runningComment = {
+      ...agentMessage,
+      rootMessageId: null,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-1' },
+      metadata: { run_status: 'running' },
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [runningComment], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => runningComment),
+      failAgentResponse: vi.fn(async () => runningComment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '接入', status: 'in_progress' } as never}
+        issueTimeline
+        linear
+      />
+    )
+
+    const card = await screen.findByTestId('cloud-task-activity-card-message-2')
+    expect(
+      within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
+    ).toHaveAttribute('data-status', 'running')
+    expect(within(card).queryByTestId('cloud-task-activity-reply-toggle-message-2')).toBeNull()
+  })
+
+  it('shows creation and allows replies when a completed run is persisted', async () => {
+    const completedComment = {
+      ...agentMessage,
+      rootMessageId: null,
+      status: 'completed' as const,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-1' },
+    }
+    lifecycleSnapshotMock.value.tasks.set('device-1:runtime-1', {
+      execution: { known: true },
+      derived: { isBusy: false },
+    })
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [completedComment], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => completedComment),
+      failAgentResponse: vi.fn(async () => completedComment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: '接入',
+            status: 'completed',
+            created_at: '2026-08-02T00:00:00Z',
+            created_by_user_name: 'Ada',
+          } as never
+        }
+        issueTimeline
+        linear
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-task-status-created')).toHaveTextContent(
+      'Ada 创建 Issue'
+    )
+    const card = screen.getByTestId('cloud-task-activity-card-message-2')
+    expect(
+      within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
+    ).toHaveAttribute('data-status', 'succeeded')
+    expect(within(card).getByTestId('cloud-task-activity-reply-toggle-message-2')).toBeVisible()
+  })
+
+  it('scrolls the comment list to the bottom when a new parent comment is sent', async () => {
     const user = userEvent.setup()
     const client = {
       subscribe: vi.fn(async () => ({
@@ -805,8 +1607,8 @@ describe('TaskActivityView', () => {
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '新评论')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
-    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }))
-    expect(scrollTo).not.toHaveBeenCalledWith({ top: 1200, behavior: 'auto' })
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'auto' }))
+    expect(scrollTo).not.toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
   })
 
   it('keeps linear activity auto-follow inside the comment list', async () => {
@@ -1004,7 +1806,7 @@ describe('TaskActivityView', () => {
 
     const card = await screen.findByTestId('cloud-task-activity-message-message-2')
     expect(card).toHaveTextContent('任务已执行完成。')
-    expect(card).toHaveTextContent('已完成')
+    expect(screen.getByTestId('task-activity-run-event-message-2')).toHaveTextContent('已完成')
     expect(card).not.toHaveTextContent('正在处理')
   })
 
@@ -1056,13 +1858,14 @@ describe('TaskActivityView', () => {
     ).toHaveAttribute('data-status', 'running')
   })
 
-  it('renders a bound workflow execution as a task summary and opens its task details', async () => {
+  it('renders a bound dispatch task by its delegated title and opens its details', async () => {
     const user = userEvent.setup()
     const onOpenTask = vi.fn()
     const completedAgentMessage: ProjectChatMessage = {
       ...agentMessage,
       type: 'text',
-      content: '已完成代码修改、单元测试和构建验证。',
+      content:
+        '已完成代码修改、单元测试和构建验证。\n\n```sh\npwd\n```\n\n' + '完整结果。'.repeat(60),
       status: 'completed',
       runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
     }
@@ -1088,7 +1891,7 @@ describe('TaskActivityView', () => {
       task_id: 'runtime-task-1',
       task_title: '实现 Issue 修改',
       backend_task_id: null,
-      workflow_node_id: 'develop',
+      workflow_node_id: null,
       linked_at: '2026-08-24T08:00:00Z',
     }
 
@@ -1102,9 +1905,6 @@ describe('TaskActivityView', () => {
             id: 'WEG-1',
             title: 'Inspect changes',
             status: 'in_progress',
-            workflow: {
-              nodes: [{ id: 'develop', name: '开发' }],
-            },
           } as never
         }
         taskBindings={[binding]}
@@ -1115,22 +1915,46 @@ describe('TaskActivityView', () => {
 
     const card = await screen.findByTestId('cloud-task-activity-message-message-2')
     expect(card).toHaveTextContent('实现 Issue 修改')
-    expect(card).toHaveTextContent('开发')
+    expect(card).not.toHaveTextContent('Inspect changes')
     expect(screen.getByTestId('cloud-task-activity-task-summary-message-2')).toHaveTextContent(
       '已完成代码修改、单元测试和构建验证。'
     )
 
-    await user.click(screen.getByTestId('cloud-task-activity-open-task-message-2'))
+    expect(card.querySelector('pre code')).toHaveTextContent('pwd')
+    expect(card).toHaveTextContent('完整结果。'.repeat(60))
+
+    const taskLink = screen.getByTestId('cloud-task-activity-open-task-message-2')
+    await user.click(taskLink)
     expect(onOpenTask).toHaveBeenCalledWith(binding)
   })
 
   it('renders a bound Issue execution as a task summary without a workflow stage', async () => {
+    devicesMock.value = [
+      {
+        id: 1,
+        device_id: 'logical-device-1',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: 'logical-device-1',
+            runtime_device_id: 'runtime-device-1',
+            status: 'online',
+          },
+        ],
+      },
+    ]
     const completedAgentMessage: ProjectChatMessage = {
       ...agentMessage,
       type: 'text',
       content: '普通 Issue 执行完成。',
+      metadata: { run_id: '8bd9eeb-b551-413e-801d-534aa32f3715' },
       status: 'completed',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      runtimeAddress: { deviceId: 'runtime-device-1', taskId: 'runtime-task-1' },
     }
     const client = {
       subscribe: vi.fn(async () => ({
@@ -1152,13 +1976,14 @@ describe('TaskActivityView', () => {
         currentUserId={1}
         project={{ id: '11', name: 'Wework' } as never}
         task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
+        deviceNamesById={{ 'logical-device-1': 'Local Executor' }}
         taskBindings={[
           {
             id: 10,
             cloud_project_id: '11',
             loop_item_id: 'WEG-1',
             task_user_id: 1,
-            device_id: 'device-1',
+            device_id: 'runtime-device-1',
             task_id: 'runtime-task-1',
             task_title: 'pwd',
             backend_task_id: null,
@@ -1172,7 +1997,10 @@ describe('TaskActivityView', () => {
 
     const card = await screen.findByTestId('cloud-task-activity-message-message-2')
     expect(card).toHaveTextContent('pwd')
-    expect(card).toHaveTextContent('AI 执行')
+    const executionEvent = screen.getByTestId('task-activity-run-event-message-2')
+    expect(executionEvent).toHaveTextContent('AI 执行')
+    expect(executionEvent).toHaveTextContent('Local Executor')
+    expect(executionEvent).not.toHaveTextContent('8bd9eeb')
     expect(card).toHaveTextContent('普通 Issue 执行完成。')
   })
 
@@ -1442,6 +2270,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-rerun',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -1459,6 +2288,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 7,
             assignee_agent_id: '12',
+            automation: { prompt: 'Manager: inspect the diff and report evidence.' },
           } as never
         }
         onTaskUpdated={onTaskUpdated}
@@ -1475,7 +2305,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun',
-          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
+          prompt: 'Manager: inspect the diff and report evidence.',
         })
       )
     )
@@ -1488,6 +2318,62 @@ describe('TaskActivityView', () => {
       })
     )
     expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('refreshes the task version before accepting after a version conflict', async () => {
+    const user = userEvent.setup()
+    const onTaskUpdated = vi.fn()
+    const completedTask = {
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      status: 'completed' as const,
+      version: 9,
+      assignee_agent_id: '12',
+    }
+    updateLoopItem
+      .mockRejectedValueOnce(
+        Object.assign(new Error('task changed'), {
+          code: 'version_conflict',
+        })
+      )
+      .mockResolvedValueOnce(completedTask)
+    getLoopItem.mockResolvedValueOnce({
+      ...completedTask,
+      status: 'in_review',
+      version: 8,
+    })
+
+    render(
+      <TaskActivityView
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', location: 'local' } as never}
+        task={
+          {
+            ...completedTask,
+            status: 'in_review',
+            version: 7,
+            ai_state: { status: 'completed' },
+          } as never
+        }
+        onTaskUpdated={onTaskUpdated}
+        linear
+      />
+    )
+
+    await user.click(await screen.findByTestId('cloud-task-activity-accept-WEG-1'))
+
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem).toHaveBeenNthCalledWith(1, 'WEG-1', {
+      version: 7,
+      status: 'completed',
+    })
+    expect(getLoopItem).toHaveBeenCalledWith('WEG-1')
+    expect(updateLoopItem).toHaveBeenNthCalledWith(2, 'WEG-1', {
+      version: 8,
+      status: 'completed',
+    })
+    expect(onTaskUpdated).toHaveBeenCalledWith(completedTask)
   })
 
   it('offers manual rerun when the assigned AI run failed', async () => {
@@ -1535,6 +2421,7 @@ describe('TaskActivityView', () => {
         deviceId: 'device-1',
         taskId: 'runtime-task-rerun-failed',
       }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen(address)
       return address
     })
@@ -1571,7 +2458,7 @@ describe('TaskActivityView', () => {
         expect.objectContaining({
           triggerMessageId: undefined,
           runtimeTaskId: 'runtime-task-rerun-failed',
-          prompt: expect.stringContaining('你是 Code Reviewer，这个项目任务的 AI 执行者'),
+          prompt: 'Inspect changes\n\nReview the current diff',
           model: 'gpt-5.5-codex',
         })
       )
@@ -1685,7 +2572,7 @@ describe('TaskActivityView', () => {
     await user.click(await screen.findByTestId('cloud-task-activity-open-execution-message-2'))
 
     expect(await screen.findByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-execution-transcript')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-execution-detail-scroll')).toBeInTheDocument()
     expect(screen.getByText('在任务页打开')).toBeInTheDocument()
     expect(openRuntimeTask).not.toHaveBeenCalled()
 
@@ -1693,122 +2580,8 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
   })
 
-  it('exposes the current AI manager execution to the workflow summary', async () => {
-    runtimeWorkMock.value = {
-      projects: [],
-      chats: [],
-      totalTasks: 0,
-    }
-    const managerMessage: ProjectChatMessage = {
-      ...agentMessage,
-      messageId: 'manager-message-1',
-      type: 'agent_status',
-      content: '',
-      metadata: {
-        kind: 'project_automation_run',
-        automation_run_id: 'manager-run-1',
-        run_id: 'manager-run-1',
-        run_status: 'queued',
-      },
-      status: 'pending',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'manager-runtime-1' },
-    }
-    const previousManagerMessage: ProjectChatMessage = {
-      ...managerMessage,
-      messageId: 'manager-message-previous',
-      status: 'completed',
-      runtimeAddress: null,
-    }
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: {
-          messages: [previousManagerMessage, managerMessage],
-          latestSequence: 3,
-          currentUserId: '1',
-        },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async () => userMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-    const onWorkflowManagerExecutionChange = vi.fn()
-
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
-          {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            status: 'in_progress',
-            assignee_agent_id: '12',
-          } as never
-        }
-        workflowManagerRunId="manager-run-1"
-        onWorkflowManagerExecutionChange={onWorkflowManagerExecutionChange}
-        linear
-      />
-    )
-
-    await waitFor(() =>
-      expect(onWorkflowManagerExecutionChange).toHaveBeenLastCalledWith(expect.any(Function))
-    )
-    const openExecution = [...onWorkflowManagerExecutionChange.mock.calls]
-      .reverse()
-      .map(call => call[0])
-      .find(candidate => typeof candidate === 'function')
-    act(() => openExecution())
-
-    expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-execution-detail-status')).toHaveTextContent('排队中')
-  })
-
-  it('refreshes the workflow plan when the AI manager finishes', async () => {
-    const managerMessage: ProjectChatMessage = {
-      ...agentMessage,
-      messageId: 'manager-message-completed',
-      type: 'text',
-      content: '方案已成功提交，正在等待审批。',
-      metadata: {
-        kind: 'project_automation_run',
-        automation_run_id: 'manager-run-1',
-        run_id: 'manager-run-1',
-        run_status: 'completed',
-      },
-      status: 'completed',
-    }
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: { messages: [managerMessage], latestSequence: 2, currentUserId: '1' },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async () => userMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-    const onWorkflowManagerFinished = vi.fn()
-
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
-        workflowManagerRunId="manager-run-1"
-        onWorkflowManagerFinished={onWorkflowManagerFinished}
-        linear
-      />
-    )
-
-    await waitFor(() => expect(onWorkflowManagerFinished).toHaveBeenCalledTimes(1))
-  })
-
   it('shows the stop action for a running AI run inside the floating panel', async () => {
+    paneExecution.running = true
     runtimeWorkMock.value = {
       projects: [],
       chats: [
@@ -1867,42 +2640,64 @@ describe('TaskActivityView', () => {
       expect(cancelRuntimeTask).toHaveBeenCalledWith({
         deviceId: 'device-1',
         taskId: 'runtime-task-2',
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
       })
     )
   })
 
-  it('does not expose execution details for an address absent from runtime work', async () => {
-    runtimeWorkMock.value = { projects: [], chats: [], totalTasks: 0 }
-    const message: ProjectChatMessage = {
-      ...agentMessage,
-      status: 'streaming',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'missing-runtime-task' },
+  it.each([
+    { status: 'streaming' as const, linear: true },
+    { status: 'completed' as const, linear: true },
+    { status: 'streaming' as const, linear: false },
+    { status: 'completed' as const, linear: false },
+  ])(
+    'opens $status execution details before the workbench list syncs (linear=$linear)',
+    async ({ status, linear }) => {
+      const user = userEvent.setup()
+      runtimeWorkMock.value = { projects: [], chats: [], totalTasks: 0 }
+      const message: ProjectChatMessage = {
+        ...agentMessage,
+        status,
+        runtimeAddress: { deviceId: 'device-1', taskId: 'new-runtime-task' },
+      }
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: { messages: [message], latestSequence: 2, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: 'Inspect', status: 'in_progress', version: 1 } as never}
+          linear={linear}
+        />
+      )
+
+      const trigger = await screen.findByTestId(
+        linear
+          ? 'cloud-task-activity-execution-badge-message-2'
+          : 'cloud-task-activity-open-execution-message-2'
+      )
+      expect(trigger).toBeEnabled()
+      await user.click(trigger)
+      expect(await screen.findByTestId('runtime-execution-detail-overlay')).toHaveTextContent(
+        'new-runtime-task'
+      )
+      await user.click(screen.getByTestId('runtime-execution-detail-open-page'))
+      expect(openRuntimeTask).toHaveBeenCalledWith({
+        ...message.runtimeAddress,
+        projectSession: { projectId: '11', issueId: 'WEG-1' },
+      })
     }
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: { messages: [message], latestSequence: 2, currentUserId: '1' },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async () => userMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={{ id: 'WEG-1', title: 'Inspect', status: 'in_progress', version: 1 } as never}
-      />
-    )
-
-    expect(await screen.findByTestId('cloud-task-activity-message-message-2')).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('cloud-task-activity-open-execution-message-2')
-    ).not.toBeInTheDocument()
-  })
+  )
 
   function sendButtonFor(composerTestId: string) {
     const composer = screen.getByTestId(composerTestId)
@@ -1910,118 +2705,145 @@ describe('TaskActivityView', () => {
     return within(form as HTMLElement).getByRole('button', { name: '发送消息' })
   }
 
-  it('continues the card AI session from the inline composer', async () => {
-    const user = userEvent.setup()
-    const rootMessage: ProjectChatMessage = {
-      ...userMessage,
-      rootMessageId: null,
-    }
-    const completedAgentMessage: ProjectChatMessage = {
-      ...agentMessage,
-      content: '已检查当前改动，发现 2 处问题。',
-      status: 'completed',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'parent-session-1' },
-      rootMessageId: userMessage.messageId,
-      replyToMessageId: userMessage.messageId,
-    }
-    const attachment: Attachment = {
-      id: 7,
-      filename: 'spec.txt',
-      file_size: 12,
-      mime_type: 'text/plain',
-      status: 'ready',
-      file_extension: 'txt',
-      created_at: '2026-08-06T00:00:00Z',
-    }
-    attachmentSelectionMock.attachments = [attachment]
-    sendRuntimePaneMessage.mockResolvedValue(true)
-    runtimeWorkMock.value = {
-      projects: [
-        {
-          project: { id: 91, name: '运营工作区' },
-          deviceWorkspaces: [
-            {
-              deviceId: 'device-1',
-              projectId: 91,
-              tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: {
-          messages: [rootMessage, completedAgentMessage],
-          latestSequence: 2,
-          currentUserId: '1',
-        },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async () => userMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-
-    runtimeWorkMock.value = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'device-1',
-          projectId: null,
-          tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
-        },
-      ],
-      totalTasks: 1,
-    }
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
+  it.each([false, true])(
+    'continues the card AI session without a new-comment model override (%s)',
+    async selectNewCommentModel => {
+      listModels.mockResolvedValue({
+        data: [
           {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            description: 'Review the current diff',
-            status: 'inbox',
-            version: 1,
-            assignee_agent_id: '12',
-          } as never
-        }
-        linear
-      />
-    )
-
-    expect(
-      screen.queryByTestId(`cloud-task-activity-reply-${completedAgentMessage.messageId}`)
-    ).not.toBeInTheDocument()
-    await user.type(
-      await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
-      '继续处理{Enter}'
-    )
-
-    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
-    expect(client.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        replyToMessageId: rootMessage.messageId,
+            name: 'gpt-5.5-codex',
+            type: 'runtime',
+            displayName: 'GPT 5.5 Codex',
+            config: { ui: { family: 'codex-official' } },
+          },
+        ],
       })
-    )
-    await waitFor(() =>
-      expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          address: { deviceId: 'device-1', taskId: 'parent-session-1' },
-          message: '继续处理',
-          attachmentIds: [7],
-        }),
-        expect.anything()
+      const user = userEvent.setup()
+      const rootMessage: ProjectChatMessage = {
+        ...userMessage,
+        rootMessageId: null,
+      }
+      const completedAgentMessage: ProjectChatMessage = {
+        ...agentMessage,
+        content: '已检查当前改动，发现 2 处问题。',
+        status: 'completed',
+        runtimeAddress: { deviceId: 'device-1', taskId: 'parent-session-1' },
+        rootMessageId: userMessage.messageId,
+        replyToMessageId: userMessage.messageId,
+      }
+      const attachment: Attachment = {
+        id: 7,
+        filename: 'spec.txt',
+        file_size: 12,
+        mime_type: 'text/plain',
+        status: 'ready',
+        file_extension: 'txt',
+        created_at: '2026-08-06T00:00:00Z',
+      }
+      attachmentSelectionMock.attachments = [attachment]
+      sendRuntimePaneMessage.mockResolvedValue(true)
+      runtimeWorkMock.value = {
+        projects: [
+          {
+            project: { id: 91, name: '运营工作区' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                projectId: 91,
+                tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      }
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [rootMessage, completedAgentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      runtimeWorkMock.value = {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            projectId: null,
+            tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+          },
+        ],
+        totalTasks: 1,
+      }
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+              assignee_agent_id: '12',
+            } as never
+          }
+          linear
+        />
       )
-    )
-    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
-  })
+
+      if (selectNewCommentModel) {
+        await user.click(screen.getByTestId('task-comment-settings-toggle'))
+        await user.click(await screen.findByTestId('model-selector-button'))
+        await user.hover(await screen.findByTestId('model-control-menu-model'))
+        await user.click(await screen.findByTestId('model-option-gpt-5.5-codex'))
+      }
+      expect(
+        screen.queryByTestId(`cloud-task-activity-reply-${completedAgentMessage.messageId}`)
+      ).not.toBeInTheDocument()
+      await user.type(
+        await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
+        '继续处理{Enter}'
+      )
+
+      await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+      expect(client.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          replyToMessageId: rootMessage.messageId,
+        })
+      )
+      await waitFor(() =>
+        expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+            message: '继续处理',
+            attachmentIds: [7],
+          }),
+          expect.objectContaining({
+            optimisticUserMessage: expect.objectContaining({
+              role: 'user',
+              content: '继续处理',
+              attachments: [expect.objectContaining({ id: 7, filename: 'spec.txt' })],
+            }),
+          })
+        )
+      )
+      expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+      expect(sendRuntimePaneMessage.mock.calls[0][0]).not.toHaveProperty('modelId')
+      expect(sendRuntimePaneMessage.mock.calls[0][0]).not.toHaveProperty('modelSelection')
+    }
+  )
 
   it('continues a Wegent board Task without creating a local runtime task', async () => {
     agentsMock.value = [
@@ -2119,154 +2941,6 @@ describe('TaskActivityView', () => {
     ).toBeInTheDocument()
   })
 
-  it('continues a custom AI manager from its own comment session', async () => {
-    agentsMock.value = [
-      {
-        ...agentsMock.value[0],
-        runtime: 'wegent',
-        wegentTeamId: 32,
-      },
-    ]
-    const user = userEvent.setup()
-    const managerMessage: ProjectChatMessage = {
-      ...agentMessage,
-      messageId: 'manager-result-1',
-      sender: {
-        type: 'agent',
-        id: 'automation_manager:rule-1',
-        name: '自定义 AI 调度员',
-      },
-      content: '已完成分派。',
-      metadata: {
-        kind: 'project_automation_run',
-        manager_type: 'custom',
-        executor_type: 'automation_manager',
-        execution_id: 301,
-        run_status: 'completed',
-      },
-      status: 'completed',
-      rootMessageId: null,
-      runtimeAddress: { deviceId: 'local-device', taskId: 'manager-runtime-1' },
-      agentId: null,
-    }
-    const triggerMessage: ProjectChatMessage = {
-      ...userMessage,
-      messageId: 'manager-question-1',
-      content: '任务完成了吗？',
-      replyToMessageId: managerMessage.messageId,
-      rootMessageId: managerMessage.messageId,
-    }
-    const managerReply: ProjectChatMessage = {
-      ...agentMessage,
-      messageId: 'manager-reply-1',
-      sender: managerMessage.sender,
-      content: '',
-      metadata: {
-        kind: 'automation_manager_continuation',
-        manager_type: 'custom',
-        conversation_only: true,
-        run_status: 'running',
-      },
-      triggerMessageId: triggerMessage.messageId,
-      replyToMessageId: triggerMessage.messageId,
-      rootMessageId: managerMessage.messageId,
-      runtimeAddress: managerMessage.runtimeAddress,
-      status: 'streaming',
-      agentId: null,
-    }
-    runtimeWorkMock.value = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'local-device',
-          projectId: null,
-          tasks: [{ taskId: 'manager-runtime-1', title: 'AI 调度员' }],
-        },
-      ],
-      totalTasks: 1,
-    }
-    const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: { messages: [managerMessage], latestSequence: 2, currentUserId: '1' },
-        unsubscribe: vi.fn(),
-      })),
-      send: vi.fn(async () => triggerMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...managerReply, status: 'failed' as const })),
-      continueAutomationManager: vi.fn(async () => managerReply),
-      continueWegentTask: vi.fn(async () => agentMessage),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
-          {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            status: 'in_progress',
-            version: 1,
-            assignee_agent_id: '12',
-          } as never
-        }
-        taskBindings={[
-          {
-            id: 9,
-            cloud_project_id: '11',
-            loop_item_id: 'WEG-1',
-            task_user_id: 1,
-            device_id: 'local-device',
-            task_id: 'manager-runtime-1',
-            task_title: 'Inspect changes',
-            backend_task_id: null,
-            workflow_node_id: null,
-            linked_at: '2026-08-24T08:00:00Z',
-          },
-        ]}
-        linear
-      />
-    )
-
-    expect(
-      await screen.findByTestId(`cloud-task-activity-message-${managerMessage.messageId}`)
-    ).toHaveTextContent('自定义 AI 调度员')
-    await user.type(
-      await screen.findByTestId(`cloud-task-activity-card-composer-${managerMessage.messageId}`),
-      '任务完成了吗？{Enter}'
-    )
-
-    await waitFor(() => expect(client.continueAutomationManager).toHaveBeenCalledOnce())
-    expect(client.continueAutomationManager).toHaveBeenCalledWith({
-      projectId: '11',
-      taskId: 'WEG-1',
-      triggerMessageId: 'manager-question-1',
-      managerMessageId: 'manager-result-1',
-    })
-    expect(client.continueWegentTask).not.toHaveBeenCalled()
-    expect(client.startAgentResponse).not.toHaveBeenCalled()
-    expect(client.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mentions: [],
-        replyToMessageId: 'manager-result-1',
-      })
-    )
-    await waitFor(() =>
-      expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          address: { deviceId: 'local-device', taskId: 'manager-runtime-1' },
-          message: '任务完成了吗？',
-        }),
-        expect.anything()
-      )
-    )
-    expect(
-      await screen.findByTestId(`cloud-task-activity-message-${managerReply.messageId}`)
-    ).toHaveTextContent('自定义 AI 调度员')
-  })
-
   it('replies to the parent comment from the card composer by default', async () => {
     const user = userEvent.setup()
     const rootMessage: ProjectChatMessage = {
@@ -2332,7 +3006,72 @@ describe('TaskActivityView', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('shows a send button on the card composer only after typing', async () => {
+  it('sends a structured project member mention from the card reply composer', async () => {
+    const user = userEvent.setup()
+    const rootMessage: ProjectChatMessage = {
+      ...userMessage,
+      rootMessageId: null,
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [rootMessage],
+          latestSequence: 1,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        members={[
+          {
+            id: 3,
+            user_id: 4,
+            user_name: 'hajimi',
+            email: null,
+            role: 'Developer',
+          },
+        ]}
+        linear
+      />
+    )
+
+    const input = await screen.findByTestId(
+      `cloud-task-activity-card-composer-${rootMessage.messageId}`
+    )
+    await user.type(input, '@')
+    expect(await screen.findByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    await user.click(screen.getByTestId('collaboration-issue-mention-member-4'))
+    await user.type(input, '看一下{Enter}')
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: rootMessage.messageId,
+        mentions: [expect.objectContaining({ type: 'user', id: '4', label: 'hajimi' })],
+      })
+    )
+  })
+
+  it('keeps the reply send button disabled until there is a draft', async () => {
     const user = userEvent.setup()
     const rootMessage: ProjectChatMessage = {
       ...userMessage,
@@ -2375,13 +3114,13 @@ describe('TaskActivityView', () => {
     // after the comment is sent, without waiting for the runtime task.
     createProjectRuntimeTask.mockReturnValue(new Promise(() => {}))
     expect(
-      screen.queryByTestId(`cloud-task-activity-card-send-${rootMessage.messageId}`)
-    ).not.toBeInTheDocument()
+      screen.getByTestId(`cloud-task-activity-card-send-${rootMessage.messageId}`)
+    ).toBeDisabled()
 
     await user.type(composer, '继续处理')
     expect(
       screen.getByTestId(`cloud-task-activity-card-send-${rootMessage.messageId}`)
-    ).toBeInTheDocument()
+    ).toBeEnabled()
 
     await user.click(screen.getByTestId(`cloud-task-activity-card-send-${rootMessage.messageId}`))
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
@@ -2604,7 +3343,9 @@ describe('TaskActivityView', () => {
 
     fireEvent(composer, pasteEvent)
 
-    expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    await waitFor(() =>
+      expect(attachmentSelectionMock.handleFileSelect).toHaveBeenCalledWith([file])
+    )
   })
 
   it('uploads files selected through the card composer attach button', async () => {
@@ -2706,104 +3447,124 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it('queues a card reply while its session is running and sends it after completion', async () => {
-    const user = userEvent.setup()
-    let emitMessage: ((message: ProjectChatMessage) => void) | null = null
-    const rootMessage: ProjectChatMessage = {
-      ...userMessage,
-      rootMessageId: null,
-    }
-    const runningAgentMessage: ProjectChatMessage = {
-      ...agentMessage,
-      content: 'working…',
-      status: 'streaming',
-      runtimeAddress: { deviceId: 'device-1', taskId: 'parent-session-1' },
-      rootMessageId: userMessage.messageId,
-      replyToMessageId: userMessage.messageId,
-    }
-    const client = {
-      subscribe: vi.fn(async (_projectId, _taskId, _afterSequence, onMessage) => {
-        emitMessage = onMessage
-        return {
-          snapshot: {
-            messages: [rootMessage, runningAgentMessage],
-            latestSequence: 2,
-            currentUserId: '1',
-          },
-          unsubscribe: vi.fn(),
-        }
-      }),
-      send: vi.fn(async () => userMessage),
-      startAgentResponse: vi.fn(async () => agentMessage),
-      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
-      dispose: vi.fn(),
-    } satisfies ProjectChatClient
-
-    runtimeWorkMock.value = {
-      projects: [
-        {
-          project: { id: 91, name: '运营工作区' },
-          deviceWorkspaces: [
-            {
-              deviceId: 'device-1',
-              projectId: 91,
-              tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+  it.each(['message', 'runtime'])(
+    'queues a card reply and sends it after %s completion',
+    async source => {
+      const user = userEvent.setup()
+      let emitMessage: ((message: ProjectChatMessage) => void) | null = null
+      const rootMessage: ProjectChatMessage = {
+        ...userMessage,
+        rootMessageId: null,
+      }
+      const runningAgentMessage: ProjectChatMessage = {
+        ...agentMessage,
+        content: 'working…',
+        status: 'streaming',
+        runtimeAddress: { deviceId: 'device-1', taskId: 'parent-session-1' },
+        rootMessageId: userMessage.messageId,
+        replyToMessageId: userMessage.messageId,
+      }
+      const client = {
+        subscribe: vi.fn(async (_projectId, _taskId, _afterSequence, onMessage) => {
+          emitMessage = onMessage
+          return {
+            snapshot: {
+              messages: [rootMessage, runningAgentMessage],
+              latestSequence: 2,
+              currentUserId: '1',
             },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: 1,
-    }
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
+            unsubscribe: vi.fn(),
+          }
+        }),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      runtimeWorkMock.value = {
+        projects: [
           {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            description: 'Review the current diff',
-            status: 'in_progress',
-            version: 7,
-            assignee_agent_id: '12',
-          } as never
-        }
-        linear
-      />
-    )
+            project: { id: 91, name: '运营工作区' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                projectId: 91,
+                tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      }
+      const view = (
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'in_progress',
+              version: 7,
+              assignee_agent_id: '12',
+            } as never
+          }
+          linear
+        />
+      )
 
-    await user.type(
-      await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
-      '继续处理{Enter}'
-    )
+      const { rerender } = render(view)
 
-    expect(client.send).not.toHaveBeenCalled()
-    expect(
-      within(
-        screen.getByTestId(`cloud-task-activity-card-queue-${rootMessage.messageId}`)
-      ).getByText('继续处理')
-    ).toBeInTheDocument()
+      await user.type(
+        await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
+        '继续处理{Enter}'
+      )
 
-    emitMessage?.({ ...runningAgentMessage, status: 'completed' })
-
-    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
-    expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address: { deviceId: 'device-1', taskId: 'parent-session-1' },
-        message: '继续处理',
-      }),
-      expect.any(Object)
-    )
-    await waitFor(() =>
+      expect(client.send).not.toHaveBeenCalled()
       expect(
         within(
           screen.getByTestId(`cloud-task-activity-card-queue-${rootMessage.messageId}`)
-        ).queryByText('继续处理')
-      ).not.toBeInTheDocument()
-    )
-  })
+        ).getByText('继续处理')
+      ).toBeInTheDocument()
+
+      if (source === 'message') {
+        act(() => emitMessage?.({ ...runningAgentMessage, status: 'completed' }))
+      } else {
+        const lifecycle = new RuntimeTaskLifecycleStore('queue-test')
+        lifecycle.syncRuntimeTask(runningAgentMessage.runtimeAddress!, {
+          taskId: 'parent-session-1',
+          title: 'Done',
+          runtime: 'codex',
+          workspacePath: '/workspace',
+          status: 'done',
+          running: false,
+          completedAt: '2026-08-03T00:01:00Z',
+        })
+        lifecycleSnapshotMock.value = lifecycle.getSnapshot()
+        rerender(cloneElement(view))
+      }
+
+      await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+      expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+          message: '继续处理',
+        }),
+        expect.any(Object)
+      )
+      await waitFor(() =>
+        expect(
+          within(
+            screen.getByTestId(`cloud-task-activity-card-queue-${rootMessage.messageId}`)
+          ).queryByText('继续处理')
+        ).not.toBeInTheDocument()
+      )
+    }
+  )
 
   it('allows a plain new comment while another parent session is still running', async () => {
     const user = userEvent.setup()
@@ -3034,4 +3795,104 @@ describe('TaskActivityView', () => {
       '状态: 执行失败\n错误: Device went offline before dispatch'
     )
   })
+
+  it('flashes the comment a notification opened', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [userMessage, agentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => userMessage),
+        startAgentResponse: vi.fn(async () => agentMessage),
+        failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          focusedCommentId="message-1"
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+            } as never
+          }
+        />
+      )
+
+      const comment = await screen.findByTestId('cloud-task-activity-message-message-1')
+      expect(comment).toHaveAttribute('data-message-id', 'message-1')
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
+      expect(screen.getByTestId('cloud-task-activity-message-message-2')).not.toHaveAttribute(
+        'data-flash'
+      )
+
+      await act(async () => {
+        vi.advanceTimersByTime(2500)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+it('starts a cloud issue comment through the project service when the assigned agent is hidden', async () => {
+  const user = userEvent.setup()
+  agentsMock.value = []
+  const client = {
+    subscribe: vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '2' },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async () => userMessage),
+    executeTaskComment: vi.fn(async () => [
+      { ...agentMessage, content: '已排队', status: 'pending' as const },
+    ]),
+    startAgentResponse: vi.fn(),
+    failAgentResponse: vi.fn(),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+  createProjectRuntimeTask.mockClear()
+  render(
+    <TaskActivityView
+      client={client}
+      currentUserId={2}
+      project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+      task={
+        {
+          id: 'WEG-1',
+          title: 'Member issue',
+          status: 'inbox',
+          version: 1,
+          assignee_agent_id: '12',
+        } as never
+      }
+    />
+  )
+  await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
+  await user.click(screen.getByRole('button', { name: '发送消息' }))
+  await waitFor(() =>
+    expect(client.executeTaskComment).toHaveBeenCalledWith({
+      projectId: '11',
+      taskId: 'WEG-1',
+      triggerMessageId: 'message-1',
+      attachmentIds: [],
+    })
+  )
+  expect(client.startAgentResponse).not.toHaveBeenCalled()
+  expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  expect(screen.queryByTestId('task-comment-settings-toggle')).not.toBeInTheDocument()
 })

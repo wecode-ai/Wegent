@@ -54,7 +54,7 @@ export function CloudConnectionDialog({
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  useEscapeKey(onClose)
+  useEscapeKey(onClose, open)
 
   if (!open) return null
 

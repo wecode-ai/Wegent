@@ -14,8 +14,8 @@ from app.schemas.delivery import (
 )
 from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.services.cloud_projects import cloud_project_service
-from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 
 
@@ -70,7 +70,7 @@ class ProjectBoardSnapshotService:
     ) -> ProjectBoardSnapshotResponse:
         access = cloud_project_service.access(db, project_id, user_id)
         _, items = self.list_item_views(db, project_id, user_id)
-        if access.is_public_visitor:
+        if access.is_viewer:
             return ProjectBoardSnapshotResponse(
                 items=items,
                 task_bindings=[],

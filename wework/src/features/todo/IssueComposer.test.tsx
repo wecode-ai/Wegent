@@ -12,6 +12,7 @@ import { issueDraftFromText } from './issueComposerDraft'
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (_key: string, fallback: string) => fallback,
+    i18n: { language: 'zh-CN' },
   }),
 }))
 

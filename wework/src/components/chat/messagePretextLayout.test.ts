@@ -151,4 +151,107 @@ describe('messagePretextLayout', () => {
     expect(mockedPrepare).not.toHaveBeenCalled()
     expect(mockedLayout).not.toHaveBeenCalled()
   })
+
+  test('measures fenced code by its rendered lines instead of wrapping it', () => {
+    const code = Array.from(
+      { length: 10 },
+      (_, index) => `const line${index} = '${'x'.repeat(160)}'`
+    )
+    const message: WorkbenchMessage = {
+      id: 'assistant-code',
+      role: 'assistant',
+      content: ['Intro', '', '```ts', ...code, '```', '', 'Outro'].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    // Two prose segments at the mocked three lines each, plus ten unwrapped code lines and the
+    // code block's own chrome — plus the assistant row's hover action and vertical buffer.
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(2 * 72 + 10 * 22 + 84 + 32)
+    expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    for (const [text] of mockedPrepare.mock.calls) {
+      expect(text).not.toContain('const line0')
+    }
+  })
+
+  test('treats an unclosed fence as code until the end of the message', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-unclosed-fence',
+      role: 'assistant',
+      content: ['Before', '```', 'one', 'two', ''].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+  })
+
+  test('closes a fence only with its own marker', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-fence-marker',
+      role: 'assistant',
+      content: ['~~~~', '```', 'inner', '~~~~', 'After'].join('\n'),
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+    expect(mockedPrepare).toHaveBeenCalledTimes(1)
+    expect(mockedPrepare.mock.calls[0]?.[0]).toContain('After')
+  })
+
+  test('keeps inline code in the wrapped prose measurement', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-inline-code',
+      role: 'assistant',
+      content: 'Run `pnpm test` and ``pnpm lint`` before pushing',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(104)
+    expect(mockedPrepare).toHaveBeenCalledTimes(1)
+  })
+
+  test('budgets a collapsed process section once, however many blocks a turn holds', () => {
+    const blocks = Array.from({ length: 54 }, (_, index) => ({
+      id: `tool-${index}`,
+      subtaskId: 'turn-1',
+      type: 'tool' as const,
+      toolName: 'shell',
+      status: 'done' as const,
+      createdAt: 1,
+    }))
+    const manyBlocks: WorkbenchMessage = {
+      id: 'assistant-many-blocks',
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+      blocks,
+    }
+    const oneBlock: WorkbenchMessage = {
+      ...manyBlocks,
+      id: 'assistant-one-block',
+      blocks: blocks.slice(0, 1),
+    }
+
+    // Prose (mocked at three lines) plus one collapsed summary row and the assistant row's own hover
+    // action and vertical buffer — the block count no longer adds height of its own.
+    expect(getMessagePretextIntrinsicHeight(manyBlocks, 500)).toBe(72 + 44 + 32)
+    expect(getMessagePretextIntrinsicHeight(oneBlock, 500)).toBe(72 + 44 + 32)
+  })
+
+  test('adds nothing for a turn that ran no blocks', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-no-blocks',
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+      blocks: [],
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 32)
+  })
 })

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import ProjectAutomationRule, ProjectChatAgent, RuntimeProfile
 from app.schemas.issue_workflow import WorkflowExecutionConfig
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
-from app.services.project_automation_domain import manager_type, runtime_config
+from app.services.project_automation_domain import runtime_config
 from app.services.project_chat.service import compiled_bot_config
 from app.services.project_chat.workspace_binding import read_agent_workspace_binding
 
@@ -148,11 +148,9 @@ def project_automation_execution_config(
     *,
     issue_creator_user_id: int,
 ) -> WorkflowExecutionConfig | None:
-    """Snapshot the AI manager Runtime without starting the manager."""
+    """Snapshot an automation Runtime without starting work."""
 
     metadata = dict(rule.metadata_json or {})
-    if manager_type(metadata) == "wegent":
-        return None
     runtime = runtime_config(metadata)
     runtime_source = str(runtime.get("source") or "")
     runtime_user_id = int(rule.created_by_user_id or issue_creator_user_id)

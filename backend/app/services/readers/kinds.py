@@ -266,12 +266,9 @@ class IKindReader(ABC):
                 return team
 
             if user_id != 0:
-                from app.schemas.share import MemberRole
                 from app.services.share.team_share_service import team_share_service
 
-                if team_share_service.check_permission(
-                    db, team.id, user_id, MemberRole.Reporter
-                ):
+                if team_share_service.get_resource_for_use(db, team.id, user_id):
                     return team
 
             logger.debug(f"User {user_id} has no access to team {namespace}/{name}")

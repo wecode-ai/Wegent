@@ -170,7 +170,7 @@ class SubscriptionTaskCompletionHandler:
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.FAILED,
-                ):
+                ) and not self._is_code_wiki_scheduled_update(db, execution):
                     await self._dispatch_notifications(
                         db, execution, event, result_summary
                     )
@@ -181,6 +181,17 @@ class SubscriptionTaskCompletionHandler:
                 f"task_id={event.task_id}, error={e}",
                 exc_info=True,
             )
+
+    @staticmethod
+    def _is_code_wiki_scheduled_update(
+        db: Session, execution: BackgroundExecution
+    ) -> bool:
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            is_code_wiki_scheduled_update,
+        )
+
+        subscription = db.get(Kind, execution.subscription_id)
+        return bool(subscription and is_code_wiki_scheduled_update(subscription))
 
     def _find_execution_by_task_id(
         self, db: Session, task_id: int
@@ -223,7 +234,14 @@ class SubscriptionTaskCompletionHandler:
             .first()
         )
 
-        return execution
+        if execution is not None:
+            return execution
+
+        from app.services.knowledge.code_wiki.subscription_integration import (
+            recover_scheduled_execution_for_task,
+        )
+
+        return recover_scheduled_execution_for_task(db, task_id)
 
     def _extract_result_summary(self, event: TaskCompletedEvent) -> Optional[str]:
         """Extract result summary from TaskCompletedEvent.

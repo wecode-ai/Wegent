@@ -22,6 +22,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
 )
+from app.services.knowledge.code_wiki.runner import CodeWikiRunError
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
 from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -35,6 +36,33 @@ PAYLOAD = {
     "source_url": "https://github.com/wecode-ai/Wegent.git",
     "execution_model_ref": {"name": "claude-opus-5", "type": "public"},
 }
+
+
+def test_deleting_a_wiki_concurrently_returns_not_found(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete route turns the expected re-lock race into its public 404."""
+    from fastapi import HTTPException
+
+    from app.api.endpoints import knowledge_code_wiki
+
+    wiki = Kind(id=123, user_id=test_user.id, json={"spec": {"kbType": "code_wiki"}})
+    monkeypatch.setattr(knowledge_code_wiki, "_readable_code_wiki", lambda *args: wiki)
+    monkeypatch.setattr(
+        knowledge_code_wiki,
+        "delete_scheduled_update",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            CodeWikiRunError("Code Wiki no longer exists")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        knowledge_code_wiki.delete_code_wiki_scheduled_update(
+            123, current_user=test_user, db=test_db
+        )
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Code wiki not found"
 
 
 @pytest.fixture(autouse=True)

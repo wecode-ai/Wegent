@@ -124,7 +124,10 @@ def _resolve_task_default_knowledge_bases(
         return None, []
 
     team = resolve_task_ref_team(db, task_crd, user_id)
-    if team is None or team_share_service.get_resource(db, team.id, user_id) is None:
+    if (
+        team is None
+        or team_share_service.get_resource_for_use(db, team.id, user_id) is None
+    ):
         return None, []
 
     candidate_ids = list(

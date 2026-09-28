@@ -161,7 +161,15 @@ pub fn build_skill_deployment_plan(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .map(ToOwned::to_owned)?;
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
+    let skill_namespaces = configured_skill_namespaces(request.extra.get("additional_skills"));
+    let has_local_codex_skill = skills
+        .iter()
+        .any(|skill| skill_namespaces.get(skill).map(String::as_str) == Some("codex"));
+    if auth_token.is_empty() && !has_local_codex_skill {
+        return None;
+    }
     let team_namespace = request
         .team_namespace
         .clone()
@@ -183,7 +191,7 @@ pub fn build_skill_deployment_plan(
 
     Some(SkillDeploymentPlan {
         skills,
-        skill_namespaces: configured_skill_namespaces(request.extra.get("additional_skills")),
+        skill_namespaces,
         auth_token,
         team_namespace,
         task_id: request
@@ -397,5 +405,50 @@ mod tests {
         let plan = deployment_plan(&request);
 
         assert_eq!(plan.task_id, None);
+    }
+
+    #[test]
+    fn builds_local_skill_plan_without_backend_authentication() {
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([
+                ("preload_skills".to_owned(), json!(["local-skill"])),
+                (
+                    "additional_skills".to_owned(),
+                    json!([{"name": "local-skill", "namespace": "codex"}]),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+
+        let plan = deployment_plan(&request);
+
+        assert!(plan.auth_token.is_empty());
+        assert_eq!(
+            plan.skill_namespaces.get("local-skill").map(String::as_str),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn omits_remote_skill_plan_without_backend_authentication() {
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "preload_skills".to_owned(),
+                json!(["remote-skill"]),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let plan = build_skill_deployment_plan(
+            &json!({"skills": ["remote-skill"]}),
+            &request,
+            SkillDeploymentOptions {
+                skills_dir: PathBuf::from("/tmp/skills"),
+                clear_cache: false,
+                skip_existing: false,
+            },
+        );
+
+        assert!(plan.is_none());
     }
 }

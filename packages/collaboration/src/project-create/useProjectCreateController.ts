@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import type { CollaborationExecutionEnvironment } from "../types";
 
 import {
   RepositoryProviderError,
@@ -16,6 +18,32 @@ import type {
   ProjectCreateHostAdapter,
   ProjectCreateLabels,
 } from "./types";
+
+type ProjectVisibility = NonNullable<
+  import("../ports/SharedWorkspaceApi").WorkspaceProjectCreateInput["visibility"]
+>;
+
+export function defaultExecutionEnvironmentDeviceIds(
+  environments: CollaborationExecutionEnvironment[],
+): number[] {
+  const deviceIds = new Map<string, number>();
+  for (const environment of environments) {
+    const deviceId = environment.device_id;
+    if (
+      !environment.is_current_device ||
+      environment.kind !== "local_device" ||
+      environment.status !== "online" ||
+      deviceId == null ||
+      !Number.isSafeInteger(deviceId) ||
+      deviceId <= 0
+    ) {
+      continue;
+    }
+    const identity = environment.device_key?.trim() || String(deviceId);
+    if (!deviceIds.has(identity)) deviceIds.set(identity, deviceId);
+  }
+  return [...deviceIds.values()];
+}
 
 export function projectCreateErrorMessage(
   cause: unknown,
@@ -56,14 +84,30 @@ export function useProjectCreateController({
     useState<ProjectCreateLocation>(initialLocation);
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [visibility, setVisibility] = useState<ProjectVisibility>("private");
+  const [publicAccessRole, setPublicAccessRole] = useState<
+    "Viewer" | "Developer"
+  >("Viewer");
+  const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
+    "open" | "related"
+  >("open");
   const [repositoryAddress, setRepositoryAddress] = useState("");
   const [token, setToken] = useState("");
   const [aitableUrl, setAitableUrl] = useState("");
   const [memberUserIds, setMemberUserIds] = useState<number[]>([]);
-  const [agentTeamIds, setAgentTeamIds] = useState<number[]>([]);
+  const [agentResourceIds, setAgentResourceIds] = useState<string[]>([]);
+  const defaultAgentResourceIds = resourceSetup?.defaultAgentResourceIds ?? [];
+  const defaultAgentResourceIdsKey = defaultAgentResourceIds.join("\0");
   const [executionEnvironmentDeviceIds, setExecutionEnvironmentDeviceIds] =
-    useState<number[]>([]);
+    useState<number[]>(() =>
+      defaultExecutionEnvironmentDeviceIds(
+        resourceSetup?.executionEnvironments ?? [],
+      ),
+    );
+  const executionEnvironmentSelectionChanged = useRef(false);
+  const [collaborationGroupDraft, setCollaborationGroupDraft] = useState<
+    import("./types").ProjectCreateCollaborationGroupDraft | null
+  >(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryProvider =
@@ -82,6 +126,22 @@ export function useProjectCreateController({
     (!isAITableProvider || aitableLink) &&
     !saving,
   );
+
+  useEffect(() => {
+    if (executionEnvironmentSelectionChanged.current) return;
+    setExecutionEnvironmentDeviceIds(
+      defaultExecutionEnvironmentDeviceIds(
+        resourceSetup?.executionEnvironments ?? [],
+      ),
+    );
+  }, [resourceSetup?.executionEnvironments]);
+
+  useEffect(() => {
+    if (!defaultAgentResourceIdsKey) return;
+    setAgentResourceIds((current) => [
+      ...new Set([...defaultAgentResourceIds, ...current]),
+    ]);
+  }, [defaultAgentResourceIdsKey]);
 
   async function submit() {
     if (!canSubmit) return;
@@ -110,13 +170,31 @@ export function useProjectCreateController({
         description: description.trim(),
         taskProvider,
         providerConfig,
-        ...(location === "cloud" ? { visibility } : {}),
+        ...(location === "cloud"
+          ? {
+              visibility,
+              ...(visibility === "public"
+                ? { publicAccess: { role: publicAccessRole } }
+                : {}),
+              ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
+            }
+          : {}),
+        ...(location === "local" && resourceSetup
+          ? {
+              includeDefaultAgent:
+                defaultAgentResourceIds.length === 0 ||
+                defaultAgentResourceIds.some((id) =>
+                  agentResourceIds.includes(id),
+                ),
+            }
+          : {}),
       });
       if (resourceSetup) {
         await resourceSetup.configure(project, {
           memberUserIds,
-          agentTeamIds,
+          agentResourceIds,
           executionEnvironmentDeviceIds,
+          collaborationGroupDraft,
         });
       }
       host?.track?.("created");
@@ -136,6 +214,8 @@ export function useProjectCreateController({
       location,
       taskProvider,
       visibility,
+      publicAccessRole,
+      defaultIssueSecurity,
       repositoryAddress,
       token,
       aitableUrl,
@@ -146,8 +226,9 @@ export function useProjectCreateController({
       error,
       canSubmit,
       memberUserIds,
-      agentTeamIds,
+      agentResourceIds,
       executionEnvironmentDeviceIds,
+      collaborationGroupDraft,
     },
     commands: {
       setName,
@@ -155,12 +236,18 @@ export function useProjectCreateController({
       setLocation,
       setTaskProvider,
       setVisibility,
+      setPublicAccessRole,
+      setDefaultIssueSecurity,
       setRepositoryAddress,
       setToken,
       setAitableUrl,
       setMemberUserIds,
-      setAgentTeamIds,
-      setExecutionEnvironmentDeviceIds,
+      setAgentResourceIds,
+      setExecutionEnvironmentDeviceIds: (deviceIds: number[]) => {
+        executionEnvironmentSelectionChanged.current = true;
+        setExecutionEnvironmentDeviceIds(deviceIds);
+      },
+      setCollaborationGroupDraft,
       clearError: () => setError(null),
       submit,
     },

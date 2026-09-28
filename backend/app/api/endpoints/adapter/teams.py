@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -31,6 +30,7 @@ from app.schemas.team import (
     TeamUpdate,
 )
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.default_team import resolve_default_team
 from app.services.shared_team import shared_team_service
 from app.services.team_list_filters import (
     TeamModeFilter,
@@ -117,10 +117,6 @@ def list_teams(
     Each team item includes a `default_for_modes` field (list of mode names)
     indicating which modes this team is the default for (based on env config).
     """
-    api_start = time.time()
-    logger.info(
-        f"[list_teams] START user_id={current_user.id}, page={page}, limit={limit}, scope={scope}, group_name={group_name}"
-    )
 
     validate_team_list_groups(db, current_user.id, group_name, group_names)
     filters = build_team_list_filters(db, current_user.id, source_filter, mode)
@@ -140,7 +136,6 @@ def list_teams(
     default_config = _get_default_teams_config()
     items = _add_default_for_modes(items, default_config)
 
-    logger.info(f"[list_teams] TOTAL API took {time.time() - api_start:.3f}s")
     return {"total": total, "items": items}
 
 
@@ -161,6 +156,22 @@ def create_team(
     return team_kinds_service.create_with_user(
         db=db, obj_in=team_create, user_id=current_user.id, group_name=group_name
     )
+
+
+@router.get("/default")
+@trace_sync(span_name="teams.default", tracer_name="backend.teams")
+def get_default_team(
+    mode: Literal["chat", "code", "knowledge", "task"] = Query("chat"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the configured accessible default, or null when unavailable."""
+    defaults = _get_default_teams_config()
+    config = defaults.get(mode)
+    if config is None:
+        return None
+    team = resolve_default_team(db, user_id=current_user.id, mode=mode, **config)
+    return _add_default_for_modes([team], defaults)[0] if team else None
 
 
 @router.get("/{team_id}", response_model=TeamDetail)

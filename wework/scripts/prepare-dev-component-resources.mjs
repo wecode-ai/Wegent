@@ -3,13 +3,29 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { cp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
-import { CORE_PLUGIN_DIRECTORIES, corePluginTarget } from './lib/core-plugin-resources.mjs'
+import {
+  CORE_PLUGIN_DIRECTORIES,
+  INTERNAL_CORE_PLUGIN_MANIFEST,
+  INTERNAL_CORE_PLUGINS,
+  corePluginSource,
+  corePluginTarget,
+} from './lib/core-plugin-resources.mjs'
 import { materializeBundledPluginResources } from './lib/bundled-plugin-resources.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -30,17 +46,21 @@ async function replaceLink(source, destination) {
   const metadata = await stat(source)
   await mkdir(dirname(destination), { recursive: true })
   await rm(destination, { recursive: true, force: true })
-  const type =
-    process.platform === 'win32' && metadata.isDirectory()
-      ? 'junction'
-      : metadata.isDirectory()
-        ? 'dir'
-        : 'file'
-  await symlink(resolve(source), destination, type)
+  if (process.platform === 'win32' && !metadata.isDirectory()) {
+    await copyFile(resolve(source), destination)
+  } else {
+    const type =
+      process.platform === 'win32' && metadata.isDirectory()
+        ? 'junction'
+        : metadata.isDirectory()
+          ? 'dir'
+          : 'file'
+    await symlink(resolve(source), destination, type)
+  }
 }
 
 async function copyCorePlugin(weworkRoot, directory, destination) {
-  const source = join(weworkRoot, 'dsh', directory)
+  const source = corePluginSource(weworkRoot, directory)
   const appWebRoot = join(weworkRoot, 'dsh', 'app-wework', 'web')
   await cp(source, destination, {
     recursive: true,
@@ -102,6 +122,9 @@ export async function prepareDevelopmentComponentResources(options) {
   const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
   for (const directory of CORE_PLUGIN_DIRECTORIES) {
     await copyCorePlugin(weworkRoot, directory, join(corePluginsRoot, corePluginTarget(directory)))
+  }
+  if (INTERNAL_CORE_PLUGINS.length > 0) {
+    await cp(INTERNAL_CORE_PLUGIN_MANIFEST, join(corePluginsRoot, 'internal-plugins.json'))
   }
   const bundledPluginsRoot = join(resourcesRoot, 'bundled-plugins')
   await materializeBundledPluginResources(weworkRoot, bundledPluginsRoot)

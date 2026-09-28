@@ -1,0 +1,179 @@
+import type {
+  RequestUserInputResponse,
+  RequestUserInputPayload,
+  TurnFileChangesSummary,
+} from './runtime'
+import type {
+  WorkbenchProcessingBlock,
+  WorkbenchToolBlock as ToolBlock,
+} from './workbench-message-reducer'
+type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
+
+const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
+export const CODEX_IMPLEMENT_PLAN_QUESTION = '执行此计划?'
+export const CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL = '是的，执行此计划'
+const IMPLEMENT_PLAN_TEXT_MARKERS = ['实施此计划', '执行此计划']
+
+export function hasImplementationPlanText(text: string | null | undefined): boolean {
+  const normalizedText = text?.trim()
+  return Boolean(
+    normalizedText && IMPLEMENT_PLAN_TEXT_MARKERS.some(marker => normalizedText.includes(marker))
+  )
+}
+
+export type RequestUserInputBlock = ToolBlock & {
+  renderPayload: RequestUserInputPayload
+}
+
+export function requestUserInputPayloadKey(
+  payload: RequestUserInputPayload | null | undefined
+): string | null {
+  const requestId = payload?.requestId ?? payload?.request_id
+  if (requestId !== undefined && requestId !== null && String(requestId).trim()) {
+    return `request:${String(requestId)}`
+  }
+
+  const itemId = payload?.itemId ?? payload?.item_id
+  if (itemId !== undefined && itemId !== null && String(itemId).trim()) {
+    return `item:${String(itemId)}`
+  }
+
+  return null
+}
+
+export function requestUserInputResponseKey(response: RequestUserInputResponse): string | null {
+  const requestId = response.requestId ?? response.request_id
+  if (requestId !== undefined && requestId !== null && String(requestId).trim()) {
+    return `request:${String(requestId)}`
+  }
+
+  const itemId = response.itemId ?? response.item_id
+  if (itemId !== undefined && itemId !== null && String(itemId).trim()) {
+    return `item:${String(itemId)}`
+  }
+
+  return null
+}
+
+export function requestUserInputResponseText(response: RequestUserInputResponse): string {
+  const answers = Object.values(response.answers)
+    .flatMap(answer => answer.answers)
+    .map(answer => answer.trim())
+    .filter(Boolean)
+  return answers.length > 0 ? answers.join('\n') : '继续'
+}
+
+export function isImplementationPlanRequestUserInput(
+  payload: RequestUserInputPayload | null | undefined
+): boolean {
+  const questions = Array.isArray(payload?.questions) ? payload.questions : []
+  return questions.some(question => {
+    const id = question.id?.trim().toLowerCase()
+    const text = question.question?.trim()
+    if (id === 'implement') return true
+    if (hasImplementationPlanText(text)) return true
+    return question.options?.some(option => hasImplementationPlanText(option.label)) ?? false
+  })
+}
+
+export function isImplementationPlanConfirmationResponse(
+  response: RequestUserInputResponse | null | undefined
+): boolean {
+  const answers = response?.answers
+  if (!answers || typeof answers !== 'object') return false
+
+  return Object.values(answers).some(answer => {
+    if (!answer || typeof answer !== 'object') return false
+    const values = (answer as { answers?: unknown }).answers
+    if (!Array.isArray(values)) return false
+    return values.some(value => hasImplementationPlanText(String(value)))
+  })
+}
+
+export function isRequestUserInputBlock(block: ProcessingBlock): block is RequestUserInputBlock {
+  if (block.type !== 'tool') return false
+  return isRequestUserInputPayload(block.renderPayload)
+}
+
+export function isPendingRequestUserInputBlock(
+  block: ProcessingBlock,
+  hiddenRequestUserInputIds: ReadonlySet<string> = EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
+): block is RequestUserInputBlock {
+  if (!isRequestUserInputBlock(block)) return false
+  if (block.status === 'error') return false
+  if (hasRequestUserInputResponse(block.renderPayload)) return false
+  return !isHiddenRequestUserInputBlock(block, hiddenRequestUserInputIds)
+}
+
+export function isAnsweredRequestUserInputBlock(block: ProcessingBlock): boolean {
+  if (!isRequestUserInputBlock(block)) return false
+  return hasRequestUserInputResponse(block.renderPayload)
+}
+
+export function isHiddenRequestUserInputBlock(
+  block: ProcessingBlock,
+  hiddenRequestUserInputIds: ReadonlySet<string>
+): boolean {
+  if (!isRequestUserInputBlock(block)) return false
+  const key = requestUserInputPayloadKey(block.renderPayload)
+  return Boolean(key && hiddenRequestUserInputIds.has(key))
+}
+
+export function applyRequestUserInputResponseToBlock(
+  block: ProcessingBlock,
+  response: RequestUserInputResponse
+): ProcessingBlock {
+  const responseKey = requestUserInputResponseKey(response)
+  if (!isMatchingRequestUserInputBlock(block, responseKey)) return block
+  return {
+    ...block,
+    status: 'done',
+    renderPayload: {
+      ...block.renderPayload,
+      response,
+    },
+  }
+}
+
+/** A history refresh must not reopen a question already accepted by the runtime. */
+export function preserveRequestUserInputResponse(
+  local: ProcessingBlock,
+  snapshot: ProcessingBlock
+): ProcessingBlock {
+  if (!isRequestUserInputBlock(local) || !isRequestUserInputBlock(snapshot)) return snapshot
+  if (
+    requestUserInputPayloadKey(local.renderPayload) !==
+    requestUserInputPayloadKey(snapshot.renderPayload)
+  )
+    return snapshot
+  const response =
+    local.renderPayload.response ??
+    local.renderPayload.requestUserInputResponse ??
+    local.renderPayload.request_user_input_response
+  return response ? applyRequestUserInputResponseToBlock(snapshot, response) : snapshot
+}
+
+function isRequestUserInputPayload(value: unknown): value is RequestUserInputPayload {
+  return (
+    Boolean(value) &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as { kind?: unknown }).kind === 'request_user_input'
+  )
+}
+
+export function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
+  return Boolean(
+    payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
+  )
+}
+
+function isMatchingRequestUserInputBlock(
+  block: ProcessingBlock,
+  responseKey: string | null
+): block is RequestUserInputBlock {
+  if (!isPendingRequestUserInputBlock(block)) return false
+  if (!responseKey) return true
+  const payloadKey = requestUserInputPayloadKey(block.renderPayload)
+  return payloadKey === responseKey
+}

@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.health import probe_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -40,6 +41,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.logging import setup_logging
+from app.core.sdk_startup import preload_openai_sdk
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
@@ -197,6 +199,8 @@ async def _application_lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
+    # Load SDK resources before IM/background consumers can dispatch requests.
+    await asyncio.to_thread(preload_openai_sdk)
     from app.services.builtin_plugin_service import builtin_plugin_service
 
     # Every Backend process validates any plugins marked as required.
@@ -394,8 +398,6 @@ async def _application_lifespan(app: FastAPI):
 
     sio = get_sio()
     try:
-        import asyncio
-
         bind_socketio_loop(asyncio.get_running_loop())
     except RuntimeError:
         pass
@@ -432,11 +434,6 @@ async def _application_lifespan(app: FastAPI):
     )
 
     register_project_automation_task_completion_handler(event_bus)
-    from app.services.board_team_completion import (
-        register_board_team_completion_handler,
-    )
-
-    register_board_team_completion_handler(event_bus)
     logger.info("✓ Project automation task completion handler registered")
 
     # Register code wiki run completion handler. A version's outcome is normally
@@ -648,6 +645,11 @@ def create_app():
         redoc_url=redoc_url,
         lifespan=lifespan,
     )
+
+    # Keep frequent probes ahead of business routes. With an empty API prefix,
+    # the existing database-aware /health route must retain precedence.
+    if settings.API_PREFIX:
+        app.include_router(probe_router)
 
     logger = _logger
 
@@ -912,6 +914,8 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    if not settings.API_PREFIX:
+        app.include_router(probe_router)
 
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools
@@ -939,7 +943,7 @@ def create_socketio_asgi_app():
     Create combined ASGI app with Socket.IO mounted.
 
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
-    and everything else to FastAPI.
+    and everything else through registered distribution wrappers to FastAPI.
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
@@ -968,38 +972,18 @@ def create_socketio_asgi_app():
 
     socketio_app = create_socketio_app(sio)
 
+    # Distribution-specific WebSocket handlers wrap FastAPI before Socket.IO.
+    from app.core.asgi_extensions import wrap_asgi_app
+
+    wrapped_app = wrap_asgi_app(_fastapi_app)
+
     # Create combined ASGI app
     return socketio.ASGIApp(
         sio,
-        other_asgi_app=_fastapi_app,
+        other_asgi_app=wrapped_app,
         socketio_path="/socket.io",
     )
 
 
 # Combined ASGI app (Socket.IO + FastAPI)
 app = create_socketio_asgi_app()
-
-
-# Root path (registered on FastAPI app)
-@_fastapi_app.get("/")
-async def root():
-    """
-    Root path, returns API information
-    """
-    return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "api_prefix": settings.API_PREFIX,
-        "docs_url": f"{settings.API_PREFIX}/docs",
-        "socketio_path": "/socket.io",
-    }
-
-
-# Health check endpoint (registered on FastAPI app)
-@_fastapi_app.get("/health")
-async def health():
-    """
-    Health check endpoint for container orchestration and load balancers.
-    Returns a simple status indicating the service is running.
-    """
-    return {"status": "healthy"}

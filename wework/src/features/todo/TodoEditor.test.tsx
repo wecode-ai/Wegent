@@ -1,13 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
-import type {
-  CloudLoopItem,
-  CloudProject,
-  LoopItemTaskBinding,
-  WorkflowPlan,
-} from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 
@@ -83,6 +78,31 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('uses collaboration translations for runtime configuration notices', async () => {
+    const item = {
+      ...baseItem,
+      execution_id: 627,
+      execution_state: 'waiting_runtime',
+      assignee_agent_name: '检查智能体',
+    } as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        presentation="workspace-panel"
+      />
+    )
+
+    expect(await screen.findByText(/缺少设备或模型配置/)).toBeInTheDocument()
+    expect(screen.queryByText('runtimeSettings.executionBlocked')).not.toBeInTheDocument()
+    expect(screen.queryByText('runtimeSettings.ownerRequired')).not.toBeInTheDocument()
+  })
+
   it('preserves shared detail translation interpolation options', async () => {
     const deliveryApi = {
       ...api,
@@ -163,7 +183,7 @@ describe('TodoEditor external item sync', () => {
     expect(updateLoopItem).not.toHaveBeenCalled()
   })
 
-  it('uses the shared execution entry for an accessible Issue assigned to someone else', async () => {
+  it('does not add a manual execution entry to the Issue drawer', async () => {
     const onCreateTask = vi.fn()
     const assignedToSomeoneElse = {
       ...baseItem,
@@ -190,8 +210,36 @@ describe('TodoEditor external item sync', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
-    await userEvent.click(await screen.findByTestId('cloud-todo-create-task'))
-    expect(onCreateTask).toHaveBeenCalledWith()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
+  })
+
+  it('does not add a default-assistant execution entry to the Issue drawer', async () => {
+    const onCreateTask = vi.fn()
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={{ ...baseItem, project_store: 'local' }}
+        project={{ ...project, project_store: 'local' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        defaultAssistant={{
+          name: '本机助手',
+          description: '在“我的 Mac”上运行，使用设备当前可用能力',
+          capabilitySummary: '2 个插件 · 3 个 Skill · 本地文件与桌面操作',
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-default-assistant')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
   })
 
   it('keeps trusted local Issue editing enabled through an explicit local marker', async () => {
@@ -230,10 +278,15 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeInTheDocument()
 
     await user.clear(screen.getByTestId('cloud-todo-detail-title'))
-    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Local editable Issue')
+    await user.paste('Local editable Issue')
     await user.click(screen.getByTestId('cloud-todo-save'))
 
-    await vi.waitFor(() => expect(updateLoopItem).toHaveBeenCalled())
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        localItem.id,
+        expect.objectContaining({ title: 'Local editable Issue' })
+      )
+    )
   })
 
   it('renders local task bindings without waiting for independent remote directories', async () => {
@@ -272,14 +325,22 @@ describe('TodoEditor external item sync', () => {
         api={fastBindingsApi}
         projectChatAgentApi={projectChatAgentApi}
         teamApi={teamApi}
+        deviceNamesById={{ 'local-device': '开发设备' }}
+        selectedTaskId="local-task"
+        taskExecutionStates={{ '7': { status: 'running' } }}
         currentUserId={1}
       />
     )
 
     await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    expect(await screen.findByTestId('cloud-todo-open-task-conversation-7')).toHaveTextContent(
-      '立即显示的本地任务'
-    )
+    const taskRow = await screen.findByTestId('cloud-todo-open-task-conversation-7')
+    expect(taskRow).toHaveTextContent('立即显示的本地任务')
+    expect(taskRow).toHaveTextContent('开发设备')
+    expect(taskRow).toHaveTextContent('执行中')
+    expect(taskRow).toHaveTextContent('当前会话')
+    expect(taskRow).toHaveAttribute('data-selected', 'true')
+    expect(screen.getByTestId('cloud-todo-task-status-7')).toHaveAttribute('data-status', 'running')
+    expect(taskRow).not.toHaveTextContent('local-device')
   })
 
   it('shows board task bindings immediately while the detail refresh is pending', async () => {
@@ -427,6 +488,79 @@ describe('TodoEditor external item sync', () => {
     })
 
     expect(screen.queryByText('过期刷新结果')).not.toBeInTheDocument()
+  })
+
+  it('preserves loaded collaboration groups while the same Issue refreshes', async () => {
+    const pendingRefresh = deferred<never[]>()
+    const collaborationGroup = {
+      id: 'group-1',
+      name: '性能诊断协作小组',
+      members: [],
+      stages: [],
+    }
+    const listCollaborationGroups = vi
+      .fn()
+      .mockResolvedValueOnce([collaborationGroup])
+      .mockImplementationOnce(() => pendingRefresh.promise)
+    const sharedApi = {
+      projects: { listCollaborationGroups },
+      issues: { update: vi.fn(), assign: vi.fn() },
+      attachments: {
+        list: vi.fn(async () => []),
+        upload: vi.fn(),
+        read: vi.fn(),
+        download: vi.fn(),
+        remove: vi.fn(),
+      },
+      collaborators: {
+        list: vi.fn(async () => []),
+        add: vi.fn(),
+        remove: vi.fn(),
+      },
+      taskBindings: { list: vi.fn(async () => []) },
+      members: { list: vi.fn(async () => []) },
+      agents: { list: vi.fn(async () => []) },
+      deliveries: {
+        list: vi.fn(async () => []),
+        get: vi.fn(),
+      },
+    } as never
+    const renderEditor = (taskRefreshKey: number) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={{ ...project, access_role: 'Owner', collaboration_groups: [] }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        sharedApi={sharedApi}
+        taskRefreshKey={taskRefreshKey}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor(0))
+
+    await waitFor(() => expect(listCollaborationGroups).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    expect(
+      await screen.findByTestId('cloud-todo-detail-assignee-option-group:group-1')
+    ).toHaveTextContent('性能诊断协作小组')
+
+    view.rerender(renderEditor(1))
+
+    expect(listCollaborationGroups).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('cloud-todo-detail-assignee-option-group:group-1')).toHaveTextContent(
+      '性能诊断协作小组'
+    )
+
+    await act(async () => {
+      pendingRefresh.resolve([])
+      await pendingRefresh.promise
+    })
+    expect(
+      screen.queryByTestId('cloud-todo-detail-assignee-option-group:group-1')
+    ).not.toBeInTheDocument()
   })
 
   it('shows the automation provenance on a generated task', () => {
@@ -585,8 +719,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'user:5')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
     await user.click(
       screen.getByTestId(
         notify
@@ -650,8 +784,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '张三' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), '')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
@@ -709,8 +843,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await screen.findByRole('option', { name: '评审智能体' })
-    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'team:42')
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-team:42'))
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
@@ -719,352 +853,6 @@ describe('TodoEditor external item sync', () => {
         assigneeType: 'team',
         assigneeId: '42',
       })
-    })
-  })
-})
-
-describe('TodoEditor workflow plans', () => {
-  const managedItem = {
-    ...baseItem,
-    workflow: {
-      version: 1,
-      definition_version: 1,
-      stage_mode: 'none',
-      advancement_policy: 'ai',
-      approval_policy: 'required',
-      orchestration_status: 'awaiting_approval',
-      active_run_id: 'workflow-run-1',
-      active_plan_version: 1,
-      current_stage_id: null,
-      nodes: [],
-    },
-  } as unknown as CloudLoopItem
-  const awaitingApprovalPlan: WorkflowPlan = {
-    run_id: 'workflow-run-1',
-    issue_id: managedItem.id,
-    stage_id: '__issue__',
-    plan_version: 1,
-    approval_policy: 'required',
-    status: 'awaiting_approval',
-    summary: 'Stale plan',
-    items: [],
-    manager_run: null,
-  }
-
-  it('keeps a mutation result when an older plan request finishes later', async () => {
-    const stalePlanRequest = deferred<WorkflowPlan | null>()
-    const approvedPlan: WorkflowPlan = {
-      ...awaitingApprovalPlan,
-      status: 'running',
-      summary: 'Approved plan',
-    }
-    const workflowApi = {
-      listDeliveries: vi.fn(async () => ({ items: [] })),
-      listTaskBindings: vi.fn(async () => []),
-      listLoopItemAttachments: vi.fn(async () => []),
-      listLoopItemCollaborators: vi.fn(async () => []),
-      listCloudProjectMembers: vi.fn(async () => []),
-      getWorkflowPlan: vi.fn(() => stalePlanRequest.promise),
-      approveWorkflowPlan: vi.fn(async () => approvedPlan),
-      getLoopItem: vi.fn(async () => managedItem),
-    } as never
-
-    render(
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={managedItem}
-        project={project}
-        allItems={[managedItem]}
-        onUpdated={vi.fn()}
-        onClose={vi.fn()}
-        api={workflowApi}
-        currentUserId={1}
-      />
-    )
-
-    await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
-    await vi.waitFor(() =>
-      expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
-    )
-
-    await act(async () => {
-      stalePlanRequest.resolve(awaitingApprovalPlan)
-      await stalePlanRequest.promise
-    })
-
-    expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
-    expect(screen.getByTestId('cloud-todo-workflow-plan')).not.toHaveTextContent('Stale plan')
-  })
-
-  it('keeps a mutation error when an older plan request finishes later', async () => {
-    const stalePlanRequest = deferred<WorkflowPlan | null>()
-    const approvalRequest = deferred<WorkflowPlan>()
-    const workflowApi = {
-      listDeliveries: vi.fn(async () => ({ items: [] })),
-      listTaskBindings: vi.fn(async () => []),
-      listLoopItemAttachments: vi.fn(async () => []),
-      listLoopItemCollaborators: vi.fn(async () => []),
-      listCloudProjectMembers: vi.fn(async () => []),
-      getWorkflowPlan: vi.fn(() => stalePlanRequest.promise),
-      approveWorkflowPlan: vi.fn(() => approvalRequest.promise),
-    } as never
-
-    render(
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={managedItem}
-        project={project}
-        allItems={[managedItem]}
-        onUpdated={vi.fn()}
-        onClose={vi.fn()}
-        api={workflowApi}
-        currentUserId={1}
-      />
-    )
-
-    await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
-    await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
-    await vi.waitFor(() => expect(workflowApi.approveWorkflowPlan).toHaveBeenCalledTimes(1))
-
-    approvalRequest.reject(new Error('Plan approval failed'))
-    await vi.waitFor(() =>
-      expect(
-        screen.getByTestId('cloud-todo-workflow-error-summary').parentElement
-      ).toHaveTextContent('Plan approval failed')
-    )
-
-    await act(async () => {
-      stalePlanRequest.resolve(awaitingApprovalPlan)
-      await stalePlanRequest.promise
-    })
-
-    expect(screen.getByTestId('cloud-todo-workflow-error-summary').parentElement).toHaveTextContent(
-      'Plan approval failed'
-    )
-    expect(screen.getByTestId('cloud-todo-workflow-plan')).not.toHaveTextContent('Stale plan')
-  })
-
-  it('exposes a stable selector for the workflow error summary', async () => {
-    const failedPlan: WorkflowPlan = {
-      ...awaitingApprovalPlan,
-      status: 'failed',
-      summary: '',
-      manager_run: {
-        id: 'manager-run-1',
-        status: 'failed',
-        recent_activity: 'Failed',
-        error: 'no model or tool progress',
-        updated_at: '2026-08-21T00:00:00Z',
-      },
-    }
-    const workflowApi = {
-      listDeliveries: vi.fn(async () => ({ items: [] })),
-      listTaskBindings: vi.fn(async () => []),
-      listLoopItemAttachments: vi.fn(async () => []),
-      listLoopItemCollaborators: vi.fn(async () => []),
-      listCloudProjectMembers: vi.fn(async () => []),
-      getWorkflowPlan: vi.fn(async () => failedPlan),
-    } as never
-
-    render(
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={managedItem}
-        project={project}
-        allItems={[managedItem]}
-        onUpdated={vi.fn()}
-        onClose={vi.fn()}
-        api={workflowApi}
-        currentUserId={1}
-      />
-    )
-
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    expect(await screen.findByTestId('cloud-todo-workflow-error-summary')).toHaveTextContent(
-      '启动超时'
-    )
-  })
-})
-
-describe('TodoEditor workflow node actions', () => {
-  it('routes local automation execution through the shared issue detail port', async () => {
-    const workflowItem = {
-      ...baseItem,
-      workflow: {
-        version: 1,
-        definition_version: 1,
-        stage_mode: 'dag',
-        advancement_policy: 'manual',
-        nodes: [
-          {
-            id: 'implementation',
-            name: '实现',
-            depends_on: [],
-            required: true,
-            workspace_policy: 'composer',
-            automation_rule_id: 'automation-1',
-            status: 'ready',
-            task_ids: [],
-          },
-        ],
-      },
-    } as unknown as CloudLoopItem
-    const refreshedItem = {
-      ...workflowItem,
-      version: 2,
-      workflow: {
-        ...workflowItem.workflow!,
-        nodes: workflowItem.workflow!.nodes.map(node => ({ ...node, status: 'queued' as const })),
-      },
-    }
-    const localApi = {
-      ...api,
-      getLoopItem: vi.fn(async () => refreshedItem),
-    } as never
-    const runWorkflowNode = vi.fn(async () => ({
-      id: 'run-1',
-      projectId: '11',
-      automationId: 'automation-1',
-      status: 'queued',
-    }))
-    const onUpdated = vi.fn()
-
-    render(
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={workflowItem}
-        project={project}
-        allItems={[workflowItem]}
-        onUpdated={onUpdated}
-        onClose={vi.fn()}
-        api={localApi}
-        projectAutomationApi={{ runWorkflowNode } as never}
-        currentUserId={1}
-      />
-    )
-
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    await userEvent.click(await screen.findByTestId('cloud-todo-run-workflow-node-implementation'))
-
-    await vi.waitFor(() => {
-      expect(runWorkflowNode).toHaveBeenCalledWith('11', 'WEG-1', 'implementation', 'automation-1')
-      expect(localApi.getLoopItem).toHaveBeenCalledWith('WEG-1')
-      expect(onUpdated).toHaveBeenCalledWith(refreshedItem)
-    })
-  })
-
-  it('routes local deliverable completion and decision through the shared issue detail port', async () => {
-    const workflowItem = {
-      ...baseItem,
-      workflow: {
-        version: 1,
-        definition_version: 1,
-        stage_mode: 'dag',
-        advancement_policy: 'manual',
-        nodes: [
-          {
-            id: 'review',
-            name: '评审',
-            depends_on: [],
-            required: true,
-            workspace_policy: 'composer',
-            automation_rule_id: 'automation-1',
-            status: 'awaiting_approval',
-            task_ids: ['device-1:task-1'],
-            required_deliverables: [
-              {
-                id: 'summary',
-                name: '评审结论',
-                description: '',
-                value_type: 'text',
-              },
-            ],
-            fulfilled_deliverable_ids: [],
-          },
-        ],
-      },
-    } as unknown as CloudLoopItem
-    const refreshedItem = {
-      ...workflowItem,
-      version: 2,
-    }
-    const createDelivery = vi.fn(async () => ({ id: 'delivery-1' }))
-    const finalizeDelivery = vi.fn(async () => ({ id: 'delivery-1' }))
-    const decideWorkflowNode = vi.fn(async () => refreshedItem)
-    const localApi = {
-      ...api,
-      listTaskBindings: vi.fn(async () => [
-        {
-          id: 1,
-          cloud_project_id: '11',
-          loop_item_id: 'WEG-1',
-          task_user_id: 7,
-          device_id: 'device-1',
-          task_id: 'task-1',
-          task_title: 'Review',
-          backend_task_id: null,
-          workflow_node_id: 'review',
-          linked_at: '2026-09-11T00:00:00Z',
-        },
-      ]),
-      createDelivery,
-      finalizeDelivery,
-      discardDraft: vi.fn(async () => undefined),
-      decideWorkflowNode,
-      getLoopItem: vi.fn(async () => refreshedItem),
-    } as never
-    const onUpdated = vi.fn()
-    const user = userEvent.setup()
-
-    render(
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={workflowItem}
-        project={project}
-        allItems={[workflowItem]}
-        onUpdated={onUpdated}
-        onClose={vi.fn()}
-        api={localApi}
-        currentUserId={7}
-      />
-    )
-
-    await user.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
-    await user.click(await screen.findByTestId('cloud-todo-approve-workflow-node-review'))
-    const deliverable = screen.getByTestId('workflow-deliverable-input-summary')
-    await user.type(deliverable.querySelector('textarea')!, '通过共享流程完成')
-    await user.click(screen.getByTestId('workflow-stage-completion-submit'))
-
-    await vi.waitFor(() => {
-      expect(createDelivery).toHaveBeenCalledWith(
-        'WEG-1',
-        expect.objectContaining({
-          source_task: expect.objectContaining({
-            deviceId: 'device-1',
-            taskId: 'task-1',
-          }),
-        })
-      )
-      expect(finalizeDelivery).toHaveBeenCalledWith('delivery-1', {
-        fulfillments: [
-          {
-            requirement_id: 'summary',
-            kind: 'text',
-            text: '通过共享流程完成',
-          },
-        ],
-      })
-      expect(decideWorkflowNode).toHaveBeenCalledWith('WEG-1', 'review', 'approve', '', 7)
-      expect(localApi.getLoopItem).toHaveBeenCalledWith('WEG-1')
-      expect(onUpdated).toHaveBeenCalledWith(refreshedItem)
     })
   })
 })
@@ -1145,6 +933,39 @@ describe('TodoEditor assignment chain', () => {
 })
 
 describe('TodoEditor status history', () => {
+  it('shows status changes in the collaboration drawer timeline without a duplicate popover', async () => {
+    const item = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'pending',
+          from_status_name: '待处理',
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'user_update',
+          by_user_id: null,
+          at: '2026-08-01T10:00:00Z',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="edit"
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        presentation="workspace-panel"
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-task-status-event-0')).toHaveTextContent('待处理')
+    expect(screen.getByTestId('cloud-task-status-event-0')).toHaveTextContent('进行中')
+    expect(screen.queryByTestId('cloud-todo-status-history-trigger')).not.toBeInTheDocument()
+  })
+
   it('shows status history in a popover triggered next to the status', async () => {
     const user = userEvent.setup()
     const historyItem = {
@@ -1273,6 +1094,378 @@ describe('TodoEditor status history', () => {
 })
 
 describe('TodoEditor create parent resolution', () => {
+  it('keeps assignee management actions visible while search filters options', async () => {
+    const user = userEvent.setup()
+    const onAddAssigneeMember = vi.fn()
+    const onAddAssigneeAgent = vi.fn()
+    const createApi = {
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        onAddAssigneeMember={onAddAssigneeMember}
+        onAddAssigneeAgent={onAddAssigneeAgent}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.type(screen.getByTestId('cloud-todo-create-assignee-search'), 'missing')
+
+    expect(screen.getByText('没有匹配的负责人')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-create-assignee-add-member')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-create-assignee-add-agent')).toBeVisible()
+    expect(screen.getByRole('listbox', { name: '负责人' })).not.toContainElement(
+      screen.getByTestId('cloud-todo-create-assignee-add-member')
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee-add-member'))
+    expect(onAddAssigneeMember).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('cloud-todo-create-assignee-menu')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(screen.getByTestId('cloud-todo-create-assignee-add-agent'))
+    expect(onAddAssigneeAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { mode: 'create' as const, accessRole: 'Developer' },
+    { mode: 'create' as const, accessRole: 'Reporter' },
+    { mode: 'edit' as const, accessRole: 'Owner' },
+  ])('hides assignee management actions outside authorized creation: %j', async values => {
+    const user = userEvent.setup()
+    render(
+      values.mode === 'create' ? (
+        <TodoEditor
+          mode="create"
+          project={{ ...project, access_role: values.accessRole }}
+          initialParent={null}
+          initialStatus="inbox"
+          allItems={[]}
+          onCreated={vi.fn()}
+          onClose={vi.fn()}
+          onAddAssigneeMember={vi.fn()}
+          onAddAssigneeAgent={vi.fn()}
+          api={api}
+          currentUserId={1}
+        />
+      ) : (
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={{ ...project, access_role: values.accessRole }}
+          allItems={[baseItem]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          onAddAssigneeMember={vi.fn()}
+          onAddAssigneeAgent={vi.fn()}
+          api={api}
+          currentUserId={1}
+        />
+      )
+    )
+
+    const trigger = screen.getByTestId(
+      values.mode === 'create' ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'
+    )
+    if (!trigger.hasAttribute('disabled')) await user.click(trigger)
+
+    expect(screen.queryByTestId('cloud-todo-create-assignee-add-member')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-create-assignee-add-agent')).not.toBeInTheDocument()
+  })
+
+  it('creates a human-assigned Issue atomically without a follow-up assignment', async () => {
+    const user = userEvent.setup()
+    const createLoopItem = vi.fn(async () => ({
+      ...baseItem,
+      assignee_user_id: 7,
+      assignee_agent_id: null,
+      version: 1,
+    }))
+    const assignLoopItem = vi.fn()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      createLoopItem,
+      assignLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-create-assignee-option-user:7'))
+    await user.click(screen.getByTestId('wework-assignment-notify-confirm'))
+    await user.type(screen.getByTestId('cloud-todo-title'), 'Human-owned Issue')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createLoopItem).toHaveBeenCalledWith('11', {
+        title: 'Human-owned Issue',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+        assignee_user_id: 7,
+        notify_assignee: true,
+      })
+    })
+    expect(assignLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('lists project collaboration groups and assigns the created task to the selected group', async () => {
+    const user = userEvent.setup()
+    const createLoopItem = vi.fn(async () => ({ ...baseItem, version: 1 }))
+    const updateLoopItem = vi.fn(async (_id, values) => ({
+      ...baseItem,
+      ...values,
+      assignee_group_name: '项目协作小组',
+      version: 2,
+    }))
+    const assignLoopItem = vi.fn()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem,
+      updateLoopItem,
+      assignLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={
+          {
+            ...project,
+            access_role: 'Owner',
+            collaboration_groups: [
+              {
+                id: 'group-1',
+                name: '项目协作小组',
+              },
+            ],
+            execution_environment: {
+              repositories: [],
+              setup_steps: [],
+              devices: {
+                'local-device': {
+                  status: 'ready',
+                  workspace_path: '/workspace/project',
+                  prepared_at: '2026-09-26T00:00:00Z',
+                  error: '',
+                },
+              },
+            },
+          } as CloudProject
+        }
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const groupOption = await screen.findByTestId('cloud-todo-create-assignee-option-group:group-1')
+    expect(groupOption).toHaveTextContent('项目协作小组')
+    await user.click(groupOption)
+    await user.type(screen.getByTestId('cloud-todo-title'), '交给协作小组')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+        version: 1,
+        assignee_group_id: 'group-1',
+      })
+    })
+    expect(assignLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('blocks AI assignment before creation when the execution environment is not initialized', async () => {
+    const user = userEvent.setup()
+    const createLoopItem = vi.fn()
+    const updateLoopItem = vi.fn()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={
+          {
+            ...project,
+            access_role: 'Owner',
+            collaboration_groups: [{ id: 'group-1', name: '项目协作小组' }],
+            execution_environment: {
+              repositories: [],
+              setup_steps: [],
+              devices: {},
+            },
+          } as CloudProject
+        }
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-create-assignee-option-group:group-1'))
+    await user.type(screen.getByTestId('cloud-todo-title'), '交给协作小组')
+
+    expect(
+      screen.getByTestId('cloud-todo-create-execution-environment-required')
+    ).toHaveTextContent('请先在项目设置中初始化环境')
+    expect(screen.getByTestId('cloud-todo-create-confirm')).toBeDisabled()
+    expect(createLoopItem).not.toHaveBeenCalled()
+    expect(updateLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('restores the assignee and notification choice before atomic creation', async () => {
+    const user = userEvent.setup()
+    const attachment = new File(['draft context'], 'draft-context.txt', { type: 'text/plain' })
+    const createLoopItem = vi.fn(async () => ({
+      ...baseItem,
+      assignee_user_id: 7,
+      assignee_agent_id: null,
+      version: 1,
+    }))
+    const assignLoopItem = vi.fn()
+    const addLoopItemAttachment = vi.fn(async () => ({
+      id: 'draft-attachment',
+      loop_item_id: baseItem.id,
+      display_name: attachment.name,
+      content_type: attachment.type,
+      size_bytes: attachment.size,
+      sha256: 'draft-hash',
+      created_by_user_id: 1,
+      created_at: '2026-09-21T00:00:00Z',
+      markdown_url: 'wegent://attachments/draft-attachment',
+      markdown: '',
+    }))
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      createLoopItem,
+      assignLoopItem,
+      addLoopItemAttachment,
+    } as never
+    const editor = (
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+    const firstView = render(editor)
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-create-assignee-option-user:7'))
+    await user.click(screen.getByTestId('wework-assignment-notify-confirm-cancel-button'))
+    await user.type(screen.getByTestId('cloud-todo-title'), 'Restored human owner')
+    await user.upload(screen.getByTestId('cloud-todo-attachment-input'), attachment)
+    expect(screen.getByText('draft-context.txt')).toBeInTheDocument()
+    await vi.waitFor(() => {
+      expect(localStorage.getItem('wework-todo-draft:11:inbox')).toContain('"user:7"')
+    })
+    firstView.unmount()
+
+    render(editor)
+    expect(screen.getByTestId('cloud-todo-title')).toHaveValue('Restored human owner')
+    expect(screen.getByTestId('cloud-todo-create-assignee')).toHaveAttribute('data-value', 'user:7')
+    expect(screen.getByText('draft-context.txt')).toBeInTheDocument()
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createLoopItem).toHaveBeenCalledWith('11', {
+        title: 'Restored human owner',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+        assignee_user_id: 7,
+        notify_assignee: false,
+      })
+    })
+    expect(assignLoopItem).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(addLoopItemAttachment).toHaveBeenCalledWith(baseItem.id, attachment)
+      expect(localStorage.getItem('wework-todo-draft:11:inbox')).toBeNull()
+    })
+  })
   it('keeps Wegent Teams available when the member directory fails', async () => {
     const createApi = {
       listCloudProjectMembers: vi.fn(async () => {
@@ -1294,7 +1487,7 @@ describe('TodoEditor create parent resolution', () => {
     render(
       <TodoEditor
         mode="create"
-        project={project}
+        project={{ ...project, access_role: 'Owner' }}
         initialParent={null}
         initialStatus="inbox"
         allItems={[]}
@@ -1306,7 +1499,132 @@ describe('TodoEditor create parent resolution', () => {
       />
     )
 
-    expect(await screen.findByRole('option', { name: '评审智能体' })).toHaveValue('team:42')
+    await userEvent.click(screen.getByTestId('cloud-todo-create-assignee'))
+    expect(
+      await screen.findByTestId('cloud-todo-create-assignee-option-team:42')
+    ).toHaveTextContent('评审智能体')
+  })
+
+  it('searches assignees and parent issues before selecting them', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+        {
+          id: 8,
+          user_id: 8,
+          user_name: 'Bob',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+    } as never
+    const release = {
+      ...baseItem,
+      id: 'WEG-20',
+      title: 'Release checklist',
+    } as unknown as CloudLoopItem
+    const onboarding = {
+      ...baseItem,
+      id: 'WEG-21',
+      title: 'Onboarding',
+    } as unknown as CloudLoopItem
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[release, onboarding]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={7}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const assigneeSearch = screen.getByTestId('cloud-todo-create-assignee-search')
+    expect(assigneeSearch).toHaveFocus()
+    await user.type(assigneeSearch, 'ali')
+    expect(await screen.findByRole('option', { name: 'Alice' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'Bob' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Alice' }))
+    expect(screen.getByTestId('cloud-todo-create-assignee')).toHaveAttribute('data-value', 'user:7')
+
+    await user.click(screen.getByTestId('cloud-todo-create-parent'))
+    const parentSearch = screen.getByTestId('cloud-todo-create-parent-search')
+    expect(parentSearch).toHaveFocus()
+    await user.type(parentSearch, 'release')
+    expect(screen.getByRole('option', { name: 'WEG-20 · Release checklist' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'WEG-21 · Onboarding' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'WEG-20 · Release checklist' }))
+    expect(screen.getByTestId('cloud-todo-create-parent')).toHaveAttribute('data-value', 'WEG-20')
+  })
+
+  it('keeps the assignee search focused while its options finish loading', async () => {
+    const user = userEvent.setup()
+    const members = deferred<
+      Array<{
+        id: number
+        user_id: number
+        user_name: string
+        email: null
+        role: string
+      }>
+    >()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(() => members.promise),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={{ ...project, access_role: 'Owner' }}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={7}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-create-assignee'))
+    const search = screen.getByTestId('cloud-todo-create-assignee-search')
+    expect(search).toHaveFocus()
+
+    await act(async () => {
+      members.resolve([
+        {
+          id: 7,
+          user_id: 7,
+          user_name: 'Alice',
+          email: null,
+          role: 'Developer',
+        },
+      ])
+      await members.promise
+    })
+
+    expect(await screen.findByRole('option', { name: 'Alice' })).toBeVisible()
+    expect(search).toHaveFocus()
   })
 
   it('drops a parent that no longer exists and creates a top-level task', async () => {
@@ -1451,9 +1769,6 @@ describe('TodoEditor shared attachments', () => {
       taskBindings: {
         list: vi.fn(async () => []),
       },
-      workflowPlans: {
-        get: vi.fn(async () => null),
-      },
       members: {
         list: vi.fn(async () => []),
       },
@@ -1521,9 +1836,6 @@ describe('TodoEditor shared attachments', () => {
       },
       taskBindings: {
         list: vi.fn(async () => []),
-      },
-      workflowPlans: {
-        get: vi.fn(async () => null),
       },
       members: {
         list: vi.fn(async () => []),

@@ -1,0 +1,82 @@
+[
+  [
+    {
+      "id": 7,
+      "task_id": 2,
+      "inherited": false,
+      "origin_task_id": 2,
+      "origin_subtask_id": 7,
+      "team_id": null,
+      "title": null,
+      "bot_ids": [
+        3,
+        1,
+        3,
+        "1",
+        null
+      ],
+      "role": "ASSISTANT",
+      "prompt": null,
+      "executor_namespace": null,
+      "executor_name": null,
+      "message_id": 1,
+      "parent_id": null,
+      "status": "COMPLETED",
+      "progress": 0,
+      "result": null,
+      "error_message": null,
+      "user_id": 1,
+      "created_at": null,
+      "updated_at": null,
+      "completed_at": null,
+      "bots": [],
+      "contexts": [],
+      "attachments": [],
+      "sender_type": null,
+      "sender_user_id": null,
+      "sender_user_name": null,
+      "reply_to_subtask_id": null
+    }
+  ],
+  [
+    {
+      "id": 7,
+      "task_id": 2,
+      "inherited": true,
+      "origin_task_id": 2,
+      "origin_subtask_id": 7,
+      "team_id": 0,
+      "title": "",
+      "bot_ids": [
+        3,
+        1,
+        3,
+        "1",
+        null
+      ],
+      "role": "ASSISTANT",
+      "prompt": "",
+      "executor_namespace": "",
+      "executor_name": "",
+      "message_id": 1,
+      "parent_id": 0,
+      "status": "COMPLETED",
+      "progress": 0,
+      "result": {
+        "value": ""
+      },
+      "error_message": "",
+      "user_id": 1,
+      "created_at": null,
+      "updated_at": null,
+      "completed_at": null,
+      "bots": [],
+      "contexts": [],
+      "attachments": [],
+      "sender_type": "",
+      "sender_user_id": 0,
+      "sender_user_name": null,
+      "reply_to_subtask_id": 0
+    }
+  ]
+]

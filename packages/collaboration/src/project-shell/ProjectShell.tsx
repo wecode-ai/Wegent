@@ -203,6 +203,7 @@ export function ProjectShell({
       <header
         ref={headerRef}
         data-testid="cloud-project-header"
+        data-board-cursor-policy={boardView ? "arrow" : undefined}
         className={`relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6 ${
           !embedded && sidebarCollapsed ? "pl-[240px]" : "pl-6"
         }`}

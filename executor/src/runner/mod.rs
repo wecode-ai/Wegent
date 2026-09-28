@@ -11,6 +11,8 @@ use std::{
 
 use tokio::{sync::oneshot, task::JoinHandle};
 
+pub(crate) mod streaming;
+
 use crate::{
     agent_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
@@ -23,6 +25,11 @@ pub trait AgentEngine: Clone + Send + Sync + 'static {
     type RunFuture: Future<Output = ExecutionOutcome> + Send + 'static;
 
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture;
+
+    /// Release a suspended interaction after its execution callback has completed.
+    fn cancel_pending(&self, _task_id: &str, _subtask_id: Option<&str>) -> Option<EventEnvelope> {
+        None
+    }
 
     fn run_with_events<S>(
         &self,
@@ -162,6 +169,7 @@ where
     ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         let handles = Arc::clone(&self.handles);
         let sink = self.sink.clone();
+        let engine = self.engine.clone();
         Box::pin(async move {
             let mut fields = task_fields(&task_id, subtask_id.as_deref().unwrap_or(""));
             log_executor_event("task cancellation requested", &fields);
@@ -174,6 +182,9 @@ where
                 key.and_then(|key| guard.remove(&key))
             };
             let Some(state) = state else {
+                if let Some(event) = engine.cancel_pending(&task_id, subtask_id.as_deref()) {
+                    return sink.send(event).await.is_ok();
+                }
                 fields.push(("result", "not_running".to_owned()));
                 log_executor_event("task cancellation skipped", &fields);
                 return false;
@@ -191,6 +202,7 @@ where
                     fields.push(("abort_error", truncate_for_log(&error.to_string())));
                 }
             }
+            engine.cancel_pending(&task_id, subtask_id.as_deref());
             log_executor_event("task execution stop confirmed", &fields);
             fields.push(("callback_event", "response.incomplete".to_owned()));
             match sink

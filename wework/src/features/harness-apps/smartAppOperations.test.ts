@@ -3,6 +3,7 @@ import type { HarnessAppInstallation, HarnessAppPreview } from '@/api/local/harn
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import {
+  beginSmartAppPublication,
   importSmartAppPackage,
   installMarketplaceSmartApp,
   prepareMarketplaceSmartApp,
@@ -47,6 +48,7 @@ const preview = {
 
 const installation = {
   id: 'installed-research',
+  state: 'installed',
   manifest: preview.manifest,
   source: 'market',
 } as HarnessAppInstallation
@@ -224,4 +226,48 @@ describe('smart app operations', () => {
     ])
     events.stop()
   })
+  test('reports a resolved failed installation as confirmation failure', async () => {
+    mocks.install.mockResolvedValue({ ...installation, state: 'failed' })
+    const events = collectOperationResults()
+    try {
+      const result = await importSmartAppPackage('/private/workbench.zip')
+      expect(result.state).toBe('failed')
+      expect(events.results).toEqual([
+        expect.objectContaining({
+          key: 'smart_app.zip_import',
+          outcome: 'failed',
+          failureStage: 'confirm',
+        }),
+      ])
+    } finally {
+      events.stop()
+    }
+  })
+  test.each(['published', 'rejected', 'pending'] as const)(
+    'separates publication acceptance from %s',
+    status => {
+      const events = collectOperationResults()
+      try {
+        const attempt = beginSmartAppPublication()
+        const result = { submission: { status } } as Parameters<typeof attempt.submitted>[0]
+        attempt.submitted(result)
+        attempt.submitted(result)
+        attempt.fail()
+        expect(events.results).toEqual([
+          { key: 'smart_app.publish_request', outcome: 'succeeded' },
+          ...(status === 'pending'
+            ? []
+            : [
+                {
+                  key: 'smart_app.publish',
+                  outcome: status === 'published' ? 'succeeded' : 'failed',
+                  ...(status === 'rejected' ? { failureStage: 'confirm' } : {}),
+                },
+              ]),
+        ])
+      } finally {
+        events.stop()
+      }
+    }
+  )
 })

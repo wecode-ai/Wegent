@@ -5,13 +5,6 @@
  * npm packages may use. This file provides polyfills for those features.
  */
 
-// Type declarations for polyfills
-declare global {
-  interface ObjectConstructor {
-    hasOwn?(obj: object, prop: PropertyKey): boolean
-  }
-}
-
 if (typeof window !== 'undefined') {
   // Object.hasOwn polyfill (ES2022)
   // Used by many modern libraries for property checking

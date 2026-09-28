@@ -239,18 +239,18 @@ class TestImageGenerationConfig:
         assert config.max_images == 8
         assert config.watermark is True
 
-    def test_extra_fields_ignored(self):
-        """Test that extra fields are ignored (default Pydantic behavior)."""
+    def test_extra_fields_preserved(self):
+        """Test that future image configuration fields round-trip."""
         from app.schemas.generation import ImageGenerationConfig
 
-        # Extra fields should be ignored by default
         config = ImageGenerationConfig(
             size="2K",
-            unknown_field="value",  # This should be ignored
+            unknown_field="value",
         )
 
         assert config.size == "2K"
-        assert not hasattr(config, "unknown_field")
+        assert config.unknown_field == "value"
+        assert config.model_dump()["unknown_field"] == "value"
 
 
 class TestVideoGenerationConfig:

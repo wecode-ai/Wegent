@@ -1,10 +1,7 @@
 import type { NativeWorkspacePath } from '@/lib/native-workspace-path-picker'
 import type { ResolvedWorkspacePathTransfer } from '@/lib/workspace-path-transfer'
-import { createComposerPathReference } from './composerMentions'
-
-export function workspacePathReferenceText(entries: NativeWorkspacePath[]): string {
-  return entries.map(entry => createComposerPathReference(entry.path, entry.isDirectory)).join(' ')
-}
+import { workspacePathReferenceText } from '@wegent/collaboration/composer'
+export { workspacePathReferenceText } from '@wegent/collaboration/composer'
 
 export function appendWorkspacePathReferences(
   value: string,

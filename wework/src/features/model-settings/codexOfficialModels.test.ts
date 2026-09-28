@@ -27,14 +27,17 @@ describe('codexOfficialModels', () => {
     ])
   })
 
-  test('maps requested picker names in the fixed product order', () => {
+  test('maps known picker names in product order and keeps unknown models available', () => {
     const modelIds = [
+      'future-codex-model',
       'gpt-5.3-codex-spark',
       'gpt-5.4-mini',
       'gpt-5.4',
       'gpt-5.6-luna',
       'gpt-5.6-terra',
       'gpt-5.6-sol',
+      'gpt-6-luna',
+      'gpt-6-sol',
       'gpt-5.5',
       'gpt-6-astra',
     ]
@@ -58,6 +61,8 @@ describe('codexOfficialModels', () => {
 
     expect(result.models.map(model => codexModelPickerLabel(model.modelId))).toEqual([
       'GPT-6 Astra',
+      'GPT-6 Sol',
+      'GPT-6 Luna',
       'GPT 5.6 Sol',
       'GPT 5.6 Terra',
       'GPT 5.6 Luna',
@@ -65,13 +70,15 @@ describe('codexOfficialModels', () => {
       'GPT 5.4',
       'GPT 5.4 Mini',
       'GPT 5.3 Codex Spark',
+      'future-codex-model',
     ])
   })
 
-  test('matches the ChatGPT official picker instead of exposing every model/list entry', () => {
+  test('accepts visible Codex models dynamically while excluding hidden legacy entries', () => {
     const result = normalizeCodexOfficialModelList({
       data: [
-        { model: 'gpt-5.2' },
+        { model: 'future-codex-model' },
+        { model: 'gpt-5.2', hidden: true },
         { model: 'gpt-5.3-codex-spark' },
         { model: 'gpt-5.4-mini' },
         { model: 'gpt-5.4' },
@@ -79,12 +86,16 @@ describe('codexOfficialModels', () => {
         { model: 'gpt-5.6-luna' },
         { model: 'gpt-5.6-terra' },
         { model: 'gpt-5.6-sol' },
+        { model: 'gpt-6-luna' },
+        { model: 'gpt-6-sol' },
         { model: 'gpt-6-astra', hidden: true },
       ],
     })
 
     expect(result.models.map(model => model.modelId)).toEqual([
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -92,6 +103,7 @@ describe('codexOfficialModels', () => {
       'gpt-5.4',
       'gpt-5.4-mini',
       'gpt-5.3-codex-spark',
+      'future-codex-model',
     ])
   })
 

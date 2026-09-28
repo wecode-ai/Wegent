@@ -4,18 +4,33 @@
 
 import type {
   CollaborationPlatformLocation,
+  CollaborationPlatformRootView,
   CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 
+const ROOT_PATHS: Record<CollaborationPlatformRootView, string> = {
+  home: '/collaboration',
+  agents: '/collaboration/agents',
+  teams: '/collaboration/teams',
+  devices: '/collaboration/devices',
+  'my-work': '/collaboration/my-work',
+  inbox: '/collaboration/inbox',
+  runs: '/collaboration/runs',
+}
+
+export function collaborationRootViewForPath(
+  pathname: string
+): CollaborationPlatformRootView | null {
+  return (
+    (Object.keys(ROOT_PATHS) as CollaborationPlatformRootView[]).find(
+      view => ROOT_PATHS[view] === pathname
+    ) ?? null
+  )
+}
+
 export function collaborationLocationPath(location: CollaborationPlatformLocation): string {
   if (!location.workspaceId) {
-    const rootPath = {
-      home: '/collaboration',
-      'my-work': '/collaboration/my-work',
-      inbox: '/collaboration/inbox',
-      runs: '/collaboration/runs',
-    } as const
-    return rootPath[location.rootView ?? 'home']
+    return ROOT_PATHS[location.rootView ?? 'home']
   }
   const workspaceBase = `/collaboration/workspaces/${encodeURIComponent(location.workspaceId)}`
   if (!location.projectId) {

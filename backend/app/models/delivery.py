@@ -158,13 +158,6 @@ class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
     @property
-    def visibility(self) -> str:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return "private"
-        return "public" if metadata.get("visibility") == "public" else "private"
-
-    @property
     def tags(self) -> list[str]:
         """Project-level tag registry stored inside the metadata JSON column."""
         metadata = self.metadata_json
@@ -261,13 +254,13 @@ class ProjectAutomationRun(LoopNode):
 
 
 class ProjectWorkflowRun(LoopNode):
-    """One durable AI planning attempt for an Issue."""
+    """Persisted legacy workflow run rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_run"}
 
 
 class ProjectWorkflowPlanItem(LoopNode):
-    """One proposed concrete child task in a workflow plan version."""
+    """Persisted legacy workflow plan rows retained for polymorphic loading."""
 
     __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
 
@@ -311,6 +304,29 @@ class LoopItemTaskBinding(LoopNode):
         value = metadata.get("workflow_node_id")
         return value if isinstance(value, str) and value else None
 
+    def _metadata_text(self, key: str) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def human_assignment_id(self) -> str | None:
+        return self._metadata_text("human_assignment_id")
+
+    @property
+    def dispatch_id(self) -> str | None:
+        return self._metadata_text("dispatch_id")
+
+    @property
+    def dispatch_round_id(self) -> str | None:
+        return self._metadata_text("dispatch_round_id")
+
+    @property
+    def assignment_id(self) -> str | None:
+        return self._metadata_text("assignment_id")
+
     @property
     def change_requests(self) -> list[dict[str, object]]:
         metadata = self.metadata_json
@@ -324,6 +340,12 @@ class LoopItemTaskBinding(LoopNode):
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("linked_at", func.now())
         super().__init__(**kwargs)
+
+
+class WorkspaceCleanupIntent(LoopNode):
+    """Durable Issue lifecycle intent addressed to one Executor."""
+
+    __mapper_args__ = {"polymorphic_identity": "workspace_cleanup"}
 
 
 class CloudProjectFile(LoopNode):

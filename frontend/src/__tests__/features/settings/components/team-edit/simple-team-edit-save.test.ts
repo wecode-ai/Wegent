@@ -32,6 +32,7 @@ const botForm: SimpleBotFormValue = {
   modelType: 'public',
   modelNamespace: 'default',
   prompt: 'Answer clearly.',
+  inheritBaseCapabilities: true,
   selectedSkills: ['repo-reader'],
   selectedSkillRefs: {},
   availableSkills: skills,
@@ -71,6 +72,8 @@ describe('simple team edit save helpers', () => {
         bind_model_type: 'public',
       },
       system_prompt: 'Answer clearly.',
+      inherit_base_capabilities: true,
+      capability_mode: 'manual',
       mcp_servers: {},
       default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
       skills: ['repo-reader'],
@@ -125,6 +128,20 @@ describe('simple team edit save helpers', () => {
         url: 'https://example.com/mcp',
       },
     })
+    expect(request.capability_mode).toBe('manual')
+  })
+
+  it('follows the device only when no fixed capability is configured', () => {
+    const request = buildSimpleBotRequest(
+      {
+        ...botForm,
+        inheritBaseCapabilities: false,
+        selectedSkills: [],
+      },
+      'support-agent'
+    )
+
+    expect(request.capability_mode).toBe('follow_device')
   })
 
   it('builds a solo team request with a leader bot and input placeholder', () => {

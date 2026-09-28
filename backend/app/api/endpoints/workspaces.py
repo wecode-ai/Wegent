@@ -38,8 +38,12 @@ from app.schemas.workspace import (
     WorkspaceUpdate,
 )
 from app.services.cloud_projects import cloud_project_service
+from app.services.cloud_projects.responses import (
+    list_project_responses,
+)
+from app.services.cloud_projects.responses import project_response as _project_response
 from app.services.workspaces import workspace_service
-from app.services.workspaces.storage import workspace_id_for_project
+from app.services.workspaces.responses import list_workspace_responses
 
 router = APIRouter()
 resources_router = APIRouter()
@@ -56,23 +60,6 @@ def _response(
             **workspace.__dict__,
             "access_role": role,
             **workspace_service.summary_counts(db, int(workspace.id)),
-        }
-    )
-
-
-def _project_response(
-    db: Session,
-    project: object,
-    current_user: User,
-) -> CloudProjectResponse:
-    access = cloud_project_service.access(db, int(project.id), current_user.id)
-    return CloudProjectResponse.model_validate(
-        {
-            **project.__dict__,
-            "workspace_id": workspace_id_for_project(db, project.id),
-            "current_user_id": current_user.id,
-            "current_user_name": current_user.user_name,
-            "access_role": access.role,
         }
     )
 
@@ -102,12 +89,7 @@ def list_workspaces(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceListResponse:
-    return WorkspaceListResponse(
-        items=[
-            _response(db, workspace, current_user)
-            for workspace in workspace_service.list_accessible(db, current_user.id)
-        ]
-    )
+    return WorkspaceListResponse(items=list_workspace_responses(db, current_user.id))
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
@@ -427,13 +409,8 @@ def list_workspace_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectListResponse:
-    projects = cloud_project_service.list_accessible(
-        db,
-        current_user.id,
-        workspace_id=workspace_id,
-    )
     return CloudProjectListResponse(
-        items=[_project_response(db, project, current_user) for project in projects]
+        items=list_project_responses(db, current_user, workspace_id)
     )
 
 

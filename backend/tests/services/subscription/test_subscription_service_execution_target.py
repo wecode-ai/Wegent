@@ -136,6 +136,42 @@ def test_create_subscription_persists_specific_execution_target(
     assert created_kind.json["spec"]["executionTarget"]["device_id"] == device.name
 
 
+def test_create_subscription_persists_remote_execution_target(
+    test_db: Session, test_user
+):
+    """Create should persist a remote device execution target."""
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    remote_device = _create_device(
+        test_db,
+        test_user.id,
+        "remote-device-1",
+        DeviceType.REMOTE,
+    )
+
+    created = service.create_subscription(
+        test_db,
+        subscription_in=_build_create_payload(
+            team.id,
+            {
+                "type": "remote",
+                "device_id": remote_device.name,
+            },
+        ),
+        user_id=test_user.id,
+    )
+
+    assert created.execution_target.type == "remote"
+    assert created.execution_target.device_id == remote_device.name
+
+    created_kind = test_db.query(Kind).filter(Kind.id == created.id).first()
+    assert created_kind is not None
+    assert created_kind.json["spec"]["executionTarget"]["type"] == "remote"
+    assert (
+        created_kind.json["spec"]["executionTarget"]["device_id"] == remote_device.name
+    )
+
+
 def test_create_subscription_rejects_other_user_workspace(test_db: Session, test_user):
     service = SubscriptionService()
     team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")

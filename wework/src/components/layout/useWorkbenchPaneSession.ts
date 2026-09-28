@@ -1,5 +1,12 @@
+import {
+  transcriptRangeFromPage,
+  mergeTranscriptRanges,
+  runtimeTurnNavigationLoadOptions,
+} from '@wegent/chat-core/runtime-transcript-page'
+export { runtimeTurnNavigationLoadOptions } from '@wegent/chat-core/runtime-transcript-page'
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 import i18n from '@/i18n'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   compareMessageStyles,
@@ -13,6 +20,7 @@ import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/run
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
+  resolveRuntimePaneLifecycleAddress,
 } from '@/features/workbench/runtimePaneStatus'
 import {
   consumeRuntimeTaskLifecycleBlock,
@@ -72,6 +80,7 @@ import type {
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
+  RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
   RuntimeSubagentStatus,
@@ -95,6 +104,7 @@ import {
   clearInterruptedRuntimeConversationGuidanceExcept,
   completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
@@ -108,6 +118,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationMessageHasStartedTurn,
   runtimeConversationSnapshotSettlesLatestTurn,
+  runtimeConversationHydrationHasUpdates,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
   setRuntimeConversationGoal,
@@ -254,10 +265,10 @@ export function useWorkbenchPaneSession({
     : projectChat.scopeKey
   const attachmentState =
     projectChat.attachmentStateByScope[inputScopeKey] ?? EMPTY_ATTACHMENT_STATE
+  const addExistingAttachmentForScope = projectChat.addExistingAttachmentForScope
   const addExistingAttachment = useCallback(
-    (attachment: Attachment) =>
-      projectChat.addExistingAttachmentForScope(inputScopeKey, attachment),
-    [inputScopeKey, projectChat]
+    (attachment: Attachment) => addExistingAttachmentForScope(inputScopeKey, attachment),
+    [addExistingAttachmentForScope, inputScopeKey]
   )
   const handleFileSelect = useCallback(
     (files: File | File[]) => projectChat.handleFileSelectForScope(inputScopeKey, files),
@@ -332,12 +343,16 @@ export function useWorkbenchPaneSession({
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
-  const [transcriptLoading, setTranscriptLoading] = useState(() => Boolean(currentRuntimeTask))
+  const [transcriptLoadingKey, setTranscriptLoadingKey] = useState<string | null>(() =>
+    currentRuntimeTask ? runtimeTaskLoadAddressKey(currentRuntimeTask) : null
+  )
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
   const [transcriptReloadVersion, setTranscriptReloadVersion] = useState(0)
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
-  const [transcriptLoadingMoreBefore, setTranscriptLoadingMoreBefore] = useState(false)
+  const [transcriptLoadingMoreBeforeKey, setTranscriptLoadingMoreBeforeKey] = useState<
+    string | null
+  >(null)
   const [transcriptFullContent, setTranscriptFullContent] = useState(false)
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
@@ -384,8 +399,15 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
     )
   const runtimeTaskLoadTarget = retainedRuntimeTaskLoadTarget
+  const transcriptLoading =
+    runtimeTaskLoadTarget !== null && transcriptLoadingKey === runtimeTaskLoadTarget.key
+  const transcriptLoadingMoreBefore =
+    runtimeTaskLoadTarget !== null && transcriptLoadingMoreBeforeKey === runtimeTaskLoadTarget.key
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     currentRuntimeTask ? getRuntimeConversationMessages(currentRuntimeTask) : []
+  )
+  const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
+    currentRuntimeTask ? getRuntimeConversationTurns(currentRuntimeTask) : []
   )
   const messagesRef = useRef<WorkbenchMessage[]>(messages)
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
@@ -446,7 +468,10 @@ export function useWorkbenchPaneSession({
     },
     [applyMessageActions, flushPendingMessageActions]
   )
-  const lifecycleAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
+  const lifecycleAddress = resolveRuntimePaneLifecycleAddress(
+    currentRuntimeTask,
+    runtimeTaskLoadTarget?.address
+  )
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
   const goalExecutionStatus = taskLifecycle?.task?.goalExecutionStatus ?? null
@@ -470,6 +495,27 @@ export function useWorkbenchPaneSession({
         : paneStatus.isBusy,
     [currentRuntimeTask, lifecycleStore, paneStatus.isBusy]
   )
+  const diagnosticTaskId = lifecycleAddress?.taskId
+  const diagnosticDeviceId = lifecycleAddress?.deviceId
+  const diagnosticHasActiveAssistant = Boolean(paneStatus.activeAssistantMessage)
+  useEffect(() => {
+    if (!diagnosticTaskId) return
+    logRuntimeTaskCreateStage('pane-waiting-state', {
+      taskId: diagnosticTaskId,
+      deviceId: diagnosticDeviceId,
+      sendPhase: paneStatus.sendPhase,
+      running: paneStatus.taskExecution.running,
+      waiting: paneStatus.isWaitingForAssistantIndicator,
+      hasActiveAssistant: diagnosticHasActiveAssistant,
+    })
+  }, [
+    diagnosticTaskId,
+    diagnosticDeviceId,
+    paneStatus.sendPhase,
+    paneStatus.taskExecution.running,
+    paneStatus.isWaitingForAssistantIndicator,
+    diagnosticHasActiveAssistant,
+  ])
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
@@ -564,6 +610,7 @@ export function useWorkbenchPaneSession({
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       setMessages([])
+      setTurns([])
       setSubagentStatuses([])
       setTaskPlan(null)
       return
@@ -578,6 +625,7 @@ export function useWorkbenchPaneSession({
         )
       }
       setMessages(getRuntimeConversationMessages(address))
+      setTurns(getRuntimeConversationTurns(address))
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
@@ -683,9 +731,9 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
-      setTranscriptLoading(false)
+      setTranscriptLoadingKey(null)
       setTranscriptError(null)
-      setTranscriptLoadingMoreBefore(false)
+      setTranscriptLoadingMoreBeforeKey(null)
       return
     }
 
@@ -694,6 +742,7 @@ export function useWorkbenchPaneSession({
       loadedRuntimeTranscriptKeyRef.current === loadKey &&
       displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
     ) {
+      setTranscriptLoadingKey(current => (current === loadKey ? null : current))
       return
     }
 
@@ -717,14 +766,15 @@ export function useWorkbenchPaneSession({
       seededMessages: summarizeWorkbenchMessages(seededMessages),
     })
     dispatchMessages({ type: 'reset', messages: seededMessages })
-    setTranscriptLoading(true)
+    setTranscriptLoadingKey(loadKey)
     setTranscriptError(null)
     setTranscriptHasMoreBefore(false)
     setTranscriptBeforeCursor(null)
-    setTranscriptLoadingMoreBefore(false)
+    setTranscriptLoadingMoreBeforeKey(null)
     setTranscriptFullContent(false)
     setLoadedTranscriptRanges([])
     setTurnNavigation([])
+    const turnsAtLoadStart = getRuntimeConversationTurns(address)
     void Promise.resolve()
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
@@ -732,8 +782,17 @@ export function useWorkbenchPaneSession({
         })
       )
       .then(transcript => {
+        logRuntimeTaskCreateStage('pane-transcript-received', {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          cancelled,
+          messageCount: transcript.messages.length,
+          turnCount: transcript.turns.length,
+        })
         if (!cancelled) {
           const preserveActiveTurn =
+            (runtimeConversationHydrationHasUpdates(address, hydrationToken) ||
+              getRuntimeConversationTurns(address) !== turnsAtLoadStart) &&
             (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
             !runtimeConversationSnapshotSettlesLatestTurn(address, transcript.turns)
           lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn })
@@ -809,7 +868,7 @@ export function useWorkbenchPaneSession({
       })
       .finally(() => {
         if (!cancelled) {
-          setTranscriptLoading(false)
+          setTranscriptLoadingKey(current => (current === loadKey ? null : current))
         }
       })
 
@@ -916,12 +975,13 @@ export function useWorkbenchPaneSession({
 
     const { key: loadKey, address } = runtimeTaskLoadTarget
     const beforeCursor = transcriptBeforeCursor
-    setTranscriptLoadingMoreBefore(true)
+    setTranscriptLoadingMoreBeforeKey(loadKey)
     try {
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
         limit: runtimeTranscriptPageSize,
         beforeCursor,
       })
+      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
@@ -944,7 +1004,7 @@ export function useWorkbenchPaneSession({
         error,
       })
     } finally {
-      setTranscriptLoadingMoreBefore(false)
+      setTranscriptLoadingMoreBeforeKey(current => (current === loadKey ? null : current))
     }
   }, [
     dispatchMessages,
@@ -967,13 +1027,14 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      const { address } = runtimeTaskLoadTarget
+      const { key: loadKey, address } = runtimeTaskLoadTarget
       const loadOptions = runtimeTurnNavigationLoadOptions(
         item,
         loadedTranscriptRangesRef.current,
         runtimeTranscriptPageSize
       )
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
+      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
       const nextHasMoreBefore =
         loadOptions.beforeCursor === undefined
           ? transcriptHasMoreBefore
@@ -1011,13 +1072,14 @@ export function useWorkbenchPaneSession({
     async (gap: LoadedTranscriptRange) => {
       if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
 
-      const { address } = runtimeTaskLoadTarget
+      const { key: loadKey, address } = runtimeTaskLoadTarget
       const limit = Math.min(runtimeTranscriptPageSize, gap.end - gap.start)
       const loadOptions = {
         limit,
         afterCursor: `offset:${gap.start}`,
       }
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
+      if (runtimeTaskLoadTargetRef.current?.key !== loadKey) return
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
@@ -1136,6 +1198,8 @@ export function useWorkbenchPaneSession({
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+          ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
+          ...(message.origin ? { origin: message.origin } : {}),
         },
         {
           onError: options.onError ?? setError,
@@ -1252,6 +1316,8 @@ export function useWorkbenchPaneSession({
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+          ...(message.cloudProjectId ? { cloudProjectId: message.cloudProjectId } : {}),
+          ...(message.origin ? { origin: message.origin } : {}),
         },
         { onError: setError }
       )
@@ -1974,6 +2040,8 @@ export function useWorkbenchPaneSession({
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
               additionalContext: options.additionalContext,
+              cloudProjectId: options.cloudProjectId,
+              origin: options.origin,
               ...getRuntimeModelFields(),
             }
 
@@ -2049,6 +2117,7 @@ export function useWorkbenchPaneSession({
             initialGoal,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             initialSupervisor: options.initialSupervisor,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
@@ -2182,7 +2251,9 @@ export function useWorkbenchPaneSession({
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
           setInput('')
+          resetAttachments()
           let errorScopeKey = inputScopeKey
+          let submissionScopeKey = inputScopeKey
           const optimisticMessage = createRuntimeUserMessage(
             visibleSubmittedInput,
             currentAttachments,
@@ -2191,52 +2262,68 @@ export function useWorkbenchPaneSession({
               codeComments: codeCommentContexts,
             }
           )
-          const sent = await sendCurrentInput(visibleSubmittedInput, {
-            optimisticUserMessage: optimisticMessage,
-            codeCommentContexts,
-            initialGoal: pendingInitialGoal,
-            additionalContext: resolvedAdditionalContext,
-            cloudProjectId: options.cloudProjectId,
-            origin: options.origin,
-            initialSupervisor: options.initialSupervisor,
-            ...(options.runtime ? { runtime: options.runtime } : {}),
-            ...(options.runtimeExecutablePath
-              ? { runtimeExecutablePath: options.runtimeExecutablePath }
-              : {}),
-            ...(options.runtimePermissionMode
-              ? { runtimePermissionMode: options.runtimePermissionMode }
-              : {}),
-            ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
-            ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
-              ? { modelSelection: options.modelSelection }
-              : {}),
-            onError: nextError => setErrorForScope(errorScopeKey, nextError),
-            onRuntimeTaskOptimisticOpen: (address, context) => {
-              errorScopeKey = getRuntimeTaskChatScopeKey(address)
-              options.onRuntimeTaskCreated?.(address)
-              if (pendingInitialGoal) {
-                setPendingGoalState(current =>
-                  current
-                    ? {
-                        ...current,
-                        targetKey: runtimeTranscriptPaneKey(address),
-                        targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
-                      }
-                    : current
-                )
-              }
-              if (pendingInitialGoal && pendingGoalState) {
-                seedRuntimePaneGoal(address, pendingGoalState.goal)
-              }
-              debugRuntimePaneMessageFlow('seed-optimistic-open', {
-                address: runtimeAddressDebug(address),
-                previousAddress: context?.previousAddress
-                  ? runtimeAddressDebug(context.previousAddress)
-                  : null,
-                seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
-              })
-            },
-          })
+          let sent: boolean | RuntimeTaskAddress
+          try {
+            sent = await sendCurrentInput(visibleSubmittedInput, {
+              attachments: currentAttachments,
+              preserveAttachments: true,
+              optimisticUserMessage: optimisticMessage,
+              codeCommentContexts,
+              initialGoal: pendingInitialGoal,
+              additionalContext: resolvedAdditionalContext,
+              cloudProjectId: options.cloudProjectId,
+              origin: options.origin,
+              initialSupervisor: options.initialSupervisor,
+              ...(options.runtime ? { runtime: options.runtime } : {}),
+              ...(options.runtimeExecutablePath
+                ? { runtimeExecutablePath: options.runtimeExecutablePath }
+                : {}),
+              ...(options.runtimePermissionMode
+                ? { runtimePermissionMode: options.runtimePermissionMode }
+                : {}),
+              ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
+              ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+                ? { modelSelection: options.modelSelection }
+                : {}),
+              onError: nextError => setErrorForScope(errorScopeKey, nextError),
+              onRuntimeTaskOptimisticOpen: (address, context) => {
+                errorScopeKey = getRuntimeTaskChatScopeKey(address)
+                submissionScopeKey = errorScopeKey
+                options.onRuntimeTaskCreated?.(address)
+                if (pendingInitialGoal) {
+                  setPendingGoalState(current =>
+                    current
+                      ? {
+                          ...current,
+                          targetKey: runtimeTranscriptPaneKey(address),
+                          targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+                        }
+                      : current
+                  )
+                }
+                if (pendingInitialGoal && pendingGoalState) {
+                  seedRuntimePaneGoal(address, pendingGoalState.goal)
+                }
+                debugRuntimePaneMessageFlow('seed-optimistic-open', {
+                  address: runtimeAddressDebug(address),
+                  previousAddress: context?.previousAddress
+                    ? runtimeAddressDebug(context.previousAddress)
+                    : null,
+                  seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
+                })
+              },
+              onRuntimeTaskOptimisticRemoved: () => {
+                errorScopeKey = inputScopeKey
+                submissionScopeKey = inputScopeKey
+              },
+            })
+          } catch (error) {
+            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            currentAttachments.forEach(attachment =>
+              addExistingAttachmentForScope(submissionScopeKey, attachment)
+            )
+            throw error
+          }
           if (sent) {
             if (!isRuntimeTaskAddress(sent)) {
               appendLocalUserMessage(visibleSubmittedInput, currentAttachments, {
@@ -2260,10 +2347,12 @@ export function useWorkbenchPaneSession({
             if (isRuntimeTaskAddress(sent)) {
               dispatchMessages({ type: 'reset', messages: [] })
             }
-            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
-            restoreInputAfterFailure(visibleSubmittedInput)
+            setInputForScope(submissionScopeKey, visibleSubmittedInput)
+            currentAttachments.forEach(attachment =>
+              addExistingAttachmentForScope(submissionScopeKey, attachment)
+            )
           }
           return Boolean(sent)
         }
@@ -2278,6 +2367,8 @@ export function useWorkbenchPaneSession({
             createdAt: new Date().toISOString(),
             attachments: persistAttachmentReferences(currentAttachments),
             additionalContext: resolvedAdditionalContext,
+            cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             ...getRuntimeModelFields(),
           }
 
@@ -2345,6 +2436,8 @@ export function useWorkbenchPaneSession({
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
           additionalContext: resolvedAdditionalContext,
+          cloudProjectId: options.cloudProjectId,
+          origin: options.origin,
           ...getRuntimeModelFields(),
         }
 
@@ -2416,6 +2509,7 @@ export function useWorkbenchPaneSession({
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
+        addExistingAttachmentForScope,
         queuedMessages.length,
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,
@@ -2427,6 +2521,7 @@ export function useWorkbenchPaneSession({
         setErrorForScope,
         setError,
         setInput,
+        setInputForScope,
         setQueuedMessages,
         setRuntimeGoal,
       ]
@@ -3093,6 +3188,7 @@ export function useWorkbenchPaneSession({
     handleFileSelect,
     removeAttachment,
     messages,
+    turns,
     queuedMessages,
     queuedMessagesPaused,
     guidanceMessages,
@@ -3101,6 +3197,7 @@ export function useWorkbenchPaneSession({
     input,
     setInput,
     error,
+    setError,
     clearError,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
@@ -3210,6 +3307,7 @@ function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
 
   return JSON.stringify({
     route: getRuntimeTaskRouteKey(address),
+    projectSession: address.projectSession ?? null,
     runtime: address.runtime ?? null,
     threadId: address.threadId?.trim() || runtimeHandleThreadId || null,
     workspaceKind: address.workspaceKind ?? null,
@@ -3368,98 +3466,6 @@ function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number)
     const oldestKey = map.keys().next().value
     if (oldestKey === undefined) return
     map.delete(oldestKey)
-  }
-}
-
-function transcriptRangeFromPage(transcript: RuntimePaneTranscript): LoadedTranscriptRange[] {
-  const indexedRange = transcriptRangeFromMessageIndexes(transcript.messages)
-  const rangeStart =
-    numericValue(transcript.rangeStart) ??
-    cursorOffset(transcript.beforeCursor) ??
-    indexedRange?.start ??
-    (transcript.hasMoreBefore ? null : 0)
-  const rangeEnd =
-    numericValue(transcript.rangeEnd) ??
-    cursorOffset(transcript.afterCursor) ??
-    indexedRange?.end ??
-    (rangeStart === null ? null : rangeStart + transcript.messages.length)
-
-  if (rangeStart === null || rangeEnd === null || rangeEnd < rangeStart) return []
-  return [{ start: rangeStart, end: rangeEnd }]
-}
-
-function transcriptRangeFromMessageIndexes(
-  messages: WorkbenchMessage[]
-): LoadedTranscriptRange | null {
-  const indexes = messages
-    .map(message =>
-      typeof message.runtimeMessageIndex === 'number' &&
-      Number.isFinite(message.runtimeMessageIndex)
-        ? message.runtimeMessageIndex
-        : null
-    )
-    .filter((index): index is number => index !== null)
-  if (indexes.length === 0) return null
-  return {
-    start: Math.min(...indexes),
-    end: Math.max(...indexes) + 1,
-  }
-}
-
-function mergeTranscriptRanges(
-  currentRanges: LoadedTranscriptRange[],
-  incomingRanges: LoadedTranscriptRange[]
-): LoadedTranscriptRange[] {
-  const ranges = [...currentRanges, ...incomingRanges]
-    .filter(range => range.end > range.start)
-    .sort((left, right) => left.start - right.start)
-
-  const merged: LoadedTranscriptRange[] = []
-  for (const range of ranges) {
-    const previous = merged[merged.length - 1]
-    if (!previous || range.start > previous.end) {
-      merged.push({ ...range })
-      continue
-    }
-    previous.end = Math.max(previous.end, range.end)
-  }
-  return merged
-}
-
-function numericValue(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function cursorOffset(cursor: string | null | undefined): number | null {
-  if (!cursor) return null
-  const match = /^offset:(\d+)$/.exec(cursor.trim())
-  if (!match) return null
-  return Number.parseInt(match[1], 10)
-}
-
-export function runtimeTurnNavigationLoadOptions(
-  item: RuntimeTurnNavigationItem,
-  loadedRanges: LoadedTranscriptRange[],
-  pageSize: number
-) {
-  if (item.cursor && !item.cursor.startsWith('offset:')) {
-    return {
-      limit: pageSize,
-      beforeCursor: item.cursor,
-    }
-  }
-
-  const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
-  const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
-  const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
-  const pageEnd = Math.max(
-    messageIndex + 1,
-    Math.min(nextLoadedRange?.start ?? messageIndex + pageSize, messageIndex + pageSize)
-  )
-
-  return {
-    limit: pageSize,
-    beforeCursor: `offset:${pageEnd}`,
   }
 }
 

@@ -1,7 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import { teamApis } from '@/apis/team'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { Team } from '@/types/api'
 import type { TeamModeFilter } from '../../selector/team-selector-utils'
 import { QuickLauncherCards } from './quick-launcher-cards'
@@ -22,7 +25,6 @@ interface QuickLaunchPanelProps {
   onTeamSelect: (team: Team) => void
   onPresetSelect: (selection: QuickPresetSelection) => void
   currentMode: TeamModeFilter
-  isLoading?: boolean
   defaultTeam?: Team | null
   launchIntent?: QuickLaunchIntent | null
   onLaunchIntentConsumed?: () => void
@@ -32,10 +34,10 @@ interface QuickLaunchPanelProps {
 
 export function QuickLaunchPanel({
   teams,
+  selectedTeam,
   onTeamSelect,
   onPresetSelect,
   currentMode,
-  isLoading,
   defaultTeam,
   launchIntent,
   onLaunchIntentConsumed,
@@ -43,7 +45,13 @@ export function QuickLaunchPanel({
   renderQuickCreateCard,
 }: QuickLaunchPanelProps) {
   const router = useRouter()
-  const [selectedLauncher, setSelectedLauncher] = useState<QuickLauncher | null>(null)
+  const { toast } = useToast()
+  const { t } = useTranslation('common')
+  const selectionSequence = useRef(0)
+  const pendingTeams = useRef(new Map<number, Promise<Team>>())
+  const [selectedLauncher, setSelectedLauncher] = useState<(QuickLauncher & { team: Team }) | null>(
+    null
+  )
   const [selectedLauncherKey, setSelectedLauncherKey] = useState<string | null>(null)
   const [isPhraseListExiting, setIsPhraseListExiting] = useState(false)
   const exitTimerRef = useRef<number | null>(null)
@@ -51,7 +59,7 @@ export function QuickLaunchPanel({
     isLoading: isQuickLaunchLoading,
     systemLaunchers,
     favoriteLaunchers,
-  } = useQuickLaunchers({ teams, currentMode, defaultTeam })
+  } = useQuickLaunchers({ currentMode, defaultTeam })
   const currentTargetPage = getCurrentTargetPageByMode(currentMode)
 
   const shouldNavigateToLauncherPage = useCallback(
@@ -71,7 +79,7 @@ export function QuickLaunchPanel({
   useEffect(() => clearExitTimer, [clearExitTimer])
 
   const showPhraseList = useCallback(
-    (launcher: QuickLauncher) => {
+    (launcher: QuickLauncher & { team: Team }) => {
       clearExitTimer()
       setSelectedLauncherKey(null)
       setIsPhraseListExiting(false)
@@ -105,48 +113,62 @@ export function QuickLaunchPanel({
     [router]
   )
 
-  useEffect(() => {
-    if (!launchIntent?.launcherKey) {
-      return
-    }
+  const activateLauncher = useCallback(
+    async (launcher: QuickLauncher, intent?: QuickLaunchIntent) => {
+      const sequence = ++selectionSequence.current
+      try {
+        let team = teams.find(item => item.id === launcher.team.id)
+        if (!team) {
+          let pending = pendingTeams.current.get(launcher.team.id)
+          if (!pending) {
+            pending = teamApis.getTeam(launcher.team.id)
+            pendingTeams.current.set(launcher.team.id, pending)
+            const clear = () => pendingTeams.current.delete(launcher.team.id)
+            void pending.then(clear, clear)
+          }
+          team = await pending
+        }
+        if (sequence !== selectionSequence.current) return
+        const resolved = { ...launcher, team }
+        onTeamSelect(team)
+        if (intent?.presetId) {
+          const preset = launcher.inputPresets.find(item => item.id === intent.presetId)
+          if (preset) onPresetSelect({ launcher: resolved, preset })
+        } else if (launcher.inputPresets.length > 0 && (!intent || intent.showPresets)) {
+          showPhraseList(resolved)
+        } else {
+          setSelectedLauncherKey(launcher.key)
+        }
+        if (intent) onLaunchIntentConsumed?.()
+      } catch (error) {
+        if (sequence !== selectionSequence.current) return
+        console.error('Failed to load quick launch agent:', error)
+        toast({ title: t('teams.load_failed_title'), variant: 'destructive' })
+      }
+    },
+    [teams, onTeamSelect, onPresetSelect, onLaunchIntentConsumed, showPhraseList, toast, t]
+  )
 
+  useLayoutEffect(() => {
+    // Invalidate pending details before accepting a selection from another entry point.
+    return () => {
+      selectionSequence.current += 1
+    }
+  }, [currentMode, selectedTeam?.id])
+
+  useEffect(() => {
+    if (!launchIntent?.launcherKey) return
     const launcher = [...systemLaunchers, ...favoriteLaunchers].find(
       item => item.key === launchIntent.launcherKey
     )
-    if (!launcher) {
-      return
+    if (!launcher) return
+    void activateLauncher(launcher, launchIntent)
+    return () => {
+      selectionSequence.current += 1
     }
+  }, [launchIntent, systemLaunchers, favoriteLaunchers, activateLauncher])
 
-    onTeamSelect(launcher.team)
-
-    if (launchIntent.presetId) {
-      const preset = launcher.inputPresets.find(item => item.id === launchIntent.presetId)
-      if (preset) {
-        onPresetSelect({ launcher, preset })
-      }
-      onLaunchIntentConsumed?.()
-      return
-    }
-
-    if (launchIntent.showPresets && launcher.inputPresets.length > 0) {
-      showPhraseList(launcher)
-      onLaunchIntentConsumed?.()
-      return
-    }
-
-    setSelectedLauncherKey(launcher.key)
-    onLaunchIntentConsumed?.()
-  }, [
-    favoriteLaunchers,
-    launchIntent,
-    onLaunchIntentConsumed,
-    onPresetSelect,
-    onTeamSelect,
-    showPhraseList,
-    systemLaunchers,
-  ])
-
-  if (isLoading || isQuickLaunchLoading) {
+  if (isQuickLaunchLoading) {
     return (
       <div className="mx-auto mt-6 h-[108px] w-full max-w-[820px] animate-pulse rounded-lg bg-surface" />
     )
@@ -182,16 +204,12 @@ export function QuickLaunchPanel({
       selectedLauncherKey={selectedLauncherKey}
       onSelectLauncher={launcher => {
         if (shouldNavigateToLauncherPage(launcher)) {
+          selectionSequence.current += 1
           navigateToLauncher(launcher)
           return
         }
 
-        onTeamSelect(launcher.team)
-        if (launcher.inputPresets.length > 0) {
-          showPhraseList(launcher)
-          return
-        }
-        setSelectedLauncherKey(launcher.key)
+        void activateLauncher(launcher)
       }}
       renderMoreButton={renderMoreButton}
       renderQuickCreateCard={renderQuickCreateCard}

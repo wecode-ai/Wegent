@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { CheckCircle2, Code2, Loader2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { createLocalCodexPluginApi, type ExternalContentSource } from '@/api/local/codexPlugins'
@@ -20,6 +21,13 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
   const [importing, setImporting] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => {
+      if (!importing) onClose()
+    },
+    true,
+    '[data-testid="external-content-import-confirm-button"]:not([disabled])'
+  )
 
   const handleImport = async () => {
     setImporting(true)
@@ -38,6 +46,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
       <div
         role="dialog"
+        ref={dialogRef}
         aria-modal="true"
         aria-labelledby="external-content-import-title"
         data-testid="external-content-import-dialog"

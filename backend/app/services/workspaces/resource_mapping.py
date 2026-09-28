@@ -10,6 +10,7 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.workspaces.storage import workspace_from_kind
 
 
@@ -65,7 +66,7 @@ def execution_environment_values(
         "id": device.id,
         "workspace_id": workspace_id or grant.entity_id,
         "device_id": device.id,
-        "device_key": str(spec.get("deviceId") or device.name),
+        "device_key": runtime_device_route_id(device),
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(device_type),
         "device_type": device_type,
@@ -104,7 +105,7 @@ def personal_environment_values(
     return {
         "id": str(device.id),
         "device_id": device.id,
-        "device_key": str(spec.get("deviceId") or device.name),
+        "device_key": runtime_device_route_id(device),
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(device_type),
         "coding_tools": coding_tools(spec),

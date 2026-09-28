@@ -114,16 +114,8 @@ body,
   overflow-x: hidden;
 }
 
-/* Ensure all text elements can truncate properly */
-p,
-span,
-div,
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
+/* Collaboration owns its text wrapping through the shared desktop components. */
+:is(p, span, div, h1, h2, h3, h4, h5, h6):where(:not(.collaboration-theme *)) {
   overflow-wrap: break-word;
   word-wrap: break-word;
 }
@@ -258,29 +250,14 @@ body {
   }
 }
 
-@layer components {
-  .heading-base {
-    font-size: var(--text-heading-md);
-    font-weight: 500;
-    line-height: 1.33;
-  }
-
-  .heading-subsection {
-    font-size: var(--text-heading-sm);
-    font-weight: 500;
-    line-height: 1.33;
-  }
-}
-
 /* Remove default blue outline from Headless UI */
-[data-headlessui-state~='open'] {
+[data-headlessui-state~='open']:not(:where(.collaboration-theme, .collaboration-theme *)) {
   outline: none !important;
   box-shadow: none !important;
 }
 
-button:focus,
-button:focus,
-button:focus-visible {
+button:focus:not(:where(.collaboration-theme, .collaboration-theme *)),
+button:focus-visible:not(:where(.collaboration-theme, .collaboration-theme *)) {
   outline: none !important;
   box-shadow: none !important;
 }
@@ -897,8 +874,8 @@ button:focus-visible {
 
 /* Custom scrollbar styles are now in scrollbar.css */
 
-/* Smooth transitions for theme switching */
-* {
+/* The shared workbench owns its focus styles and component motion. */
+*:not(:where(.collaboration-theme, .collaboration-theme *)) {
   transition-property: background-color, border-color, color, fill, stroke;
   transition-duration: 200ms;
   transition-timing-function: ease-in-out;

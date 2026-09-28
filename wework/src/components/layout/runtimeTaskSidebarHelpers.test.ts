@@ -56,6 +56,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           runtime: 'codex' as const,
           sidebarOrder: index,
           updatedAt: `2026-08-18T0${index + 1}:00:00.000Z`,
+          recencyAt: `2026-08-18T0${index + 1}:00:00.000Z`,
         })),
         {
           taskId: 'new-task',
@@ -66,6 +67,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           optimistic: true,
           createdAt: '2026-08-19T01:00:00.000Z',
           updatedAt: '2026-08-19T01:00:00.000Z',
+          recencyAt: '2026-08-19T01:00:00.000Z',
         },
       ],
     }
@@ -90,7 +92,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     ])
   })
 
-  test('sorts tasks without manual order by latest activity', () => {
+  test('sorts tasks without manual order by provider recency', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/chats',
@@ -104,7 +106,8 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Recently reactivated',
           runtime: 'codex',
           createdAt: '2026-08-01T02:00:00.000Z',
-          updatedAt: '2026-08-17T02:00:00.000Z',
+          updatedAt: '2026-08-18T02:00:00.000Z',
+          recencyAt: '2026-08-17T02:00:00.000Z',
         },
         {
           taskId: 'previously-first',
@@ -113,7 +116,8 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Previously first',
           runtime: 'codex',
           createdAt: '2026-08-16T02:00:00.000Z',
-          updatedAt: '2026-08-16T02:00:00.000Z',
+          updatedAt: '2026-08-19T02:00:00.000Z',
+          recencyAt: '2026-08-16T02:00:00.000Z',
         },
       ],
     }
@@ -177,6 +181,10 @@ describe('runtimeTaskSidebarHelpers', () => {
           index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
             ? '2026-08-14T09:00:00.000Z'
             : `2026-08-12T0${index + 1}:00:00.000Z`,
+        recencyAt:
+          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+            ? '2026-08-14T09:00:00.000Z'
+            : `2026-08-12T0${index + 1}:00:00.000Z`,
       })),
     }
 
@@ -201,6 +209,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           running: true,
           completedAt: '2026-06-01T00:00:00.000Z',
           updatedAt: '2026-06-01T00:00:00.000Z',
+          recencyAt: '2026-06-01T00:00:00.000Z',
         },
         {
           taskId: 'newer-idle',
@@ -210,6 +219,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           running: false,
           completedAt: '2026-06-02T00:00:00.000Z',
           updatedAt: '2026-06-02T00:00:00.000Z',
+          recencyAt: '2026-06-02T00:00:00.000Z',
         },
       ],
     }
@@ -227,6 +237,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           running: true,
           completedAt: '2026-06-03T00:00:00.000Z',
           updatedAt: '2026-06-03T00:00:00.000Z',
+          recencyAt: '2026-06-03T00:00:00.000Z',
         },
       ],
     }
@@ -234,59 +245,6 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(
       getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
-  })
-
-  test('hides automation manager sessions only from the standalone task list', () => {
-    const workspace: RuntimeDeviceWorkspace = {
-      deviceId: 'device-1',
-      workspacePath: '/workspace/chats',
-      workspaceKind: 'chat',
-      available: true,
-      tasks: [
-        {
-          taskId: 'automation-manager',
-          workspacePath: '/workspace/chats/automation-manager',
-          workspaceKind: 'chat',
-          title: 'Automation manager',
-          runtime: 'codex',
-          runtimeHandle: {
-            origin: {
-              type: 'project_automation',
-              automationRole: 'manager',
-              run_id: 'run-1',
-            },
-          },
-        },
-        {
-          taskId: 'project-robot',
-          workspacePath: '/workspace/chats/project-robot',
-          workspaceKind: 'chat',
-          title: 'Project robot',
-          runtime: 'codex',
-          runtimeHandle: {
-            origin: {
-              type: 'project_automation',
-              run_id: 'run-1',
-            },
-          },
-        },
-        {
-          taskId: 'ordinary-task',
-          workspacePath: '/workspace/chats/ordinary-task',
-          workspaceKind: 'chat',
-          title: 'Ordinary task',
-          runtime: 'codex',
-        },
-      ],
-    }
-
-    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'project-robot',
-      'ordinary-task',
-    ])
-    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toContain(
-      'automation-manager'
-    )
   })
 
   test('sorts queued runtime tasks by their real execution position', () => {
@@ -304,6 +262,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           status: 'queued',
           queuePosition: 2,
           updatedAt: '2026-08-12T03:00:00.000Z',
+          recencyAt: '2026-08-12T03:00:00.000Z',
         },
         {
           taskId: 'queued-first',
@@ -314,6 +273,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           status: 'queued',
           queuePosition: 1,
           updatedAt: '2026-08-12T02:00:00.000Z',
+          recencyAt: '2026-08-12T02:00:00.000Z',
         },
       ],
     }
@@ -340,6 +300,7 @@ describe('runtimeTaskSidebarHelpers', () => {
             status: 'queued',
             queuePosition: 2,
             updatedAt: '2026-08-12T05:00:00.000Z',
+            recencyAt: '2026-08-12T05:00:00.000Z',
           },
           {
             taskId: 'device-one-first',
@@ -350,6 +311,7 @@ describe('runtimeTaskSidebarHelpers', () => {
             status: 'queued',
             queuePosition: 1,
             updatedAt: '2026-08-12T02:00:00.000Z',
+            recencyAt: '2026-08-12T02:00:00.000Z',
           },
         ],
       },
@@ -366,6 +328,7 @@ describe('runtimeTaskSidebarHelpers', () => {
             running: true,
             status: 'running',
             updatedAt: '2026-08-12T04:00:00.000Z',
+            recencyAt: '2026-08-12T04:00:00.000Z',
           },
           {
             taskId: 'device-two-first',
@@ -376,6 +339,7 @@ describe('runtimeTaskSidebarHelpers', () => {
             status: 'queued',
             queuePosition: 1,
             updatedAt: '2026-08-12T03:00:00.000Z',
+            recencyAt: '2026-08-12T03:00:00.000Z',
           },
         ],
       },
@@ -404,6 +368,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           createdAt: '2026-06-01T00:00:00.000Z',
           completedAt: '2026-06-02T00:00:00.000Z',
           updatedAt: '2026-06-04T00:00:00.000Z',
+          recencyAt: '2026-06-04T00:00:00.000Z',
         },
         {
           taskId: 'completed',
@@ -414,6 +379,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           createdAt: '2026-06-01T00:00:00.000Z',
           completedAt: '2026-06-03T00:00:00.000Z',
           updatedAt: '2026-06-03T00:00:00.000Z',
+          recencyAt: '2026-06-03T00:00:00.000Z',
         },
       ],
     }
@@ -439,6 +405,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           createdAt: '2026-06-01T00:00:00.000Z',
           completedAt: '2026-06-02T00:00:00.000Z',
           updatedAt: '2026-06-04T00:00:00.000Z',
+          recencyAt: '2026-06-04T00:00:00.000Z',
         },
         {
           taskId: 'idle',
@@ -449,6 +416,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           createdAt: '2026-06-01T00:00:00.000Z',
           completedAt: '2026-06-03T00:00:00.000Z',
           updatedAt: '2026-06-03T00:00:00.000Z',
+          recencyAt: '2026-06-03T00:00:00.000Z',
         },
       ],
     }

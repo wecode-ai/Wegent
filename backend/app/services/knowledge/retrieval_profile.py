@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.system_config import SystemConfig
+from app.schemas.kind import ModelCategoryType, resolve_model_category
 
 KNOWLEDGE_BASE_RETRIEVAL_PROFILE_KEY = "knowledge_base_retrieval_profile"
 
@@ -69,7 +70,9 @@ def profile_health(
         ("Model", embedding_name, embedding_namespace)
     )
     model_spec = (embedding_model.json or {}).get("spec", {}) if embedding_model else {}
-    if embedding_model is None or model_spec.get("modelType") != "embedding":
+    if embedding_model is None or (
+        resolve_model_category(model_spec) != ModelCategoryType.EMBEDDING.value
+    ):
         return {
             "status": "invalid",
             "fallback_reason": "embedding_model_unavailable",

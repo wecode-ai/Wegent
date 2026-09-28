@@ -20,7 +20,12 @@ import { getRuntimeConfig } from '@/config/runtime'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import { createSocketClient } from '@wegent/chat-core'
+import {
+  createCloudRuntimeIpcClient,
+  createSocketClient,
+  type CloudRuntimeIpcClient,
+} from '@wegent/chat-core'
+import { createRuntimeComposerApi } from '@wegent/chat-core/runtime-composer-api'
 import { buildInstalledPluginProjectCatalog } from '@wegent/collaboration'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
@@ -42,6 +47,7 @@ export interface BackendWorkbenchServicesOptions {
   getToken: () => string | null
   redirectOnUnauthorized?: boolean
   transportKind?: ExecutorTransportKind
+  runtimeIpc?: CloudRuntimeIpcClient
 }
 
 export function createBackendWorkbenchServices(
@@ -95,6 +101,14 @@ export function createBackendWorkbenchServices(
   })
   const workspaceRuntimePort = createWeworkWorkspaceRuntimePort(deliveryApi, projectAutomationApi)
   const cloudPluginApi = createPluginApi(client, apiBaseUrl)
+  const composerRuntimeIpc =
+    options.runtimeIpc ??
+    createCloudRuntimeIpcClient({
+      socketBaseUrl,
+      socketPath,
+      getToken: resolveToken,
+      clientOrigin: 'wework',
+    })
   const pluginApi = {
     async listPlugins(deviceId: string) {
       const response = await cloudPluginApi.listInstalledPlugins(deviceId)
@@ -135,6 +149,9 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    composerCatalogApi: createRuntimeComposerApi(composerRuntimeIpc, deviceId =>
+      cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
+    ),
     pluginApi,
     attachmentApi: createAttachmentApi({
       apiBaseUrl,
@@ -149,7 +166,13 @@ export function createBackendWorkbenchServices(
       },
     }),
     userApi: createUserApi(client),
-    socketClient,
+    socketClient: {
+      ensureConnected: (...args) => socketClient.ensureConnected(...args),
+      dispose: () => {
+        socketClient.dispose()
+        composerRuntimeIpc.dispose()
+      },
+    },
     async recoverRuntimeConnections() {
       socketClient.disconnect()
       await socketClient.connect(undefined, true)
@@ -164,6 +187,8 @@ export function createBackendWorkbenchServices(
       startProjectCodeServer: projectApi.startCodeServerSession,
       startDeviceTerminal: deviceApi.startTerminal,
       startDeviceCodeServer: deviceApi.startCodeServer,
+      startDeviceExtensionSession: deviceApi.startExtensionSession,
+      revokeDeviceExtensionSession: deviceApi.revokeExtensionSession,
       createRemoteTerminalClient: sessionId =>
         createRemoteTerminalClient(sessionId, {
           socketBaseUrl,

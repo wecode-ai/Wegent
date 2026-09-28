@@ -1,10 +1,11 @@
+import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import {
   DshExecutorTransportError,
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
 } from '@/api/dsh/executorTransport'
-import { resetSystemProxyStateForTests, resolveLocalCodexProxyUrl } from './systemProxy'
+import { resolveLocalCodexProxyUrl } from './systemProxy'
 
 export type UnlistenFn = () => void
 
@@ -52,11 +53,7 @@ export interface LocalExecutorLog {
   status: LocalExecutorStatus
 }
 
-export interface LocalExecutorEvent {
-  event: string
-  payload: Record<string, unknown>
-  sequence?: number
-}
+export type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 
 interface CodexStartupStatus {
   ready: boolean
@@ -96,6 +93,20 @@ let initializeBundledPluginMarketplacePromise: Promise<BundledPluginMarketplace>
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
 let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
+let nextLocalExecutorRequestFailure: {
+  method: string
+  message: string
+  resolve: () => void
+} | null = null
+
+export function failNextLocalExecutorRequestForE2E(method: string, message: string): Promise<void> {
+  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
+    throw new Error('Local executor request failure injection is only available in E2E mode')
+  }
+  return new Promise(resolve => {
+    nextLocalExecutorRequestFailure = { method, message, resolve }
+  })
+}
 
 function isExecutorHealthy(status: LocalExecutorStatus): boolean {
   return status.running && status.ready !== false && !status.error
@@ -289,6 +300,13 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       }
       initializedLocalExecutorStatus = status
       availableLocalExecutorStatus = status
+      // Bundled default plugins must reach the Codex plugins cache even when no
+      // renderer ever opens the app/plugin catalog (e.g. isolated plugin
+      // development instances). Reconcile is local-only: it reads the bundled
+      // marketplace from disk and never contacts GitHub.
+      void ensureBundledPluginMarketplaceRegistered().catch(error => {
+        console.warn('[local-ipc] bundled plugin marketplace reconcile failed', error)
+      })
       return status
     })().finally(() => {
       ensureLocalExecutorStartedPromise = null
@@ -308,7 +326,6 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
-  resetSystemProxyStateForTests()
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
@@ -370,6 +387,12 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
+  if (nextLocalExecutorRequestFailure?.method === method) {
+    const failure = nextLocalExecutorRequestFailure
+    nextLocalExecutorRequestFailure = null
+    failure.resolve()
+    return Promise.reject(new Error(failure.message))
+  }
   return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
     if (isExecutorTransportFailure(cause)) {
       availableLocalExecutorStatus = null

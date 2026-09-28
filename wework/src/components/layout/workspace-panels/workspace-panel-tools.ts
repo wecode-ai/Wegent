@@ -1,10 +1,9 @@
 import { configuredWorkspacePath } from '@/lib/project-workspace'
+import type { DeviceSurfaceWorkspaceMenuItem } from '@/extensions/device-surface-contract'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import type { ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 
 export type WorkspaceTool = 'terminal'
-
-export type WorkspacePanelMenuTool = WorkspaceTool | 'desktop'
 
 export interface WorkspacePanelMenuAction {
   visible: boolean
@@ -12,13 +11,14 @@ export interface WorkspacePanelMenuAction {
   title?: string
 }
 
-export interface RunnableWorkspacePanelMenuAction extends WorkspacePanelMenuAction {
+export interface WorkspacePanelExtensionMenuAction
+  extends WorkspacePanelMenuAction, DeviceSurfaceWorkspaceMenuItem {
   run: () => Promise<void>
 }
 
 export type WorkspacePanelMenuActions = {
   terminal: WorkspacePanelMenuAction
-  desktop: RunnableWorkspacePanelMenuAction
+  extension: WorkspacePanelExtensionMenuAction | null
 }
 
 export type WorkspaceTerminalSessionBase = ProjectDeviceSessionResponse & {

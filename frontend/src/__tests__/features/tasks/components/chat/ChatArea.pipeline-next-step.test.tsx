@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { ChatArea } from '@/features/tasks/components/chat'
@@ -45,6 +45,16 @@ const mockSelectedTaskDetail = {
 }
 
 let mockChatAreaTeam = mockSelectedTeam
+let mockNewChatTeam: Team | null = null
+let mockNewChat = false
+let mockEarlyDefaultTeam: Team | null = null
+const mockHandleTeamChange = jest.fn()
+const mockFindDefaultTeam = (teams: Team[]) =>
+  teams.find(team => team.default_for_modes?.includes('chat')) ?? null
+
+jest.mock('@/features/tasks/hooks/useDefaultTeam', () => ({
+  useDefaultTeam: (_mode: string, enabled: boolean) => (enabled ? mockEarlyDefaultTeam : null),
+}))
 let mockChatAreaSelectedModel: Record<string, unknown> | null = null
 let mockChatAreaAttachments: Array<Record<string, unknown>> = []
 let mockTaskMessages = new Map<string, unknown>()
@@ -71,7 +81,7 @@ const mockStageInfo = {
 }
 
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams('taskId=42'),
+  useSearchParams: () => new URLSearchParams(mockNewChat ? '' : 'taskId=42'),
   useRouter: () => ({ push: jest.fn() }),
   usePathname: () => '/chat',
 }))
@@ -121,9 +131,9 @@ jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
 
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
-    selectedTeam: mockChatAreaTeam,
-    handleTeamChange: jest.fn(),
-    findDefaultTeamForMode: jest.fn(),
+    selectedTeam: mockNewChat ? mockNewChatTeam : mockChatAreaTeam,
+    handleTeamChange: mockHandleTeamChange,
+    findDefaultTeamForMode: mockFindDefaultTeam,
     defaultTeam: null,
     restoreDefaultTeam: jest.fn(),
     isUsingDefaultTeam: false,
@@ -190,12 +200,12 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
-    selectedTaskDetail: mockSelectedTaskDetail,
-    selectedTask: mockSelectedTaskDetail,
+    selectedTaskDetail: mockNewChat ? null : mockSelectedTaskDetail,
+    selectedTask: mockNewChat ? null : mockSelectedTaskDetail,
     selectTask: jest.fn(),
     accessDenied: false,
     taskState: {
-      taskId: mockSelectedTaskDetail.id,
+      taskId: mockNewChat ? undefined : mockSelectedTaskDetail.id,
       messages: mockTaskMessages,
       runtime: { taskStatus: undefined },
     },
@@ -249,7 +259,11 @@ jest.mock(
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
-  QuickAccessCards: () => <div data-testid="quick-access-cards" />,
+  QuickAccessCards: ({ onTeamSelect }: { onTeamSelect: (team: Team) => void }) => (
+    <button data-testid="quick-access-cards" onClick={() => onTeamSelect(mockSelectedTeam)}>
+      Select agent
+    </button>
+  ),
 }))
 jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
@@ -390,6 +404,9 @@ describe('ChatArea pipeline next-step dialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockChatAreaTeam = mockSelectedTeam
+    mockNewChat = false
+    mockEarlyDefaultTeam = null
+    mockHandleTeamChange.mockReset()
     mockChatAreaSelectedModel = null
     mockChatAreaAttachments = []
     ;(mockSelectedTeam.bots[0] as { contextPassing: string }).contextPassing = 'previous_bot'
@@ -674,4 +691,56 @@ describe('ChatArea pipeline next-step dialog', () => {
 
     expect(await screen.findByTestId('pipeline-next-step-button')).toBeDisabled()
   })
+})
+
+describe('ChatArea selection while the catalog loads', () => {
+  const defaultTeam = {
+    ...mockSelectedTeam,
+    id: 8,
+    bind_mode: ['chat'],
+    default_for_modes: ['chat'],
+  } as Team
+
+  beforeEach(() => {
+    mockNewChat = true
+    mockNewChatTeam = null
+    mockEarlyDefaultTeam = null
+    mockTaskMessages = new Map()
+    mockHandleTeamChange.mockReset().mockImplementation((team: Team | null) => {
+      mockNewChatTeam = team
+    })
+  })
+
+  it.each(['present', 'removed', 'empty', 'failed'] as const)(
+    'preserves an early manual selection and reconciles a %s catalog',
+    outcome => {
+      const { rerender } = render(<ChatArea teams={[]} isTeamsLoading taskType="chat" />)
+      fireEvent.click(screen.getByTestId('quick-access-cards'))
+      expect(mockNewChatTeam?.id).toBe(7)
+      mockHandleTeamChange.mockClear()
+
+      // The default arrives after the user has already chosen another agent.
+      mockEarlyDefaultTeam = defaultTeam
+      rerender(<ChatArea teams={[]} isTeamsLoading taskType="chat" />)
+      expect(mockHandleTeamChange).not.toHaveBeenCalled()
+
+      const catalog =
+        outcome === 'present'
+          ? [defaultTeam, { ...mockSelectedTeam, bind_mode: ['chat'] } as Team]
+          : outcome === 'empty'
+            ? []
+            : [defaultTeam]
+      rerender(
+        <ChatArea
+          teams={catalog}
+          isTeamsLoading={false}
+          loadError={outcome === 'failed' ? new Error('Unavailable') : null}
+          taskType="chat"
+        />
+      )
+      expect(mockNewChatTeam?.id ?? null).toBe(
+        outcome === 'removed' ? 8 : outcome === 'empty' ? null : 7
+      )
+    }
+  )
 })

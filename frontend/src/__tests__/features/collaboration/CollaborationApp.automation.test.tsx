@@ -195,18 +195,9 @@ describe('CollaborationApp project collaboration groups', () => {
     fireEvent.change(screen.getByTestId('collaboration-group-description'), {
       target: { value: '持续检查并处理项目 Issue' },
     })
-    fireEvent.change(screen.getByTestId('collaboration-group-leader'), {
-      target: { value: 'agent:agent-binding-1' },
-    })
-    fireEvent.click(screen.getByTestId('collaboration-group-create-next'))
-    expect(screen.getByTestId('collaboration-group-create-tab-rules')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    fireEvent.click(screen.getByTestId('collaboration-group-create-next'))
-    expect(screen.getByTestId('collaboration-group-create-tab-environment')).toHaveAttribute(
-      'aria-selected',
-      'true'
+    fireEvent.click(screen.getByTestId('collaboration-group-create-add-members'))
+    fireEvent.click(
+      await screen.findByTestId('collaboration-group-create-member-agent-agent-binding-1')
     )
     fireEvent.click(screen.getByTestId('collaboration-group-create'))
 
@@ -260,7 +251,6 @@ describe('CollaborationApp project collaboration groups', () => {
         update: jest.fn(),
         remove: jest.fn(),
         runNow: jest.fn(),
-        runWorkflowNode: jest.fn(),
         listRuns: jest.fn().mockResolvedValue([]),
         cancelRun: jest.fn(),
         retryRun: jest.fn(),

@@ -93,6 +93,7 @@ export interface DesktopRuntimeDiagnostics {
 export class DesktopRuntime {
   private executor: ManagedExecutorHandle | null = null
   private coreDsh: CoreDshHandle | null = null
+  private desktopDeviceId: Promise<string> | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
   private coreDshPort: number | null = null
   private developmentPlugin: CoreDshDevelopmentPlugin | null = null
@@ -259,11 +260,7 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
-    const deviceId = await resolveDesktopDeviceId({
-      environment: this.options.environment,
-      dataDirectory: this.options.dataDirectory,
-      executorHome: managedExecutorHome(this.options),
-    })
+    const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({
       environment: this.options.environment,
@@ -377,6 +374,8 @@ export class DesktopRuntime {
       }
     }
     const dshUrl = externalDshUrl || `http://127.0.0.1:${port as number}`
+    const deviceId = await this.resolveDesktopDeviceId()
+    if (this.lifecycleGeneration !== generation) return null
     if (managedRuntime) {
       const launch = createCoreDshLaunch(managedRuntime, port as number)
       command = launch.command
@@ -401,12 +400,22 @@ export class DesktopRuntime {
         ...runtimeEnvironment,
         ...this.options.hostPipe.environment(),
         ...(dshHome ? { DSH_HOME: dshHome } : {}),
+        WEGENT_APP_IPC_DEVICE_ID: deviceId,
       },
       hostPipe: this.options.hostPipe,
     }
     if (this.lifecycleGeneration !== generation) return null
     this.startupStep('core-dsh-prepare', 'completed')
     return { plugins, port, runtimeOptions }
+  }
+
+  private resolveDesktopDeviceId(): Promise<string> {
+    this.desktopDeviceId ??= resolveDesktopDeviceId({
+      environment: this.options.environment,
+      dataDirectory: this.options.dataDirectory,
+      executorHome: managedExecutorHome(this.options),
+    })
+    return this.desktopDeviceId
   }
 
   private createPreparedCoreDsh(

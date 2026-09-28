@@ -83,19 +83,29 @@ export function KanbanColumnDropzone({
       ref={setNodeRef}
       data-testid={testId}
       className={classNames(
-        "relative min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-2 pt-2 transition-colors",
+        "relative flex min-h-0 flex-1 flex-col transition-colors",
         isOver && "rounded-xl bg-muted ring-1 ring-inset ring-focus/50",
       )}
     >
-      {isOver && dragHint ? (
+      <div
+        data-testid={`${testId}-viewport`}
+        className="min-h-0 w-full flex-1 overflow-y-auto overscroll-y-contain pr-1.5"
+      >
         <div
-          data-testid={`${testId.replace("-dropzone-", "-drag-hint-")}`}
-          className="pointer-events-none sticky top-0 z-20 rounded-lg border border-border bg-background/95 px-2 py-1.5 text-center text-xs font-medium text-text-secondary shadow-sm"
+          data-testid={`${testId}-content`}
+          className="w-full space-y-2 px-2 pb-2 pt-2"
         >
-          {dragHint}
+          {isOver && dragHint ? (
+            <div
+              data-testid={`${testId.replace("-dropzone-", "-drag-hint-")}`}
+              className="pointer-events-none sticky top-0 z-20 rounded-lg border border-border bg-background/95 px-2 py-1.5 text-center text-xs font-medium text-text-secondary shadow-sm"
+            >
+              {dragHint}
+            </div>
+          ) : null}
+          {children}
         </div>
-      ) : null}
-      {children}
+      </div>
     </div>
   );
 }
@@ -211,7 +221,7 @@ export function KanbanBoard<TColumn, TItem>({
 
   return (
     <DndContext {...dndContextProps}>
-      <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
+      <div className="flex h-full min-h-0 w-max min-w-full items-start gap-3.5 px-6">
         {columns.map((column) => (
           <KanbanColumn
             {...columnProps}

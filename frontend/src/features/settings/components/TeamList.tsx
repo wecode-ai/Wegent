@@ -128,6 +128,7 @@ interface TeamListProps {
   hideModeFilter?: boolean
   createRequest?: ResourceCreateRequest
   onCreated?: (team: Team) => void
+  onSaved?: (team: Team, created: boolean) => void
   onCreateRequestClose?: () => void
   creationOnly?: boolean
   compact?: boolean
@@ -163,6 +164,7 @@ export default function TeamList({
   hideModeFilter = false,
   createRequest,
   onCreated,
+  onSaved,
   onCreateRequestClose,
   creationOnly = false,
   compact = false,
@@ -289,10 +291,11 @@ export default function TeamList({
   const handleTeamSaved = useCallback(
     async (team: Team) => {
       await loadData()
+      onSaved?.(team, editingTeamId === 0)
       if (pendingCreateRequestRef.current) onCreated?.(team)
       pendingCreateRequestRef.current = null
     },
-    [loadData, onCreated]
+    [loadData, onCreated, onSaved, editingTeamId]
   )
 
   const handleCreateOptionsChange = useCallback(

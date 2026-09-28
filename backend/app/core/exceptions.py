@@ -22,6 +22,18 @@ def _make_json_serializable(value):
     return value
 
 
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    """Remove complete Model spec inputs so validation cannot echo credentials."""
+    sanitized = []
+    for error in errors:
+        item = dict(error)
+        location = item.get("loc", ())
+        if "json" in location:
+            item.pop("input", None)
+        sanitized.append(item)
+    return sanitized
+
+
 class NotFoundException(HTTPException):
     """Resource not found exception"""
 
@@ -91,7 +103,9 @@ async def validation_exception_handler(request, exc: RequestValidationError):
         content={
             "error_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
             "detail": "Request parameter validation failed",
-            "errors": _make_json_serializable(exc.errors()),
+            "errors": _make_json_serializable(
+                _sanitize_validation_errors(exc.errors())
+            ),
         },
     )
 

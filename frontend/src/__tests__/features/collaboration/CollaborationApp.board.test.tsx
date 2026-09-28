@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import {
   CollaborationApp,
@@ -78,12 +78,49 @@ function issue(): CollaborationIssue {
   }
 }
 
-function dragDataTransfer() {
-  const transfer = new Map<string, string>()
-  return {
-    effectAllowed: 'none',
-    getData: (type: string) => transfer.get(type) ?? '',
-    setData: (type: string, value: string) => transfer.set(type, value),
+class BoardPointerEvent extends MouseEvent {
+  readonly isPrimary = true
+  readonly pointerId = 1
+}
+
+async function dragCardTo(card: HTMLElement, target: HTMLElement) {
+  jest.useFakeTimers()
+  const originalPointerEvent = window.PointerEvent
+  window.PointerEvent = BoardPointerEvent as unknown as typeof PointerEvent
+  const rect = jest
+    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockImplementation(function (this: HTMLElement) {
+      const x = target.contains(this) ? 400 : 0
+      return {
+        x,
+        y: 0,
+        left: x,
+        top: 0,
+        right: x + 280,
+        bottom: 200,
+        width: 280,
+        height: 200,
+        toJSON() {},
+      }
+    })
+  try {
+    const handle = card.querySelector<HTMLElement>('[data-testid^="cloud-todo-card-"]')!
+    fireEvent.pointerDown(handle, { clientX: 20, clientY: 20, button: 0 })
+    fireEvent.pointerMove(document, { clientX: 30, clientY: 20 })
+    expect(await screen.findByTestId('project-board-drag-overlay')).toBeInTheDocument()
+    fireEvent.pointerMove(document, { clientX: 420, clientY: 20 })
+    await act(async () => {
+      fireEvent.pointerUp(document, { clientX: 420, clientY: 20 })
+      // dnd-kit suppresses the click after a drop for 50ms.
+      await jest.advanceTimersByTimeAsync(50)
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('project-board-drag-overlay')).not.toBeInTheDocument()
+    )
+  } finally {
+    rect.mockRestore()
+    window.PointerEvent = originalPointerEvent
+    jest.useRealTimers()
   }
 }
 
@@ -99,6 +136,7 @@ describe('CollaborationApp shared project board', () => {
       projects: {
         get: jest.fn().mockResolvedValue(currentProject),
         update: updateProject,
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({
@@ -150,9 +188,10 @@ describe('CollaborationApp shared project board', () => {
     }
     expect(screen.getByTestId('collaboration-issue-issue-1')).toHaveTextContent('共享看板任务')
 
-    const dataTransfer = dragDataTransfer()
-    fireEvent.dragStart(screen.getByTestId('collaboration-issue-issue-1'), { dataTransfer })
-    fireEvent.drop(screen.getByTestId('cloud-todo-column-dropzone-completed'), { dataTransfer })
+    await dragCardTo(
+      screen.getByTestId('collaboration-issue-issue-1'),
+      screen.getByTestId('cloud-todo-column-dropzone-completed')
+    )
     await waitFor(() =>
       expect(updateIssue).toHaveBeenCalledWith('issue-1', {
         version: 1,
@@ -184,9 +223,8 @@ describe('CollaborationApp shared project board', () => {
     })
     expect(screen.queryByTestId('collaboration-issue-issue-1')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByTestId('cloud-board-group-by'), {
-      target: { value: 'priority' },
-    })
+    fireEvent.click(screen.getByTestId('cloud-board-group-by'))
+    fireEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
     await waitFor(() =>
       expect(updateProject).toHaveBeenCalledWith(
         currentProject.id,
@@ -250,6 +288,7 @@ describe('CollaborationApp shared project board', () => {
     const api = {
       projects: {
         get: jest.fn().mockResolvedValue(currentProject),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({
@@ -287,9 +326,7 @@ describe('CollaborationApp shared project board', () => {
     render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
 
     const card = await screen.findByTestId('collaboration-issue-issue-1')
-    const dataTransfer = dragDataTransfer()
-    fireEvent.dragStart(card, { dataTransfer })
-    fireEvent.drop(screen.getByTestId(scenario.target), { dataTransfer })
+    await dragCardTo(card, screen.getByTestId(scenario.target))
 
     const assertion = scenario.configure({ update, assign, reorder })
     await waitFor(assertion.assert)
@@ -348,6 +385,7 @@ describe('CollaborationApp shared project board', () => {
       projects: {
         list: jest.fn().mockResolvedValue([externalProject]),
         get: jest.fn().mockResolvedValue(externalProject),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         listPage,

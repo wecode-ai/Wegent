@@ -98,6 +98,53 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
+  it('persists a continued turn on the existing runtime session', async () => {
+    request.mockResolvedValue(
+      commentRecord({
+        message_id: 'agent-turn-2',
+        sender_type: 'agent',
+        sender_id: 'a1',
+        sender_name: 'Bot',
+        status: 'streaming',
+        reply_to_message_id: 'user-turn-2',
+        thread_root_message_id: 'root-1',
+        metadata: {
+          runtime_address: { deviceId: 'local-device', taskId: 'session-1' },
+        },
+      })
+    )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+
+    const response = await client.startAgentResponse({
+      projectId: 'p1',
+      taskId: 't1',
+      triggerMessageId: 'user-turn-2',
+      agentId: 'a1',
+      runtimeDeviceId: 'local-device',
+      runtimeTaskId: 'session-1',
+      prompt: '我之前说了啥',
+    })
+
+    expect(request).toHaveBeenCalledWith('todos.comment.agent.start', {
+      project_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+      trigger_message_id: 'user-turn-2',
+      runtime_device_id: 'local-device',
+      runtime_task_id: 'session-1',
+      prompt: '我之前说了啥',
+      model: null,
+    })
+    expect(response).toMatchObject({
+      messageId: 'agent-turn-2',
+      status: 'streaming',
+      runtimeAddress: { deviceId: 'local-device', taskId: 'session-1' },
+    })
+    expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
+  })
+
   it('carries the selected local code project into the comment and enqueue payload', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
@@ -182,6 +229,45 @@ describe('createLocalProjectChatClient', () => {
     subscription.unsubscribe()
   })
 
+  it('delivers metadata-only activity updates even within the same timestamp', async () => {
+    vi.useFakeTimers()
+    const planning = commentRecord({
+      sender_type: 'agent',
+      sender_id: 'leader',
+      sender_name: '负责人',
+      status: 'streaming',
+      metadata: { dispatch_role: 'manager', dispatch_assignments: [] },
+    })
+    const assigned = {
+      ...planning,
+      metadata: {
+        dispatch_role: 'manager',
+        dispatch_assignments: [{ task_title: '采集证据', agent_name: '执行智能体' }],
+      },
+    }
+    request.mockResolvedValueOnce([planning]).mockResolvedValueOnce([assigned])
+
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const onMessage = vi.fn()
+    const subscription = await client.subscribe('p1', 't1', 0, onMessage)
+    onMessage.mockClear()
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          dispatch_assignments: [
+            expect.objectContaining({ task_title: '采集证据', agent_name: '执行智能体' }),
+          ],
+        }),
+      })
+    )
+    subscription.unsubscribe()
+  })
+
   it('maps runtime_address metadata onto agent messages', async () => {
     vi.useFakeTimers()
     request.mockResolvedValue([
@@ -211,5 +297,37 @@ describe('createLocalProjectChatClient', () => {
       taskId: 'codex-queue-7-123',
     })
     subscription.unsubscribe()
+  })
+  it('preserves queued activity and its persisted runtime task link', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        status: 'pending',
+        metadata: {
+          execution_id: 4,
+          runtime_address: { deviceId: 'local', taskId: 'codex-queue-4' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      status: 'pending',
+      runtimeAddress: { deviceId: 'local', taskId: 'codex-queue-4' },
+    })
+    subscription.unsubscribe()
+  })
+
+  it('reports an initial read failure instead of returning an empty activity list', async () => {
+    request.mockRejectedValue(new Error('Local activity database unavailable'))
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    await expect(client.subscribe('p1', 't1', 0, vi.fn())).rejects.toThrow(
+      'Local activity database unavailable'
+    )
+    client.dispose()
   })
 })

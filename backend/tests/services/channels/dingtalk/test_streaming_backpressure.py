@@ -1,7 +1,6 @@
 """Regression tests for slow card delivery and authoritative completion."""
 
 import asyncio
-import threading
 import time
 from unittest.mock import AsyncMock
 
@@ -13,17 +12,16 @@ from shared.models import EventType, ExecutionEvent
 from tests.services.channels.dingtalk.test_emitter import FakeCache, card_factory
 
 
-def block_update(card, loop, content):
+def block_update(card, content):
     started = asyncio.Event()
-    release = threading.Event()
+    release = asyncio.Event()
     original = card.ai_streaming
 
-    def streaming(value, append=False):
+    async def streaming(value, append=False):
         if value == content:
-            loop.call_soon_threadsafe(started.set)
-            if not release.wait(5):
-                raise AssertionError("test did not release blocked card request")
-        original(value, append=append)
+            started.set()
+            await release.wait()
+        await original(value, append=append)
 
     card.ai_streaming = streaming
     return started, release
@@ -37,7 +35,7 @@ async def test_slow_card_does_not_block_ingestion_and_done_replaces_pending(
     emitter.MIN_UPDATE_INTERVAL = 0
     await emitter.emit_start(1, 2)
     card = card_factory[0]
-    started, release = block_update(card, asyncio.get_running_loop(), "first")
+    started, release = block_update(card, "first")
     try:
         await emitter.emit_chunk(1, 2, "first", 0)
         await asyncio.wait_for(started.wait(), 1)
@@ -88,16 +86,15 @@ async def test_default_window_coalesces_chunks_without_early_card_updates(card_f
     emitter = StreamingResponseEmitter(object(), object(), "card-1")
     await emitter.emit_start(1, 2)
     card = card_factory[0]
-    loop = asyncio.get_running_loop()
     first_sent, second_sent = asyncio.Event(), asyncio.Event()
     sent_at = []
     original = card.ai_streaming
 
-    def streaming(content, append=False):
-        original(content, append=append)
+    async def streaming(content, append=False):
+        await original(content, append=append)
         sent_at.append(time.monotonic())
         event = first_sent if len(sent_at) == 1 else second_sent
-        loop.call_soon_threadsafe(event.set)
+        event.set()
 
     card.ai_streaming = streaming
     try:
@@ -133,9 +130,7 @@ async def test_terminal_on_reconstructed_worker_fences_old_pending_updates(
     first.set_shared_content_key("shared-card")
     first.MIN_UPDATE_INTERVAL = 0
     await first.emit_start(1, 2)
-    started, release = block_update(
-        card_factory[0], asyncio.get_running_loop(), "first"
-    )
+    started, release = block_update(card_factory[0], "first")
     second = StreamingResponseEmitter(object(), object(), "card-1")
     second.set_shared_content_key("shared-card")
     try:

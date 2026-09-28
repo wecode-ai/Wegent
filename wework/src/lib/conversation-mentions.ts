@@ -87,6 +87,7 @@ export async function appendConversationMentionContext(
     mentions.map(async mention => {
       const transcript = await loadTranscript(mention.address, {
         includeFullContent: true,
+        conversationContextOnly: true,
         refresh: true,
       })
       return {

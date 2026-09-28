@@ -31,7 +31,12 @@ import { releaseAttachmentPreview } from '@/lib/attachments'
 import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
 import { resolveRuntimeTaskWorkspaceBinding } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
-import type { Attachment, ProjectWithTasks, RuntimeTaskCreateRequest } from '@/types/api'
+import type {
+  Attachment,
+  ProjectExecutionMode,
+  ProjectWithTasks,
+  RuntimeTaskCreateRequest,
+} from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { issueDraftFromText } from './issueComposerDraft'
@@ -206,12 +211,6 @@ export function IssueComposer({
     draft?.localProjectId ?? initialLocalProjectId ?? runtimeTaskProjects[0]?.id ?? null
   )
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
-  const [executionMode, setExecutionMode] = useState(
-    () => workbench?.projectExecutionMode ?? 'current_workspace'
-  )
-  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
-    () => workbench?.projectWorktreeBranch ?? null
-  )
   const selectedLocalProject =
     runtimeTaskProjects.find(project => project.id === localProjectId) ?? null
   const selectedWorkspaceBinding = resolveRuntimeTaskWorkspaceBinding({
@@ -409,7 +408,8 @@ export function IssueComposer({
   const createIssue = async (
     submittedContent: string,
     submittedTitle?: string,
-    keepOpen = false
+    keepOpen = false,
+    executionMode: ProjectExecutionMode = 'current_workspace'
   ) => {
     const description = submittedContent.trim()
     const pendingTag = tagDraft.trim().replace(/^#/, '')
@@ -439,12 +439,11 @@ export function IssueComposer({
               runtime: 'codex',
               message: description,
               ...(selectedWorkspaceBinding ?? {}),
-              ...(executionMode === 'git_worktree'
+              ...(selectedLocalProject && executionMode === 'git_worktree'
                 ? {
                     execution: {
                       workspace: {
                         source: 'git_worktree' as const,
-                        ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
                       },
                     },
                   }
@@ -484,8 +483,6 @@ export function IssueComposer({
     }
     return created
   }
-  const submit = (submittedContent?: string) =>
-    createIssue(submittedContent ?? contentRef.current, title)
   const updateCompactContent = (value: string) => {
     if (fullScreenRef.current) return
     contentRef.current = value
@@ -542,6 +539,7 @@ export function IssueComposer({
           currentProjectId: selectedLocalProject?.id,
           selectedDeviceWorkspaceId: localDeviceWorkspaceId,
           executionMode: 'current_workspace',
+          executionModeLocked: true,
           onSelectProject: selectLocalProject,
           onSelectStandaloneDevice: () => undefined,
           onSelectProjectWorkspace: selectLocalProjectWorkspace,
@@ -549,169 +547,175 @@ export function IssueComposer({
           showProjectClearButton: false,
         }
       : undefined
-  const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => (
-    <div
-      data-testid="workspace-issue-composer-input-shell"
-      className="relative font-normal text-text-primary"
-    >
-      <BufferedChatInput
-        value={content}
-        onChange={updateCompactContent}
-        onSubmit={submit}
-        disabled={busy}
-        submitDisabled={busy || !boardKey}
-        error={error}
-        placeholder={t('workbench.input_placeholder', '随心输入')}
-        inputTestId="workspace-issue-input"
-        nativeEmptyCaret
-        submitButtonTestId="workspace-issue-submit"
-        variant="desktop"
-        projectChat={projectChat}
-        projectWork={
-          resolvedProjectWork
-            ? {
-                ...resolvedProjectWork,
-                executionMode,
-                worktreeBranch,
-                onExecutionModeChange: setExecutionMode,
-                onWorktreeBranchChange: setWorktreeBranch,
-              }
-            : undefined
-        }
-        showProjectWorkBar={creationMode === 'task' && runtimeTaskProjects.length > 0}
-        showExecutionTools={creationMode === 'task'}
-        showWorkspaceMenu={false}
-        toolbarLeadingContext={
-          creationMode === 'issue' ? (
-            <label className="relative flex h-8 min-w-0 max-w-48 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-within:bg-muted focus-within:text-text-primary">
-              <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">
-                {selectedWorkItemProject?.name ??
-                  t('workbench.default_work_item_board', '我的任务')}
-              </span>
-              <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <select
-                data-testid="workspace-issue-project-compact"
-                aria-label={t('todo.issue_project_label', '项目空间')}
-                value={boardKey}
-                disabled={busy || projects.length === 0}
-                onChange={event => selectBoard(event.target.value)}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-              >
-                {!projects.some(
-                  project => `${project.project_store}:${String(project.id)}` === boardKey
-                ) && boardKey ? (
-                  <option value={boardKey}>
-                    {selectedWorkItemProject?.name ??
-                      t('workbench.default_work_item_board', '我的任务')}
-                  </option>
-                ) : null}
-                {projects.map(project => (
-                  <option
-                    key={`${project.project_store}:${String(project.id)}`}
-                    value={`${project.project_store}:${String(project.id)}`}
-                  >
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : undefined
-        }
-        projectWorkBarMiddleContext={
-          creationMode === 'task' && selectedWorkItemProject ? (
-            <WorkItemComposerGuide
-              integrated
-              toolbar
-              project={selectedWorkItemProject}
-              projects={projects}
-              onSelectProject={project =>
-                selectBoard(`${project.project_store}:${String(project.id)}`)
-              }
-            />
-          ) : undefined
-        }
-        projectWorkBarTrailingContext={
-          creationMode === 'task' ? (
-            <WorkbenchHarnessSelector
-              runtime="codex"
-              harnesses={[]}
-              enabledHarnesses={[]}
-              loading={false}
-              detectionFailed={false}
-              onRuntimeChange={() => undefined}
-            />
-          ) : undefined
-        }
-      />
-      {creationMode === 'issue' ? (
-        <Tooltip
-          label={t('todo.expand_issue_editor', '全屏编辑')}
-          side="top"
-          align="end"
-          className="absolute right-3 top-3 z-10"
-        >
-          <button
-            type="button"
-            data-testid="workspace-issue-expand"
-            onClick={openFullScreen}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none md:h-8 md:w-8"
-            aria-label={t('todo.expand_issue_editor', '全屏编辑')}
+  const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => {
+    const executionMode: ProjectExecutionMode = resolvedProjectWork?.worktreeAvailability?.available
+      ? 'git_worktree'
+      : 'current_workspace'
+
+    return (
+      <div
+        data-testid="workspace-issue-composer-input-shell"
+        className="relative font-normal text-text-primary"
+      >
+        <BufferedChatInput
+          value={content}
+          onChange={updateCompactContent}
+          onSubmit={submittedContent =>
+            createIssue(submittedContent ?? content, title, false, executionMode)
+          }
+          disabled={busy}
+          submitDisabled={busy || !boardKey}
+          error={error}
+          placeholder={t('workbench.input_placeholder', '随心输入')}
+          inputTestId="workspace-issue-input"
+          nativeEmptyCaret
+          submitButtonTestId="workspace-issue-submit"
+          variant="desktop"
+          projectChat={projectChat}
+          projectWork={
+            resolvedProjectWork
+              ? {
+                  ...resolvedProjectWork,
+                  executionMode,
+                  executionModeLocked: true,
+                }
+              : undefined
+          }
+          showProjectWorkBar={creationMode === 'task' && runtimeTaskProjects.length > 0}
+          showExecutionTools={creationMode === 'task'}
+          showWorkspaceMenu={false}
+          toolbarLeadingContext={
+            creationMode === 'issue' ? (
+              <label className="relative flex h-8 min-w-0 max-w-48 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-within:bg-muted focus-within:text-text-primary">
+                <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 truncate">
+                  {selectedWorkItemProject?.name ??
+                    t('workbench.default_work_item_board', '我的任务')}
+                </span>
+                <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <select
+                  data-testid="workspace-issue-project-compact"
+                  aria-label={t('todo.issue_project_label', '项目空间')}
+                  value={boardKey}
+                  disabled={busy || projects.length === 0}
+                  onChange={event => selectBoard(event.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                >
+                  {!projects.some(
+                    project => `${project.project_store}:${String(project.id)}` === boardKey
+                  ) && boardKey ? (
+                    <option value={boardKey}>
+                      {selectedWorkItemProject?.name ??
+                        t('workbench.default_work_item_board', '我的任务')}
+                    </option>
+                  ) : null}
+                  {projects.map(project => (
+                    <option
+                      key={`${project.project_store}:${String(project.id)}`}
+                      value={`${project.project_store}:${String(project.id)}`}
+                    >
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : undefined
+          }
+          projectWorkBarMiddleContext={
+            creationMode === 'task' && selectedWorkItemProject ? (
+              <WorkItemComposerGuide
+                integrated
+                toolbar
+                project={selectedWorkItemProject}
+                projects={projects}
+                onSelectProject={project =>
+                  selectBoard(`${project.project_store}:${String(project.id)}`)
+                }
+              />
+            ) : undefined
+          }
+          projectWorkBarTrailingContext={
+            creationMode === 'task' ? (
+              <WorkbenchHarnessSelector
+                runtime="codex"
+                harnesses={[]}
+                enabledHarnesses={[]}
+                loading={false}
+                detectionFailed={false}
+                onRuntimeChange={() => undefined}
+              />
+            ) : undefined
+          }
+        />
+        {creationMode === 'issue' ? (
+          <Tooltip
+            label={t('todo.expand_issue_editor', '全屏编辑')}
+            side="top"
+            align="end"
+            className="absolute right-3 top-3 z-10"
           >
-            <Maximize2 className="h-4 w-4" />
-          </button>
-        </Tooltip>
-      ) : null}
-      {creationMode === 'issue' && !content.trim() ? (
-        <div
-          data-testid="workspace-issue-templates"
-          className="mt-2 flex flex-wrap items-center gap-1.5 px-1"
-        >
-          <span className="mr-1 text-xs text-text-muted">
-            {t('todo.issue_templates_label', '从模板开始')}
-          </span>
-          {[
-            {
-              key: 'feature',
-              label: t('todo.issue_template_feature', '开发功能'),
-              content: t(
-                'todo.issue_template_feature_content',
-                '目标：\n\n背景：\n\n范围：\n\n验收标准：\n'
-              ),
-            },
-            {
-              key: 'bug',
-              label: t('todo.issue_template_bug', '修复问题'),
-              content: t(
-                'todo.issue_template_bug_content',
-                '问题现象：\n\n复现步骤：\n\n期望结果：\n'
-              ),
-            },
-            {
-              key: 'research',
-              label: t('todo.issue_template_research', '调研方案'),
-              content: t(
-                'todo.issue_template_research_content',
-                '待回答问题：\n\n输出要求：\n\n决策标准：\n'
-              ),
-            },
-          ].map(template => (
             <button
-              key={template.key}
               type="button"
-              data-testid={`workspace-issue-template-${template.key}`}
-              data-template-content={template.content}
-              disabled={busy}
-              onClick={applyIssueTemplate}
-              className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+              data-testid="workspace-issue-expand"
+              onClick={openFullScreen}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none md:h-8 md:w-8"
+              aria-label={t('todo.expand_issue_editor', '全屏编辑')}
             >
-              {template.label}
+              <Maximize2 className="h-4 w-4" />
             </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
+          </Tooltip>
+        ) : null}
+        {creationMode === 'issue' && !content.trim() ? (
+          <div
+            data-testid="workspace-issue-templates"
+            className="mt-2 flex flex-wrap items-center gap-1.5 px-1"
+          >
+            <span className="mr-1 text-xs text-text-muted">
+              {t('todo.issue_templates_label', '从模板开始')}
+            </span>
+            {[
+              {
+                key: 'feature',
+                label: t('todo.issue_template_feature', '开发功能'),
+                content: t(
+                  'todo.issue_template_feature_content',
+                  '目标：\n\n背景：\n\n范围：\n\n验收标准：\n'
+                ),
+              },
+              {
+                key: 'bug',
+                label: t('todo.issue_template_bug', '修复问题'),
+                content: t(
+                  'todo.issue_template_bug_content',
+                  '问题现象：\n\n复现步骤：\n\n期望结果：\n'
+                ),
+              },
+              {
+                key: 'research',
+                label: t('todo.issue_template_research', '调研方案'),
+                content: t(
+                  'todo.issue_template_research_content',
+                  '待回答问题：\n\n输出要求：\n\n决策标准：\n'
+                ),
+              },
+            ].map(template => (
+              <button
+                key={template.key}
+                type="button"
+                data-testid={`workspace-issue-template-${template.key}`}
+                data-template-content={template.content}
+                disabled={busy}
+                onClick={applyIssueTemplate}
+                className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+              >
+                {template.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div

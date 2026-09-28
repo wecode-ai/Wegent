@@ -12,6 +12,7 @@ const KEYS: Record<string, string> = {
   ArrowRight: 'Right',
   A: 'A',
   B: 'B',
+  C: 'C',
   M: 'M',
   T: 'T',
   x: 'x',

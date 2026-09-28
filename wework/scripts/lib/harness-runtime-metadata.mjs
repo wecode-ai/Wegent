@@ -18,7 +18,8 @@ export function normalizeFileViewerAssetManifest(manifest, outputRoot) {
 function normalizeAsset(asset, outputRoot) {
   if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return asset
   if (typeof asset.to !== 'string') return asset
-  const relative = path.relative(canonicalPath(outputRoot), canonicalPath(asset.to))
+  const assetPath = path.isAbsolute(asset.to) ? asset.to : path.resolve(outputRoot, asset.to)
+  const relative = path.relative(canonicalPath(outputRoot), canonicalPath(assetPath))
   if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`)) {
     throw new Error(`File viewer asset is outside the DSH app output: ${asset.to}`)
   }

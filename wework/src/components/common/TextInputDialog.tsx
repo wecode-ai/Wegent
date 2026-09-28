@@ -1,8 +1,9 @@
 import { X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogForm } from './DialogForm'
 
 interface TextInputDialogProps {
   open: boolean
@@ -43,18 +44,39 @@ function TextInputDialogContent({
 
   const trimmedValue = value.trim()
 
-  useEscapeKey(onClose)
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!submitting) onClose()
+  })
 
   return createPortal(
     <div
       data-testid={`${inputTestId}-overlay`}
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
+      <DialogForm
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${inputTestId}-title`}
         className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 text-text-primary shadow-2xl"
+        onSubmit={async event => {
+          event.preventDefault()
+          if (!trimmedValue || submitting) return
+          setSubmitting(true)
+          setError(null)
+          try {
+            await onSubmit(trimmedValue)
+            onClose()
+          } catch (submitError) {
+            setError(
+              submitError instanceof Error
+                ? submitError.message
+                : t('workbench.save_failed', '保存失败')
+            )
+          } finally {
+            setSubmitting(false)
+          }
+        }}
       >
         <div className="flex items-center justify-between gap-4">
           <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-text-primary">
@@ -64,6 +86,7 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-close-button`}
             onClick={onClose}
+            disabled={submitting}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={cancelLabel}
           >
@@ -73,13 +96,17 @@ function TextInputDialogContent({
         {description && (
           <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
         )}
-        <label className="mt-5 block text-sm font-medium leading-[18px] text-text-secondary">
+        <label
+          htmlFor={inputTestId}
+          className="mt-5 block text-sm font-medium leading-[18px] text-text-secondary"
+        >
           {label}
         </label>
         <input
+          id={inputTestId}
           data-testid={inputTestId}
           value={value}
-          autoFocus
+          disabled={submitting}
           onFocus={event => event.currentTarget.select()}
           onChange={event => {
             setValue(event.target.value)
@@ -93,36 +120,21 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-cancel-button`}
             onClick={onClose}
+            disabled={submitting}
             className="h-11 min-w-[44px] rounded-md border border-border px-4 text-sm font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
             {cancelLabel}
           </button>
           <button
-            type="button"
+            type="submit"
             data-testid={confirmTestId}
             disabled={!trimmedValue || submitting}
-            onClick={async () => {
-              setSubmitting(true)
-              setError(null)
-              try {
-                await onSubmit(trimmedValue)
-                onClose()
-              } catch (submitError) {
-                setError(
-                  submitError instanceof Error
-                    ? submitError.message
-                    : t('workbench.save_failed', '保存失败')
-                )
-              } finally {
-                setSubmitting(false)
-              }
-            }}
             className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {confirmLabel}
           </button>
         </div>
-      </div>
+      </DialogForm>
     </div>,
     document.body
   )

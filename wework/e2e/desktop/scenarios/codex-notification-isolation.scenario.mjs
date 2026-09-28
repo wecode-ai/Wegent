@@ -169,7 +169,7 @@ async function selectTask(control, sidebar, task, completion, timeoutMs) {
   )
 }
 
-async function waitForUnreadBadge(control, count, timeoutMs) {
+async function waitForUnreadBadge(control, count, timeoutMs, trayCount = count) {
   const { platform } = JSON.parse(await control.command('getNativeWindowState', 'body'))
   const deadline = Date.now() + timeoutMs
   let latest
@@ -184,10 +184,23 @@ async function waitForUnreadBadge(control, count, timeoutMs) {
       }
     }
     const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
-    if (unreadItems.length === count && latest.dockBadge === expectedBadge) return
+    if (unreadItems.length === trayCount && latest.dockBadge === expectedBadge) {
+      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const hasBellBadge = snapshot.testIds.includes('wework-notifications-unread')
+      if (count === 0 && !hasBellBadge) return
+      if (count > 0 && hasBellBadge) {
+        const bellCount = await control.command(
+          'getText',
+          '[data-testid="wework-notifications-unread"]'
+        )
+        if (bellCount === String(count)) return
+      }
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  assert.fail(`Expected ${count} unread tasks and matching Dock badge: ${JSON.stringify(latest)}`)
+  assert.fail(
+    `Expected ${count} unread notifications, ${trayCount} unread tray tasks and matching Dock badge: ${JSON.stringify(latest)}`
+  )
 }
 
 export function createDesktopScenario({
@@ -353,7 +366,7 @@ export function createDesktopScenario({
           { timeoutMs: uiTimeoutMs }
         )
         await control.command('click', '[data-testid="settings-back-button"]')
-        await waitForUnreadBadge(control, enabled ? 2 : 0, uiTimeoutMs)
+        await waitForUnreadBadge(control, 2, uiTimeoutMs, enabled ? 2 : 0)
       }
 
       const readyCountBeforeReload = control.readyCount

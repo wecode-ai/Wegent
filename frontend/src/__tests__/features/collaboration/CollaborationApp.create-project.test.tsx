@@ -97,8 +97,9 @@ describe('CollaborationApp shared project creation', () => {
 
     fireEvent.click(await screen.findByTestId('collaboration-project-create'))
 
-    expect(screen.getByTestId('cloud-project-location-cloud')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-location-local')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
     expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-github')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-task-provider-gitlab')).toBeInTheDocument()
@@ -132,6 +133,8 @@ describe('CollaborationApp shared project creation', () => {
           token: 'gitlab-secret',
         },
         visibility: 'public',
+        publicAccess: { role: 'Viewer' },
+        defaultIssueSecurity: 'open',
       })
     )
     expect(navigate).toHaveBeenCalledWith({
@@ -139,5 +142,61 @@ describe('CollaborationApp shared project creation', () => {
       issueId: null,
       view: 'board',
     })
+  })
+
+  it('creates a public built-in project with related issue security', async () => {
+    const create = jest.fn().mockResolvedValue({
+      ...createdProject,
+      task_provider: 'local',
+      provider_config: {},
+      visibility: 'public',
+      public_access: { role: 'Viewer' },
+      default_issue_security: 'related',
+    })
+    const api = {
+      projects: {
+        list: jest.fn().mockResolvedValue([]),
+        create,
+      },
+    } as unknown as SharedWorkspaceApi
+    const host = homeHost()
+
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+
+    fireEvent.click(await screen.findByTestId('collaboration-project-create'))
+    fireEvent.change(screen.getByTestId('collaboration-project-name-input'), {
+      target: { value: ' Related tasks ' },
+    })
+    fireEvent.click(screen.getByTestId('cloud-project-visibility-public'))
+    fireEvent.click(screen.getByTestId('cloud-project-default-issue-security-related'))
+    fireEvent.click(screen.getByTestId('collaboration-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({
+        name: 'Related tasks',
+        description: '',
+        taskProvider: 'local',
+        providerConfig: {},
+        visibility: 'public',
+        publicAccess: { role: 'Viewer' },
+        defaultIssueSecurity: 'related',
+      })
+    )
+  })
+
+  it('keeps issue security available for GitHub projects', async () => {
+    render(<CollaborationApp api={homeApi()} host={homeHost()} locale="zh-CN" pollIntervalMs={0} />)
+
+    fireEvent.click(await screen.findByTestId('collaboration-project-create'))
+    fireEvent.click(screen.getByTestId('collaboration-project-create-advanced'))
+    expect(screen.getByTestId('cloud-project-default-issue-security-related')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('cloud-project-task-provider-github'))
+
+    expect(screen.getByTestId('cloud-project-default-issue-security-related')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-visibility-private')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 })

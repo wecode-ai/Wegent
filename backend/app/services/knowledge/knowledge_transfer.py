@@ -113,7 +113,10 @@ class KnowledgeTransferService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
+                Kind.is_active,
             )
+            .populate_existing()
+            .with_for_update()
             .first()
         )
 
@@ -182,12 +185,24 @@ class KnowledgeTransferService:
         # Store old namespace for response
         old_namespace = kb.namespace
 
-        # Update the namespace
-        kb.namespace = target_group_name
-
         # Update the name in Kind record to reflect new namespace
         # Format: kb-{user_id}-{namespace}-{name}
         new_kb_name = f"kb-{user_id}-{target_group_name}-{kb_name}"
+
+        # Scheduled-update storage owns the denormalized reference. Move it in the
+        # same transaction before changing the Kind identity it currently matches.
+        if kb_spec.get("kbType") == "code_wiki":
+            from app.services.knowledge.code_wiki.scheduled_update import (
+                retarget_scheduled_update,
+            )
+
+            retarget_scheduled_update(
+                db,
+                knowledge_base=kb,
+                name=new_kb_name,
+                namespace=target_group_name,
+            )
+        kb.namespace = target_group_name
         kb.name = new_kb_name
 
         # Update the namespace in the JSON spec as well

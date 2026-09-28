@@ -7,8 +7,45 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
+#[path = "local_history_tests.rs"]
+mod local_history_tests;
+
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
+
+#[path = "task_lookup_tests.rs"]
+mod task_lookup_tests;
+
+/// Restores one environment variable when a test finishes.
+struct ScalarEnv {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScalarEnv {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScalarEnv {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+#[path = "task_project_move_tests.rs"]
+mod task_project_move_tests;
 
 #[path = "message_presentation_tests.rs"]
 mod message_presentation_tests;
@@ -85,14 +122,11 @@ fn running_task_count_uses_process_local_execution_state() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (first_cancel, _first_cancel_rx) = oneshot::channel();
     let (_first_stopped, first_stopped_rx) = oneshot::channel();
-    let first_execution = handler
-        .start_local_task_execution("task-1".to_owned(), None, first_cancel, first_stopped_rx)
-        .expect("first local execution should start");
+    let first_execution =
+        handler.start_local_task_execution("task-1".to_owned(), first_cancel, first_stopped_rx);
     let (second_cancel, _second_cancel_rx) = oneshot::channel();
     let (_second_stopped, second_stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-2".to_owned(), None, second_cancel, second_stopped_rx)
-        .expect("second local execution should start");
+    handler.start_local_task_execution("task-2".to_owned(), second_cancel, second_stopped_rx);
 
     assert_eq!(handler.running_task_count()["runningCount"], 2);
     assert!(handler.finish_local_task_execution("task-1", first_execution));
@@ -137,6 +171,60 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
         .filter_map(Value::as_str)
         .collect::<HashSet<_>>();
     assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
+}
+
+#[tokio::test]
+async fn create_task_persists_collaboration_member_runtime_profiles() {
+    let (handler, root) = isolated_runtime_work_handler("collaboration-member-profiles");
+    {
+        let mut scheduler = handler
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned");
+        scheduler.max_concurrent_tasks = 1;
+        scheduler.active_tasks = 1;
+    }
+    let profiles = json!([{
+        "memberIds": ["agent-2"],
+        "runtimePayload": {
+            "taskId": "member-template",
+            "runtime": "codex"
+        }
+    }]);
+    let request = ExecutionRequest {
+        task_id: "manager-task-1".to_owned(),
+        subtask_id: "manager-task-1-initial".to_owned(),
+        prompt: Value::String("Manage the Issue".to_owned()),
+        project_workspace_path: Some("/tmp/project".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let response = handler
+        .create_task(json!({
+            "schemaVersion": 1,
+            "taskId": "manager-task-1",
+            "runtime": "codex",
+            "title": "Issue manager",
+            "workspacePath": "/tmp/project",
+            "executionRequest": request,
+            "runtimeHandle": {
+                "collaborationManagerContext": "Issue context",
+                "collaborationDispatchTaskId": "dispatch-task-1",
+                "collaborationMemberRuntimeProfiles": profiles,
+            }
+        }))
+        .await
+        .expect("manager task should be accepted");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(
+        handler
+            .local_task_link("manager-task-1")
+            .expect("manager task should be persisted")
+            .runtime_handle["collaborationMemberRuntimeProfiles"],
+        profiles
+    );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -332,9 +420,7 @@ async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     let archive = {
         let handler = handler.clone();
@@ -400,9 +486,8 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     handler.upsert_local_task(link);
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     assert!(
         !handler
@@ -420,16 +505,6 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
         handler.finish_local_task_execution("task-1", execution_id),
         "a terminal runtime result must settle the execution when stop acknowledgement is lost"
     );
-    let active_state = serde_json::from_slice::<Value>(
-        &fs::read(root.join("runtime-work/worktrees.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        active_state["records"][normalize_workspace_path(&worktree.path)]["executionLease"],
-        Value::Null,
-        "terminal completion must clear durable execution evidence"
-    );
-
     let retry = {
         let handler = handler.clone();
         tokio::spawn(async move {
@@ -451,20 +526,10 @@ async fn terminal_completion_after_stop_timeout_unblocks_archive_retry() {
     assert_eq!(response["accepted"], true);
     assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
     assert!(!handler.is_active_local_task("task-1"));
-    let archived_worktree = handler
+    handler
         .worktrees
         .delete(Path::new(&worktree.path), true)
         .expect("snapshot-preserving cleanup should succeed");
-    assert!(archived_worktree.execution_lease.is_none());
-    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-    assert!(
-        restarted
-            .reconcile()
-            .expect("restart reconciliation should succeed")
-            .iter()
-            .all(|outcome| !outcome.interrupted_execution),
-        "a stopped and archived task must not retain interrupted execution evidence"
-    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -473,9 +538,7 @@ async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
     drop(stopped_tx);
 
     assert!(
@@ -504,9 +567,7 @@ async fn cancel_timeout_force_settles_task_and_returns_success() {
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    handler
-        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
-        .expect("local execution should start");
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
 
     let response = handler
         .cancel_task_with_timeout(
@@ -576,14 +637,8 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     ));
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-1".to_owned(),
-            Some(&worktree.path),
-            cancel_tx,
-            stopped_rx,
-        )
-        .expect("local execution should start");
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
     let _stopped_sender = stopped_tx;
 
     assert!(
@@ -611,15 +666,6 @@ async fn runtime_terminal_cancellation_settles_execution_after_stop_request_time
     assert_eq!(task.status, "cancelled");
     assert!(!task.running);
     assert!(task.completed_at.is_some());
-    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-    assert!(
-        restarted
-            .reconcile()
-            .expect("restart reconciliation should succeed")
-            .iter()
-            .all(|outcome| !outcome.interrupted_execution),
-        "the runtime terminal result must clear durable execution evidence"
-    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -913,200 +959,7 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 }
 
 #[tokio::test]
-async fn restart_reconciliation_fails_only_explicitly_interrupted_execution() {
-    let root = temp_runtime_work_index_path("restart-active-execution").with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let index_path = root.join("runtime-work/index.json");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-source", None, false)
-        .unwrap();
-    let mut source_link = RuntimeTaskLink::new_pending(
-        "task-source".to_owned(),
-        record.path.clone(),
-        "Source Worktree".to_owned(),
-    );
-    source_link.updated_at = 1_780_000_000_000;
-    handler.upsert_local_task(source_link);
-    let mut fork_link = RuntimeTaskLink::new_pending(
-        "task-fork".to_owned(),
-        record.path.clone(),
-        "Forked Worktree".to_owned(),
-    );
-    fork_link.updated_at = 1_780_000_000_000;
-    handler.upsert_local_task(fork_link);
-    handler
-        .worktrees
-        .begin_execution(Path::new(&record.path), "task-fork", 7)
-        .expect("a forked task should be able to execute in its source worktree");
-    assert!(
-        handler
-            .worktrees
-            .begin_execution(Path::new(&record.path), "task-source", 8)
-            .unwrap_err()
-            .contains("already executing task task-fork"),
-        "a second task must not execute concurrently in the shared worktree"
-    );
-
-    handler.store = RuntimeWorkStore::new(index_path);
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    assert!(handler.reconcile_worktrees_once().await);
-
-    let task = handler
-        .store
-        .get_task("task-fork")
-        .expect("interrupted fork task should remain diagnosable");
-    assert_eq!(task.status, "failed");
-    assert!(!task.running);
-    assert!(task.runtime_handle["lastError"]
-        .as_str()
-        .unwrap()
-        .contains("was executing"));
-    assert_eq!(
-        handler.store.get_task("task-source").unwrap().status,
-        "active",
-        "restart reconciliation must not fail the worktree creator when its fork was executing"
-    );
-    let state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
-    assert_eq!(
-        state["records"][normalize_workspace_path(&record.path)]["executionLease"],
-        Value::Null
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn active_execution_evidence_survives_listing_and_clears_on_finish() {
-    let root = temp_runtime_work_index_path("active-execution-lease").with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(state_path.clone());
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-executing", None, false)
-        .unwrap();
-    let (cancel, _cancelled) = oneshot::channel();
-    let (_stopped, stopped) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-executing".to_owned(),
-            Some(&record.path),
-            cancel,
-            stopped,
-        )
-        .expect("execution should start");
-
-    let reconciled = handler
-        .worktrees
-        .reconcile()
-        .expect("listing should succeed");
-    assert!(
-        reconciled.is_empty(),
-        "startup reconciliation must not consume this process's live lease"
-    );
-    let active_state = serde_json::from_slice::<Value>(&fs::read(&state_path).unwrap()).unwrap();
-    assert_eq!(
-        active_state["records"][normalize_workspace_path(&record.path)]["executionLease"]
-            ["executionId"],
-        execution_id
-    );
-
-    assert!(handler.finish_local_task_execution("task-executing", execution_id));
-    let finished_state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
-    assert_eq!(
-        finished_state["records"][normalize_workspace_path(&record.path)]["executionLease"],
-        Value::Null
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn execution_finish_is_idempotent_after_reconciliation_clears_lease() {
-    let root = temp_runtime_work_index_path("active-execution-idempotent-finish")
-        .with_extension("directory");
-    let source = root.join("source");
-    let managed_root = root.join("workspace/worktrees");
-    let state_path = root.join("runtime-work/worktrees.json");
-    initialize_test_repository(&source);
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
-    handler.worktrees = WorktreeManager::new(state_path);
-    handler
-        .worktrees
-        .update_settings(WorktreeSettingsPatch {
-            worktree_root: Some(managed_root.display().to_string()),
-            ..WorktreeSettingsPatch::default()
-        })
-        .unwrap();
-    let record = handler
-        .worktrees
-        .prepare(&source, "task-executing", None, false)
-        .unwrap();
-    handler.upsert_local_task(RuntimeTaskLink::new_pending(
-        "task-executing".to_owned(),
-        record.path.clone(),
-        "Task".to_owned(),
-    ));
-    let (cancel, _cancelled) = oneshot::channel();
-    let (_stopped, stopped) = oneshot::channel();
-    let execution_id = handler
-        .start_local_task_execution(
-            "task-executing".to_owned(),
-            Some(&record.path),
-            cancel,
-            stopped,
-        )
-        .expect("execution should start");
-
-    assert!(handler
-        .worktrees
-        .finish_execution(Path::new(&record.path), "task-executing", execution_id)
-        .expect("simulated reconciliation should clear the lease"));
-    assert!(
-        handler.finish_local_task(
-            "task-executing",
-            execution_id,
-            Some("thread-1".to_owned()),
-            "done",
-        ),
-        "terminal completion should treat an already-cleared lease as settled"
-    );
-
-    let task = handler
-        .local_task_link("task-executing")
-        .expect("task should remain stored");
-    assert_eq!(task.status, "done");
-    assert!(!task.running);
-    assert!(!handler.is_active_local_task("task-executing"));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn restart_reconciliation_leaves_history_without_execution_evidence_unchanged() {
+async fn restart_reconciliation_leaves_active_history_unchanged() {
     let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
     let source = root.join("source");
     let managed_root = root.join("workspace/worktrees");
@@ -1265,9 +1118,7 @@ async fn failed_worktree_reconciliation_remains_retryable() {
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
-    handler
-        .start_local_task_execution(local_task_id.to_owned(), None, cancel, stopped)
-        .expect("test execution should start")
+    handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
 }
 
 fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
@@ -1351,6 +1202,47 @@ fn skips_backend_connection_without_a_configured_connection() {
     assert!(request.backend_url.is_none());
     assert!(request.auth_token.is_none());
     assert!(request.runtime_auth_token.is_none());
+}
+
+#[test]
+fn rewrites_loopback_gateway_from_the_payload_backend_url() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({
+        "base_url": "http://localhost:8000/api/runtime-work/llm-responses-proxy",
+    });
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["base_url"],
+        json!("http://backend.example.com:8000/api/runtime-work/llm-responses-proxy")
+    );
+}
+
+#[test]
+fn rewrites_loopback_gateway_when_no_connection_snapshot_exists() {
+    let _lock = crate::test_env::lock();
+    let _backend = ScalarEnv::remove("WEGENT_BACKEND_URL");
+    let _mode = ScalarEnv::set("EXECUTOR_MODE", "local");
+    let snapshot: Arc<Mutex<Option<ConnectionConfig>>> = Arc::new(Mutex::new(None));
+    let handler =
+        RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(snapshot);
+    let mut request = ExecutionRequest {
+        backend_url: Some("http://backend.example.com:8000".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.model_config = json!({"baseUrl": "http://127.0.0.1:8000/api/work"});
+
+    handler.apply_backend_connection(&mut request);
+
+    assert_eq!(
+        request.model_config["baseUrl"],
+        json!("http://backend.example.com:8000/api/work")
+    );
 }
 
 #[test]
@@ -2351,6 +2243,9 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -2452,6 +2347,9 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
             response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: None,
             goal_status_observed: false,
+            started_at_ms: None,
+            completed_at_ms: None,
+            duration_ms: None,
         }),
     );
 
@@ -3181,6 +3079,9 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 response_value_origin: value_origin,
                 goal_status: None,
                 goal_status_observed: false,
+                started_at_ms: Some(1_780_000_000_000),
+                completed_at_ms: Some(1_780_000_018_250),
+                duration_ms: Some(18_250),
             }),
         );
 
@@ -3190,6 +3091,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(event["payload"]["data"]["durationMs"], 18_250, "{case}");
         assert_eq!(
             event["payload"]["data"]["valueOrigin"],
             value_origin.as_str(),
@@ -3203,6 +3105,60 @@ fn completed_responses_use_the_active_codex_turn_id() {
 
         let _ = fs::remove_file(index_path);
     }
+}
+
+#[test]
+fn failed_responses_emit_runtime_turn_duration() {
+    let (event_tx, mut event_rx) = broadcast::channel(1);
+    let index_path = temp_runtime_work_index_path("failed-turn-duration");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "task-failed-duration";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "subtask-failed-duration".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, local_task_id);
+
+    handler.handle_turn_result(
+        local_task_id,
+        execution_id,
+        &request,
+        Some(&ActiveCodexTurn {
+            execution_id,
+            thread_id: "thread-failed-duration".to_owned(),
+            turn_id: "turn-failed-duration".to_owned(),
+        }),
+        Ok(crate::agents::CodexAppServerTurn {
+            thread_id: "thread-failed-duration".to_owned(),
+            outcome: ExecutionOutcome::Failed {
+                message: "upstream failed".to_owned(),
+            },
+            response_item_id: None,
+            response_value_origin: crate::agents::CodexResponseValueOrigin::Empty,
+            goal_status: None,
+            goal_status_observed: false,
+            started_at_ms: Some(1_780_000_000_000),
+            completed_at_ms: Some(1_780_000_002_500),
+            duration_ms: Some(2_500),
+        }),
+    );
+
+    let event = event_rx
+        .try_recv()
+        .expect("failed response should be emitted");
+    assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
+    assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
+    assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
+
+    let _ = fs::remove_file(index_path);
 }
 
 #[tokio::test]
@@ -3330,6 +3286,54 @@ fn cached_user_message_preserves_attachment_only_messages() {
     assert_eq!(message["clientUserMessageId"], "runtime-local-pane-1");
     assert_eq!(message["attachments"][0]["filename"], "pasted-feedback.zip");
     assert_eq!(message["attachments"][0]["status"], "ready");
+}
+
+#[test]
+fn user_message_presentation_matches_shared_reference_fixtures() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
+    )))
+    .unwrap();
+    for fixture in fixtures {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "shared-reference",
+            "message": fixture["reference"],
+        }))
+        .unwrap();
+        let expected = match fixture["kind"].as_str() {
+            Some("skill") => json!([{
+                "token": format!("${}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            Some("plugin") => json!([{
+                "token": format!("@{}", fixture["name"].as_str().unwrap()),
+                "href": fixture["href"],
+            }]),
+            _ => json!([]),
+        };
+        assert_eq!(presentation["content"], fixture["reference"]);
+        assert_eq!(presentation["references"], expected, "{fixture}");
+    }
+}
+
+#[test]
+fn user_message_presentation_preserves_home_relative_skill_references() {
+    let content = "Use [$test-skill](~/.agents/skills/test-skill/SKILL.md)";
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "home-relative-skill",
+        "message": content,
+    }))
+    .expect("home-relative skills should produce presentation metadata");
+
+    assert_eq!(presentation["content"], content);
+    assert_eq!(
+        presentation["references"],
+        json!([{
+            "token": "$test-skill",
+            "href": "~/.agents/skills/test-skill/SKILL.md",
+        }])
+    );
 }
 
 #[test]
@@ -4016,6 +4020,7 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
             after_cursor: None,
         },
         full_content: false,
+        conversation_context_only: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
         turn_navigation,
     });
@@ -4025,6 +4030,53 @@ fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
     assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
     assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
     assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
+}
+
+#[test]
+fn conversation_context_transcript_omits_process_payloads() {
+    let messages = vec![
+        json!({
+            "id": "user-1",
+            "turnId": "turn-1",
+            "role": "user",
+            "content": "Investigate",
+            "attachments": [{"localPath": "/tmp/secret"}],
+        }),
+        json!({
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Fixed",
+            "status": "done",
+            "blocks": [{"type": "tool", "toolOutput": "x".repeat(1_000_000)}],
+            "runtimeItems": [{"type": "command_execution", "output": "large"}],
+        }),
+    ];
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "codex".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: true,
+        conversation_context_only: true,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation: Vec::new(),
+    });
+
+    assert_eq!(response["messages"][0]["content"], "Investigate");
+    assert!(response["messages"][0].get("attachments").is_none());
+    assert_eq!(response["messages"][1]["content"], "Fixed");
+    assert!(response["messages"][1].get("blocks").is_none());
+    assert!(response["messages"][1].get("runtimeItems").is_none());
+    assert_eq!(response["turns"][0]["items"][1]["type"], "assistant_text");
+    assert_eq!(response["turns"][0]["items"][1]["content"], "Fixed");
 }
 
 #[test]
@@ -4324,6 +4376,198 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["taskId"], "optimistic-local-task");
     assert_eq!(result["workspacePath"], "/tmp/project");
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    assert!(
+        result.get("running").is_none(),
+        "An unknown task must not report an authoritative idle execution"
+    );
+}
+
+#[tokio::test]
+async fn transcript_without_session_preserves_known_terminal_state() {
+    let index_path = temp_runtime_work_index_path("transcript-terminal-without-session");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "failed-before-session".to_owned(),
+        "/tmp/project".to_owned(),
+        "Failed task".to_owned(),
+    );
+    link.status = "failed".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": { "taskId": "failed-before-session", "workspacePath": "/tmp/project" }
+        }))
+        .await
+        .expect("terminal task without a session should return its known state");
+
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"], json!([]));
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn completed_transcript_uses_persisted_snapshot_when_provider_session_is_not_ready() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-provider-not-ready");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "completed-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Completed task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    link.status = "done".to_owned();
+    link.running = false;
+    link.completed_at = Some(1_780_000_000_000);
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Persisted final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "completed-task",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("completed transcript should remain readable before the provider session is ready");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["running"], false);
+    assert_eq!(result["messages"][0]["content"], "Persisted final answer");
+    assert_eq!(
+        result["turns"][0]["items"][0]["content"],
+        "Persisted final answer"
+    );
+    let _ = std::fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn unmaterialized_provider_transcript_returns_local_presentation() {
+    let index_path = temp_runtime_work_index_path("unmaterialized-provider-transcript");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Pending task".to_owned(),
+    );
+    link.thread_id = Some("01a0d200-cdaa-75b1-a55c-090a89171c79".to_owned());
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "content": "nihao",
+            "createdAt": 1790229662977_i64,
+            "ensureVisible": true,
+            "attachments": [],
+            "references": [],
+        }),
+    );
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                }
+            }
+        }))
+        .await
+        .expect("unmaterialized provider thread should use the local presentation");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(result["messages"][0]["content"], "nihao");
+
+    let navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-1",
+                "runtimeHandle": {
+                    "threadId": "01a0d200-cdaa-75b1-a55c-090a89171c79"
+                },
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("unmaterialized provider navigation should be empty");
+
+    assert_eq!(navigation["success"], true);
+    assert_eq!(navigation["turnNavigation"], json!([]));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn direct_thread_override_bypasses_unmaterialized_local_transcript() {
+    for navigation_only in [false, true] {
+        let index_path = temp_runtime_work_index_path(if navigation_only {
+            "direct-thread-override-navigation"
+        } else {
+            "direct-thread-override-transcript"
+        });
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Pending task".to_owned(),
+        );
+        link.thread_id = Some("linked-thread".to_owned());
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": "runtime-local-pane-1",
+                "content": "local presentation",
+                "createdAt": 1790229662977_i64,
+                "ensureVisible": true,
+                "attachments": [],
+                "references": [],
+            }),
+        );
+        handler.upsert_local_task(link);
+
+        let error = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "runtimeHandle": {
+                        "threadId": "requested-thread"
+                    },
+                    "navigationOnly": navigation_only
+                }
+            }))
+            .await
+            .expect_err("an explicit thread override should read the requested provider thread");
+
+        assert_eq!(error.code, "codex_error");
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[test]
@@ -4687,6 +4931,94 @@ fn spawned_child_notifications_wait_for_parent_route_registration() {
 }
 
 #[test]
+fn subagent_activity_routes_pending_native_child_notifications() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("pending-native-child-thread-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "turn-root".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-root".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-root", local_task_id.to_owned(), request, false);
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "item": {
+                "id": "child-message",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": ""
+            }
+        }
+    }));
+    handler.route_codex_notification(json!({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "thread-child",
+            "turnId": "turn-child",
+            "itemId": "child-message",
+            "delta": "native child output"
+        }
+    }));
+
+    assert!(!handler.thread_event_route_exists("thread-child"));
+    assert!(event_rx.try_recv().is_err());
+
+    handler.route_codex_notification(json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-root",
+            "turnId": "turn-root",
+            "item": {
+                "type": "subAgentActivity",
+                "agentPath": "/root/native-child",
+                "agentThreadId": "thread-child",
+                "kind": "started"
+            }
+        }
+    }));
+
+    assert!(handler.thread_event_route_exists("thread-child"));
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.subagent.activity"
+    );
+    assert_eq!(
+        event_rx.try_recv().unwrap()["event"],
+        "response.block.created"
+    );
+    let child_event = event_rx
+        .try_recv()
+        .expect("pending native child output should replay through the inherited route");
+    assert_eq!(child_event["event"], "response.block.created");
+    assert_eq!(child_event["payload"]["taskId"], local_task_id);
+    assert_eq!(child_event["payload"]["subtaskId"], "turn-root");
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        child_event["payload"]["data"]["block"]["content"],
+        "native child output"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn child_notifications_remain_ordered_while_pending_notifications_replay() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("replaying-spawned-child-thread-route");
@@ -4989,17 +5321,26 @@ fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
 #[tokio::test]
 async fn cached_task_list_uses_the_existing_runtime_work_store() {
     let (handler, root) = isolated_runtime_work_handler("cached-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({ "electron-saved-workspace-roots": ["/tmp/cached-project"] })
+            .as_object()
+            .unwrap(),
+    );
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "local-task-1".to_owned(),
         runtime: "claude".to_owned(),
-        workspace_path: "/tmp/cached-project".to_owned(),
+        workspace_path: "/tmp/Codex/cached-task".to_owned(),
         title: "Cached task".to_owned(),
         status: "active".to_owned(),
         ..RuntimeTaskLink::default()
     });
 
     let response = handler
-        .list_tasks(&json!({ "preferCached": true }))
+        .list_tasks_with_project_index(
+            &json!({ "preferCached": true }),
+            &project_index,
+            Instant::now(),
+        )
         .await
         .expect("cached task list should be available");
     let tasks = response["workspaces"]
@@ -5013,6 +5354,47 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
     assert!(tasks
         .iter()
         .any(|task| { task["taskId"] == "local-task-1" && task["title"] == "Cached task" }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn cached_task_list_keeps_tasks_linked_to_cloud_issues() {
+    let (handler, root) = isolated_runtime_work_handler("cached-cloud-issue-task-list");
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "cloud-issue-task-1".to_owned(),
+        runtime: "claude".to_owned(),
+        workspace_path: "/tmp/Codex/cloud-issue-task".to_owned(),
+        title: "Cloud issue task".to_owned(),
+        status: "active".to_owned(),
+        runtime_handle: json!({
+            "cloudProjectId": "project-1",
+            "origin": {
+                "type": "board_comment",
+                "cloudProjectId": "project-1",
+                "loopItemId": "issue-1"
+            }
+        }),
+        ..RuntimeTaskLink::default()
+    });
+
+    let response = handler
+        .list_tasks(&json!({ "preferCached": true }))
+        .await
+        .expect("cached task list should keep cloud issue tasks");
+    let tasks = response["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array")
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(tasks.iter().any(|task| {
+        task["taskId"] == "cloud-issue-task-1"
+            && task["runtimeHandle"]["cloudProjectId"] == "project-1"
+            && task["runtimeHandle"]["origin"]["loopItemId"] == "issue-1"
+    }));
 
     let _ = fs::remove_dir_all(root);
 }
@@ -5572,6 +5954,86 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
 }
 
 #[tokio::test]
+async fn execution_mapper_persists_request_user_input_without_settling_execution() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-request-user-input");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-waiting";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-waiting".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Waiting task".to_owned(),
+    );
+    link.thread_id = Some("thread-waiting".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-waiting".to_owned(),
+        "turn-waiting".to_owned(),
+    );
+    let active_turn = handler
+        .active_codex_turn(local_task_id)
+        .expect("request user input turn should be active");
+    let message = json!({
+        "id": 42,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-waiting",
+            "turnId": "turn-waiting",
+            "itemId": "question-1",
+            "questions": [{
+                "id": "choice",
+                "question": "Continue?",
+                "options": [{"label": "Yes", "description": "Continue"}]
+            }]
+        }
+    });
+
+    let mut event_mapper = CodexNotificationEventMapper::default();
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut event_mapper,
+            message,
+        )
+        .await;
+
+    let link = handler
+        .local_task_link(local_task_id)
+        .expect("waiting task should remain persisted");
+    assert_eq!(
+        link.interaction_status.as_deref(),
+        Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    );
+    assert!(
+        handler.is_active_local_task(local_task_id),
+        "waiting for input must not settle the active execution"
+    );
+
+    let events = std::iter::from_fn(|| event_rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["event"] == "response.block.created"
+            && event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+    }));
+    assert!(events
+        .iter()
+        .any(|event| event["event"] == "runtime.work.changed"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
 async fn execution_mapper_drops_notifications_after_stop_is_requested() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-cancel-race");
@@ -5989,6 +6451,10 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         .collect::<Vec<_>>();
 
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+    assert!(target_paths.iter().any(|path| {
+        path.ends_with("/workspace/attachments/runtime/task-1")
+            || path.ends_with("\\workspace\\attachments\\runtime\\task-1")
+    }));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     let _ = fs::remove_dir_all(root);
@@ -6032,4 +6498,78 @@ fn run_test_git(path: &Path, args: &[&str]) {
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn local_project_execution_never_inherits_backend_credentials() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false").with_backend_connection(
+        Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "https://backend.example.com".into(),
+            socket_url: String::new(),
+            auth_token: "cloud-token".into(),
+            runtime_auth_token: "runtime-token".into(),
+        }))),
+    );
+    let mut request = ExecutionRequest {
+        backend_url: Some("https://stale-backend.example.com".into()),
+        auth_token: Some("stale-token".into()),
+        runtime_auth_token: Some("stale-runtime-token".into()),
+        skill_identity_token: Some("stale-skill-token".into()),
+        ..Default::default()
+    };
+    request
+        .extra
+        .insert("origin".into(), json!({"projectStore":"local"}));
+    handler.apply_backend_connection(&mut request);
+    assert!(request.backend_url.is_none());
+    assert!(request.auth_token.is_none());
+    assert!(request.runtime_auth_token.is_none());
+    assert!(request.skill_identity_token.is_none());
+}
+
+#[test]
+fn context_compaction_cache_preserves_started_and_completed_outcomes() {
+    for completed in [false, true] {
+        let (handler, root) = isolated_runtime_work_handler("context-compaction-cache");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+        for method in if completed {
+            vec!["item/started", "item/completed"]
+        } else {
+            vec!["item/started"]
+        } {
+            handler.record_active_codex_transcript_item(
+                "task-1",
+                "turn-1",
+                &json!({
+                    "method": method,
+                    "params": {"item": {"id": "compact-1", "type": "contextCompaction"}}
+                }),
+            );
+        }
+        let active = handler.active_codex_transcript_messages("task-1");
+        assert_eq!(
+            active[0]["blocks"][0]["status"],
+            if completed { "done" } else { "pending" }
+        );
+
+        handler.persist_and_clear_active_codex_transcript("task-1", "interrupted");
+        let link = handler.local_task_link("task-1").unwrap();
+        let persisted = completed_transcript_messages(&link);
+        assert_eq!(persisted[0]["status"], "cancelled");
+        assert_eq!(
+            persisted[0]["blocks"][0]["status"],
+            if completed { "done" } else { "error" }
+        );
+        assert!(handler
+            .active_codex_transcript_messages("task-1")
+            .is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

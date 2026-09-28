@@ -13,6 +13,7 @@ from everywhere else at the same time.
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.knowledge import KnowledgeDocumentCreate, KnowledgeDocumentCreateV1
 from app.schemas.task import TaskCreate
 
@@ -32,6 +33,16 @@ def test_a_client_cannot_ask_for_a_hidden_task():
     # matters is that it does not reach the row: asserting the attribute is absent is
     # asserting exactly that.
     assert not hasattr(task, "namespace")
+
+
+def test_a_client_cannot_set_an_external_connection_credential_owner():
+    reference = ExternalKnowledgeRef(
+        provider="wiki",
+        id="v1:conn-primary:42",
+        bound_by_user_id=7,
+    )
+
+    assert not hasattr(reference, "bound_by_user_id")
 
 
 def test_the_runner_can_still_hide_its_own_task():
@@ -90,9 +101,30 @@ def test_the_ordinary_source_types_are_untouched(schema, extra):
         assert schema(source_type=source_type, **extra).source_type == source_type
 
 
-def test_a_stored_code_document_still_deserialises():
-    """The read model must keep the value: refusing it on the way out would break
-    reading back anything the indexer writes, which is the opposite of the point."""
+def test_stored_internal_document_types_still_deserialise():
+    """The read model must preserve values written by their dedicated flows."""
+    from datetime import datetime, timezone
+
     from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentResponse
 
-    assert DocumentSourceType("code") == DocumentSourceType.CODE
+    payload = {
+        "id": 1,
+        "kind_id": 1,
+        "name": "wiki page",
+        "file_extension": "md",
+        "file_size": 0,
+        "status": "enabled",
+        "user_id": 1,
+        "is_active": True,
+        "index_status": "not_indexed",
+        "index_generation": 0,
+        "folder_id": 0,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    for source_type in ("code",):
+        response = KnowledgeDocumentResponse.model_validate(
+            {**payload, "source_type": source_type}
+        )
+        assert response.source_type == DocumentSourceType(source_type)

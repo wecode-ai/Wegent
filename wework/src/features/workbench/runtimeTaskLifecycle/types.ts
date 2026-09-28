@@ -1,4 +1,9 @@
-import type { RuntimeGoalStatus, RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
+import type {
+  RuntimeGoalStatus,
+  RuntimeTaskAddress,
+  RuntimeTaskInteractionStatus,
+  RuntimeTaskSummary,
+} from '@/types/api'
 
 export type RuntimeTaskExecutionPhase =
   | 'unknown'
@@ -21,6 +26,7 @@ export interface RuntimeTaskLifecycleState {
   turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
+  interactionStatus: RuntimeTaskInteractionStatus | null
   hasAuthoritativeGoalStatus: boolean
   continuable: boolean
   unread: boolean
@@ -37,6 +43,7 @@ export interface RuntimeTaskLifecycleDerivedState {
   canSend: boolean
   canQueue: boolean
   shouldShowSidebarRunning: boolean
+  shouldShowSidebarWaiting: boolean
   shouldShowUnread: boolean
 }
 
@@ -57,6 +64,7 @@ export interface RuntimeTaskLifecycleSnapshot {
     outcome: RuntimeTaskTurnOutcome
   }
   goalStatus: RuntimeGoalStatus | null
+  interactionStatus: RuntimeTaskInteractionStatus | null
   continuable: boolean
   unread: boolean
   derived: RuntimeTaskLifecycleDerivedState
@@ -84,6 +92,8 @@ export type RuntimeTaskLifecycleEvent =
       outcome?: Exclude<RuntimeTaskTurnOutcome, null>
     }
   | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
+  | { type: 'user_input_requested' }
+  | { type: 'user_input_responded' }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }
   | { type: 'marked_read' }
   | { type: 'marked_unread' }

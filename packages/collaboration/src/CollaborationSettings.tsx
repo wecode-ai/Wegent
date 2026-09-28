@@ -31,6 +31,11 @@ interface CollaborationSettingsProps {
   embedded?: boolean;
   translate: CollaborationTranslate;
   section?: "overview" | "members" | "agents" | "board";
+  quickAddRequest?: {
+    id: number;
+    target: "members" | "agents";
+  };
+  onQuickAddRequestConsumed?(requestId: number): void;
 }
 
 function createManageIcon(
@@ -82,6 +87,8 @@ export function CollaborationSettings({
   embedded = false,
   translate,
   section = "overview",
+  quickAddRequest,
+  onQuickAddRequestConsumed,
 }: CollaborationSettingsProps) {
   const manageApi = useMemo(
     () => createSharedWorkspaceProjectManageApi(api),
@@ -139,6 +146,12 @@ export function CollaborationSettings({
       project={project}
       section={section}
       onProjectUpdated={onChange}
+      openMembersRequestId={
+        section === "members" && quickAddRequest?.target === "members"
+          ? quickAddRequest.id
+          : undefined
+      }
+      onOpenMembersRequestConsumed={onQuickAddRequestConsumed}
       renderProviderSettings={() => (
         <ProjectAgentConfiguration
           api={api}
@@ -147,6 +160,12 @@ export function CollaborationSettings({
           resourceContext={agentResourceContext}
           onError={onError}
           onAgentsChange={onAgentsChange}
+          openComposerRequestId={
+            section === "agents" && quickAddRequest?.target === "agents"
+              ? quickAddRequest.id
+              : undefined
+          }
+          onOpenComposerRequestConsumed={onQuickAddRequestConsumed}
           translate={translate}
         />
       )}

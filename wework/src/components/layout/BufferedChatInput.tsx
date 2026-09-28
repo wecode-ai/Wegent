@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useImperativeHandle,
+  type Ref,
+} from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -20,9 +29,11 @@ export interface BufferedChatInputInsertion {
 }
 
 interface BufferedChatInputProps extends ChatInputProps {
+  inputRef?: Ref<ChatInputHandle>
   autoFocus?: boolean
   insertion?: BufferedChatInputInsertion | null
-  onDraftEdit?: () => void
+  replaceDraftKey?: number
+  onDraftEdit?: (draft: string) => void
 }
 
 const DRAFT_FLUSH_DELAY_MS = 300
@@ -33,7 +44,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   onSubmit,
   autoFocus,
   insertion,
+  replaceDraftKey,
   onDraftEdit,
+  inputRef,
   onCompositionStart: onParentCompositionStart,
   onCompositionEnd: onParentCompositionEnd,
   ...props
@@ -51,12 +64,26 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
+  useImperativeHandle(
+    inputRef,
+    () => ({
+      get element() {
+        return composerRef.current?.element ?? null
+      },
+      focus: () => composerRef.current?.focus(),
+      getValue: () => composerRef.current?.getValue() ?? draftRef.current,
+      insertReference: reference => composerRef.current?.insertReference(reference),
+      setValue: (value, offset) => composerRef.current?.setValue(value, offset),
+    }),
+    []
+  )
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
   const publishedDraftRevisionRef = useRef(0)
   const publishedDraftsRef = useRef(
     new Map<string | undefined, Array<{ revision: number; value: string }>>()
   )
+  const lastReplaceDraftKeyRef = useRef(replaceDraftKey)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -71,6 +98,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
     if (pane?.dataset.activeWorkbenchPane !== 'true') return false
     if (element?.closest('[hidden], [aria-hidden="true"]')) return false
+    // Navigation and device refresh can finish after a modal has taken focus.
+    const blockingDialog = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')
+    ).some(
+      dialog =>
+        !dialog.contains(element ?? null) &&
+        !dialog.closest('[hidden], [aria-hidden="true"], [inert]')
+    )
+    if (blockingDialog) return false
     composer.focus()
     return true
   }, [])
@@ -183,10 +219,12 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   // Sync external value changes into composer and local state.
   useEffect(() => {
     const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+    const replacingDraft = lastReplaceDraftKeyRef.current !== replaceDraftKey
+    lastReplaceDraftKeyRef.current = replaceDraftKey
     const acknowledgedPublicationIndex = publications.findLastIndex(
       publication => publication.value === value
     )
-    const acknowledgesPublishedDraft = acknowledgedPublicationIndex >= 0
+    const acknowledgesPublishedDraft = !replacingDraft && acknowledgedPublicationIndex >= 0
     const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       sourceValueLength: value.length,
@@ -198,7 +236,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       shouldSetComposer,
     })
     committedValueRef.current = value
-    if (acknowledgesPublishedDraft) {
+    if (replacingDraft) {
+      draftRef.current = value
+      setDraftState({ scopeKey, sourceValue: value, draft: value })
+    } else if (acknowledgesPublishedDraft) {
       publications.splice(0, acknowledgedPublicationIndex + 1)
       if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
       setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
@@ -210,7 +251,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
-  }, [scopeKey, setComposerValue, value])
+  }, [replaceDraftKey, scopeKey, setComposerValue, value])
 
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
@@ -241,7 +282,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       draftRef.current = nextDraft
       if (programmaticUpdateDepthRef.current === 0) {
         draftEditVersionRef.current += 1
-        onDraftEdit?.()
+        onDraftEdit?.(nextDraft)
       }
       if (isComposingRef.current) {
         cancelPendingFlush()

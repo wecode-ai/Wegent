@@ -47,7 +47,6 @@ const blankPane: WorkbenchPaneIdentity = {
   standaloneChatKey: 1,
 }
 const panes = [paneOne, paneTwo, paneThree]
-const paneByKey = new Map(panes.map(pane => [getWorkbenchPaneKey(pane), pane] as const))
 const paneOneKey = getWorkbenchPaneKey(paneOne)
 const paneTwoKey = getWorkbenchPaneKey(paneTwo)
 const paneThreeKey = getWorkbenchPaneKey(paneThree)
@@ -95,6 +94,7 @@ function PaneContent({ pane }: { pane: WorkbenchPaneIdentity }) {
 function Stack({
   activePane,
   activeTestId = 'active-pane',
+  availablePanes = panes,
   onPaneFocus = () => undefined,
   retainedResourceKeys = [],
   workbenchVisible = true,
@@ -102,11 +102,15 @@ function Stack({
 }: {
   activePane: WorkbenchPaneIdentity
   activeTestId?: string | null
+  availablePanes?: WorkbenchPaneIdentity[]
   onPaneFocus?: (pane: WorkbenchPaneIdentity) => void
   retainedResourceKeys?: string[]
   workbenchVisible?: boolean
   followActivePane?: boolean
 }) {
+  const availablePaneByKey = new Map(
+    availablePanes.map(pane => [getWorkbenchPaneKey(pane), pane] as const)
+  )
   const [layout, setLayout] = useState(
     () =>
       parsePersistedWorkbenchLayout(localStorage.getItem('workbench-split-test')) ??
@@ -123,11 +127,11 @@ function Stack({
       <SplitWorkbenchPaneStack
         activePane={activePane}
         layout={renderedLayout}
-        validRuntimeKeys={[...paneByKey.keys()]}
+        validRuntimeKeys={[...availablePaneByKey.keys()]}
         retainedResourceKeys={retainedResourceKeys}
         activeTestId={activeTestId}
         workbenchVisible={workbenchVisible}
-        resolvePane={key => paneByKey.get(key) ?? null}
+        resolvePane={key => availablePaneByKey.get(key) ?? null}
         getPaneTitle={pane => pane.currentRuntimeTask?.taskId ?? 'blank'}
         onPaneFocus={onPaneFocus}
         onLayoutFocus={paneId => {
@@ -216,6 +220,50 @@ describe('SplitWorkbenchPaneStack', () => {
     )
     await waitFor(() =>
       expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-mount-id', mountId)
+    )
+  })
+
+  it('keeps retained resources alive beyond the former pane cache limit', async () => {
+    const manyPanes = Array.from({ length: 11 }, (_, index) => ({
+      currentRuntimeTask: { deviceId: 'device', taskId: `retained-${index}` },
+      currentProject: null,
+    }))
+    const retainedKeys: string[] = []
+    const firstPane = manyPanes[0]
+    const view = render(
+      <Stack activePane={firstPane} availablePanes={manyPanes} followActivePane />
+    )
+    const firstMountId = screen.getByTestId('pane-content-retained-0').dataset.mountId
+
+    for (const pane of manyPanes) {
+      view.rerender(
+        <Stack
+          activePane={pane}
+          availablePanes={manyPanes}
+          retainedResourceKeys={retainedKeys}
+          followActivePane
+        />
+      )
+      expect(
+        await screen.findByTestId(`pane-content-${pane.currentRuntimeTask?.taskId}`)
+      ).toBeVisible()
+      retainedKeys.push(getWorkbenchPaneKey(pane))
+    }
+
+    view.rerender(
+      <Stack
+        activePane={firstPane}
+        availablePanes={manyPanes}
+        retainedResourceKeys={retainedKeys}
+        followActivePane
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pane-content-retained-0')).toHaveAttribute(
+        'data-mount-id',
+        firstMountId
+      )
     )
   })
 

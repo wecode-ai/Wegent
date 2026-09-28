@@ -10,6 +10,7 @@ from app.api.endpoints.admin.public_models import (
     create_public_model,
     update_public_model,
 )
+from app.core.exceptions import ValidationException
 from app.models.user import User
 from app.schemas.admin import PublicModelCreate, PublicModelUpdate
 
@@ -31,12 +32,55 @@ def _model_json(name: str) -> dict:
     }
 
 
+def _embedding_model_json(name: str, dimensions: int | None = 1536) -> dict:
+    spec: dict = {
+        "modelConfig": {"env": {"model": "custom", "model_id": name}},
+        "modelType": "embedding",
+    }
+    if dimensions is not None:
+        spec["embeddingConfig"] = {"dimensions": dimensions}
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Model",
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": spec,
+        "status": {"state": "Available"},
+    }
+
+
 def test_public_model_schema_rejects_non_object_spec() -> None:
     with pytest.raises(ValidationError, match="spec must be an object"):
         PublicModelCreate(
             name="invalid-spec-public-model",
             json={"kind": "Model", "spec": "invalid"},
         )
+
+
+def test_public_model_schema_uses_model_validation_and_preserves_extensions() -> None:
+    model_json = _model_json("validated-public-model")
+    model_json["spec"]["futureSpecOption"] = {"enabled": False}
+    model_json["spec"]["videoConfig"] = {"futureVideoOption": "kept"}
+
+    validated = PublicModelCreate(
+        name="validated-public-model",
+        json=model_json,
+    ).model_json
+
+    assert validated["spec"]["futureSpecOption"] == {"enabled": False}
+    assert validated["spec"]["videoConfig"]["futureVideoOption"] == "kept"
+
+
+def test_public_model_schema_rejects_known_invalid_fields_and_unsafe_keys() -> None:
+    invalid_type = _model_json("invalid-public-model")
+    invalid_type["spec"]["modelType"] = "tts"
+    invalid_type["spec"]["ttsConfig"] = {"speed": 9}
+    with pytest.raises(ValidationError, match="less than or equal to 4"):
+        PublicModelCreate(name="invalid-public-model", json=invalid_type)
+
+    unsafe = _model_json("unsafe-public-model")
+    unsafe["spec"]["modelConfig"]["env"]["nested"] = {"prototype": True}
+    with pytest.raises(ValidationError, match="unsafe key names"):
+        PublicModelUpdate(json=unsafe)
 
 
 @pytest.mark.asyncio
@@ -110,3 +154,71 @@ async def test_public_model_config_update_preserves_hidden_state(
     assert response.is_visible is False
     assert response.model_json["spec"]["isVisible"] is False
     assert response.model_json["spec"]["modelConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_public_embedding_model_create_requires_dimension(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    with pytest.raises(ValidationException, match="dimensions"):
+        await create_public_model(
+            model_data=PublicModelCreate(
+                name="no-dimension-public-model",
+                json=_embedding_model_json("no-dimension-public-model", None),
+            ),
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_embedding_model_dimension_is_immutable(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    created = await create_public_model(
+        model_data=PublicModelCreate(
+            name="stable-public-model",
+            json=_embedding_model_json("stable-public-model"),
+        ),
+        db=test_db,
+        current_user=test_admin_user,
+    )
+
+    with pytest.raises(ValidationException, match="immutable"):
+        await update_public_model(
+            model_data=PublicModelUpdate(
+                json=_embedding_model_json("stable-public-model", 768)
+            ),
+            model_id=created.id,
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_model_json_visibility_is_authoritative(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    created = await create_public_model(
+        model_data=PublicModelCreate(
+            name="json-visibility-model",
+            json=_model_json("json-visibility-model"),
+        ),
+        db=test_db,
+        current_user=test_admin_user,
+    )
+    updated_json = _model_json("json-visibility-model")
+    updated_json["spec"]["isVisible"] = False
+
+    response = await update_public_model(
+        model_data=PublicModelUpdate(json=updated_json),
+        model_id=created.id,
+        db=test_db,
+        current_user=test_admin_user,
+    )
+
+    assert response.is_visible is False
+    assert response.model_json["spec"]["isVisible"] is False

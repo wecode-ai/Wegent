@@ -1,3 +1,4 @@
+import { ProviderSettingsSection } from './ProviderSettingsSection'
 import {
   AlertCircle,
   ChevronDown,
@@ -78,10 +79,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
+import { defaultAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
-import { SettingsPage, SettingsPageHeader } from './settings-ui'
+import { SettingsPage, SettingsPageHeader, SettingsSwitch } from './settings-ui'
 import { CustomModelCapabilitiesForm } from './CustomModelCapabilitiesForm'
 
 interface CloudRuntimeSettingsConnection {
@@ -1116,7 +1121,9 @@ function LocalModelSettingsSection({
   onOpenCloudSettings?: () => void
 }) {
   const { t } = useTranslation('common')
-  const [models, setModels] = useState<LocalModelConfig[]>(() => listLocalModelConfigs())
+  const [models, setModels] = useState<LocalModelConfig[]>(() =>
+    listLocalModelConfigs().filter(model => !model.providerConnectionId)
+  )
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formVisible, setFormVisible] = useState(false)
   const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
@@ -1135,7 +1142,7 @@ function LocalModelSettingsSection({
   const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
-    setModels(listLocalModelConfigs())
+    setModels(listLocalModelConfigs().filter(model => !model.providerConnectionId))
   }, [])
 
   useEffect(() => {
@@ -2692,6 +2699,7 @@ function DisconnectedCloudCodexSyncSection({
   codexOfficialLoading,
   codexOfficialError,
   onRefreshCodexOfficialModels,
+  subscriptionEnabled,
 }: {
   onOpenCloudSettings?: () => void
   status: LocalRuntimeAuthStatus | null
@@ -2708,8 +2716,13 @@ function DisconnectedCloudCodexSyncSection({
   codexOfficialLoading: boolean
   codexOfficialError: string | null
   onRefreshCodexOfficialModels: () => void
+  subscriptionEnabled: boolean
 }) {
   const { t } = useTranslation('common')
+
+  if (!subscriptionEnabled) {
+    return null
+  }
 
   return (
     <>
@@ -2813,10 +2826,51 @@ function ModelInterfaceSettingsSection({
   onOpenCloudSettings?: () => void
 }) {
   return (
-    <LocalModelSettingsSection
-      cloudConnection={cloudConnection}
-      onOpenCloudSettings={onOpenCloudSettings}
-    />
+    <div className="space-y-6">
+      <ProviderSettingsSection />
+      <LocalModelSettingsSection
+        cloudConnection={cloudConnection}
+        onOpenCloudSettings={onOpenCloudSettings}
+      />
+    </div>
+  )
+}
+
+function LocalCodexSubscriptionToggle({
+  enabled,
+  loaded,
+  onToggle,
+}: {
+  enabled: boolean
+  loaded: boolean
+  onToggle: (nextEnabled: boolean) => void
+}) {
+  const { t } = useTranslation('common')
+
+  return (
+    <div
+      data-testid="local-codex-subscription-toggle-row"
+      className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background px-4 py-3"
+    >
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-text-primary">
+          {t('workbench.local_codex_subscription_title', '本地 Codex 订阅')}
+        </div>
+        <p className="mt-1 text-xs leading-5 text-text-secondary">
+          {t(
+            'workbench.local_codex_subscription_description',
+            '开启后才会加载本机 Codex 订阅账号及其模型；关闭后已链接的认证将不再自动恢复。'
+          )}
+        </p>
+      </div>
+      <SettingsSwitch
+        data-testid="local-codex-subscription-toggle"
+        checked={enabled}
+        disabled={!loaded}
+        onCheckedChange={onToggle}
+        aria-label={t('workbench.local_codex_subscription_title', '本地 Codex 订阅')}
+      />
+    </div>
   )
 }
 
@@ -2904,6 +2958,57 @@ export function ModelSettingsPage({
   const [codexOfficialLoading, setCodexOfficialLoading] = useState(true)
   const [codexOfficialError, setCodexOfficialError] = useState<string | null>(null)
 
+  const appPreferences = useAppPreferencesState()
+  // When the preferences provider is absent (e.g. legacy tests that render this
+  // page without AppPreferencesProvider) default to enabled so the Codex surface
+  // behaves as before. Once loaded, honor the persisted preference.
+  const subscriptionEnabled = !appPreferences
+    ? true
+    : appPreferences.loaded
+      ? appPreferences.preferences.localCodexSubscriptionEnabled
+      : defaultAppPreferences.localCodexSubscriptionEnabled
+  const subscriptionLoaded = !appPreferences ? true : appPreferences.loaded
+  const [restartDialogOpen, setRestartDialogOpen] = useState(false)
+  const [restartPending, setRestartPending] = useState(false)
+  const pendingSubscriptionEnabledRef = useRef<boolean | null>(null)
+
+  const handleToggleLocalCodexSubscription = useCallback(async (nextEnabled: boolean) => {
+    pendingSubscriptionEnabledRef.current = nextEnabled
+    try {
+      await updateAppPreferences({ localCodexSubscriptionEnabled: nextEnabled })
+      setRestartDialogOpen(true)
+    } catch {
+      // The shared preference provider did not apply the change; nothing to revert.
+      pendingSubscriptionEnabledRef.current = null
+    }
+  }, [])
+
+  const handleCancelRestart = useCallback(async () => {
+    const previous = pendingSubscriptionEnabledRef.current
+    pendingSubscriptionEnabledRef.current = null
+    setRestartDialogOpen(false)
+    // Roll the preference back so the on-disk state matches the still-running
+    // executor environment until the user actually restarts.
+    if (previous !== null) {
+      try {
+        await updateAppPreferences({ localCodexSubscriptionEnabled: !previous })
+      } catch {
+        // Best-effort rollback; the restart dialog stays closed.
+      }
+    }
+  }, [])
+
+  const handleConfirmRestart = useCallback(async () => {
+    pendingSubscriptionEnabledRef.current = null
+    setRestartPending(true)
+    try {
+      await invokeDesktopHost<void>('app.relaunch')
+    } catch {
+      setRestartPending(false)
+      setRestartDialogOpen(false)
+    }
+  }, [])
+
   const onlineDevices = useMemo(
     () => devices.filter(device => device.status === 'online' && isClaudeCodeDevice(device)),
     [devices]
@@ -2947,8 +3052,9 @@ export function ModelSettingsPage({
   }, [t])
 
   useEffect(() => {
+    if (!subscriptionEnabled) return
     void Promise.resolve().then(loadLocalAuthStatus)
-  }, [loadLocalAuthStatus])
+  }, [loadLocalAuthStatus, subscriptionEnabled])
 
   useEffect(
     () => () => {
@@ -3079,8 +3185,9 @@ export function ModelSettingsPage({
   }, [t])
 
   useEffect(() => {
+    if (!subscriptionEnabled) return
     void Promise.resolve().then(loadCodexOfficialModels)
-  }, [loadCodexOfficialModels])
+  }, [loadCodexOfficialModels, subscriptionEnabled])
 
   const loadRuntimeConfig = useCallback(
     async (refresh = false) => {
@@ -3220,6 +3327,23 @@ export function ModelSettingsPage({
     : 'bg-muted text-text-muted'
   const updatedAt = formatRuntimeDate(config?.auth_json_updated_at)
 
+  const restartConfirmDialog = (
+    <ConfirmDialog
+      open={restartDialogOpen}
+      title={t('workbench.local_codex_subscription_restart_title', '需要重启 Wework 生效')}
+      description={t(
+        'workbench.local_codex_subscription_restart_description',
+        '本地 Codex 订阅的更改需要重启 Wework 后才会完全生效。请先保存尚未完成的工作。'
+      )}
+      cancelLabel={t('common.cancel', '取消')}
+      confirmLabel={t('workbench.local_codex_subscription_restart_action', '重启')}
+      confirmTestId="local-codex-subscription-restart-confirm"
+      pending={restartPending}
+      onClose={() => void handleCancelRestart()}
+      onConfirm={() => void handleConfirmRestart()}
+    />
+  )
+
   if (!cloudConnection.isConnected) {
     return (
       <SettingsPage data-testid="model-settings-page">
@@ -3235,6 +3359,13 @@ export function ModelSettingsPage({
         </div>
         <div className="mt-8">
           <CodexAuthSettingsSection isConnected={false}>
+            <LocalCodexSubscriptionToggle
+              enabled={subscriptionEnabled}
+              loaded={subscriptionLoaded}
+              onToggle={checked => {
+                void handleToggleLocalCodexSubscription(checked)
+              }}
+            />
             <DisconnectedCloudCodexSyncSection
               onOpenCloudSettings={onOpenCloudSettings}
               status={localAuthStatus}
@@ -3251,9 +3382,11 @@ export function ModelSettingsPage({
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
               onRefreshCodexOfficialModels={() => void loadCodexOfficialModels()}
+              subscriptionEnabled={subscriptionEnabled}
             />
           </CodexAuthSettingsSection>
         </div>
+        {restartConfirmDialog}
       </SettingsPage>
     )
   }
@@ -3290,11 +3423,18 @@ export function ModelSettingsPage({
       </div>
       <div className="mt-8">
         <CodexAuthSettingsSection isConnected>
+          <LocalCodexSubscriptionToggle
+            enabled={subscriptionEnabled}
+            loaded={subscriptionLoaded}
+            onToggle={checked => {
+              void handleToggleLocalCodexSubscription(checked)
+            }}
+          />
           {loading ? (
             <div className="py-8 text-center text-sm text-text-secondary">
               {t('common.loading', '加载中...')}
             </div>
-          ) : (
+          ) : subscriptionEnabled ? (
             <>
               <CodexSettingsGroup title={t('workbench.codex_settings_models_group_title')}>
                 <CodexOfficialModelsSection
@@ -3444,9 +3584,10 @@ export function ModelSettingsPage({
                 </div>
               )}
             </>
-          )}
+          ) : null}
         </CodexAuthSettingsSection>
       </div>
+      {restartConfirmDialog}
     </SettingsPage>
   )
 }

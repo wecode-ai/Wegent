@@ -577,6 +577,12 @@ window.__ModuleLoader__.load({
             }
             return activeConversationController.getTranscript(reference)
           },
+          readAssetChunk(reference, request) {
+            if (!activeConversationController) {
+              throw new Error('No active Wework conversation controller')
+            }
+            return activeConversationController.readAssetChunk(reference, request)
+          },
         }),
         contributions,
         chat: Object.freeze({
@@ -764,8 +770,12 @@ window.__ModuleLoader__.load({
         service,
         bindConversationController(controller) {
           assertActive()
-          if (!controller || typeof controller.getTranscript !== 'function') {
-            throw new Error('Conversation controller must provide getTranscript')
+          if (
+            !controller ||
+            typeof controller.getTranscript !== 'function' ||
+            typeof controller.readAssetChunk !== 'function'
+          ) {
+            throw new Error('Conversation controller must provide getTranscript and readAssetChunk')
           }
           activeConversationController = controller
           return () => {

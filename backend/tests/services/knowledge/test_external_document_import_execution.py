@@ -23,6 +23,7 @@ from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
+    KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
 )
 from app.services.knowledge.external_document_import import (
@@ -39,6 +40,7 @@ from app.services.knowledge.external_document_providers import (
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 from .conftest import create_external_import_kb as _create_kb
+from .conftest import patch_provider_fetch, provider_with_fetch
 
 
 class TestRunExternalDocumentImport:
@@ -76,9 +78,9 @@ class TestRunExternalDocumentImport:
         document = self._create_placeholder(test_db, test_user)
         document_id = document.id
         monkeypatch.setattr(test_db, "expire_on_commit", True)
-        monkeypatch.setattr(
+        patch_provider_fetch(
+            monkeypatch,
             get_external_document_provider("dingtalk"),
-            "fetch_content",
             AsyncMock(
                 return_value=ExternalDocumentContent(
                     name="Deleted during upload", file_extension="md", content=b"body"
@@ -116,6 +118,7 @@ class TestRunExternalDocumentImport:
 
         document = self._create_placeholder(test_db, test_user)
         document_id = document.id
+        user_id = test_user.id
         document.update_external_source_config(
             status="inaccessible",
             last_error="Source was unavailable",
@@ -134,9 +137,9 @@ class TestRunExternalDocumentImport:
         }
         test_db.commit()
         monkeypatch.setattr(test_db, "expire_on_commit", True)
-        monkeypatch.setattr(
+        patch_provider_fetch(
+            monkeypatch,
             get_external_document_provider("dingtalk"),
-            "fetch_content",
             AsyncMock(
                 return_value=ExternalDocumentContent(
                     name="Recovered source", file_extension="md", content=b"new body"
@@ -149,11 +152,13 @@ class TestRunExternalDocumentImport:
         )
 
         run_external_document_import(test_db, document, test_user, generation=0)
+        current = test_db.get(KnowledgeDocument, document_id)
+        assert current is not None
         assert mark_document_index_failed(
-            test_db, document_id, document.index_generation
+            test_db, document_id, current.index_generation
         )
 
-        current = KnowledgeService.get_document(test_db, document_id, test_user.id)
+        current = KnowledgeService.get_document(test_db, document_id, user_id)
         assert current.index_status == DocumentIndexStatus.FAILED
         assert current.external_source_config["status"] == "accessible"
         assert "last_error" not in current.external_source_config
@@ -179,9 +184,8 @@ class TestRunExternalDocumentImport:
             content=b"# Run Doc",
             metadata={"provider": "dingtalk"},
         )
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(return_value=content),
-        )
+        fetch = AsyncMock(return_value=content)
+        provider = provider_with_fetch(fetch)
         attached: dict = {}
 
         def fake_attach(**kwargs):
@@ -201,7 +205,7 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=0)
 
-        provider.fetch_content.assert_awaited_once_with(test_db, test_user, "h" * 32)
+        fetch.assert_awaited_once_with(test_user, "h" * 32)
         assert attached["document"].id == document.id
         assert attached["content"] is content
         assert attached["generation"] == 0
@@ -235,9 +239,10 @@ class TestRunExternalDocumentImport:
         content = ExternalDocumentContent(
             name="External Word Document", file_extension="docx", content=b"word bytes"
         )
-        monkeypatch.setattr(
+        document_id = document.id
+        patch_provider_fetch(
+            monkeypatch,
             get_external_document_provider("dingtalk"),
-            "fetch_content",
             AsyncMock(return_value=content),
         )
         monkeypatch.setattr(
@@ -253,11 +258,13 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=0)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.file_extension == "docx"
         assert document.index_status == DocumentIndexStatus.PENDING_CONVERSION
         assert document.converted_attachment_id is None
-        assert document.name == "Run Doc"
+        # A DingTalk copy follows its source title when the body lands.
+        assert document.name == "External Word Document"
         assert convert.call_args.args == ("knowledge_doc_converter.convert_document",)
         assert convert.call_args.kwargs["kwargs"]["file_extension"] == "docx"
         assert convert.call_args.kwargs["kwargs"]["attachment_id"] == 4321
@@ -270,8 +277,9 @@ class TestRunExternalDocumentImport:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         document = self._create_placeholder(test_db, test_user)
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(side_effect=ExternalDocumentFetchError("无法连接 Wiki 站点"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -281,13 +289,233 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=0)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.index_status == DocumentIndexStatus.FAILED
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_import_failed"
+        assert error["message"] == "无法连接 Wiki 站点"
         assert error["retryable"] is True
         assert error["generation"] == 0
+        response = KnowledgeDocumentResponse.model_validate(document)
+        assert response.processing_error is not None
+        assert response.processing_error.message == "无法连接 Wiki 站点"
+
+    def test_nonretryable_fetch_failure_preserves_error_contract(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalDocumentFetchError(
+                    "该文件由 Git LFS 管理，当前不支持同步",
+                    error_code="unsupported_file_type",
+                    retryable=False,
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
+        error = document.processing_error_payload
+        assert error is not None
+        assert error["code"] == "unsupported_file_type"
+        assert error["message"] == "该文件由 Git LFS 管理，当前不支持同步"
+        assert error["retryable"] is False
+
+    def test_nonretryable_sync_failure_records_failed_remote_version(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.attachment_id = 321
+        document.is_active = True
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "sync": {
+                    "enabled": True,
+                    "connection_id": "conn-primary",
+                    "resource_id": "42",
+                    "observed_version": "blob-lfs",
+                    "content_version": "blob-old",
+                    "indexed_version": "blob-old",
+                },
+            }
+        }
+        test_db.commit()
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalDocumentFetchError(
+                    "该文件由 Git LFS 管理，当前不支持同步",
+                    error_code="unsupported_file_type",
+                    retryable=False,
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        current = test_db.get(KnowledgeDocument, document.id)
+        assert current is not None
+        sync = current.external_source_config["sync"]
+        assert sync["failed_version"] == "blob-lfs"
+        assert sync["last_error_code"] == "unsupported_file_type"
+        assert sync["last_error_retryable"] is False
+
+    def test_missing_wiki_source_keeps_existing_successful_index(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "title": "Wiki Runbook",
+                "sync": {
+                    "enabled": True,
+                    "connection_id": "conn-primary",
+                    "resource_id": "42",
+                    "content_version": "2026-09-08T01:00:00Z",
+                    "indexed_version": "2026-09-08T01:00:00Z",
+                },
+            }
+        }
+        document.attachment_id = 321
+        document.is_active = True
+        document.status = DocumentStatus.ENABLED
+        test_db.commit()
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "Wiki 源文档不存在",
+                    error_code="external_source_missing",
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
+        external = document.source_config["external"]
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert document.is_active is True
+        assert document.processing_error_payload is None
+        assert external["status"] == "inaccessible"
+        assert external["last_error"] == "Wiki 源文档不存在"
+        assert external["sync"]["last_error_code"] == "external_source_missing"
+
+    def test_missing_wiki_source_uses_safe_fallback(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        test_db.commit()
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "",
+                    error_code="external_source_missing",
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
+        external = document.source_config["external"]
+        assert external["last_error"] == "外部源文档不存在"
+        assert document.processing_error_payload["code"] == "external_source_missing"
+
+    def test_transient_wiki_failure_keeps_existing_successful_index(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "title": "Wiki Runbook",
+                "sync": {
+                    "enabled": True,
+                    "connection_id": "conn-primary",
+                    "resource_id": "42",
+                    "indexed_version": "2026-09-08T01:00:00Z",
+                },
+            }
+        }
+        document.attachment_id = 321
+        document.is_active = True
+        document.status = DocumentStatus.ENABLED
+        test_db.commit()
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(side_effect=ExternalDocumentFetchError("无法连接 Wiki 站点"))
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        current = test_db.get(KnowledgeDocument, document_id)
+        assert current is not None
+        external = current.external_source_config
+        assert current.index_status == DocumentIndexStatus.SUCCESS
+        assert current.is_active is True
+        assert current.processing_error_payload is None
+        assert external["status"] == "sync_error"
+        assert external["last_error"] == "无法连接 Wiki 站点"
+        assert external["sync"]["last_error_code"] == "external_import_failed"
 
     def test_new_attempt_after_attachment_landing_is_not_replaced_by_old_handoff(
         self, test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
@@ -373,8 +601,9 @@ class TestRunExternalDocumentImport:
         document.index_generation = 2
         document.index_status = DocumentIndexStatus.INDEXING
         test_db.commit()
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(side_effect=ExternalDocumentFetchError("boom"))
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -384,7 +613,8 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=1)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.index_status == DocumentIndexStatus.INDEXING
         assert document.index_generation == 2
         assert document.processing_error_payload is None
@@ -400,15 +630,16 @@ class TestRunExternalDocumentImport:
         )
 
         document = self._create_placeholder(test_db, test_user)
-        provider = SimpleNamespace(
-            fetch_content=AsyncMock(
+        document_id = document.id
+        provider = provider_with_fetch(
+            AsyncMock(
                 return_value=ExternalDocumentContent(
                     name="Run Doc",
                     file_extension="md",
                     content=b"# Run Doc",
                     metadata={},
                 )
-            ),
+            )
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -423,7 +654,8 @@ class TestRunExternalDocumentImport:
 
         run_external_document_import(test_db, document, test_user, generation=0)
 
-        test_db.refresh(document)
+        document = test_db.get(KnowledgeDocument, document_id)
+        assert document is not None
         assert document.index_status == DocumentIndexStatus.QUEUED
         assert document.processing_error_payload is None
 
@@ -468,8 +700,10 @@ class TestRunExternalDocumentImport:
         )
         test_db.add_all([failing, succeeding])
         test_db.commit()
+        failing_id = failing.id
+        succeeding_id = succeeding.id
 
-        def fake_fetch(db, user, resource_id):
+        def fake_fetch(user, resource_id):
             if resource_id == "r" * 32:
                 raise ExternalDocumentFetchError("boom")
             return ExternalDocumentContent(
@@ -479,7 +713,7 @@ class TestRunExternalDocumentImport:
                 metadata={},
             )
 
-        provider = SimpleNamespace(fetch_content=AsyncMock(side_effect=fake_fetch))
+        provider = provider_with_fetch(AsyncMock(side_effect=fake_fetch))
         attached: list[int] = []
 
         def fake_attach(**kwargs):
@@ -500,8 +734,10 @@ class TestRunExternalDocumentImport:
         run_external_document_import(test_db, failing, test_user, generation=0)
         run_external_document_import(test_db, succeeding, test_user, generation=0)
 
-        test_db.refresh(failing)
-        test_db.refresh(succeeding)
+        failing = test_db.get(KnowledgeDocument, failing_id)
+        succeeding = test_db.get(KnowledgeDocument, succeeding_id)
+        assert failing is not None
+        assert succeeding is not None
         assert failing.index_status == DocumentIndexStatus.FAILED
         assert failing.processing_error_payload["code"] == "external_import_failed"
         assert succeeding.index_status == DocumentIndexStatus.QUEUED
@@ -838,3 +1074,203 @@ class TestExternalDocumentPreviewAndEnableGuards:
 
         assert updated is not None
         assert updated.status == DocumentStatus.ENABLED
+
+
+class TestDingTalkCopyNameSync:
+    """A DingTalk copy follows its source title whenever a body lands."""
+
+    def _create_copy(
+        self,
+        test_db: Session,
+        test_user: User,
+        *,
+        name: str = "Run Doc",
+        provider: str = "dingtalk",
+    ) -> KnowledgeDocument:
+        kb_id = _create_kb(test_db, test_user.id, "dingtalk-name-sync-kb")
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=0,
+            name=name,
+            file_extension="md",
+            file_size=0,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": {"provider": provider}},
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider=provider,
+                external_resource_id="n" * 32,
+            ),
+            index_status=DocumentIndexStatus.QUEUED,
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    @staticmethod
+    def _enable_indexing(
+        test_db: Session,
+        document: KnowledgeDocument,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb = test_db.get(Kind, document.kind_id)
+        kb.json = {
+            **kb.json,
+            "spec": {
+                **kb.json["spec"],
+                "retrievalConfig": {
+                    "retriever_name": "test-retriever",
+                    "embedding_config": {"model_name": "test-embedding"},
+                },
+            },
+        }
+        test_db.commit()
+        monkeypatch.setattr(
+            "app.tasks.knowledge_tasks.index_document_task.delay",
+            MagicMock(return_value=SimpleNamespace(id="index-task")),
+        )
+
+    def test_landed_body_renames_the_copy(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name="最新来源名称",
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": "最新来源名称"},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "最新来源名称"
+        # The copy keeps its identity, folder and owner.
+        assert document.external_resource_id == "n" * 32
+        assert document.folder_id == 0
+        assert document.user_id == test_user.id
+
+    @pytest.mark.parametrize("blank_title", ["", "   "])
+    def test_blank_source_title_keeps_the_current_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        blank_title: str,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name=blank_title,
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": blank_title},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "本地旧名称"
+
+    def test_long_source_title_is_truncated_to_the_column_limit(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        long_title = "长" * 300
+        document = self._create_copy(test_db, test_user)
+        self._enable_indexing(test_db, document, monkeypatch)
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name=long_title,
+                    file_extension="md",
+                    content=b"new body",
+                    metadata={"title": long_title},
+                )
+            ),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == long_title[:255]
+        assert document.external_source_config["title"] == long_title
+
+    def test_failed_body_fetch_keeps_the_current_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_copy(test_db, test_user, name="本地旧名称")
+        patch_provider_fetch(
+            monkeypatch,
+            get_external_document_provider("dingtalk"),
+            AsyncMock(side_effect=ExternalDocumentFetchError("读取失败")),
+        )
+
+        run_external_document_import(
+            test_db, document, test_user, generation=document.index_generation
+        )
+
+        test_db.refresh(document)
+        assert document.name == "本地旧名称"
+        assert document.index_status == DocumentIndexStatus.FAILED
+
+    def test_other_providers_keep_the_user_document_name(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_copy(
+            test_db, test_user, name="Local name", provider="weiboap"
+        )
+        self._enable_indexing(test_db, document, monkeypatch)
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=4321), None)),
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            test_db,
+            document,
+            test_user,
+            ExternalDocumentContent(
+                name="Remote title", file_extension="md", content=b"body"
+            ),
+            generation=document.index_generation,
+        )
+
+        test_db.refresh(document)
+        assert document.name == "Local name"

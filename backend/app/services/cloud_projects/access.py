@@ -11,10 +11,11 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole, has_permission
-from app.services.cloud_project_visibility import accessible_cloud_projects
+from app.services.cloud_project_visibility import (
+    ROLES_BY_PRIORITY,
+    project_access_query,
+)
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,8 @@ class CloudProjectAccess:
     role: BaseRole
 
     @property
-    def is_public_visitor(self) -> bool:
-        return self.role == BaseRole.RestrictedAnalyst
+    def is_viewer(self) -> bool:
+        return self.role == BaseRole.Viewer
 
 
 class IssueAction(str, Enum):
@@ -55,19 +56,11 @@ def issue_permissions(
 ) -> IssuePermissions:
     """Resolve action-specific permissions without a generic edit shortcut."""
 
-    if access.is_public_visitor:
-        owns_issue = issue_creator_user_id == user_id
-        return IssuePermissions(
-            edit_content=owns_issue,
-            comment=owns_issue,
-            assign=False,
-            execute=owns_issue,
-        )
     return IssuePermissions(
         edit_content=has_permission(access.role, BaseRole.Developer),
-        comment=has_permission(access.role, BaseRole.Reporter),
+        comment=has_permission(access.role, BaseRole.Developer),
         assign=has_permission(access.role, BaseRole.Maintainer),
-        execute=has_permission(access.role, BaseRole.Reporter),
+        execute=has_permission(access.role, BaseRole.Developer),
     )
 
 
@@ -91,43 +84,13 @@ def require_cloud_project_role(
     db: Session,
     cloud_project_id: int,
     user_id: int,
-    required_role: BaseRole = BaseRole.Reporter,
+    required_role: BaseRole = BaseRole.Viewer,
 ) -> CloudProjectAccess:
-    project = (
-        accessible_cloud_projects(db, user_id)
-        .filter(CloudProject.id == cloud_project_id)
-        .first()
-    )
-    if project is None:
+    result = project_access_query(db, user_id, cloud_project_id).first()
+    if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-
-    if project.created_by_user_id == user_id:
-        role = BaseRole.Owner
-    else:
-        membership = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
-                ResourceMember.resource_id == cloud_project_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .first()
-        )
-        if membership is None:
-            if project.visibility != "public":
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "Cloud project not found"
-                )
-            role = BaseRole.RestrictedAnalyst
-        else:
-            try:
-                role = BaseRole(membership.role)
-            except ValueError as exc:
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN, "Invalid cloud project role"
-                ) from exc
+    project, priority = result
+    role = ROLES_BY_PRIORITY[priority]
 
     if not has_permission(role, required_role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")

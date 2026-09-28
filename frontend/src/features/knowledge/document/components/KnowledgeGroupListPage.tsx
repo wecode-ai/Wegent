@@ -32,6 +32,7 @@ import {
   KnowledgeBaseCategoryFilter,
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
+import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -52,6 +53,7 @@ import type {
   MemberRole,
 } from '@/types/knowledge'
 import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
+import { hasAdvancedKnowledgeBases } from '../hooks/useAdvancedKnowledgeMode'
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
@@ -73,6 +75,12 @@ export interface KnowledgeGroupListPageProps {
   onSelectKb: (kb: KbDataItem) => void
   /** Create a new knowledge base */
   onCreateKb?: (kbType: KnowledgeBaseType) => void
+  /** Whether advanced knowledge bases exist or are enabled by runtime config */
+  hasAdvancedKnowledge?: boolean
+  /** Whether advanced knowledge bases (code wikis) are visible */
+  showAdvancedKnowledge?: boolean
+  /** Update advanced knowledge base visibility */
+  onShowAdvancedKnowledgeChange?: (show: boolean) => void
   /** Edit a knowledge base */
   onEditKb?: (kb: KbDataItem) => void
   /** Delete a knowledge base */
@@ -165,6 +173,9 @@ export function KnowledgeGroupListPage({
   onBack,
   onSelectKb,
   onCreateKb,
+  hasAdvancedKnowledge = false,
+  showAdvancedKnowledge = false,
+  onShowAdvancedKnowledgeChange,
   onEditKb,
   onDeleteKb,
   canManageKb,
@@ -188,7 +199,6 @@ export function KnowledgeGroupListPage({
   const [sortBy, setSortBy] = useState<SortBy>('created')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
-
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
@@ -200,15 +210,23 @@ export function KnowledgeGroupListPage({
 
   const showCodeCategory = useMemo(
     () =>
-      getRuntimeConfigSync().enableCodeWiki ||
-      [
-        ...dataSource,
-        ...personalCreatedByMe,
-        ...personalSharedWithMe,
-        ...groupNativeKbs,
-        ...groupSharedKbs,
-      ].some(kb => kb.kb_type === 'code_wiki'),
-    [dataSource, personalCreatedByMe, personalSharedWithMe, groupNativeKbs, groupSharedKbs]
+      showAdvancedKnowledge &&
+      (getRuntimeConfigSync().enableCodeWiki ||
+        hasAdvancedKnowledgeBases([
+          ...dataSource,
+          ...personalCreatedByMe,
+          ...personalSharedWithMe,
+          ...groupNativeKbs,
+          ...groupSharedKbs,
+        ])),
+    [
+      dataSource,
+      groupNativeKbs,
+      groupSharedKbs,
+      personalCreatedByMe,
+      personalSharedWithMe,
+      showAdvancedKnowledge,
+    ]
   )
 
   useEffect(() => {
@@ -597,6 +615,14 @@ export function KnowledgeGroupListPage({
           onValueChange={setCategory}
           showCode={showCodeCategory}
         />
+        {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+          <AdvancedKnowledgeToggle
+            id="show-advanced-knowledge"
+            testId="show-advanced-knowledge-toggle"
+            checked={showAdvancedKnowledge}
+            onCheckedChange={onShowAdvancedKnowledgeChange}
+          />
+        )}
         {onCreateKb && (
           <Button
             variant="primary"

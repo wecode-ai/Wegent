@@ -78,6 +78,7 @@ test.describe('Agent conversation regression', () => {
   let apiClient: ApiClient
   let token = ''
   let chatShellTeam: CreatedTeam
+  let inheritedClaudeTeam: CreatedTeam
   let claudeChatTeam: CreatedTeam
   let codeTeam: CreatedTeam
   let codexCodeTeam: CreatedTeam
@@ -140,6 +141,37 @@ test.describe('Agent conversation regression', () => {
     const secondRequest = await waitForCapturedModelRequest(request, followUpPrompt)
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('saved ClaudeCode agent executes once with inherited base capabilities', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `VERIFY_INHERITED_CAPABILITIES_${makeContextToken('inherited_claude')}`
+
+    await openTaskPage(page, '/chat', inheritedClaudeTeam.id, 'chat')
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await waitForBackendTerminal(request, taskId)
+
+    const modelRequest = await waitForCapturedModelRequest(
+      request,
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt),
+      `ClaudeCode model request containing ${prompt}`
+    )
+    const requestText = extractText(modelRequest.body)
+    expect(requestText).toContain('CUSTOM_INHERITED_CLAUDE_IDENTITY')
+    expect(requestText).toContain('interactive')
+    expect(requestText).toContain('sandbox')
+    expect(requestText).not.toContain(
+      'You are Wegent, a helpful, harmless, and honest AI assistant.'
+    )
+
+    const matchingRequests = (await loadCapturedModelRequests(request)).filter(
+      capture => isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt)
+    )
+    expect(matchingRequests).toHaveLength(1)
   })
 
   test('normal mode ClaudeCode supports dialogue, follow-up, and session resume', async ({
@@ -893,6 +925,15 @@ test.describe('Agent conversation regression', () => {
       bindMode: ['chat'],
       modelName: CHAT_MODEL_NAME,
     })
+    inheritedClaudeTeam = await createTeam(request, {
+      teamName: `${TEST_PREFIX}-inherited-claude-team`,
+      botName: `${TEST_PREFIX}-inherited-claude-bot`,
+      shellName: CLAUDE_SHELL_NAME,
+      bindMode: ['chat'],
+      modelName: CLAUDE_MODEL_NAME,
+      systemPrompt: 'CUSTOM_INHERITED_CLAUDE_IDENTITY',
+      inheritBaseCapabilities: true,
+    })
     claudeChatTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-claude-chat-team`,
       botName: `${TEST_PREFIX}-claude-chat-bot`,
@@ -996,6 +1037,8 @@ test.describe('Agent conversation regression', () => {
       preloadSkills?: string[]
       preloadSkillRefs?: Record<string, SkillRefMeta>
       mcpServers?: Record<string, unknown>
+      systemPrompt?: string
+      inheritBaseCapabilities?: boolean
     }
   ): Promise<CreatedTeam> {
     const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
@@ -1007,7 +1050,8 @@ test.describe('Agent conversation regression', () => {
           bind_model: options.modelName,
           bind_model_type: 'user',
         },
-        system_prompt: 'You are a deterministic E2E regression assistant.',
+        system_prompt: options.systemPrompt || 'You are a deterministic E2E regression assistant.',
+        inherit_base_capabilities: options.inheritBaseCapabilities,
         skills: options.skills,
         skill_refs: options.skillRefs,
         preload_skills: options.preloadSkills,
@@ -1198,6 +1242,7 @@ test.describe('Agent conversation regression', () => {
       codexCodeTeam,
       codeTeam,
       claudeChatTeam,
+      inheritedClaudeTeam,
       chatShellTeam,
     ]) {
       if (!team) continue

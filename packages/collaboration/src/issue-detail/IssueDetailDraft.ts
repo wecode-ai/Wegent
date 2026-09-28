@@ -16,6 +16,7 @@ export type IssueAssigneeTarget =
   | ""
   | `user:${number}`
   | `agent:${string}`
+  | `group:${string}`
   | `team:${number}`;
 
 export interface IssueDetailDraftSource<TWorkflow = unknown> {
@@ -31,6 +32,7 @@ export interface IssueDetailDraftSource<TWorkflow = unknown> {
   assignee_user_id?: number | null;
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
+  assignee_group_id?: string | null;
   workflow?: TWorkflow | null;
 }
 
@@ -65,9 +67,13 @@ export interface IssueDetailDraftOptions<TWorkflow = unknown> {
 export function issueAssigneeTarget(
   source: Pick<
     IssueDetailDraftSource,
-    "assignee_user_id" | "assignee_agent_id" | "assignee_team_id"
+    | "assignee_user_id"
+    | "assignee_agent_id"
+    | "assignee_team_id"
+    | "assignee_group_id"
   >,
 ): IssueAssigneeTarget {
+  if (source.assignee_group_id) return `group:${source.assignee_group_id}`;
   if (source.assignee_team_id) return `team:${source.assignee_team_id}`;
   if (source.assignee_agent_id) return `agent:${source.assignee_agent_id}`;
   if (source.assignee_user_id) return `user:${source.assignee_user_id}`;
@@ -78,11 +84,15 @@ export function parseIssueAssigneeTarget(target: IssueAssigneeTarget): {
   assigneeUserId: number | null;
   assigneeAgentId: string | null;
   assigneeTeamId: number | null;
+  assigneeGroupId?: string;
 } {
   return {
     assigneeUserId: target.startsWith("user:") ? Number(target.slice(5)) : null,
     assigneeAgentId: target.startsWith("agent:") ? target.slice(6) : null,
     assigneeTeamId: target.startsWith("team:") ? Number(target.slice(5)) : null,
+    ...(target.startsWith("group:")
+      ? { assigneeGroupId: target.slice(6) }
+      : {}),
   };
 }
 

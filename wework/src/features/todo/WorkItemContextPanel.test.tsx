@@ -16,6 +16,7 @@ vi.mock('./TodoEditor', () => ({
     showPanelControls,
     headerActions,
     selectedTaskId,
+    deviceNamesById,
     onUpdated,
     onOpenTaskConversation,
   }: {
@@ -26,6 +27,7 @@ vi.mock('./TodoEditor', () => ({
     showPanelControls?: boolean
     headerActions?: React.ReactNode
     selectedTaskId?: string | null
+    deviceNamesById?: Readonly<Record<string, string>>
     onUpdated: (item: CloudLoopItem) => void
     onOpenTaskConversation?: (task: {
       id: number
@@ -40,6 +42,7 @@ vi.mock('./TodoEditor', () => ({
       data-fill={workspacePanelFill ? 'yes' : 'no'}
       data-controls={showPanelControls === false ? 'no' : 'yes'}
       data-selected-task={selectedTaskId}
+      data-device-name={deviceNamesById?.['local-device']}
       data-item-count={allItems.length}
     >
       {headerActions}
@@ -123,6 +126,7 @@ describe('WorkItemContextPanel', () => {
         project={project}
         item={item}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        deviceNamesById={{ 'local-device': '本地开发机' }}
         onOpenBoard={onOpenBoard}
         onOpenTask={onOpenTask}
       />
@@ -133,6 +137,7 @@ describe('WorkItemContextPanel', () => {
     expect(editor).toHaveAttribute('data-fill', 'yes')
     expect(editor).toHaveAttribute('data-controls', 'no')
     expect(editor).toHaveAttribute('data-selected-task', 'runtime-1')
+    expect(editor).toHaveAttribute('data-device-name', '本地开发机')
     await waitFor(() => expect(editor).toHaveAttribute('data-item-count', '2'))
 
     await user.click(screen.getByTestId('mock-related-task'))

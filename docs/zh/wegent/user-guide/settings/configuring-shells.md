@@ -246,7 +246,7 @@ spec:
    - **名称**: Shell 的唯一标识符 (小写字母和中划线)
    - **命名空间**: 通常使用 `default`
    - **运行时类型**: 自定义本地执行 Shell 可选择 `Codex` 或 `ClaudeCode`
-   - **支持的模型类型**: (可选) 指定此 Shell 支持的模型类型
+   - **支持的模型提供商**: (可选) 指定此 Shell 支持的模型提供商
 5. 点击 **提交** 创建
 
 #### 通过 YAML 文件配置
@@ -288,12 +288,12 @@ status:
 | 字段           | 类型   | 必填 | 说明                                                     |
 | -------------- | ------ | ---- | -------------------------------------------------------- |
 | `runtime`      | string | 是   | 运行时类型,常用值: `Codex`, `ClaudeCode`, `Dify`, `Chat` |
-| `supportModel` | array  | 否   | 支持的模型类型列表,空数组表示支持所有模型                |
+| `supportModel` | array  | 否   | 支持的模型提供商列表,空数组表示支持所有模型                |
 
 **supportModel 说明**:
 
-- 空数组 `[]`: 支持所有模型类型
-- 指定列表: 仅支持列表中的模型类型,例如 `["anthropic", "openai"]`
+- 未填写或为空数组 `[]`：不按 provider 限制模型列表。
+- 指定列表：与模型的 `spec.modelConfig.env.model` 匹配，例如 `["claude", "openai"]`；不按运行时名称追加限制。空白 provider 值无效。
 
 #### status 部分
 
@@ -315,7 +315,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: [] # 支持所有模型类型
+  supportModel: [] # 支持所有模型提供商
 status:
   state: "Available"
 ```
@@ -336,7 +336,7 @@ metadata:
   namespace: default
 spec:
   runtime: Dify
-  supportModel: [] # 支持所有模型类型
+  supportModel: [] # 支持所有模型提供商
 status:
   state: "Available"
 ```
@@ -358,7 +358,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"] # 仅支持 Anthropic 模型
+  supportModel: ["claude"] # 仅支持 Anthropic 模型
 status:
   state: "Available"
 ```
@@ -493,7 +493,7 @@ spec:
 
 - 检查 Bot 引用的 Shell 名称和命名空间是否正确
 - 确认 Shell 状态为 `Available`
-- 检查 supportModel 配置是否限制了模型类型
+- 检查 supportModel 配置是否限制了模型提供商
 
 **错误 3: 跨命名空间引用失败**
 
@@ -506,15 +506,15 @@ spec:
 
 **使用空数组 `[]` (推荐)**:
 
-- 支持所有模型类型
+- 支持所有模型提供商
 - 最大灵活性
 - 适合大多数场景
 
-**指定模型类型列表**:
+**指定模型提供商列表**:
 
-- 限制可用的模型类型
+- 限制可用的模型提供商
 - 适合有严格模型要求的场景
-- 例如: `["anthropic"]` 仅支持 Claude 模型
+- 例如: `["claude"]` 仅支持 Claude 模型
 
 ### Q6: 可以修改预设的 Shell 吗?
 

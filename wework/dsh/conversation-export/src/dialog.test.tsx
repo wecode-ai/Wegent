@@ -17,14 +17,6 @@ afterEach(() => {
 describe('ConversationExportDialog', () => {
   it('exports the complete transcript as the selected HTML format', async () => {
     const request = vi.fn(async (method: string) => {
-      if (method === 'readImageChunk') {
-        return {
-          chunkBase64: 'AQIDBA==',
-          bytesRead: 4,
-          eof: true,
-          size: 4,
-        }
-      }
       if (method === 'start') return { exportTaskId: 'export-1' }
       if (method === 'status') {
         const appendCall = request.mock.calls.find(call => call[0] === 'append')
@@ -37,6 +29,12 @@ describe('ConversationExportDialog', () => {
         }
       }
       return undefined
+    })
+    const readAssetChunk = vi.fn().mockResolvedValue({
+      chunkBase64: 'iVBORw0KGgoBAgME',
+      bytesRead: 12,
+      eof: true,
+      size: 12,
     })
     const getTranscript = vi.fn().mockResolvedValue({
       reference,
@@ -73,7 +71,7 @@ describe('ConversationExportDialog', () => {
       filePath: '/tmp/export-example',
     })
     window.__WEWORK_DSH_EXTENSIONS__ = {
-      conversations: { getTranscript },
+      conversations: { getTranscript, readAssetChunk },
       dialog: { save },
       backend: {
         scope: vi.fn(() => ({ request })),
@@ -108,31 +106,33 @@ describe('ConversationExportDialog', () => {
         filters: [{ name: 'HTML', extensions: ['html'] }],
       })
     )
-    expect(request.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0])
-    expect(request).toHaveBeenNthCalledWith(1, 'readImageChunk', {
+    expect(readAssetChunk.mock.invocationCallOrder[0]).toBeLessThan(
+      save.mock.invocationCallOrder[0]
+    )
+    expect(readAssetChunk).toHaveBeenCalledWith(reference, {
       path: '/tmp/screenshot.png',
       offset: 0,
+      length: 192 * 1024,
       workspacePath: null,
-      mimeType: 'image/png',
     })
-    expect(request).toHaveBeenNthCalledWith(2, 'start', {
+    expect(request).toHaveBeenNthCalledWith(1, 'start', {
       path: '/tmp/export-example.html',
       archive: false,
       documentName: 'Export example.html',
       assetCount: 0,
     })
     expect(request).toHaveBeenNthCalledWith(
-      3,
+      2,
       'append',
       expect.objectContaining({
         exportTaskId: 'export-1',
         content: expect.stringMatching(
-          /Hello &lt;Wework&gt;[\s\S]*<img alt="screenshot.png" src="data:image\/png;base64,AQIDBA=="/
+          /Hello &lt;Wework&gt;[\s\S]*<img alt="screenshot.png" src="data:image\/png;base64,iVBORw0KGgoBAgME"/
         ),
       })
     )
-    expect(request).toHaveBeenNthCalledWith(4, 'finish', { exportTaskId: 'export-1' })
-    expect(request).toHaveBeenNthCalledWith(5, 'status', { exportTaskId: 'export-1' })
+    expect(request).toHaveBeenNthCalledWith(3, 'finish', { exportTaskId: 'export-1' })
+    expect(request).toHaveBeenNthCalledWith(4, 'status', { exportTaskId: 'export-1' })
     fireEvent.click(screen.getByTestId('conversation-export-confirm'))
     expect(screen.queryByTestId('conversation-export-dialog')).toBeNull()
   })
@@ -161,6 +161,7 @@ describe('ConversationExportDialog', () => {
             },
           ],
         }),
+        readAssetChunk: vi.fn(),
       },
       dialog: { save: vi.fn().mockResolvedValue({ canceled: true }) },
       backend: {
@@ -218,6 +219,7 @@ describe('ConversationExportDialog', () => {
             },
           ],
         }),
+        readAssetChunk: vi.fn(),
       },
       dialog: { save: vi.fn() },
       backend: { scope: vi.fn() },
@@ -257,6 +259,12 @@ describe('ConversationExportDialog', () => {
       canceled: false,
       filePath: '/tmp/export-example',
     })
+    const readAssetChunk = vi.fn().mockResolvedValue({
+      chunkBase64: 'AQIDBA==',
+      bytesRead: 4,
+      eof: true,
+      size: 4,
+    })
     window.__WEWORK_DSH_EXTENSIONS__ = {
       conversations: {
         getTranscript: vi.fn().mockResolvedValue({
@@ -287,6 +295,7 @@ describe('ConversationExportDialog', () => {
             },
           ],
         }),
+        readAssetChunk,
       },
       dialog: { save },
       backend: {
@@ -321,11 +330,16 @@ describe('ConversationExportDialog', () => {
       documentName: 'Export example.md',
       assetCount: 1,
     })
-    expect(request).toHaveBeenCalledWith('addAsset', {
-      exportTaskId: 'export-zip',
-      archivePath: 'images/image.png',
+    expect(readAssetChunk).toHaveBeenCalledWith(reference, {
       path: '/tmp/image.png',
       workspacePath: null,
+      offset: 0,
+      length: 128 * 1024,
+    })
+    expect(request).toHaveBeenCalledWith('appendAsset', {
+      exportTaskId: 'export-zip',
+      archivePath: 'images/image.png',
+      contentBase64: 'AQIDBA==',
     })
   })
 
@@ -341,6 +355,7 @@ describe('ConversationExportDialog', () => {
           complete: true,
           turns: [],
         }),
+        readAssetChunk: vi.fn(),
       },
       dialog: { save: vi.fn() },
       backend: { scope: vi.fn() },

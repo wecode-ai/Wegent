@@ -13,6 +13,7 @@ export type WorkspaceOperationState =
   | "completed";
 
 export type WorkspaceProjectIssuesSnapshot =
+  | { status: "loading" }
   | { status: "available"; issues: CollaborationIssue[] }
   | { status: "unavailable" };
 
@@ -47,25 +48,15 @@ export function workspaceIssueOperationState(
   issue: CollaborationIssue,
 ): WorkspaceOperationState {
   const executionState = issue.execution_state?.toLowerCase() ?? null;
-  const workflowFailed =
-    issue.workflow?.orchestration_status === "failed" ||
-    issue.workflow?.nodes?.some((node) => node.status === "failed") === true;
-  if (executionState === "failed" || workflowFailed || issue.execution_error) {
+  if (executionState === "failed" || issue.execution_error) {
     return "failed";
   }
-  if (
-    issue.status === "in_review" ||
-    executionState === "waiting_approval" ||
-    issue.workflow?.orchestration_status === "awaiting_approval" ||
-    issue.workflow?.orchestration_status === "awaiting_review"
-  ) {
+  if (issue.status === "in_review" || executionState === "waiting_approval") {
     return "review";
   }
   if (
     issue.status === "in_progress" ||
-    (executionState != null && ACTIVE_EXECUTION_STATES.has(executionState)) ||
-    issue.workflow?.orchestration_status === "dispatching" ||
-    issue.workflow?.orchestration_status === "running"
+    (executionState != null && ACTIVE_EXECUTION_STATES.has(executionState))
   ) {
     return "running";
   }
@@ -86,7 +77,7 @@ export function createWorkspaceOperationsSnapshot({
   const operations = projects
     .map<WorkspaceProjectOperation>((project) => {
       const projectSnapshot = projectIssues[project.id] ?? {
-        status: "unavailable",
+        status: "loading",
       };
       const unavailable = projectSnapshot.status === "unavailable";
       const issues =

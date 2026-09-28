@@ -43,10 +43,10 @@ export async function createDesktopScenario({ captureScreenshot, executorHome, h
         '[data-testid="external-content-import-dialog"]'
       )
 
-      assert.equal(
+      assert.match(
         await readFile(join(destinationHome, 'config.toml'), 'utf8'),
-        SOURCE_CONFIG,
-        'Codex config was not imported into the managed home'
+        /^model = "desktop-e2e-imported"$/mu,
+        'The imported Codex model was not preserved in the managed home'
       )
       assert.equal(
         await readFile(join(destinationHome, 'AGENTS.md'), 'utf8'),

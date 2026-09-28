@@ -98,7 +98,7 @@ class TestLoadSkillMcpTools:
     async def test_mcp_client_created_with_config(self):
         """Test that MCPClient is created with skill MCP configs."""
         mcp_configs = {
-            "test_skill_server1": {
+            "fd16e0a_server1": {
                 "type": "stdio",
                 "command": "python",
                 "args": ["-m", "test_server"],
@@ -109,7 +109,7 @@ class TestLoadSkillMcpTools:
         mock_client = MagicMock()
         mock_client.is_connected = True
         mock_client.get_tools_with_server.return_value = {
-            "test_skill_server1": [mock_tool]
+            "fd16e0a_server1": [mock_tool]
         }
 
         with patch(
@@ -123,8 +123,8 @@ class TestLoadSkillMcpTools:
             mock_mcp_class.assert_called_once_with(mcp_configs, task_data=None)
             mock_client.connect.assert_called_once()
             assert len(tools_with_server) == 1
-            assert "test_skill_server1" in tools_with_server
-            assert len(tools_with_server["test_skill_server1"]) == 1
+            assert "fd16e0a_server1" in tools_with_server
+            assert len(tools_with_server["fd16e0a_server1"]) == 1
             assert len(clients) == 1
             assert clients[0] == mock_client
 
@@ -132,7 +132,7 @@ class TestLoadSkillMcpTools:
     async def test_mcp_connection_failure_returns_empty(self):
         """Test that connection failure returns empty dict and list gracefully."""
         mcp_configs = {
-            "test_skill_server1": {
+            "fd16e0a_server1": {
                 "type": "stdio",
                 "command": "nonexistent_command",
             }
@@ -159,7 +159,7 @@ class TestLoadSkillMcpTools:
         import asyncio
 
         mcp_configs = {
-            "test_skill_server1": {
+            "fd16e0a_server1": {
                 "type": "stdio",
                 "command": "python",
             }
@@ -183,7 +183,7 @@ class TestLoadSkillMcpTools:
     async def test_mcp_connection_exception_cleans_up(self):
         """Test that connection exception triggers proper cleanup."""
         mcp_configs = {
-            "test_skill_server1": {
+            "fd16e0a_server1": {
                 "type": "stdio",
                 "command": "python",
             }
@@ -228,7 +228,7 @@ class TestPrepareSkillToolsWithMcp:
         mock_client = MagicMock()
         mock_client.is_connected = True
         mock_client.get_tools_with_server.return_value = {
-            "test_skill_server1": [mock_tool]
+            "fd16e0a_server1": [mock_tool]
         }
 
         with patch(
@@ -246,7 +246,7 @@ class TestPrepareSkillToolsWithMcp:
             # MCP client should be created with prefixed server name
             mock_mcp_class.assert_called_once()
             call_args = mock_mcp_class.call_args
-            assert "test_skill_server1" in call_args[0][0]
+            assert "fd16e0a_server1" in call_args[0][0]
 
             # Should return MCP tools and clients
             assert len(tools) == 1
@@ -335,14 +335,14 @@ class TestPrepareSkillToolsWithMcp:
             assert load_skill_tool.get_skill_tools("test_skill") == []
 
             mock_mcp_tool = MagicMock()
-            mock_mcp_tool.name = "test_skill_server1_interactive_form_question"
-            mock_mcp_tool.server_name = "test_skill_server1"
+            mock_mcp_tool.name = "fd16e0a_server1_interactive_form_question"
+            mock_mcp_tool.server_name = "fd16e0a_server1"
 
             mock_client = MagicMock()
             mock_client.is_connected = True
             mock_client.connect = AsyncMock()
             mock_client.get_tools_with_server.return_value = {
-                "test_skill_server1": [mock_mcp_tool]
+                "fd16e0a_server1": [mock_mcp_tool]
             }
             mock_mcp_class.return_value = mock_client
 
@@ -545,12 +545,12 @@ class TestPrepareSkillToolsWithMcp:
         mock_client.is_connected = True
 
         mock_mcp_tool = MagicMock()
-        mock_mcp_tool.name = "test_skill_server1_create_async_video_card"
-        mock_mcp_tool.server_name = "test_skill_server1"
+        mock_mcp_tool.name = "fd16e0a_server1_create_async_video_card"
+        mock_mcp_tool.server_name = "fd16e0a_server1"
         mock_mcp_tool.return_direct = False
 
         mock_client.get_tools_with_server.return_value = {
-            "test_skill_server1": [mock_mcp_tool]
+            "fd16e0a_server1": [mock_mcp_tool]
         }
 
         with patch(
@@ -626,8 +626,8 @@ class TestPrepareSkillToolsWithMcp:
         mock_client = MagicMock()
         mock_client.is_connected = True
         mock_client.get_tools_with_server.return_value = {
-            "skill_a_server_a": [tool_a],
-            "skill_b_server_b": [tool_b],
+            "63074ca_server_a": [tool_a],
+            "b04e51c_server_b": [tool_b],
         }
 
         with patch(
@@ -648,8 +648,8 @@ class TestPrepareSkillToolsWithMcp:
             merged_config = call_args[0][0]
 
             # Should have both prefixed server names
-            assert "skill_a_server_a" in merged_config
-            assert "skill_b_server_b" in merged_config
+            assert "63074ca_server_a" in merged_config
+            assert "b04e51c_server_b" in merged_config
 
             # Should return combined tools
             assert len(tools) == 2
@@ -678,7 +678,7 @@ class TestPrepareSkillToolsWithMcp:
         tool_a = MagicMock(name="tool_a")
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.get_tools_with_server.return_value = {"skill_a_server_a": [tool_a]}
+        mock_client.get_tools_with_server.return_value = {"63074ca_server_a": [tool_a]}
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client
@@ -698,8 +698,8 @@ class TestPrepareSkillToolsWithMcp:
             merged_config = call_args[0][0]
 
             # Should only have skill_a's server
-            assert "skill_a_server_a" in merged_config
-            assert "skill_b_server_b" not in merged_config
+            assert "63074ca_server_a" in merged_config
+            assert "b04e51c_server_b" not in merged_config
 
             # Should return tools from skill_a only
             assert len(tools) == 1

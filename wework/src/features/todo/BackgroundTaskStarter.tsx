@@ -17,7 +17,6 @@ interface BackgroundTaskStarterProps {
   initialLocalProjectId?: number | null
   taskRequest?: RuntimeTaskCreateRequest | null
   inheritFromTask?: RuntimeTaskAddress | null
-  workflowNodeId?: string
   prepareTask?: (
     address: RuntimeTaskAddress,
     localProject: ProjectWithTasks | null
@@ -38,7 +37,6 @@ export function BackgroundTaskStarter({
   initialLocalProjectId = null,
   taskRequest = null,
   inheritFromTask = null,
-  workflowNodeId,
   prepareTask,
   onTaskCreated,
   onAddressChange,
@@ -61,10 +59,7 @@ export function BackgroundTaskStarter({
       null
     )
   }, [initialLocalProjectId, project.id, runtimeTaskProjects, state?.runtimeWork, taskRequest])
-  const runtimeContext = useMemo(
-    () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
-    [project, task, workflowNodeId]
-  )
+  const runtimeContext = useMemo(() => buildWorkItemRuntimeContext(project, task), [project, task])
   const createConversation = useProjectRuntimeTaskComposer({
     project: selectedLocalProject,
     workspaceSource: inheritFromTask,

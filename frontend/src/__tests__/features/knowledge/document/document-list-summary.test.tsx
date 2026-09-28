@@ -15,11 +15,18 @@ const mockKnowledgeDocumentTreeGrid = jest.fn()
 const mockCreateWebDocument = jest.fn()
 const mockRefreshDocuments = jest.fn()
 const mockGetDocumentProtection = jest.fn()
+const mockSynchronizeExternalDocument = jest.fn()
+const mockToast = jest.fn()
+
+jest.mock('@/hooks/use-toast', () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
+}))
 
 jest.mock('@/apis/knowledge', () => ({
   ...jest.requireActual('@/apis/knowledge'),
   createWebDocument: (...args: unknown[]) => mockCreateWebDocument(...args),
   getDocumentProtection: (...args: unknown[]) => mockGetDocumentProtection(...args),
+  synchronizeExternalDocument: (...args: unknown[]) => mockSynchronizeExternalDocument(...args),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -89,7 +96,16 @@ jest.mock('@/features/knowledge/document/hooks/useColumnResize', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
-  DocumentDetailDialog: () => null,
+  DocumentDetailDialog: ({
+    open,
+    document,
+  }: {
+    open: boolean
+    document: KnowledgeDocument | null
+  }) =>
+    open && document ? (
+      <div data-testid="document-detail-preview">{`${document.source_type}:${document.id}`}</div>
+    ) : null,
 }))
 jest.mock('@/features/knowledge/document/components/DocumentUpload', () => ({
   DocumentUpload: ({
@@ -130,17 +146,23 @@ jest.mock('@/features/knowledge/document/components/FolderTree', () => ({
     selectedIds: Set<number>
     isSelectionDisabled?: (document: KnowledgeDocument) => boolean
     onSelect?: (document: KnowledgeDocument, selected: boolean) => void
+    onViewDetail?: (document: KnowledgeDocument) => void
   }) => {
     mockFolderTree(props)
     return (
       <div>
         {props.documents.map(document => (
-          <button
-            key={document.id}
-            data-testid={`compact-select-document-${document.id}`}
-            disabled={props.isSelectionDisabled?.(document)}
-            onClick={() => props.onSelect?.(document, !props.selectedIds.has(document.id))}
-          />
+          <div key={document.id}>
+            <button
+              data-testid={`compact-select-document-${document.id}`}
+              disabled={props.isSelectionDisabled?.(document)}
+              onClick={() => props.onSelect?.(document, !props.selectedIds.has(document.id))}
+            />
+            <button
+              data-testid={`open-document-${document.id}`}
+              onClick={() => props.onViewDetail?.(document)}
+            />
+          </div>
         ))}
       </div>
     )
@@ -152,21 +174,32 @@ jest.mock('@/features/knowledge/document/components/knowledge-document-tree-grid
     showSelectionColumn: boolean
     canSelect?: (document: KnowledgeDocument) => boolean
     onSelect?: (document: KnowledgeDocument, selected: boolean) => void
+    onSync?: (document: KnowledgeDocument) => void
+    isSyncing?: (documentId: number) => boolean
     allowDownload?: boolean
   }) => {
     mockKnowledgeDocumentTreeGrid(props)
     return (
       <div>
         {props.documents.map(document => (
-          <button
-            key={document.id}
-            type="button"
-            data-testid={`select-document-${document.id}`}
-            disabled={!props.showSelectionColumn || !props.canSelect?.(document)}
-            onClick={() => props.onSelect?.(document, true)}
-          >
-            {document.name}
-          </button>
+          <div key={document.id}>
+            <button
+              type="button"
+              data-testid={`select-document-${document.id}`}
+              disabled={!props.showSelectionColumn || !props.canSelect?.(document)}
+              onClick={() => props.onSelect?.(document, true)}
+            >
+              {document.name}
+            </button>
+            <button
+              type="button"
+              data-testid={`sync-document-${document.id}`}
+              disabled={props.isSyncing?.(document.id)}
+              onClick={() => props.onSync?.(document)}
+            >
+              Sync
+            </button>
+          </div>
         ))}
       </div>
     )
@@ -249,6 +282,24 @@ function createFolder(overrides?: Partial<KnowledgeFolder>): KnowledgeFolder {
   }
 }
 
+function createDingtalkCopy(overrides?: Partial<KnowledgeDocument>): KnowledgeDocument {
+  return createDocument({
+    id: 20,
+    name: '钉钉文档',
+    source_type: 'external',
+    attachment_id: 2000,
+    source_config: {
+      external: {
+        provider: 'dingtalk',
+        resource_id: 'node-20',
+        title: '钉钉文档',
+        status: 'accessible',
+      },
+    },
+    ...overrides,
+  })
+}
+
 describe('DocumentList summary header', () => {
   beforeEach(() => {
     mockDocuments = []
@@ -258,6 +309,8 @@ describe('DocumentList summary header', () => {
     mockCreateWebDocument.mockReset()
     mockRefreshDocuments.mockReset()
     mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
+    mockSynchronizeExternalDocument.mockReset()
+    mockToast.mockReset()
   })
 
   it('refreshes added web documents without closing the source dialog from the parent', async () => {
@@ -407,6 +460,84 @@ describe('DocumentList summary header', () => {
     expect(screen.queryByTestId('expand-all-toggle')).not.toBeInTheDocument()
   })
 
+  it('opens synchronized wiki documents in the standard document preview', () => {
+    mockDocuments = [
+      createDocument({
+        source_type: 'external',
+        source_config: {
+          external: {
+            provider: 'wiki',
+            url: 'https://wiki.example.com/operations/handbook',
+            sync: { enabled: true },
+          },
+        },
+      }),
+    ]
+
+    render(<DocumentList knowledgeBase={createKnowledgeBase({ document_count: 1 })} compact />)
+
+    fireEvent.click(screen.getByTestId('open-document-10'))
+
+    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external:10')
+  })
+
+  it('keeps each wiki document busy until its own synchronization completes', async () => {
+    const resolvers = new Map<number, () => void>()
+    mockDocuments = [
+      createDocument({
+        id: 10,
+        source_type: 'external',
+        source_config: {
+          external: {
+            provider: 'wiki',
+            sync: { enabled: true },
+          },
+        },
+      }),
+      createDocument({
+        id: 11,
+        source_type: 'external',
+        source_config: {
+          external: {
+            provider: 'wiki',
+            sync: { enabled: true },
+          },
+        },
+      }),
+    ]
+    mockSynchronizeExternalDocument.mockImplementation(
+      (documentId: number) =>
+        new Promise<void>(resolve => {
+          resolvers.set(documentId, resolve)
+        })
+    )
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 2 })}
+        canManageAllDocuments
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sync-document-10'))
+    await waitFor(() => expect(screen.getByTestId('sync-document-10')).toBeDisabled())
+    fireEvent.click(screen.getByTestId('sync-document-11'))
+    await waitFor(() => expect(screen.getByTestId('sync-document-11')).toBeDisabled())
+
+    await act(async () => {
+      resolvers.get(10)?.()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('sync-document-10')).not.toBeDisabled())
+    expect(screen.getByTestId('sync-document-11')).toBeDisabled()
+
+    await act(async () => {
+      resolvers.get(11)?.()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('sync-document-11')).not.toBeDisabled())
+  })
+
   it('shows expand-all when the knowledge base has folders and fewer than 200 documents', () => {
     mockFolders = [createFolder()]
 
@@ -514,5 +645,98 @@ describe('DocumentList summary header', () => {
     onSelectionChange.mockClear()
     fireEvent.click(screen.getByTestId('compact-select-document-10'))
     expect(onSelectionChange).toHaveBeenCalledWith([])
+  })
+})
+
+describe('DocumentList DingTalk manual sync', () => {
+  beforeEach(() => {
+    mockDocuments = []
+    mockFolders = []
+    mockCreateWebDocument.mockReset()
+    mockRefreshDocuments.mockReset()
+    mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
+    mockSynchronizeExternalDocument.mockReset()
+    mockToast.mockReset()
+  })
+
+  it('synchronizes the clicked DingTalk copy only', async () => {
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    mockDocuments = [createDingtalkCopy({ id: 20 }), createDingtalkCopy({ id: 21 })]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 2 })}
+        canManageAllDocuments
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sync-document-20'))
+
+    await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledTimes(1))
+    expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(20)
+  })
+
+  it('refetches the list after a DingTalk copy synchronized', async () => {
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    mockDocuments = [createDingtalkCopy({ id: 20 })]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 1 })}
+        canManageAllDocuments
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sync-document-20'))
+
+    await waitFor(() => expect(mockRefreshDocuments).toHaveBeenCalled())
+    expect(mockToast).toHaveBeenCalledWith({
+      description: 'document.document.syncSuccess',
+    })
+  })
+
+  it('keeps the backend failure reason and restores the entry for another attempt', async () => {
+    mockSynchronizeExternalDocument.mockRejectedValue(new Error('钉钉文档已失效'))
+    mockDocuments = [createDingtalkCopy({ id: 20 })]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 1 })}
+        canManageAllDocuments
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sync-document-20'))
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        description: '钉钉文档已失效',
+      })
+    )
+    expect(mockRefreshDocuments).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('sync-document-20')).not.toBeDisabled())
+  })
+
+  it('refetches through the current query without dropping the selection', async () => {
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    mockDocuments = [createDingtalkCopy({ id: 20 }), createDingtalkCopy({ id: 21 })]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 2 })}
+        canManageAllDocuments
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('select-document-20'))
+    expect(mockKnowledgeDocumentTreeGrid.mock.lastCall?.[0].selectedDocumentIds.has(20)).toBe(true)
+
+    fireEvent.click(screen.getByTestId('sync-document-20'))
+    await waitFor(() => expect(mockRefreshDocuments).toHaveBeenCalled())
+
+    // The refetch reuses the active folder/sort/page query and keeps selection.
+    expect(mockRefreshDocuments).toHaveBeenCalledWith()
+    expect(mockKnowledgeDocumentTreeGrid.mock.lastCall?.[0].selectedDocumentIds.has(20)).toBe(true)
   })
 })

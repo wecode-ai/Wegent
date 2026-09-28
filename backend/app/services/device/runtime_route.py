@@ -67,7 +67,13 @@ def _device_spec(device: Kind) -> dict[str, Any]:
     return device.json.get("spec", {}) if isinstance(device.json, dict) else {}
 
 
-def _runtime_device_id(device: Kind) -> str:
+def runtime_device_route_id(device: Kind) -> str:
+    """Return the canonical execution identity persisted on queue rows.
+
+    App installations share one logical ``deviceId``, so only the record route
+    identifies a single Wework desktop; every other type keeps its logical id.
+    """
+
     if device_kind_type(device) == DeviceType.APP:
         return record_route_id(device)
     spec = _device_spec(device)
@@ -90,7 +96,7 @@ def _app_device_id(device: Kind) -> str | None:
 
 
 def _identity_from_device(device: Kind) -> RuntimeRouteIdentity | None:
-    runtime_device_id = _runtime_device_id(device)
+    runtime_device_id = runtime_device_route_id(device)
     if not runtime_device_id:
         return None
     device_type = device_kind_type(device)

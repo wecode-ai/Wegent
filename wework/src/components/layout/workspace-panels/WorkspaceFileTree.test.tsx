@@ -1,8 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { FileTree as PierreFileTree } from '@pierre/trees'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
-import { createWorkspaceTreeModel, getEntryByTreePath } from './workspaceFileTreeModel'
+import {
+  createWorkspaceTreeModel,
+  getEntryByTreePath,
+  workspaceFileAncestorPaths,
+} from './workspaceFileTreeModel'
 import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
@@ -35,7 +40,76 @@ describe('WorkspaceFileTree', () => {
       />
     )
 
-    expect(await screen.findByTestId('workspace-file-tree-pierre')).toBeInTheDocument()
+    const tree = await screen.findByTestId('workspace-file-tree-pierre')
+    expect(tree).toBeInTheDocument()
+    await waitFor(() => {
+      const css = tree.shadowRoot?.querySelector('[data-file-tree-unsafe-css]')?.textContent
+      expect(css).toContain('--trees-fg-override: rgb(var(--color-text-primary))')
+      expect(css).not.toMatch(/--trees-(?:file-icon-color|icon-blue)\s*:/)
+    })
+    expect(tree.shadowRoot?.querySelector('[data-file-tree-colored-icons="true"]')).not.toBeNull()
+  })
+
+  test('reveals and selects a changed file without reopening it or stealing focus', async () => {
+    const scroll = vi.spyOn(PierreFileTree.prototype, 'scrollToPath')
+    const entries = [
+      { name: 'a.py', path: '/fixture/repo/src/a.py', isDirectory: false, size: 1 },
+      { name: 'b.py', path: '/fixture/repo/src/b.py', isDirectory: false, size: 1 },
+    ]
+    const props = {
+      rootPath: '/fixture/repo',
+      activeDirectoryPath: '/fixture/repo',
+      entriesByPath: { '/fixture/repo/src': entries },
+      expandedPaths: new Set<string>(),
+      loadingPaths: new Set<string>(),
+      error: null,
+      onOpenDirectory: vi.fn(),
+      onOpenFile: vi.fn(),
+      onRefresh: vi.fn(),
+    }
+    const { rerender } = render(<WorkspaceFileTree {...props} selectedPath={entries[0].path} />)
+    await waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith('src/a.py', { offset: 'center', focus: false })
+    )
+    fireEvent.change(screen.getByTestId('workspace-file-search-input'), {
+      target: { value: 'a.py' },
+    })
+    scroll.mockClear()
+    rerender(<WorkspaceFileTree {...props} selectedPath={entries[1].path} />)
+    await waitFor(() => {
+      const shadow = screen.getByTestId('workspace-file-tree-pierre').shadowRoot!
+      expect(shadow.querySelector('[data-item-path="src/b.py"]')).toHaveAttribute(
+        'data-item-selected',
+        'true'
+      )
+      expect(shadow.querySelector('[data-item-path="src/a.py"]')).not.toHaveAttribute(
+        'data-item-selected',
+        'true'
+      )
+    })
+    expect(screen.getByTestId('workspace-file-search-input')).toHaveValue('')
+    expect(scroll).toHaveBeenCalledWith('src/b.py', { offset: 'center', focus: false })
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+    expect(props.onOpenDirectory).not.toHaveBeenCalled()
+    scroll.mockClear()
+    rerender(<WorkspaceFileTree {...props} selectedPath={entries[0].path} visible={false} />)
+    expect(scroll).not.toHaveBeenCalled()
+    rerender(<WorkspaceFileTree {...props} selectedPath={entries[0].path} visible />)
+    await waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith('src/a.py', { offset: 'center', focus: false })
+    )
+    scroll.mockRestore()
+  })
+
+  test.each([
+    ['/fixture/repo', '/fixture/repo/src/api/a.py', ['/fixture/repo/src', '/fixture/repo/src/api']],
+    ['/fixture/repo', '/fixture/repo/a.py', []],
+    ['/fixture/repo', '/fixture/repo-other/src/a.py', []],
+    ['/', '/fixture/src/a.py', ['/fixture', '/fixture/src']],
+    ['C:\\fixture\\repo', 'c:\\FIXTURE\\REPO\\src\\a.py', ['C:/fixture/repo/src']],
+    ['//server/share', '//server/share/src/a.py', ['//server/share/src']],
+  ])('finds scoped ancestors for %s and %s', (root, path, expected) => {
+    expect(workspaceFileAncestorPaths(root, path)).toEqual(expected)
   })
 
   test('deduplicates conflicting directory paths before creating the Pierre tree', async () => {
@@ -173,6 +247,20 @@ describe('WorkspaceFileTree', () => {
 
     expect(model.paths).toEqual(['src/index.ts', 'Src/Index.ts'])
     expect(getEntryByTreePath(model.entryByTreePath, 'SRC/INDEX.TS')).toBeNull()
+  })
+
+  test('keeps nested paths when the tree starts at the POSIX filesystem root', () => {
+    const entry = { name: 'a.ts', path: '/fixture/src/a.ts', isDirectory: false, size: 1 }
+    const model = createWorkspaceTreeModel({
+      rootPath: '/',
+      activeDirectoryPath: '/',
+      entriesByPath: { '/fixture/src': [entry] },
+      expandedPaths: new Set(['/fixture', '/fixture/src']),
+      selectedPath: entry.path,
+    })
+    expect(model.paths).toEqual(['fixture/src/a.ts'])
+    expect(model.selectedTreePath).toBe('fixture/src/a.ts')
+    expect(model.expandedTreePaths).toEqual(['fixture/', 'fixture/src/'])
   })
 
   test('exposes workspace path data when a file row is dragged toward the conversation', async () => {

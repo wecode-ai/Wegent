@@ -23,13 +23,15 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_notification_requires_user_input, codex_runtime_approval_policy,
+        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexAuthMutationError, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
+    attachments::device_runtime_attachment_task_dir,
     config::device::ConnectionConfig,
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -51,6 +53,8 @@ const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
 const RESUME_GOAL_ONLY_MARKER: &str = "wegent_resume_goal_only";
 const GOAL_NEEDS_ATTENTION_MARKER: &str = "wegent_goal_needs_attention";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+const INTERACTION_WAITING_FOR_USER_INPUT: &str = "waitingForUserInput";
+const COLLABORATION_MANAGER_CONTEXT_KEY: &str = "collaborationManagerContext";
 
 enum RestoreStartupState {
     Waiting {
@@ -572,8 +576,11 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    local_issue_scheduler_started: Arc<AtomicBool>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
     task_store_path: Arc<PathBuf>,
@@ -615,7 +622,6 @@ struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
-    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
     codex_turn: Option<ActiveCodexTurn>,
@@ -841,8 +847,11 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             notification_router: Arc::new(Mutex::new(None)),
+            local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
             task_store_path: Arc::new(LocalTaskStore::default_path()),
@@ -911,6 +920,7 @@ impl RuntimeWorkRpcHandler {
             .startup_recovery_deferred
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
+        handler.start_local_issue_scheduler();
         handler
     }
 
@@ -919,6 +929,8 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        self.register_cloud_collaboration_dispatcher();
+        self.resume_cloud_collaboration_rounds();
         self.start_supervisor_scheduler();
         self
     }
@@ -945,6 +957,11 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn apply_backend_connection(&self, request: &mut ExecutionRequest) {
+        if request.is_local_project() {
+            request.clear_backend_credentials();
+            return;
+        }
+        self.rewrite_model_gateway_backend(request);
         let connection = match self.backend_connection_snapshot() {
             Ok(Some(connection)) => connection,
             Ok(None) => return,
@@ -966,7 +983,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or("")
             .is_empty()
         {
-            request.backend_url = Some(connection.backend_url);
+            request.backend_url = Some(connection.backend_url.clone());
         }
         if request
             .auth_token
@@ -989,6 +1006,57 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    fn retain_runtime_model_config(&self, local_task_id: &str, model_config: &Value) {
+        let mut configs = self
+            .runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned");
+        if model_config
+            .as_object()
+            .is_some_and(|value| !value.is_empty())
+        {
+            configs.insert(local_task_id.to_owned(), model_config.clone());
+        } else {
+            configs.remove(local_task_id);
+        }
+    }
+
+    fn runtime_model_config(&self, local_task_id: &str) -> Option<Value> {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    fn forget_runtime_model_config(&self, local_task_id: &str) {
+        self.runtime_model_configs
+            .lock()
+            .expect("runtime model config map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
+    /// Rewrite a loopback cloud-model gateway to the backend this device reaches.
+    ///
+    /// The connection snapshot is unavailable before the device finishes
+    /// connecting, so fall back to the request's own backend URL (environment,
+    /// payload, or task API domain) and leave the gateway untouched when
+    /// neither source yields a reachable address.
+    fn rewrite_model_gateway_backend(&self, request: &mut ExecutionRequest) {
+        let snapshot_backend_url = self
+            .backend_connection_snapshot()
+            .ok()
+            .flatten()
+            .map(|connection| connection.backend_url)
+            .unwrap_or_default();
+        let backend_url = if snapshot_backend_url.trim().is_empty() {
+            crate::agents::request_backend_url(request).unwrap_or_default()
+        } else {
+            snapshot_backend_url
+        };
+        crate::agents::rewrite_loopback_model_gateway(request, &backend_url);
+    }
+
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
         let configure_before_startup_recovery = method == "runtime.codex.runtime_config.update";
         let startup_recovery_deferred = self.startup_recovery_deferred.load(Ordering::Acquire);
@@ -1000,6 +1068,7 @@ impl RuntimeWorkRpcHandler {
         }
         let result = match method {
             "runtime.tasks.list" => self.list_tasks(&payload).await,
+            "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
@@ -1008,6 +1077,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
             "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.collaboration.dispatch" => self.create_collaboration_dispatch(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
@@ -1134,12 +1204,16 @@ impl RuntimeWorkRpcHandler {
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
             "runtime.worktrees.list" => self.list_worktrees().await,
             "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.apply_issue_cleanup" => {
+                self.apply_issue_worktree_cleanup(payload).await
+            }
             "runtime.worktrees.restore" => self.restore_worktree(payload).await,
             "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.projects.upsert_local" => self.upsert_local_project(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.composer.catalog.read" => self.read_composer_catalog(payload).await,
             "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
@@ -1170,6 +1244,8 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     !matches!(
         method,
         "runtime.tasks.running_count"
+            | "runtime.tasks.get"
+            | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"
             | "runtime.codex.runtime_config.update"
@@ -1183,6 +1259,8 @@ fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
 
 include!("handler/helpers.rs");
 
+mod collaboration;
+mod composer_catalog;
 mod runtime_rpc;
 
 use runtime_rpc::{

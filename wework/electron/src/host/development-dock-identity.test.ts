@@ -5,14 +5,13 @@ describe('resolveDevelopmentDockIdentity', () => {
   test('uses the runtime worktree directory as the visible instance identifier', () => {
     expect(
       resolveDevelopmentDockIdentity({
-        WEWORK_DEV_TITLE: 'Wgent-订阅市场',
-        WEWORK_DEV_WORKTREE:
-          '/Users/lys/.wework/workspace/worktrees/runtime-527542697/Wgent-订阅市场',
+        WEWORK_DEV_TITLE: 'Example Project',
+        WEWORK_DEV_WORKTREE: '/var/tmp/wework/worktrees/runtime-527542697/example-project',
         WEWORK_DEV_INSTANCE_ID: 'fallback-hash',
       })
     ).toEqual({
       badge: '5275',
-      displayName: 'Wgent-订阅市场 · 5275',
+      displayName: 'Example Project · 5275',
       instanceId: '527542697',
     })
   })
@@ -33,14 +32,14 @@ describe('resolveDevelopmentDockIdentity', () => {
   test('uses the instance label prepared by the platform launcher', () => {
     expect(
       resolveDevelopmentDockIdentity({
-        WEWORK_DEV_DOCK_TITLE: '实现订阅市场 · 9876',
-        WEWORK_DEV_TITLE: '实现订阅市场',
+        WEWORK_DEV_DOCK_TITLE: 'Example Task · 9876',
+        WEWORK_DEV_TITLE: 'Example Task',
         WEWORK_DEV_INSTANCE_LABEL: '987654321',
         WEWORK_DEV_WORKTREE: '/Users/dev/github/Wegent',
       })
     ).toEqual({
       badge: '9876',
-      displayName: '实现订阅市场 · 9876',
+      displayName: 'Example Task · 9876',
       instanceId: '987654321',
     })
   })

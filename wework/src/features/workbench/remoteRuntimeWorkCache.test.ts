@@ -147,13 +147,13 @@ describe('remote runtime work cache', () => {
     expect(restoredTask).not.toHaveProperty('modelSelection')
     expect(restoredTask).not.toHaveProperty('parent')
     expect(restoredTask).not.toHaveProperty('children')
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
       'must-not-persist'
     )
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
       'full conversation'
     )
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v3.7')).not.toContain(
       'cachedProjection'
     )
   })
@@ -237,7 +237,7 @@ describe('remote runtime work cache', () => {
       totalTasks: 0,
     })
 
-    localStorage.setItem('wework.workbench.remoteRuntimeWork.v2.7', '{')
+    localStorage.setItem('wework.workbench.remoteRuntimeWork.v3.7', '{')
     expect(readCachedRemoteRuntimeWork(7)).toEqual({
       projects: [],
       chats: [],

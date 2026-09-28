@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
-import { deriveRuntimePaneStatus } from './runtimePaneStatus'
+import { deriveRuntimePaneStatus, resolveRuntimePaneLifecycleAddress } from './runtimePaneStatus'
 
 const runtimeAddress: RuntimeTaskAddress = {
   deviceId: 'device-1',
@@ -42,6 +42,20 @@ function statusFor(machine: RuntimeTaskMachine, messages: WorkbenchMessage[] = [
 }
 
 describe('runtime pane status from task lifecycle machine', () => {
+  test('reads lifecycle from the resolved current task before the retained transcript task', () => {
+    const retainedTranscriptTask = {
+      ...runtimeAddress,
+      taskId: 'optimistic-task',
+    }
+
+    expect(resolveRuntimePaneLifecycleAddress(runtimeAddress, retainedTranscriptTask)).toBe(
+      runtimeAddress
+    )
+    expect(resolveRuntimePaneLifecycleAddress(null, retainedTranscriptTask)).toBe(
+      retainedTranscriptTask
+    )
+  })
+
   test('uses the machine execution snapshot as the only busy source', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({

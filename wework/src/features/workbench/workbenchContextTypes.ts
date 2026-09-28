@@ -1,5 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
-import type { ModelSelectorCloseReason } from '@/components/chat/composer/model-selector-types'
+import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
@@ -97,6 +97,8 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  attachments?: Attachment[]
+  preserveAttachments?: boolean
   runtime?: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -112,6 +114,7 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  onRuntimeTaskOptimisticRemoved?: (address: RuntimeTaskAddress) => void
   prepareRuntimeTask?: (
     address: RuntimeTaskAddress
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
@@ -139,6 +142,9 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Override the globally selected project execution strategy. Pass null to
    * bind the task to the selected project's main workspace. */
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
+  /** Collaboration entry points choose worktrees automatically. If the
+   * executor rejects the worktree preflight, continue in the main workspace. */
+  automaticWorkspaceSelection?: boolean
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -224,7 +230,7 @@ export interface WorkbenchContextValue {
     trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
-    applyTrialTemplate?: (template: PluginPathComponent) => void
+    showTrialGuide?: (title: string, app: LocalDeviceApp) => void
     selectedSkills: SkillRef[]
     attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]
@@ -235,6 +241,14 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
+    continueInNewConversation?: (
+      model: UnifiedModel,
+      options?: ModelOptions,
+      source?: {
+        address?: RuntimeTaskAddress
+        draft?: string
+      }
+    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
@@ -324,7 +338,12 @@ export interface WorkbenchContextValue {
   ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (
     target: RuntimeTaskForkTarget,
-    options?: { lastTurnId?: string; title?: string }
+    options?: {
+      source?: RuntimeTaskAddress
+      lastTurnId?: string
+      title?: string
+      modelSelection?: ModelSelectionConfig | null
+    }
   ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
@@ -503,7 +522,6 @@ export interface WorkbenchProviderProps {
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
   loadTaskComposerCatalogs?: boolean
-  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean

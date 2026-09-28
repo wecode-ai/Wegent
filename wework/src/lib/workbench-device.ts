@@ -1,4 +1,4 @@
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 
 /** Logical alias used by CLI open and local IPC routing before the real executor id is known. */
 export const LOCAL_WORKBENCH_DEVICE_ALIAS = 'local-device'
@@ -68,6 +68,15 @@ export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | nu
   return devices.find(device => device.device_id === resolvedId) ?? null
 }
 
+export function resolveWorkbenchDeviceId(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined
+): string | null {
+  const normalized = deviceId?.trim()
+  if (!normalized) return null
+  return findWorkbenchDevice(devices, normalized)?.device_id ?? normalized
+}
+
 export function isWorkbenchDeviceOnline(device: DeviceInfo | null) {
   return Boolean(device && (device.status === 'online' || device.status === 'busy'))
 }
@@ -97,6 +106,33 @@ export function getWorkbenchDeviceIds(device: DeviceInfo): string[] {
     const normalized = id?.trim()
     return normalized ? [normalized] : []
   })
+}
+
+export function getWorkbenchDeviceNamesById(
+  devices: DeviceInfo[]
+): Readonly<Record<string, string>> {
+  const names: Record<string, string> = {}
+  for (const device of devices) {
+    const name = device.name.trim()
+    if (!name) continue
+    for (const deviceId of getWorkbenchDeviceIds(device)) names[deviceId] = name
+  }
+  return names
+}
+
+export function getRuntimeWorkDeviceNamesById(
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): Readonly<Record<string, string>> {
+  const names: Record<string, string> = {}
+  const workspaces = [
+    ...(runtimeWork?.projects ?? []).flatMap(item => item.deviceWorkspaces),
+    ...(runtimeWork?.chats ?? []),
+  ]
+  for (const workspace of workspaces) {
+    const name = workspace.deviceName?.trim()
+    if (name) names[workspace.deviceId] = name
+  }
+  return names
 }
 
 function extractNetworkHost(value?: string | null): string | null {

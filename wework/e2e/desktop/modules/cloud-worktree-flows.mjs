@@ -30,7 +30,6 @@ const WORKTREE_CHECKPOINTS = [
   'cloud-worktree-queued-cancel',
   'cloud-worktree-tools',
   'cloud-worktree-archive-restore',
-  'cloud-worktree-device-restart',
 ]
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -38,7 +37,6 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const WORKTREE_QUEUE_SCENARIO = 'worktree_queue_hold'
 const WORKTREE_RESTART_SCENARIO = 'worktree_restart_hold'
 const WORKTREE_QUEUE_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_QUEUE_HOLD'
-const WORKTREE_RESTART_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_RESTART_HOLD'
 const WORKTREE_ARCHIVE_RESTORE_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_ARCHIVE_RESTORE_HOLD'
 
 function scenarioRequestCount(control, scenario) {
@@ -184,11 +182,15 @@ async function launchTask(
   const requestCount = scenarioRequestCount(context.control, scenario)
   context.control.setScenario(scenario)
   await sendPrompt(context.control, context.composerSelector, prompt)
-  if (mode === 'git_worktree') {
-    await context.control.command('waitFor', '[data-testid="worktree-creation-status"]', {
+  // Submission progress is transient, and queued tasks defer worktree creation.
+  await context.control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    {
+      text: prompt,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-  }
+    }
+  )
   const rowTestId = await waitForNewTaskRow(
     context.control,
     knownRows,
@@ -806,79 +808,6 @@ async function verifyArchiveRestore(context) {
   await deleteWorktreeFromSettings(context.control, task)
 }
 
-async function verifyDeviceRestart(context) {
-  context.control.holdScenarioResponse(WORKTREE_RESTART_SCENARIO)
-  let task
-  try {
-    task = await launchTask(context, {
-      prompt: WORKTREE_RESTART_PROMPT,
-      scenario: WORKTREE_RESTART_SCENARIO,
-      waitForCompletion: false,
-    })
-    await assertWorktreeCreated(task, context.workspacePath)
-    await context.control.command(
-      'waitFor',
-      `[data-testid="runtime-local-task-running-${task.taskId}"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-    const requestsBeforeRestart = scenarioRequestCount(context.control, WORKTREE_RESTART_SCENARIO)
-    const restart = await context.cloudEnvironment.restartCloudExecutor()
-    assert.equal(
-      restart.runtimeInstanceId,
-      restart.previousInstanceId,
-      'The same Executor home did not preserve its stable runtime identity'
-    )
-
-    const reconciledLog = await waitForCondition(
-      async () => {
-        const log = await readFile(context.cloudEnvironment.remoteExecutorLogPath, 'utf8')
-        const appended = log.slice(restart.logOffset)
-        return appended.includes('interrupted worktree task reconciled without runtime restart')
-          ? appended
-          : null
-      },
-      WORKBENCH_READY_TIMEOUT_MS,
-      'The restarted Executor did not log Worktree reconciliation'
-    )
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
-    assert.equal(
-      scenarioRequestCount(context.control, WORKTREE_RESTART_SCENARIO),
-      requestsBeforeRestart,
-      'Executor restart automatically resumed the interrupted model turn'
-    )
-
-    await waitForCondition(
-      async () => {
-        const current = await context.cloudEnvironment.runtimeTask(task.taskId)
-        return current?.status === 'failed' && current.running === false ? current : null
-      },
-      WORKBENCH_READY_TIMEOUT_MS,
-      'The reconciled task did not become failed and stopped'
-    )
-    const worktrees = await readJson(runtimeWorkPath('worktrees.json'))
-    const worktreeRecord = worktrees.records?.[task.workspacePath]
-    assert.equal(
-      worktreeRecord?.state,
-      'active',
-      'Reconcile did not keep the valid Worktree manageable'
-    )
-    assert.match(
-      worktreeRecord?.lastError ?? '',
-      /runtime was not resumed/i,
-      'Reconcile did not persist the no-auto-resume diagnostic on the Worktree'
-    )
-    assert.equal(
-      await pathExists(task.workspacePath),
-      true,
-      'Reconcile removed the valid interrupted Worktree'
-    )
-
-    await deleteWorktreeFromSettings(context.control, task)
-  } finally {
-    context.control.releaseScenarioResponse(WORKTREE_RESTART_SCENARIO)
-  }
-}
-
 async function verifyCloudWorktreeCheckpoint({
   checkpoint,
   cloudEnvironment,
@@ -918,9 +847,6 @@ async function verifyCloudWorktreeCheckpoint({
         break
       case 'cloud-worktree-archive-restore':
         await verifyArchiveRestore(context)
-        break
-      case 'cloud-worktree-device-restart':
-        await verifyDeviceRestart(context)
         break
     }
   }

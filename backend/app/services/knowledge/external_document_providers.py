@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral seam for importing external documents.
+"""Provider-neutral seams for fetching and directly importing external documents.
 
-An external document provider resolves one external document — identified by
-the requesting user plus a provider-scoped resource ID — into content that the
-existing attachment / conversion / indexing pipeline can consume. DingTalk is
-the first adapter; a new provider only registers an adapter here and reuses
-the import state machine instead of duplicating it.
+Every provider can fetch a persisted external identity into content that the
+attachment / conversion / indexing pipeline can consume. Providers that also
+resolve caller-supplied resource IDs implement the narrower direct-import
+interface. A new adapter registers here and reuses the import state machine
+instead of duplicating it.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -25,10 +26,17 @@ from typing import Any, AsyncIterator
 import aiohttp
 from sqlalchemy.orm import Session
 
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup
+else:  # pragma: no cover - the declared Python 3.10 floor
+    # anyio, which raises the group, depends on this backport below 3.11.
+    from exceptiongroup import BaseExceptionGroup
+
 from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
 from app.models.user import User
 from app.services.dingtalk_document_types import get_import_extension
+from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.plugin_upstream_fetch import UpstreamFetchError, validate_upstream_url
 from shared.telemetry.decorators import trace_async
 
@@ -55,6 +63,17 @@ class ExternalDocumentImportError(Exception):
 class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_import_failed",
+        retryable: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+
 
 class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     """The external source no longer exists or the user lost access to it.
@@ -64,6 +83,14 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     document's source as inaccessible; it is distinct from a transient fetch
     failure and the failed initial import may be retried.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_source_unavailable",
+    ) -> None:
+        super().__init__(message, error_code=error_code, retryable=True)
 
 
 class ExternalImportLostWriteError(RuntimeError):
@@ -151,10 +178,40 @@ class ExternalDocumentContent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PreparedExternalDocumentFetch:
+    """Provider-owned payload detached from the database Session."""
+
+    external_resource_id: str
+    payload: Any = field(repr=False)
+
+
 class ExternalDocumentProvider(ABC):
-    """Contract every external document provider adapter must fulfil."""
+    """Contract for fetching a persisted external document body."""
 
     provider_id: str
+
+    @abstractmethod
+    async def fetch_content(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+    ) -> ExternalDocumentContent:
+        """Fetch the document body as attachment-ready content.
+
+        Reports ``source_update_time`` in ``metadata`` when the provider can
+        tell when the fetched body was last changed, so an automatic refresh
+        can keep a baseline that belongs to the body it just landed.
+
+        Raises ExternalSourceUnavailableError when the provider can tell the
+        resource is gone or access was revoked, ExternalDocumentFetchError
+        for transient failures.
+        """
+
+
+class DirectExternalDocumentImportProvider(ExternalDocumentProvider):
+    """Provider that can synchronously resolve a caller-supplied resource ID."""
 
     @abstractmethod
     def resolve_importable(
@@ -169,25 +226,222 @@ class ExternalDocumentProvider(ABC):
         for this user or cannot be imported.
         """
 
+
+class DetachedExternalDocumentProvider(ExternalDocumentProvider):
+    """Provider whose remote fetch can run after releasing the DB Session."""
+
     @abstractmethod
+    def prepare_content_fetch(
+        self,
+        db: Session,
+        user: User,
+        external_resource_id: str,
+        external_metadata: dict[str, Any] | None = None,
+    ) -> PreparedExternalDocumentFetch:
+        """Resolve database-backed metadata into a detached provider payload."""
+
+    @abstractmethod
+    async def fetch_prepared_content(
+        self, prepared: PreparedExternalDocumentFetch
+    ) -> ExternalDocumentContent:
+        """Fetch a prepared document body without a database Session."""
+
     async def fetch_content(
         self,
         db: Session,
         user: User,
         external_resource_id: str,
     ) -> ExternalDocumentContent:
-        """Fetch the document body as attachment-ready content.
-
-        Raises ExternalSourceUnavailableError when the provider can tell the
-        resource is gone or access was revoked, ExternalDocumentFetchError
-        for transient failures.
-        """
+        """Fetch through the detached phases when called via the base contract."""
+        prepared = self.prepare_content_fetch(db, user, external_resource_id, None)
+        return await self.fetch_prepared_content(prepared)
 
 
-class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
+def _positive_update_time(value: Any) -> int | None:
+    """Accept a positive epoch timestamp, including one sent as a digit string."""
+    if isinstance(value, str) and value.strip().isdigit():
+        # DingTalk sometimes serialises the epoch as a string; it is still usable.
+        value = int(value)
+    return value if type(value) is int and value > 0 else None
+
+
+def _read_update_time(info: dict[str, Any], node_id: str) -> int | None:
+    """Read the live source timestamp, making unusable values visible.
+
+    Without a usable timestamp the probe has nothing to compare against the
+    saved baseline, so the raw value must be identifiable in logs.
+    """
+    raw = info.get("updateTime")
+    update_time = _positive_update_time(raw)
+    if update_time is None and raw is not None:
+        logger.warning(
+            "[DingTalk Provider] Unusable updateTime node_id=%s value=%r",
+            node_id,
+            raw,
+        )
+    return update_time
+
+
+def _live_title(info: dict[str, Any]) -> str:
+    """Read the source's own current title from its live node metadata.
+
+    A rename in DingTalk only shows up here: the directory cache is refreshed on
+    its own schedule and can still hold the previous name.
+    """
+    for key in ("name", "title"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+# Real captures from the DingTalk Docs MCP (2026-09-18): a deleted node
+# answers errorCode=invalidParameter.item.notFound ("workspace node has been
+# recycled"); a never-existing node answers invalidRequest.resource.notFound
+# ("Data not found"). The structured code is the only signal trusted to mark
+# a source gone; every other failure, including any permission wording,
+# stays transient until a real revoked-access sample is captured.
+_SOURCE_GONE_ERROR_CODES = frozenset(
+    {
+        "invalidParameter.item.notFound",
+        "invalidRequest.resource.notFound",
+    }
+)
+
+
+def _mcp_result_text(result: Any) -> str:
+    """Join the text parts of one MCP tool result, ignoring other fields."""
+    parts: list[str] = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", "")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _source_unavailable_error(result: Any) -> ExternalSourceUnavailableError | None:
+    """Read a ``get_document_info`` result that positively reports a gone node.
+
+    Only a business envelope whose errorCode names the resource gone (recycled
+    or missing) counts. A tool error, a timeout or any other failure keeps its
+    transient classification, so a hiccup is never recorded as a deleted
+    source. The provider's own message and logId ride on the exception: they
+    are DingTalk's user-facing text and what its support asks for.
+    """
+    if getattr(result, "isError", False):
+        return None
+    try:
+        payload = json.loads(_mcp_result_text(result))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("success") is not False:
+        return None
+    if payload.get("errorCode") not in _SOURCE_GONE_ERROR_CODES:
+        return None
+    message = str(payload.get("errorMsg") or "").strip()
+    log_id = str(payload.get("logId") or "").strip()
+    detail = message or "钉钉源文档不存在或已被删除"
+    if log_id:
+        detail = f"{detail} (logId {log_id})"
+    return ExternalSourceUnavailableError(detail, error_code="external_source_missing")
+
+
+def _envelope_failure_detail(payload: Any) -> str:
+    """Append the provider's structured failure detail to a generic report."""
+    if not isinstance(payload, dict):
+        return ""
+    code = str(payload.get("errorCode") or "").strip()
+    message = str(payload.get("errorMsg") or "").strip()
+    detail = " ".join(part for part in (code, message) if part)
+    return f": {detail[:500]}" if detail else ""
+
+
+def _mcp_error_detail(exc: BaseException) -> str:
+    """Read an MCP protocol error's structured payload, never transport text.
+
+    A transport failure's message can embed the signed provider URL, so an
+    unexpected failure is identified by its class plus, for protocol errors,
+    the server's own error code and message.
+    """
+    error = getattr(exc, "error", None)
+    return " ".join(
+        str(part)[:500]
+        for part in (getattr(error, "code", None), getattr(error, "message", None))
+        if part
+    )
+
+
+def _leaf_errors(exc: BaseException) -> list[BaseException]:
+    """Flatten task-group wrappers into the failures that actually happened."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for child in exc.exceptions for leaf in _leaf_errors(child)]
+    return [exc]
+
+
+def _read_failure(exc: BaseException) -> BaseException:
+    """Pick the failure to report, preferring the provider's own classification.
+
+    The MCP session runs inside an anyio task group, so a failure raised inside
+    it — a classified deleted source included — comes back wrapped in an
+    ``ExceptionGroup`` next to the session teardown noise, where the class that
+    carries the reason is no longer visible.
+    """
+    leaves = _leaf_errors(exc)
+    return next(
+        (leaf for leaf in leaves if isinstance(leaf, ExternalDocumentFetchError)),
+        leaves[0],
+    )
+
+
+def _failure_summary(exc: BaseException) -> str:
+    """Name every leaf of a wrapped failure without echoing transport text."""
+    names: list[str] = []
+    for leaf in _leaf_errors(exc):
+        detail = _mcp_error_detail(leaf)
+        names.append(
+            f"{type(leaf).__name__}:{detail}" if detail else type(leaf).__name__
+        )
+    return ",".join(names)[:500]
+
+
+class DingTalkExternalDocumentProvider(DirectExternalDocumentImportProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
     provider_id = "dingtalk"
+
+    @trace_async(tracer_name="knowledge.external_import")
+    async def get_update_time(self, user: User, node_id: str) -> int | None:
+        """Read the live node timestamp without fetching content or changing a copy."""
+        from app.services.dingtalk_doc_service import DingTalkDocService
+
+        url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
+        if not url:
+            raise ExternalDocumentFetchError("DingTalk Docs is not configured")
+        try:
+            async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
+                async with open_dingtalk_session(url) as session:
+                    info = self._read_document_info(
+                        await session.call_tool(
+                            "get_document_info", {"nodeId": node_id}
+                        )
+                    )
+        except TimeoutError:
+            raise ExternalDocumentFetchError(
+                "DingTalk metadata read timed out"
+            ) from None
+        except ExternalDocumentFetchError:
+            raise
+        except Exception as exc:
+            failure = _read_failure(exc)
+            if isinstance(failure, ExternalDocumentFetchError):
+                # The session teardown wrapper must not hide the reason.
+                raise failure
+            # The cause class is enough to separate transport failures from MCP
+            # protocol errors without echoing provider payloads into logs.
+            raise ExternalDocumentFetchError(
+                f"DingTalk metadata read failed: {type(failure).__name__}"
+            ) from None
+        return _read_update_time(info, node_id)
 
     def resolve_importable(
         self,
@@ -253,10 +507,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         try:
             metadata = self.resolve_importable(db, user, external_resource_id)
         except ExternalDocumentImportError as exc:
-            if exc.status_code == 404:
-                # The synced node is gone or inactive: the source itself is
-                # no longer accessible, not a transient fetch failure.
-                raise ExternalSourceUnavailableError(str(exc)) from exc
+            # The local directory is an import prerequisite, not proof that
+            # the remote source was deleted. Only live MCP errors prove that.
             raise ExternalDocumentFetchError(str(exc)) from exc
         mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
         if not mcp_url:
@@ -265,15 +517,39 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             )
         try:
             async with asyncio.timeout(EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS):
-                extension, content = await self._fetch_document_content(
+                (
+                    extension,
+                    content,
+                    update_time,
+                    source_title,
+                ) = await self._fetch_document_content(
                     mcp_url, external_resource_id, user
                 )
         except TimeoutError:
             raise ExternalDocumentFetchError("DingTalk import timed out") from None
         except ExternalDocumentFetchError:
             raise
-        except Exception:
-            raise ExternalDocumentFetchError("DingTalk content read failed") from None
+        except Exception as exc:
+            failure = _read_failure(exc)
+            if isinstance(failure, ExternalDocumentFetchError):
+                # The session teardown wrapper must not hide the reason.
+                raise failure
+            # Keep the failure class (and an MCP error payload) visible: without
+            # it a deleted source and a broken session look identical.
+            logger.warning(
+                "[DingTalk Provider] Content read failed type=%s leaves=%s",
+                type(exc).__name__,
+                _failure_summary(exc),
+            )
+            raise ExternalDocumentFetchError(
+                f"DingTalk content read failed: {type(failure).__name__}"
+            ) from None
+        # The source's own title wins over the cached directory name, so a
+        # rename reaches the copy without waiting for a directory refresh.
+        if source_title:
+            metadata = {**metadata, "title": source_title}
+        if update_time is not None:
+            metadata = {**metadata, "source_update_time": update_time}
         return ExternalDocumentContent(
             name=metadata["title"],
             file_extension=extension,
@@ -283,15 +559,21 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
 
     async def _fetch_document_content(
         self, mcp_url: str, node_id: str, user: User
-    ) -> tuple[str, bytes]:
-        """Verify live metadata before selecting the source reader."""
+    ) -> tuple[str, bytes, int | None, str]:
+        """Verify live metadata before selecting the source reader.
+
+        Returns the body plus the live source timestamp and title read in the
+        same session, so the caller records a baseline and a name that belong
+        to the body it just fetched.
+        """
         from app.services.dingtalk_doc_service import DingTalkDocService
 
         async with open_dingtalk_session(mcp_url) as session:
-            info = self._parse_mcp_response(
-                await session.call_tool("get_document_info", {"nodeId": node_id}),
-                "get_document_info",
+            info = self._read_document_info(
+                await session.call_tool("get_document_info", {"nodeId": node_id})
             )
+            update_time = _read_update_time(info, node_id)
+            title = _live_title(info)
             extension = get_import_extension(info)
             if not extension:
                 raise ExternalDocumentFetchError(
@@ -310,7 +592,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     raise ExternalDocumentFetchError(
                         "DingTalk document content is empty or unreadable"
                     )
-                return "md", markdown.encode("utf-8")
+                return "md", markdown.encode("utf-8"), update_time, title
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
                 source_extension = str(info.get("extension")).strip().lower()
                 service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
@@ -324,14 +606,15 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     if source_extension == "axls"
                     else self._export_ai_table
                 )
-                return "xlsx", await export(export_url, node_id)
+                return "xlsx", await export(export_url, node_id), update_time, title
             payload = self._parse_mcp_response(
                 await session.call_tool("download_file", {"nodeId": node_id}),
                 "download_file",
             )
         urls = payload.get("resourceUrl")
         url = urls[0] if isinstance(urls, list) and urls else urls
-        return extension, await download_content(url, payload.get("headers"))
+        body = await download_content(url, payload.get("headers"))
+        return extension, body, update_time, title
 
     async def _export_sheet(self, url: str, node_id: str) -> bytes:
         """Export one workbook within fetch_content's existing timeout budget."""
@@ -407,6 +690,13 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 await asyncio.sleep(0.2)
         raise ExternalDocumentFetchError("DingTalk AI Table export timed out")
 
+    def _read_document_info(self, result: Any) -> dict[str, Any]:
+        """Decode node metadata, keeping a gone source distinguishable."""
+        unavailable = _source_unavailable_error(result)
+        if unavailable is not None:
+            raise unavailable
+        return self._parse_mcp_response(result, "get_document_info")
+
     @staticmethod
     def _parse_mcp_response(result: Any, tool_name: str) -> dict[str, Any]:
         """Decode the official JSON envelope without importing error text."""
@@ -433,7 +723,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         )
         if not succeeded:
             raise ExternalDocumentFetchError(
-                f"DingTalk MCP returned an unsuccessful response for {tool_name}"
+                f"DingTalk MCP returned an unsuccessful response for "
+                f"{tool_name}{_envelope_failure_detail(payload)}"
             )
         return payload
 
@@ -450,7 +741,19 @@ def get_external_document_provider(
     provider_id: str,
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
-    return _EXTERNAL_DOCUMENT_PROVIDERS.get((provider_id or "").strip().lower())
+    normalized = (provider_id or "").strip().lower()
+    if (
+        normalized == WIKI_PROVIDER_ID
+        and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS
+    ):
+        # Import lazily so the provider-neutral base contract remains usable on
+        # its own while the Wiki adapter can implement both provider seams.
+        from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415
+            wiki_external_sync_provider,
+        )
+
+        register_external_document_provider(wiki_external_sync_provider)
+    return _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized)
 
 
 register_external_document_provider(DingTalkExternalDocumentProvider())

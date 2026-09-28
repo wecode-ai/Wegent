@@ -6,7 +6,14 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class MCPProviderKeys(BaseModel):
@@ -51,6 +58,32 @@ class UserProjectWorkPreference(BaseModel):
     worktreeBranch: Optional[str] = None
 
 
+class ComposerQuickPhrase(BaseModel):
+    """Composer preferences, independent of agent quick-launch presets."""
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    content: str
+    mode: Literal["normal", "plan", "goal"]
+    attachmentPaths: Optional[List[str]] = None
+    createdAt: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_phrase(self) -> "ComposerQuickPhrase":
+        self.id = self.id.strip()
+        self.title = self.title.strip()
+        self.content = self.content.strip()
+        if not self.id or not self.title:
+            raise ValueError("Quick phrase id and title are required")
+        if self.attachmentPaths is not None:
+            self.attachmentPaths = [
+                path.strip() for path in self.attachmentPaths if path.strip()
+            ]
+        if not self.content and not self.attachmentPaths:
+            raise ValueError("Quick phrase content or attachments are required")
+        return self
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -62,6 +95,7 @@ class UserPreferences(BaseModel):
     tool_output_guard_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
     quick_access: Optional[QuickAccessPreference] = None
+    composer_quick_phrases: Optional[List[ComposerQuickPhrase]] = None
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
     default_execution_target: Optional[str] = None
     wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None

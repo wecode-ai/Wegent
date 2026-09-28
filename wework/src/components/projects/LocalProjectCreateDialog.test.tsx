@@ -26,7 +26,7 @@ describe('LocalProjectCreateDialog', () => {
     render(<LocalProjectCreateDialog {...baseProps} onCreate={onCreate} />)
 
     expect(screen.getByTestId('local-project-create-name-input')).toHaveValue('web')
-    await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
+    await userEvent.keyboard('{Enter}')
 
     expect(onCreate).toHaveBeenCalledWith({
       deviceId: 'local-device',

@@ -1,6 +1,7 @@
 import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
+import { observeRuntimePluginInvocation } from '@/features/plugins/pluginInvocationTelemetry'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,
@@ -51,6 +52,11 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
 
   function processNativeEvent(event: LocalExecutorEvent): void {
     if (shouldDropRuntimeEventForE2E(event.event)) return
+    try {
+      observeRuntimePluginInvocation(event)
+    } catch {
+      // Telemetry must never prevent a runtime event from reaching the chat UI.
+    }
     if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
       console.warn('[Wework] Runtime task plan event received', {
         taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
@@ -490,7 +496,8 @@ function projectTaskAssignedPayload(
   const projectName = stringField(payload, 'projectName')
   const itemId = stringField(payload, 'itemId')
   const itemTitle = stringField(payload, 'itemTitle')
-  const assignerName = stringField(payload, 'assignerName')
+  // The server names the acting member "actorName" for every notification kind.
+  const assignerName = stringField(payload, 'actorName')
   if (!projectId || !itemId || !itemTitle || !assignerName) return null
   return {
     projectId,

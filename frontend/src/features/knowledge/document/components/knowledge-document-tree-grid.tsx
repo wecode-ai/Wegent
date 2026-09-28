@@ -28,6 +28,7 @@ import {
   FolderOpen,
   FolderPlus,
   Pencil,
+  RefreshCw,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
@@ -44,6 +45,16 @@ import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hoo
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
+import {
+  getDocumentDisplayUpdatedAt,
+  getSyncedWikiConnectorType,
+  isDingtalkCopyDocument,
+  isDocumentIndexInFlight,
+  isSyncedWikiDocument,
+  isWikiSourceMissing,
+} from '../utils/documentUtils'
+import { ExternalSourceStatusBadge } from './ExternalSourceStatusBadge'
+import { useDingtalkSyncLabel } from '../hooks/useDingtalkSyncLabel'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
   KnowledgeResourceNode,
@@ -89,10 +100,12 @@ interface KnowledgeDocumentTreeGridProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onSync?: (doc: KnowledgeDocument) => void
   onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
+  isSyncing?: (documentId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
@@ -192,10 +205,12 @@ export function KnowledgeDocumentTreeGrid({
   onDelete,
   onRefresh,
   onReindex,
+  onSync,
   onReanalyze,
   onMove,
   refreshingDocId,
   reindexingDocId,
+  isSyncing,
   canManage,
   canSelect,
   includedInFolderScope,
@@ -204,10 +219,12 @@ export function KnowledgeDocumentTreeGrid({
   allowDownload = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
+  const getDingtalkSyncLabel = useDingtalkSyncLabel()
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
+  const hasSyncedWikiDocument = documents.some(isSyncedWikiDocument)
 
   const defaultExpandedKeys = useMemo(() => {
     if (expandAllFolders) {
@@ -269,7 +286,11 @@ export function KnowledgeDocumentTreeGrid({
 
   const handleDocumentDownload = useCallback(
     async (document: KnowledgeDocument) => {
-      if (document.source_type !== 'file' || !document.attachment_id) return
+      if (
+        !document.attachment_id ||
+        (document.source_type !== 'file' && !isSyncedWikiDocument(document))
+      )
+        return
       try {
         await downloadDocument(document)
       } catch {
@@ -367,6 +388,7 @@ export function KnowledgeDocumentTreeGrid({
                 ? document.source_config.url
                 : null
             const displayName = getDocumentDisplayName(document)
+            const wikiSourceMissing = isWikiSourceMissing(document)
             return (
               <div
                 className="flex items-center gap-2 overflow-hidden min-w-0"
@@ -389,6 +411,32 @@ export function KnowledgeDocumentTreeGrid({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                {wikiSourceMissing && (
+                  <TooltipProvider>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="default"
+                          size="sm"
+                          className="flex-shrink-0 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
+                          data-testid={`wiki-source-missing-${document.id}`}
+                        >
+                          {t('document.document.wikiSourceMissing')}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        <p className="text-xs">{t('document.document.wikiSourceMissingHint')}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                {!wikiSourceMissing && (
+                  <ExternalSourceStatusBadge
+                    document={document}
+                    testId={`external-source-inaccessible-${document.id}`}
+                    className="flex-shrink-0"
+                  />
+                )}
                 {sourceUrl && (
                   <button
                     className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
@@ -473,7 +521,34 @@ export function KnowledgeDocumentTreeGrid({
           const node = row.original.node
           if (node.kind === 'document') {
             const document = node.document
-            if (!onEdit || !(canManage?.(document) ?? true)) return null
+            if (isSyncedWikiDocument(document)) {
+              if (!onSync || !(canManage?.(document) ?? true)) return null
+              const label = t('document.document.resync')
+              const syncBusy =
+                isSyncing?.(document.id) ||
+                reindexingDocId === document.id ||
+                ['queued', 'indexing', 'converting', 'pending_conversion'].includes(
+                  document.index_status
+                )
+              return (
+                <button
+                  className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={event => {
+                    event.stopPropagation()
+                    onSync(document)
+                  }}
+                  disabled={syncBusy}
+                  title={label}
+                  aria-label={label}
+                  data-testid={`quick-sync-document-${document.id}`}
+                >
+                  <CloudDownload className="w-3.5 h-3.5" />
+                </button>
+              )
+            }
+            if (!onEdit || !(canManage?.(document) ?? true)) {
+              return null
+            }
             const label = t('common:actions.edit')
             return (
               <button
@@ -511,9 +586,9 @@ export function KnowledgeDocumentTreeGrid({
       },
       {
         id: 'type',
-        size: 80,
-        minSize: 72,
-        maxSize: 120,
+        size: 112,
+        minSize: 100,
+        maxSize: 140,
         header: () => t('document.document.columns.type'),
         cell: ({ row }) => {
           const node = row.original.node
@@ -530,7 +605,13 @@ export function KnowledgeDocumentTreeGrid({
           }
           const document = node.document
           if (document.source_type === 'external') {
-            return <ExternalDocumentBadge />
+            return (
+              <ExternalDocumentBadge
+                syncedWiki={isSyncedWikiDocument(document)}
+                extension={document.file_extension}
+                connectorType={getSyncedWikiConnectorType(document)}
+              />
+            )
           }
           if (document.source_type === 'web') {
             return (
@@ -615,11 +696,10 @@ export function KnowledgeDocumentTreeGrid({
           if (node.kind === 'folder') {
             return <span className="text-xs text-text-muted">{formatDateTime(node.updatedAt)}</span>
           }
+          const displayUpdatedAt = getDocumentDisplayUpdatedAt(node.document)
           return (
             <span className="text-xs text-text-muted">
-              {node.document.updated_at === node.document.created_at
-                ? '-'
-                : formatDateTime(node.document.updated_at)}
+              {displayUpdatedAt ? formatDateTime(displayUpdatedAt) : '-'}
             </span>
           )
         },
@@ -637,11 +717,7 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           const isPendingConversion = document.index_status === 'pending_conversion'
           const isConverting = document.index_status === 'converting'
-          const isIndexing =
-            document.index_status === 'queued' ||
-            document.index_status === 'indexing' ||
-            isConverting ||
-            isPendingConversion
+          const isIndexing = isDocumentIndexInFlight(document)
           // Indexing-in-progress takes precedence over is_active: a re-analyze/
           // re-index keeps the old index queryable (is_active stays true) but the
           // UI must surface the in-flight state. Mirrors DocumentItem compact mode.
@@ -703,9 +779,9 @@ export function KnowledgeDocumentTreeGrid({
       },
       {
         id: 'actions',
-        size: 80,
-        minSize: 72,
-        maxSize: 140,
+        size: hasSyncedWikiDocument ? 168 : 80,
+        minSize: hasSyncedWikiDocument ? 168 : 72,
+        maxSize: 200,
         enableSorting: false,
         header: () => t('document.document.columns.actions'),
         cell: ({ row }) => {
@@ -750,23 +826,32 @@ export function KnowledgeDocumentTreeGrid({
           if (!(canManage?.(document) ?? true)) return null
           const isWeb = document.source_type === 'web'
           const isExternal = document.source_type === 'external'
+          const isSyncedWiki = isSyncedWikiDocument(document)
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
-          const isPendingConversion = document.index_status === 'pending_conversion'
-          const isConverting = document.index_status === 'converting'
           const showIndexingState =
             reindexingDocId === document.id ||
-            document.index_status === 'queued' ||
-            document.index_status === 'indexing' ||
-            isConverting ||
-            isPendingConversion
+            isSyncing?.(document.id) ||
+            isDocumentIndexInFlight(document)
+          const canSyncDingtalkCopy = isDingtalkCopyDocument(document) && !!onSync
+          const dingtalkSyncLabel = getDingtalkSyncLabel(document, showIndexingState)
+          const canSyncWiki = isSyncedWiki && !!onSync && !showIndexingState
           // One retry control whose identity depends on the document: failed
-          // external documents fetch the provider's latest body through the
-          // import-retry entry, while regular documents reindex their content.
+          // external documents without a source-refresh entry fetch the
+          // provider's latest body through the import-retry entry, while
+          // regular documents reindex their content. A copy that can refresh
+          // itself retries through that entry instead of a second control.
           let retryAction: { testId: string; label: string } | null = null
           if (onReindex && !showIndexingState) {
-            if (isExternal) {
-              if (isIndexFailed) {
+            if (isSyncedWiki) {
+              if (ragConfigured && document.attachment_id && isIndexFailed) {
+                retryAction = {
+                  testId: `reindex-document-${document.id}`,
+                  label: t('document.document.reindex'),
+                }
+              }
+            } else if (isExternal) {
+              if (isIndexFailed && !canSyncDingtalkCopy) {
                 retryAction = {
                   testId: `retry-import-document-${document.id}`,
                   label: t('document.document.retryImport'),
@@ -792,7 +877,9 @@ export function KnowledgeDocumentTreeGrid({
             !!onReanalyze &&
             !showIndexingState
           const showDownload =
-            allowDownload && document.source_type === 'file' && !!document.attachment_id
+            allowDownload &&
+            !!document.attachment_id &&
+            (document.source_type === 'file' || isSyncedWiki)
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
             refreshingDocId === document.id
@@ -836,6 +923,39 @@ export function KnowledgeDocumentTreeGrid({
                   <CloudDownload
                     className={`w-4 h-4 ${refreshingDocId === document.id ? 'animate-pulse' : ''}`}
                   />
+                </button>
+              )}
+              {canSyncDingtalkCopy && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors max-md:min-h-[44px] max-md:min-w-[44px] ${
+                    showIndexingState
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={event => {
+                    event.stopPropagation()
+                    onSync?.(document)
+                  }}
+                  disabled={showIndexingState}
+                  title={dingtalkSyncLabel}
+                  aria-label={dingtalkSyncLabel}
+                  data-testid={`sync-dingtalk-document-${document.id}`}
+                >
+                  <RefreshCw className={`h-4 w-4 ${showIndexingState ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+              {canSyncWiki && (
+                <button
+                  className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                  onClick={event => {
+                    event.stopPropagation()
+                    onSync(document)
+                  }}
+                  title={t('document.document.resync')}
+                  aria-label={t('document.document.resync')}
+                  data-testid={`sync-document-${document.id}`}
+                >
+                  <CloudDownload className="h-4 w-4" />
                 </button>
               )}
               {retryAction && (
@@ -899,9 +1019,13 @@ export function KnowledgeDocumentTreeGrid({
       canManageFolders,
       canSelect,
       canSelectFolders,
+      expandAllFolders,
       expandedKeys,
+      getDingtalkSyncLabel,
       handleDocumentDownload,
+      hasSyncedWikiDocument,
       includedInFolderScope,
+      isSyncing,
       isAllSelected,
       isPartialSelected,
       multimodalFeatureEnabled,
@@ -912,6 +1036,7 @@ export function KnowledgeDocumentTreeGrid({
       onMove,
       onRefresh,
       onReindex,
+      onSync,
       onReanalyze,
       onRenameFolder,
       onSelect,
@@ -1100,14 +1225,7 @@ export function KnowledgeDocumentTreeGrid({
         </div>
       )
     },
-    [
-      activeFolderId,
-      expandAllFolders,
-      gridTemplateColumns,
-      onActivateFolder,
-      onViewDetail,
-      toggleFolder,
-    ]
+    [activeFolderId, gridTemplateColumns, onActivateFolder, onViewDetail, toggleFolder]
   )
 
   return (

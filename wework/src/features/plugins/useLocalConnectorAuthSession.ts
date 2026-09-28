@@ -1,3 +1,5 @@
+import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
@@ -80,6 +82,7 @@ export function useLocalConnectorAuthSession({
   const onSuccessRef = useRef(onSuccess)
   const tRef = useRef(t)
   const sessionRef = useRef(0)
+  const attemptRef = useRef<OperationAttempt | null>(null)
   const activeAuthSessionRef = useRef<string | null>(null)
   const cancelRequestedRef = useRef(false)
   const cancelledAuthSessionsRef = useRef(new Set<string>())
@@ -109,6 +112,13 @@ export function useLocalConnectorAuthSession({
 
   useEffect(() => {
     if (!enabled) return
+    const attempt = beginOperation('plugin.authorize', {
+      properties: pluginTelemetryIdentityFromParts({
+        marketplace: 'local',
+        pluginKey,
+      }),
+    })
+    attemptRef.current = attempt
     const session = ++sessionRef.current
     const isCurrent = () => sessionRef.current === session
     let startTimer: ReturnType<typeof setTimeout> | null = null
@@ -143,10 +153,32 @@ export function useLocalConnectorAuthSession({
         setError(null)
         setStatus(started)
         if (started.status === 'ok') {
+          attempt.succeed()
           onSuccessRef.current(started)
           return
         }
         const startedAsBrowser = browserMode || isBrowserAuthStatus(started)
+        if (
+          started.status === 'error' ||
+          started.status === 'expired' ||
+          started.status === 'cancelled'
+        ) {
+          if (started.status === 'cancelled') attempt.cancel()
+          else attempt.fail('confirm')
+          setError(
+            started.hint ||
+              (startedAsBrowser
+                ? tRef.current(
+                    'workbench.plugins_local_browser_failed',
+                    '浏览器授权未完成，请重新开始登录'
+                  )
+                : tRef.current(
+                    'workbench.plugins_local_qr_expired',
+                    '二维码已失效，请重新开始登录'
+                  ))
+          )
+          return
+        }
         const tick = async () => {
           if (!isCurrent()) return
           try {
@@ -158,6 +190,7 @@ export function useLocalConnectorAuthSession({
               qrPath: next.qrPath ?? previous?.qrPath ?? null,
             }))
             if (next.status === 'ok') {
+              attempt.succeed()
               onSuccessRef.current(next)
               return
             }
@@ -166,6 +199,8 @@ export function useLocalConnectorAuthSession({
               next.status === 'error' ||
               next.status === 'cancelled'
             ) {
+              if (next.status === 'cancelled') attempt.cancel()
+              else attempt.fail('confirm')
               setError(
                 next.hint ||
                   (startedAsBrowser || isBrowserAuthStatus(next)
@@ -183,6 +218,7 @@ export function useLocalConnectorAuthSession({
             pollTimer = setTimeout(tick, intervalMs)
           } catch (pollError) {
             if (!isCurrent()) return
+            attempt.fail('request')
             setError(
               pollError instanceof Error
                 ? pollError.message
@@ -193,6 +229,7 @@ export function useLocalConnectorAuthSession({
         pollTimer = setTimeout(tick, intervalMs)
       } catch (startError) {
         if (!isCurrent()) return
+        attempt.fail('request')
         setError(
           startErrorMessage(
             startError,
@@ -211,6 +248,7 @@ export function useLocalConnectorAuthSession({
     // second authorization session or opens another browser window.
     startTimer = setTimeout(() => void start(), 0)
     return () => {
+      attempt.cancel()
       if (sessionRef.current === session) {
         sessionRef.current += 1
       }
@@ -233,6 +271,7 @@ export function useLocalConnectorAuthSession({
   }, [])
 
   const cancelActiveSession = useCallback(() => {
+    attemptRef.current?.cancel()
     cancelRequestedRef.current = true
     const sessionId = activeAuthSessionRef.current
     activeAuthSessionRef.current = null

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { KnowledgeTree } from '@/features/knowledge/document/components/KnowledgeTree'
@@ -138,6 +138,74 @@ describe('KnowledgeTree permissions', () => {
 })
 
 describe('KnowledgeTree category filter', () => {
+  it('keeps empty and lazy group nodes while advanced knowledge is hidden', () => {
+    const documentKb = createKnowledgeBase()
+    const codeWiki = {
+      ...createKnowledgeBase(),
+      id: 9,
+      name: 'Code Wiki',
+      kb_type: 'code_wiki' as const,
+    }
+    const nodes: TreeNode[] = [
+      {
+        id: 'group',
+        type: 'category-root',
+        label: 'Group Knowledge',
+        expanded: true,
+        children: [
+          {
+            id: 'group-empty',
+            type: 'group-item',
+            label: 'Empty Group',
+            children: [],
+          },
+          {
+            id: 'group-loaded',
+            type: 'group-item',
+            label: 'Loaded Group',
+            expanded: true,
+            children: [
+              {
+                id: `kb-${documentKb.id}`,
+                type: 'kb-leaf',
+                label: documentKb.name,
+                knowledgeBase: documentKb,
+              },
+              {
+                id: `kb-${codeWiki.id}`,
+                type: 'kb-leaf',
+                label: codeWiki.name,
+                knowledgeBase: codeWiki,
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    render(
+      <KnowledgeTree
+        nodes={nodes}
+        selectedKbId={null}
+        loading={false}
+        expandState={{ group: true, 'group-loaded': true }}
+        onToggleExpand={jest.fn()}
+        onSelectKb={jest.fn()}
+        onCreateKb={jest.fn()}
+        onShowAdvancedKnowledgeChange={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-tree-node-group-empty')).toBeInTheDocument()
+    expect(screen.getByTestId(`knowledge-tree-kb-${documentKb.id}`)).toBeInTheDocument()
+    expect(screen.queryByTestId(`knowledge-tree-kb-${codeWiki.id}`)).not.toBeInTheDocument()
+    const categoryControls = screen.getByTestId('knowledge-tree-category-controls')
+    expect(within(categoryControls).getByTestId('knowledge-category-filter')).toBeInTheDocument()
+    expect(
+      within(categoryControls).getByTestId('show-advanced-knowledge-toggle-mobile')
+    ).toBeInTheDocument()
+  })
+
   it('uses the generic empty state for the default all category', () => {
     render(
       <KnowledgeTree
@@ -148,6 +216,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -197,6 +266,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 
@@ -243,6 +313,7 @@ describe('KnowledgeTree category filter', () => {
         onToggleExpand={jest.fn()}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
+        showAdvancedKnowledge
       />
     )
 

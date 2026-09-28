@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/prepare-file-viewer-assets.mjs && next dev",
-    "build": "node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=4096' next build",
+    "dev": "node scripts/prepare-internal-assets.mjs && node scripts/prepare-file-viewer-assets.mjs && next dev",
+    "build": "node scripts/prepare-internal-assets.mjs && node scripts/prepare-file-viewer-assets.mjs && NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
@@ -172,6 +172,7 @@
     "husky": "^9.1.7",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
+    "jszip": "3.10.2",
     "lint-staged": "^15.2.11",
     "nyc": "^17.1.0",
     "postcss": "^8.5.0",

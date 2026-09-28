@@ -18,7 +18,7 @@ export interface QuickLauncher {
   title: string
   description?: string | null
   icon?: string | null
-  team: Team
+  team: Pick<Team, 'id' | 'bind_mode'>
   targetPage: TeamTargetPage
   inputPresets: QuickInputPreset[]
 }

@@ -57,6 +57,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSocket } from '@/contexts/SocketContext'
+import { useAdminDeviceMonitorExtension } from '@extensions/admin-device-monitor'
 import { DeviceUpgradeStatusPayload, ServerEvents } from '@/types/socket'
 import { cn, isCompleteVersionString, isVersionAtLeast } from '@/lib/utils'
 
@@ -168,6 +169,7 @@ export function DeviceMonitorPanel() {
   const { socket, isConnected } = useSocket()
   const [stats, setStats] = useState<AdminDeviceStats | null>(null)
   const [devices, setDevices] = useState<AdminDeviceInfo[]>([])
+  const deviceMonitorExtension = useAdminDeviceMonitorExtension(devices)
   const [total, setTotal] = useState(0)
   const [hasLoadedStats, setHasLoadedStats] = useState(false)
   const [hasLoadedDevices, setHasLoadedDevices] = useState(false)
@@ -1029,6 +1031,7 @@ export function DeviceMonitorPanel() {
                           </Tooltip>
                         )}
                       </TooltipProvider>
+                      {deviceMonitorExtension.renderAction(device)}
                     </div>
                   </div>
                 </Card>
@@ -1077,6 +1080,7 @@ export function DeviceMonitorPanel() {
           </div>
         </div>
       )}
+      {deviceMonitorExtension.renderPanel()}
     </div>
   )
 }

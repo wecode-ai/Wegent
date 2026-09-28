@@ -8,11 +8,12 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 from pydantic import (
     AliasChoices,
     BaseModel,
+    ConfigDict,
     Field,
     field_serializer,
     field_validator,
@@ -60,9 +61,30 @@ class ModelCategoryType(str, Enum):
     IMAGE = "image"
 
 
+def resolve_model_category(spec: Optional[Mapping[str, Any]]) -> str:
+    """Return the normalized category of a Model spec.
+
+    The CRD keeps the category at ``spec.modelType``; older payloads nest it in
+    ``spec.modelConfig.modelType``. Enum members are unwrapped and unknown
+    categories are returned lower-cased so callers can still report them.
+    """
+    model_type: Any = None
+    if isinstance(spec, Mapping):
+        model_type = spec.get("modelType")
+        if model_type is None:
+            model_config = spec.get("modelConfig") or {}
+            if isinstance(model_config, Mapping):
+                model_type = model_config.get("modelType")
+
+    model_type = getattr(model_type, "value", model_type)
+    return str(model_type or ModelCategoryType.LLM.value).strip().lower()
+
+
 # Type-specific configurations
 class TTSConfig(BaseModel):
     """TTS-specific configuration"""
+
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
 
     voice: Optional[str] = Field(
         None, description="Voice ID (e.g., 'alloy', 'echo' for OpenAI)"
@@ -76,6 +98,8 @@ class TTSConfig(BaseModel):
 class STTConfig(BaseModel):
     """STT-specific configuration"""
 
+    model_config = ConfigDict(extra="allow")
+
     language: Optional[str] = Field(
         None, description="Language code (e.g., 'en', 'zh')"
     )
@@ -86,6 +110,8 @@ class STTConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     """Embedding-specific configuration"""
+
+    model_config = ConfigDict(extra="allow")
 
     dimensions: Optional[int] = Field(
         None, description="Output dimensions (e.g., 1536)"
@@ -103,6 +129,8 @@ class EmbeddingConfig(BaseModel):
 class RerankConfig(BaseModel):
     """Rerank-specific configuration"""
 
+    model_config = ConfigDict(extra="allow")
+
     top_n: Optional[int] = Field(None, description="Number of top results to return")
     return_documents: Optional[bool] = Field(
         True, description="Whether to return document texts"
@@ -118,6 +146,8 @@ class ModelCapabilities(BaseModel):
     covering image analysis (no separate ``supportsImage`` toggle on such
     models).
     """
+
+    model_config = ConfigDict(extra="allow")
 
     supportsImage: Optional[bool] = Field(
         None,
@@ -175,12 +205,22 @@ class KnowledgeBaseDefaultRef(BaseModel):
     name: str
 
 
+class BaseGhostRef(BaseModel):
+    """Reference to a system Ghost used as the capability baseline."""
+
+    name: str
+    namespace: str = "default"
+    user_id: int = 0
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
+    baseGhostRef: Optional[BaseGhostRef] = None
     mcpServers: Optional[Dict[str, Any]] = None
+    plugins: Optional[List[Dict[str, Any]]] = None
     defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
@@ -229,8 +269,41 @@ class GhostList(BaseModel):
 
 
 # Model CRD schemas
+_UNSAFE_MODEL_SPEC_KEYS = frozenset({"__proto__", "constructor", "prototype"})
+
+
+def _unsafe_model_spec_paths(value: Any, path: str = "spec") -> List[str]:
+    """Return unsafe key paths without exposing configuration values."""
+    if isinstance(value, dict):
+        paths: List[str] = []
+        for key, nested_value in value.items():
+            key_path = f"{path}.{key}"
+            if key in _UNSAFE_MODEL_SPEC_KEYS:
+                paths.append(key_path)
+            paths.extend(_unsafe_model_spec_paths(nested_value, key_path))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, nested_value in enumerate(value):
+            paths.extend(_unsafe_model_spec_paths(nested_value, f"{path}[{index}]"))
+        return paths
+    return []
+
+
 class ModelSpec(BaseModel):
     """Model specification"""
+
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unsafe_keys(cls, value: Any) -> Any:
+        unsafe_paths = _unsafe_model_spec_paths(value)
+        if unsafe_paths:
+            raise ValueError(
+                "Model spec contains unsafe key names: " + ", ".join(unsafe_paths)
+            )
+        return value
 
     modelConfig: Dict[str, Any]
     isCustomConfig: Optional[bool] = (
@@ -266,6 +339,25 @@ class ModelSpec(BaseModel):
         description="Legacy maximum output tokens per response.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _adopt_legacy_model_type(cls, data: Any) -> Any:
+        """Adopt a nested ``modelConfig.modelType`` when the field is absent.
+
+        Legacy payloads put the category inside ``modelConfig``. Without this,
+        the ``llm`` default hides the nested category from every consumer that
+        reads the parsed resource.
+        """
+        if not isinstance(data, Mapping) or data.get("modelType") is not None:
+            return data
+        model_config = data.get("modelConfig") or {}
+        if (
+            isinstance(model_config, Mapping)
+            and model_config.get("modelType") is not None
+        ):
+            return {**data, "modelType": model_config["modelType"]}
+        return data
+
     @staticmethod
     def _model_config_token_limit(value: Any) -> Optional[int]:
         """Return a numeric token limit from the runtime model config."""
@@ -300,7 +392,9 @@ class ModelSpec(BaseModel):
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
         ModelCategoryType.LLM,
-        description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
+        description="Model category type (llm, tts, stt, embedding, rerank). "
+        "Defaults to 'llm' for backward compatibility, unless the payload nests "
+        "the category in modelConfig.modelType.",
     )
     modelGroup: Optional[str] = Field(
         None,
@@ -343,6 +437,19 @@ class ModelSpec(BaseModel):
         description="Whether this public model is visible in user model selectors. "
         "Hidden models remain available to existing bindings.",
     )
+    allowedUsers: Optional[List[str]] = Field(
+        None,
+        description="User-name whitelist for a public model. Only enforced when "
+        "allowedUsersEnabled is True. The list is preserved even when the switch "
+        "is off, but then does not restrict access.",
+    )
+    allowedUsersEnabled: Optional[bool] = Field(
+        None,
+        description="Explicit switch for whitelist-only mode. When True, only "
+        "users listed in allowedUsers can see and use the model, and an empty "
+        "allowedUsers list denies everyone. When absent/False, the model is a "
+        "normal public model available to everyone and allowedUsers is ignored.",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "
@@ -359,6 +466,8 @@ class ModelStatus(Status):
 
 class Model(BaseModel):
     """Model CRD"""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "Model"
@@ -462,6 +571,8 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
+    # Legacy Bots without this field keep their configured Ghost capabilities.
+    capability_mode: str = "manual"
     secondaryModelRef: Optional[ModelRef] = Field(
         None,
         description="Secondary LLM model for auxiliary tasks. "
@@ -1130,6 +1241,7 @@ class KnowledgeBaseSpec(BaseModel):
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    dingtalkAutoSyncEnabled: bool = Field(default=False)
     summaryEnabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",

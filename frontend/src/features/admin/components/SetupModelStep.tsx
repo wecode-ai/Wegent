@@ -23,12 +23,67 @@ import { Loader2, PlusIcon } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis, AdminPublicModel, AdminPublicModelCreate } from '@/apis/admin'
-import { ModelCRD, ModelCategoryType } from '@/apis/models'
+import { ModelCRD, ModelCategoryType, ModelSpecConfig } from '@/apis/models'
 import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
 import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
 } from '@/features/settings/components/ModelEditDialog'
+import { extractThinkingConfig } from '@/features/settings/components/model-config'
+
+export function convertAdminModelToInitialData(model: AdminPublicModel): ModelInitialData {
+  const json = model.json as Record<string, unknown>
+  const spec = json?.spec as Record<string, unknown>
+  const metadata = json?.metadata as Record<string, unknown>
+  const modelConfig = spec?.modelConfig as Record<string, unknown>
+  const env = modelConfig?.env as Record<string, unknown>
+  const modelCategoryType = (spec?.modelType as ModelCategoryType) || 'llm'
+
+  const modelType = env?.model as string
+  let providerType: string
+  if (spec?.protocol === 'openai-responses') {
+    providerType = 'openai-responses'
+  } else if (spec?.protocol === 'gemini-deep-research') {
+    providerType = 'gemini-deep-research'
+  } else if (modelCategoryType === 'video' || modelCategoryType === 'image') {
+    providerType = (spec?.protocol as string) || modelType || 'custom'
+  } else if (modelType === 'claude') {
+    providerType = 'anthropic'
+  } else {
+    providerType = modelType || 'openai'
+  }
+
+  return {
+    name: model.name,
+    displayName: (metadata?.displayName as string) || '',
+    modelGroup: typeof spec?.modelGroup === 'string' ? spec.modelGroup : undefined,
+    modelSubGroup: typeof spec?.modelSubGroup === 'string' ? spec.modelSubGroup : undefined,
+    modelCategoryType,
+    providerType,
+    modelId: env?.model_id as string,
+    apiKey: (env?.api_key as string) || '',
+    baseUrl: (env?.base_url as string) || '',
+    customHeaders: env?.custom_headers as Record<string, string>,
+    thinkingConfig: extractThinkingConfig(env),
+    protocol: spec?.protocol as string,
+    contextWindow: modelConfig?.context_window as number | undefined,
+    maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
+    costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
+    modelCapabilities: getModelCapabilitiesFromSpec({
+      modelCapabilities: spec?.modelCapabilities,
+      modelConfig,
+    }),
+    ttsConfig: spec?.ttsConfig as ModelInitialData['ttsConfig'],
+    sttConfig: spec?.sttConfig as ModelInitialData['sttConfig'],
+    embeddingConfig: spec?.embeddingConfig as ModelInitialData['embeddingConfig'],
+    rerankConfig: spec?.rerankConfig as ModelInitialData['rerankConfig'],
+    videoConfig: spec?.videoConfig as ModelInitialData['videoConfig'],
+    imageConfig: spec?.imageConfig as ModelInitialData['imageConfig'],
+    isWeworkAvailable: spec?.isWeworkAvailable === true,
+    visionSidecarModel: modelConfig?.visionSidecarModel as ModelInitialData['visionSidecarModel'],
+    spec: spec as unknown as ModelSpecConfig,
+  }
+}
 
 const SetupModelStep: React.FC = () => {
   const { t } = useTranslation()
@@ -59,44 +114,6 @@ const SetupModelStep: React.FC = () => {
     fetchModels()
   }, [fetchModels])
 
-  // Convert AdminPublicModel to ModelInitialData for editing
-  const convertToInitialData = (model: AdminPublicModel): ModelInitialData => {
-    const json = model.json as Record<string, unknown>
-    const spec = json?.spec as Record<string, unknown>
-    const metadata = json?.metadata as Record<string, unknown>
-    const modelConfig = spec?.modelConfig as Record<string, unknown>
-    const env = modelConfig?.env as Record<string, unknown>
-
-    const modelType = env?.model as string
-    let providerType: string
-    if (spec?.protocol === 'openai-responses') {
-      providerType = 'openai-responses'
-    } else if (modelType === 'claude') {
-      providerType = 'anthropic'
-    } else {
-      providerType = modelType || 'openai'
-    }
-
-    return {
-      name: model.name,
-      displayName: (metadata?.displayName as string) || '',
-      modelCategoryType: (spec?.modelType as ModelCategoryType) || 'llm',
-      providerType,
-      modelId: env?.model_id as string,
-      apiKey: (env?.api_key as string) || '',
-      baseUrl: (env?.base_url as string) || '',
-      customHeaders: env?.custom_headers as Record<string, string>,
-      protocol: spec?.protocol as string,
-      contextWindow: modelConfig?.context_window as number | undefined,
-      maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
-      costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
-      modelCapabilities: getModelCapabilitiesFromSpec({
-        modelCapabilities: spec?.modelCapabilities,
-        modelConfig,
-      }),
-    }
-  }
-
   // Custom save handler for admin API
   const handleSaveModel = async (
     _formData: ModelFormData,
@@ -105,12 +122,15 @@ const SetupModelStep: React.FC = () => {
     try {
       // Convert ModelCRD to Record<string, unknown> for admin API
       const modelJson = modelCRD as unknown as Record<string, unknown>
+      const isVisible =
+        typeof modelCRD.spec.isVisible === 'boolean' ? modelCRD.spec.isVisible : undefined
 
       if (editingModelId !== null) {
         // Update existing model
         await adminApis.updatePublicModel(editingModelId, {
           name: modelCRD.metadata.name,
           json: modelJson,
+          ...(isVisible !== undefined && { is_visible: isVisible }),
         })
         toast({ title: t('admin:setup_wizard.model_step.model_updated') })
       } else {
@@ -119,6 +139,7 @@ const SetupModelStep: React.FC = () => {
           name: modelCRD.metadata.name,
           namespace: 'default',
           json: modelJson,
+          ...(isVisible !== undefined && { is_visible: isVisible }),
         }
         await adminApis.createPublicModel(createData)
         toast({ title: t('admin:setup_wizard.model_step.model_added') })
@@ -157,7 +178,7 @@ const SetupModelStep: React.FC = () => {
   }
 
   const openEditDialog = (model: AdminPublicModel) => {
-    setEditingModelData(convertToInitialData(model))
+    setEditingModelData(convertAdminModelToInitialData(model))
     setEditingModelId(model.id)
     setIsAddDialogOpen(true)
   }

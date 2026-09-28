@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import tailwindcssAnimate from 'tailwindcss-animate'
+import collaborationPreset from '@wegent/collaboration/tailwind-preset'
 
 const withOpacity = variable => `rgb(var(${variable}) / <alpha-value>)`
 
 /** @type {import('tailwindcss').Config} */
 export default {
+  presets: [collaborationPreset],
   darkMode: ['class', '[data-theme="dark"]'],
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -15,42 +17,41 @@ export default {
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     '../packages/collaboration/src/**/*.{js,ts,jsx,tsx}',
+    '../packages/collaboration/node_modules/streamdown/dist/*.js',
   ],
   theme: {
-    fontSize: {
-      xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
-      sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
-      base: ['var(--text-base)', { lineHeight: '1.5' }],
-      lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
-      xl: ['var(--text-xl)', { lineHeight: '1.4' }],
-      '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
-      '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
-      '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
-      'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
-      'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
-      'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
-    },
     extend: {
+      fontSize: {
+        xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
+        sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
+        base: ['var(--text-base)', { lineHeight: '1.5' }],
+        lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
+        xl: ['var(--text-xl)', { lineHeight: '1.4' }],
+        '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
+        '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
+        '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
+        'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
+        'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
+        'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
+      },
+      // Keep the surface alias out of text colors: text-base is a font size.
+      backgroundColor: {
+        base: withOpacity('--color-bg-base'),
+      },
+      gradientColorStops: {
+        base: withOpacity('--color-bg-base'),
+      },
       fontFamily: {
         sans: ['var(--font-ui)'],
         mono: [
-          'ui-monospace',
-          'SFMono-Regular',
-          '"SF Mono"',
-          'Menlo',
-          'Monaco',
-          'Consolas',
-          '"Liberation Mono"',
-          '"Courier New"',
-          'monospace',
+          'var(--font-code, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
         ],
       },
       colors: {
         // Custom project colors - Wegent Purple Theme
-        base: withOpacity('--color-bg-base'),
         surface: withOpacity('--color-bg-surface'),
         muted: withOpacity('--color-bg-muted'),
-        hover: withOpacity('--color-bg-hover'),
+        hover: 'rgb(var(--color-bg-hover))',
         border: withOpacity('--color-border'),
         'border-strong': withOpacity('--color-border-strong'),
         'border-light': withOpacity('--color-border-light'),
@@ -98,9 +99,10 @@ export default {
         ring: withOpacity('--color-focus-ring'),
       },
       borderRadius: {
+        DEFAULT: 'var(--radius-default, 0.25rem)',
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: 'var(--radius-sm, calc(var(--radius) - 4px))',
         '2xl': '1rem',
         '3xl': '1.5rem',
       },

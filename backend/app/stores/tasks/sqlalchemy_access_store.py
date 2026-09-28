@@ -4,11 +4,13 @@
 
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Query, Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
+from app.stores.tasks.interfaces import TaskRuntimeState
 
 
 class SqlAlchemyTaskAccessStore:
@@ -34,19 +36,48 @@ class SqlAlchemyTaskAccessStore:
         if task.user_id == user_id:
             return True
 
-        member = (
-            db.query(ResourceMember.id)
+        return (
+            self._approved_membership_query(
+                db, task_id=task_id, user_id=user_id
+            ).first()
+            is not None
+        )
+
+    def _approved_membership_query(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Query:
+        return db.query(ResourceMember.id).filter(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.copied_resource_id == 0,
+        )
+
+    def get_runtime_state(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Optional[TaskRuntimeState]:
+        """Project only checkpoint fields, using the same owner/member policy."""
+        task_status = TaskResource.json["status"]["status"].as_string()
+        status_updated_at = TaskResource.json["status"]["updatedAt"].as_string()
+        membership = self._approved_membership_query(
+            db, task_id=task_id, user_id=user_id
+        ).exists()
+        row = (
+            db.query(task_status, status_updated_at, TaskResource.updated_at)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.resource_id == task_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
-                ResourceMember.copied_resource_id == 0,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
+                task_status != "DELETE",
+                or_(TaskResource.user_id == user_id, membership),
             )
             .first()
         )
-        return member is not None
+        if row is None:
+            return None
+        return TaskRuntimeState(status=row[0], updated_at=row[1] or row[2])
 
     def is_group_chat(self, db: Session, *, task_id: int) -> bool:
         task = self._get_accessible_task(db, task_id=task_id)

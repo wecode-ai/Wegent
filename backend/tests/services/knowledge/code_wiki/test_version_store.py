@@ -21,6 +21,7 @@ from app.models.wiki import (
 )
 from app.services.knowledge.code_wiki.page_path import InvalidPagePath
 from app.services.knowledge.code_wiki.version_store import (
+    BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY,
     STALE_RUN_AFTER_HOURS,
     apply_retention,
     page_path_of,
@@ -247,6 +248,31 @@ def test_a_slow_but_live_run_is_left_alone(test_db: Session):
     )
 
     assert reclaim_stale_generations(test_db, kind_id=KIND_ID, now=NOW) == ()
+
+
+def test_a_scheduled_run_uses_its_execution_timeout(test_db: Session) -> None:
+    scheduled = _generation(
+        test_db,
+        status=WikiGenerationStatus.RUNNING,
+        updated_at=NOW - timedelta(hours=5),
+    )
+    scheduled.ext = {BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY: 6 * 60 * 60}
+    test_db.flush()
+    test_db.query(WikiGeneration).filter(WikiGeneration.id == scheduled.id).update(
+        {WikiGeneration.updated_at: NOW - timedelta(hours=5)},
+        synchronize_session=False,
+    )
+    test_db.expire(scheduled)
+
+    assert reclaim_stale_generations(test_db, kind_id=KIND_ID, now=NOW) == ()
+    assert scheduled.status == WikiGenerationStatus.RUNNING
+    assert scheduled.updated_at == NOW - timedelta(hours=5)
+    assert scheduled.ext[BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY] == 6 * 60 * 60
+
+    reclaimed = reclaim_stale_generations(
+        test_db, kind_id=KIND_ID, now=NOW + timedelta(hours=2)
+    )
+    assert reclaimed == (scheduled.id,)
 
 
 def test_reclamation_ignores_finished_runs(test_db: Session):

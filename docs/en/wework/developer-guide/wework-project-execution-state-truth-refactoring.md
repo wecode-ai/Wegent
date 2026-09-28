@@ -216,6 +216,8 @@ An RPC transport failure is distinct from an explicit `emitted=false`. After the
 
 ## 6. Local/App startup sequence
 
+After registration, the executor sends a liveness heartbeat and reads its real capacity asynchronously. Once the read completes, it immediately publishes a heartbeat carrying that capacity for App-originated cloud project claims, without waiting for the next 30-second interval. A slow capacity read must not block liveness.
+
 ```mermaid
 sequenceDiagram
   participant APP as Wework Dispatcher
@@ -228,21 +230,31 @@ sequenceDiagram
   R-->>IPC: limit/active/active_task_ids/queued
   IPC->>SQL: inject trusted capacity + runtime_instance_id
   SQL->>SQL: check O < D, agent < R, scope free<br/>CAS queued → claimed
-  APP->>SQL: executions.start_requested
-  APP->>API: createRuntimeTask(codex-queue-{id})
-  alt Create response proves acceptance
-    API-->>APP: accepted
-    APP->>SQL: executions.runtime_start<br/>observed=accepted
-    R->>SQL: active-turn callback<br/>status/observed=running
-  else Outcome is ambiguous after Start
-    API--xAPP: lost response / exception
-    APP->>SQL: executions.dispatch_unknown
-    Note over SQL: keep claimed + stale + unknown
-  else Preflight fails before Start
+  APP->>API: createRuntimeTask(taskId, beforeDispatch)
+  API->>API: prepare workspace, model identity and execution payload
+  alt Preparation fails
+    API--xAPP: definite configuration error
     APP->>SQL: executions.dispatch_failed
-    Note over SQL: this is the only safe local dispatch failure
+    Note over SQL: no Start fence exists, safe to fail
+  else Preparation succeeds
+    API->>APP: await beforeDispatch()
+    APP->>SQL: executions.start_requested
+    SQL-->>APP: fence confirmed
+    APP-->>API: allow delivery
+    API->>R: runtime.tasks.create
+    alt Create response proves acceptance
+      API-->>APP: accepted
+      APP->>SQL: executions.runtime_start<br/>observed=accepted
+      R->>SQL: active-turn callback<br/>status/observed=running
+    else Outcome is ambiguous after Start
+      API--xAPP: lost response / exception
+      APP->>SQL: executions.dispatch_unknown
+      Note over SQL: keep claimed + stale + unknown
+    end
   end
 ```
+
+The adapter that sends the request invokes `beforeDispatch` after preparation; the Hybrid layer forwards the callback. Cloud projects executed locally follow the same sequence, persisting the fence and failure state in the backend. Cloud models must include the namespace and resource owner returned by the catalog. Missing identity is a pre-dispatch failure, not an unknown delivery outcome.
 
 App IPC no longer exposes dispatcher-callable `executions.complete` or `executions.fail`. Local Executor turn outcomes write terminal state.
 

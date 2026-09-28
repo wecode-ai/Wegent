@@ -1,3 +1,5 @@
+import { DialogForm } from '@/components/common/DialogForm'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/http'
@@ -41,6 +43,9 @@ export function EnvironmentVariablesDialog({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const nextId = useRef(0)
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!saving) onClose()
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -144,7 +149,12 @@ export function EnvironmentVariablesDialog({
         if (!saving && event.target === event.currentTarget) onClose()
       }}
     >
-      <section
+      <DialogForm
+        onSubmit={event => {
+          event.preventDefault()
+          if (canSave) void save()
+        }}
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="environment-variables-dialog-title"
@@ -308,10 +318,9 @@ export function EnvironmentVariablesDialog({
               {t('close', '关闭')}
             </button>
             <button
-              type="button"
+              type="submit"
               data-testid="environment-save-button"
               disabled={!canSave}
-              onClick={() => void save()}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -319,7 +328,7 @@ export function EnvironmentVariablesDialog({
             </button>
           </div>
         </footer>
-      </section>
+      </DialogForm>
     </div>
   )
 }

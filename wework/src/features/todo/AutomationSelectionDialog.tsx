@@ -36,6 +36,8 @@ export function AutomationSelectionDialog({
 
   return (
     <CloudTodoModal
+      onSubmit={confirm}
+      pending={saving}
       title={t('todo.automation_selection_title', '选择要运行的自动化')}
       onClose={onCancel}
     >
@@ -103,9 +105,8 @@ export function AutomationSelectionDialog({
           {t('common.cancel', '取消')}
         </button>
         <button
-          type="button"
+          type="submit"
           data-testid="automation-selection-confirm"
-          onClick={() => void confirm()}
           disabled={!selectedId || saving}
           className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
         >

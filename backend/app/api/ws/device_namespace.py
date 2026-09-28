@@ -63,7 +63,11 @@ from app.api.ws.wework_runtime_namespace import (
     wework_runtime_user_room,
 )
 from app.core.auth_utils import is_api_key, verify_api_key
-from app.core.constants import get_wework_task_room, get_wework_user_room
+from app.core.constants import (
+    EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT,
+    get_wework_task_room,
+    get_wework_user_room,
+)
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
@@ -111,7 +115,6 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
-from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.device_pull import (
     acknowledge_execution,
@@ -125,12 +128,15 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.project_chat.service import project_chat_service
-from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from app.services.workspace_cleanup_intents import (
+    acknowledge as _acknowledge_workspace_cleanup,
+)
+from app.services.workspace_cleanup_intents import claim as _claim_workspace_cleanup
 from app.stores.tasks import subtask_store
 from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
@@ -167,6 +173,18 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+
+
+def _claim_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _claim_workspace_cleanup(db, **kwargs)
+
+
+def _acknowledge_workspace_cleanup_sync(**kwargs: Any) -> bool:
+    with get_db_session() as db:
+        return _acknowledge_workspace_cleanup(db, **kwargs)
+
+
 DEVICE_TRACE_EXCLUDED_EVENTS = {
     "plugin.auth.local_lifecycle",
     "plugin.auth.automatic",
@@ -216,6 +234,7 @@ class DeviceRegistrationFingerprint:
     device_type: str
     bind_shell: str
     runtime_transfer_host: str
+    runtime_transfer_port: Optional[int]
     runtime_instance_id: str
     app_device_id: str
 
@@ -326,6 +345,7 @@ def _register_device(
     runtime_transfer_host: Optional[str] = None,
     runtime_instance_id: Optional[str] = None,
     app_device_id: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -338,6 +358,7 @@ def _register_device(
         device_type: Device type ('local', 'app', 'cloud', or 'remote')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         runtime_transfer_host: Host peers should use for direct transfers
+        runtime_transfer_port: Executor session gateway port
         runtime_instance_id: Stable runtime installation ID shared by all routes
         app_device_id: Desktop app IPC device ID for app registrations
 
@@ -354,6 +375,8 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
+                update_runtime_transfer_port=True,
                 runtime_instance_id=runtime_instance_id,
                 app_device_id=app_device_id,
             )
@@ -383,6 +406,15 @@ def _normalize_runtime_transfer_host(value: Any) -> Optional[str]:
     return candidate.strip("[]") or None
 
 
+def _registration_runtime_transfer_port(
+    payload: DeviceRegisterPayload,
+) -> Optional[int]:
+    """Resolve reported gateway port with the legacy Executor default."""
+    if "runtime_transfer_port" not in payload.model_fields_set:
+        return EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT
+    return payload.runtime_transfer_port
+
+
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
     """
     Update device heartbeat timestamp.
@@ -410,6 +442,9 @@ def _match_cloud_device_sync(
     client_ip: str,
     executor_device_id: str,
     runtime_instance_id: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
+    update_runtime_transfer_port: bool = False,
 ) -> Optional[tuple[str, bool, Optional[dict]]]:
     """
     Synchronous helper to match cloud device by device_id.
@@ -467,11 +502,19 @@ def _match_cloud_device_sync(
                         runtime_instance_id,
                         device_id=sandbox_id,
                     )
-                    if runtime_instance_id:
+                    if (
+                        runtime_instance_id
+                        or runtime_transfer_host is not None
+                        or update_runtime_transfer_port
+                    ):
                         device_json = copy.deepcopy(device.json)
-                        device_json.setdefault("spec", {})[
-                            "runtimeInstanceId"
-                        ] = runtime_instance_id
+                        device_spec = device_json.setdefault("spec", {})
+                        if runtime_instance_id:
+                            device_spec["runtimeInstanceId"] = runtime_instance_id
+                        if runtime_transfer_host is not None:
+                            device_spec["runtimeTransferHost"] = runtime_transfer_host
+                        if update_runtime_transfer_port:
+                            device_spec["runtimeTransferPort"] = runtime_transfer_port
                         device.json = device_json
                         flag_modified(device, "json")
                         db.add(device)
@@ -520,6 +563,9 @@ def _update_cloud_device_id_sync(
     executor_device_id: str,
     sandbox_id: str,
     runtime_instance_id: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
+    runtime_transfer_port: Optional[int] = None,
+    update_runtime_transfer_port: bool = False,
 ) -> str:
     """
     Synchronous helper to update cloud device ID in CRD for backward compatibility.
@@ -569,6 +615,10 @@ def _update_cloud_device_id_sync(
         device_json["spec"]["deviceId"] = executor_device_id
         if runtime_instance_id:
             device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
+        if runtime_transfer_host is not None:
+            device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
+        if update_runtime_transfer_port:
+            device_json["spec"]["runtimeTransferPort"] = runtime_transfer_port
 
         # Update cloudConfig with deviceId for future matching
         if "cloudConfig" in device_json["spec"]:
@@ -670,6 +720,23 @@ def _is_runtime_task_reply_status(status: Any) -> bool:
         normalized in RUNTIME_TASK_TERMINAL_STATUSES
         and normalized not in RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES
     )
+
+
+def _waits_for_user_input(*payloads: Any) -> bool:
+    """Return whether a terminal Runtime event only pauses for user input."""
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("silent_exit_reason") == "waiting_for_user_input":
+            return True
+        response = payload.get("response")
+        if (
+            isinstance(response, dict)
+            and response.get("silent_exit_reason") == "waiting_for_user_input"
+        ):
+            return True
+    return False
 
 
 def _runtime_task_notification_address(
@@ -774,81 +841,6 @@ def _publish_execution_item_change(
     )
 
 
-def _project_execution_workflow_status(
-    db: Session,
-    *,
-    execution: object,
-    projected_status: str,
-    ready_before: set[str],
-) -> dict[str, Any] | None:
-    """Project accepted runtime truth onto its bound workflow task."""
-
-    from app.models.delivery import LoopItemTaskBinding, loop_datetime_is_unset
-
-    user_id = int(getattr(execution, "executor_owner_user_id", 0) or 0)
-    device_id = str(getattr(execution, "runtime_device_id", "") or "")
-    task_id = str(getattr(execution, "runtime_task_id", "") or "")
-    loop_item_id = str(getattr(execution, "loop_item_id", "") or "")
-    if not all((user_id, device_id, task_id, loop_item_id, projected_status)):
-        return None
-
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.loop_item_id == loop_item_id,
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
-            LoopItemTaskBinding.task_id == task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .first()
-    )
-    if binding is None:
-        return None
-
-    from app.models.delivery import LoopItem
-    from app.services.project_workflow_projection import (
-        update_workflow_plan_task_status,
-    )
-
-    item = (
-        update_workflow_task_status(
-            db,
-            user_id=user_id,
-            device_id=device_id,
-            task_id=task_id,
-            execution_status=projected_status,
-        )
-        if binding.workflow_node_id
-        else update_workflow_plan_task_status(
-            db,
-            child_id=loop_item_id,
-            device_id=binding.device_id,
-            task_id=task_id,
-            execution_status=projected_status,
-        )
-    )
-    if item is None:
-        return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    logger.info(
-        "[IssueWorkflowContinuation] detected item=%s execution=%s event_status=%s "
-        "ready_before=%s newly_ready=%s",
-        item.id,
-        getattr(execution, "id", None),
-        projected_status,
-        sorted(ready_before),
-        sorted(newly_ready),
-    )
-    return {
-        "item_id": str(item.id),
-        "user_id": user_id,
-        "stage_ids": sorted(newly_ready),
-    }
-
-
 def _workflow_status_for_runtime_event(
     event_name: str,
     payload: dict[str, Any],
@@ -871,266 +863,6 @@ def _workflow_status_for_runtime_event(
     }:
         return "running"
     return None
-
-
-def _execution_ready_robot_stage_ids(
-    db: Session,
-    execution: object | None,
-) -> set[str]:
-    if execution is None:
-        return set()
-    loop_item_id = getattr(execution, "loop_item_id", None)
-    if not isinstance(loop_item_id, str) or not loop_item_id:
-        return set()
-    from app.models.delivery import LoopItem
-
-    item = db.get(LoopItem, loop_item_id)
-    if item is None:
-        return set()
-    return issue_workflow_start_service.ready_robot_stage_ids(item)
-
-
-def _project_bound_runtime_event_status(
-    db: Session,
-    *,
-    user_id: int,
-    device_id: str,
-    task_id: str,
-    event_name: str,
-    payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Project a manually bound Runtime task that has no execution row."""
-
-    from app.models.delivery import (
-        LoopItem,
-        LoopItemTaskBinding,
-        loop_datetime_is_unset,
-    )
-
-    projected_status = _workflow_status_for_runtime_event(event_name, payload)
-    if projected_status is None:
-        return None
-    from app.services.loop_item_executions.service import runtime_device_identity_ids
-
-    device_ids = runtime_device_identity_ids(
-        db,
-        device_id,
-        owner_user_id=user_id,
-    )
-    if not device_ids:
-        logger.info(
-            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-        )
-        return None
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id.in_(device_ids),
-            LoopItemTaskBinding.task_id == task_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .first()
-    )
-    if binding is None or not binding.loop_item_id:
-        logger.info(
-            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-        )
-        return None
-    item_before = db.get(LoopItem, binding.loop_item_id)
-    if item_before is None:
-        logger.warning(
-            "[IssueTaskRuntimeSync] item_miss user=%s device=%s task=%s "
-            "binding=%s item=%s",
-            user_id,
-            device_id,
-            task_id,
-            binding.id,
-            binding.loop_item_id,
-        )
-        return None
-    if not binding.workflow_node_id:
-        raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
-        if isinstance(raw_event_seq, bool):
-            raw_event_seq = None
-        try:
-            event_seq = int(raw_event_seq)
-        except (TypeError, ValueError):
-            event_seq = 0
-        binding_metadata = (
-            dict(binding.metadata_json)
-            if isinstance(binding.metadata_json, dict)
-            else {}
-        )
-        raw_last_event_seq = binding_metadata.get("runtime_status_event_seq")
-        try:
-            last_event_seq = int(raw_last_event_seq)
-        except (TypeError, ValueError):
-            last_event_seq = 0
-        if event_seq <= 0:
-            logger.warning(
-                "[IssueTaskRuntimeSync] rejected unsequenced direct binding event "
-                "user=%s device=%s task=%s event=%s",
-                user_id,
-                device_id,
-                task_id,
-                event_name,
-            )
-            return None
-        if event_seq <= last_event_seq:
-            logger.info(
-                "[IssueTaskRuntimeSync] ignored reordered direct binding event "
-                "user=%s device=%s task=%s event=%s current_seq=%s incoming_seq=%s",
-                user_id,
-                device_id,
-                task_id,
-                event_name,
-                last_event_seq,
-                event_seq,
-            )
-            return None
-        binding_metadata["runtime_status_event_seq"] = event_seq
-        binding.metadata_json = binding_metadata
-        next_status = (
-            "in_progress"
-            if projected_status == "running"
-            else (
-                "in_review"
-                if projected_status in {"succeeded", "failed", "cancelled"}
-                and item_before.status not in {"completed", "in_review"}
-                else None
-            )
-        )
-        if next_status is None or item_before.status == next_status:
-            return None
-        from app.models.delivery import CloudProject
-        from app.services.loop_item_status_history import write_status_change
-
-        project = db.get(CloudProject, item_before.cloud_project_id)
-        metadata = (
-            dict(item_before.metadata_json)
-            if isinstance(item_before.metadata_json, dict)
-            else {}
-        )
-        if project is not None:
-            write_status_change(
-                metadata,
-                project=project,
-                from_status=item_before.status,
-                to_status=next_status,
-                trigger=f"runtime_{projected_status}",
-                by_user_id=None,
-            )
-        item_before.metadata_json = metadata
-        item_before.status = next_status
-        item_before.completed_at = project_chat_service._loop_unset_datetime(db)
-        item_before.sort_order = 0
-        item_before.version += 1
-        db.flush()
-        publish_loop_item_changed(
-            db,
-            item=item_before,
-            reason="runtime_execution_status",
-            actor_user_id=user_id,
-        )
-        logger.info(
-            "[IssueTaskRuntimeSync] projected source=direct_binding user=%s "
-            "device=%s task=%s event=%s status=%s item=%s",
-            user_id,
-            device_id,
-            task_id,
-            event_name,
-            projected_status,
-            item_before.id,
-        )
-        return {
-            "item_id": str(item_before.id),
-            "user_id": user_id,
-            "stage_ids": [],
-        }
-
-    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item_before)
-    item = update_workflow_task_status(
-        db,
-        user_id=user_id,
-        device_id=device_id,
-        task_id=task_id,
-        execution_status=projected_status,
-    )
-    if item is None:
-        return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    logger.info(
-        "[IssueTaskRuntimeSync] projected source=binding user=%s device=%s "
-        "task=%s event=%s status=%s item=%s node=%s newly_ready=%s",
-        user_id,
-        device_id,
-        task_id,
-        event_name,
-        projected_status,
-        item.id,
-        binding.workflow_node_id,
-        sorted(newly_ready),
-    )
-    return {
-        "item_id": str(item.id),
-        "user_id": user_id,
-        "stage_ids": sorted(newly_ready),
-    }
-
-
-async def _continue_projected_workflow(intent: dict[str, Any] | None) -> None:
-    if not intent or not intent.get("stage_ids"):
-        return
-    from app.models.delivery import LoopItem
-
-    with get_db_session() as db:
-        item = db.get(LoopItem, str(intent["item_id"]))
-        if item is None:
-            logger.warning(
-                "[IssueWorkflowContinuation] skipped item=%s reason=item_missing "
-                "stages=%s",
-                intent["item_id"],
-                intent["stage_ids"],
-            )
-            return
-        logger.info(
-            "[IssueWorkflowContinuation] dispatching item=%s stages=%s user=%s",
-            item.id,
-            intent["stage_ids"],
-            intent["user_id"],
-        )
-        try:
-            started = await issue_workflow_start_service.continue_ready_stages(
-                db,
-                item=item,
-                user_id=int(intent["user_id"]),
-                stage_ids=set(intent["stage_ids"]),
-            )
-        except Exception:
-            logger.exception(
-                "[IssueWorkflowContinuation] failed item=%s stages=%s user=%s",
-                item.id,
-                intent["stage_ids"],
-                intent["user_id"],
-            )
-            raise
-        logger.info(
-            "[IssueWorkflowContinuation] completed item=%s stages=%s started=%s",
-            item.id,
-            intent["stage_ids"],
-            started,
-        )
 
 
 def _project_chat_runtime_event_sync(
@@ -1190,11 +922,6 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             owner_user_id=user_id,
         )
-        ready_before = (
-            _execution_ready_robot_stage_ids(db, execution)
-            if projected_status is not None
-            else set()
-        )
         previous_item_version = (
             _execution_item_version(db, execution) if execution is not None else None
         )
@@ -1217,16 +944,7 @@ def _project_chat_runtime_event_sync(
             )
             return None
         if matched_execution is not None:
-            workflow_continuation = (
-                _project_execution_workflow_status(
-                    db,
-                    execution=matched_execution,
-                    projected_status=projected_status,
-                    ready_before=ready_before,
-                )
-                if projected_status is not None
-                else None
-            )
+            workflow_continuation = None
             log_projection = (
                 logger.info if projected_status is not None else logger.debug
             )
@@ -1251,26 +969,7 @@ def _project_chat_runtime_event_sync(
                 previous_version=previous_item_version,
             )
         else:
-            workflow_continuation = (
-                _project_bound_runtime_event_status(
-                    db,
-                    user_id=user_id,
-                    device_id=device_id,
-                    task_id=runtime_task_id,
-                    event_name=event_name,
-                    payload=payload,
-                )
-                if user_id is not None
-                else None
-            )
-            if user_id is None:
-                logger.info(
-                    "[IssueTaskRuntimeSync] skipped reason=no_execution_or_user "
-                    "device=%s task=%s event=%s",
-                    device_id,
-                    runtime_task_id,
-                    event_name,
-                )
+            workflow_continuation = None
         projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
@@ -1310,11 +1009,6 @@ def _execution_runtime_event_sync(
                 owner_user_id=user_id,
             )
             projected_status = _workflow_status_for_runtime_event(event_name, payload)
-            ready_before = (
-                _execution_ready_robot_stage_ids(db, execution)
-                if projected_status is not None
-                else set()
-            )
             previous_item_version = (
                 _execution_item_version(db, execution)
                 if execution is not None
@@ -1329,23 +1023,12 @@ def _execution_runtime_event_sync(
                 owner_user_id=user_id,
             )
             if matched is not None:
-                workflow_continuation = (
-                    _project_execution_workflow_status(
-                        db,
-                        execution=matched,
-                        projected_status=projected_status,
-                        ready_before=ready_before,
-                    )
-                    if projected_status is not None
-                    else None
-                )
                 db.flush()
                 _publish_execution_item_change(
                     db,
                     execution=matched,
                     previous_version=previous_item_version,
                 )
-                return workflow_continuation
             return None
     except Exception:
         logger.exception(
@@ -1410,6 +1093,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "plugin.auth.read": "on_plugin_auth_read",
             "runtime.tasks.pull": "on_runtime_tasks_pull",
             "runtime.tasks.accept": "on_runtime_tasks_accept",
+            "runtime.workspace_cleanup.claim": "on_runtime_workspace_cleanup_claim",
+            "runtime.workspace_cleanup.accept": "on_runtime_workspace_cleanup_accept",
             "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
@@ -1598,6 +1283,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
         client_ip: str,
         executor_device_id: str,
         runtime_instance_id: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
+        runtime_transfer_port: Optional[int] = None,
     ) -> Optional[str]:
         """Match cloud device by verifying server-generated device_id.
 
@@ -1624,6 +1311,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 client_ip,
                 executor_device_id,
                 runtime_instance_id,
+                runtime_transfer_host,
+                runtime_transfer_port,
+                True,
             )
 
             if result is None:
@@ -1640,6 +1330,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     executor_device_id,
                     device_data["sandbox_id"],
                     runtime_instance_id,
+                    runtime_transfer_host,
+                    runtime_transfer_port,
+                    True,
                 )
 
             return logical_device_id
@@ -1917,12 +1610,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host or payload.client_ip
         )
+        runtime_transfer_port = _registration_runtime_transfer_port(payload)
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
             f"name={payload.name}, executor_version={payload.executor_version}, "
             f"tcp_client_ip={session.get('client_ip')}, "
             f"reported_client_ip={payload.client_ip}, "
-            f"runtime_transfer_host={runtime_transfer_host}"
+            f"runtime_transfer_host={runtime_transfer_host}, "
+            f"runtime_transfer_port={runtime_transfer_port}"
         )
 
         # Check if this is a cloud device registration (by IP matching)
@@ -1935,6 +1630,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_type=payload.device_type.value,
             bind_shell=payload.bind_shell.value,
             runtime_transfer_host=str(runtime_transfer_host or "").strip(),
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=str(payload.runtime_instance_id or "").strip(),
             app_device_id=str(payload.app_device_id or "").strip(),
         )
@@ -1948,6 +1644,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     client_ip or "",
                     payload.device_id,
                     payload.runtime_instance_id,
+                    runtime_transfer_host,
+                    runtime_transfer_port,
                 )
             except RuntimeInstanceMismatchError as exc:
                 logger.warning(
@@ -1991,6 +1689,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         runtime_transfer_host,
                         payload.runtime_instance_id,
                         payload.app_device_id,
+                        runtime_transfer_port,
                     )
                 )
                 if not success:
@@ -2014,6 +1713,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["logical_device_id"] = logical_device_id or route_id
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
+        session["runtime_transfer_port"] = runtime_transfer_port
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["device_type"] = payload.device_type.value
         session["execution_target_id"] = payload.app_device_id or payload.device_id
@@ -2048,6 +1748,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             executor_version=payload.executor_version,
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=payload.runtime_instance_id,
             runtime_features=(
                 payload.runtime_features.model_dump(
@@ -2101,16 +1802,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id=user_id,
                     device_id=device_id,
                 )
-                payload = device_capability_sync_service.build_desired_capabilities(
-                    db,
+            result = (
+                await device_capability_sync_service.sync_current_device_capabilities(
                     user_id=user_id,
                     device_id=device_id,
+                    timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
                 )
-            result = await device_capability_sync_service.sync_device_payload(
-                user_id=user_id,
-                device_id=device_id,
-                payload=payload,
-                timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
             with _db_session() as db:
                 plugin_device_installation_service.record_device_sync_result(
@@ -2277,7 +1974,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host
         ) or session.get("runtime_transfer_host")
+        runtime_transfer_port = (
+            payload.runtime_transfer_port
+            if "runtime_transfer_port" in payload.model_fields_set
+            else session.get("runtime_transfer_port")
+        )
         session["runtime_transfer_host"] = runtime_transfer_host
+        session["runtime_transfer_port"] = runtime_transfer_port
         await self.save_session(sid, session)
 
         # Refresh Redis TTL and update running_task_ids
@@ -2287,6 +1990,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             payload.running_task_ids,
             payload.executor_version,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_transfer_port=runtime_transfer_port,
             runtime_instance_id=payload.runtime_instance_id,
             runtime_capacity=(
                 payload.runtime_capacity.model_dump()
@@ -2318,6 +2022,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 executor_version=payload.executor_version,
                 client_ip=session.get("client_ip"),
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
                 runtime_instance_id=payload.runtime_instance_id,
                 runtime_features=(
                     payload.runtime_features.model_dump(
@@ -2334,6 +2039,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 payload.running_task_ids,
                 payload.executor_version,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_transfer_port=runtime_transfer_port,
                 runtime_instance_id=payload.runtime_instance_id,
                 runtime_capacity=(
                     payload.runtime_capacity.model_dump()
@@ -2537,6 +2243,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         runtime_device_id = session.get("device_id")
         execution_target_id = session.get("execution_target_id")
         runtime_instance_id = session.get("runtime_instance_id")
+        device_type = str(session.get("device_type") or "")
         if (
             not user_id
             or not runtime_device_id
@@ -2544,11 +2251,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
-        runtime_capacity = (
-            data.get("runtime_capacity")
-            if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)
-            else None
-        )
         return await run_sync_in_executor(
             partial(
                 pull_execution,
@@ -2556,11 +2258,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
-                # The Executor pull channel only carries cloud work; local rows
-                # are claimed by the desktop App which resolves local model
-                # credentials at claim time and never writes them to the queue.
-                environment="cloud",
-                runtime_capacity=runtime_capacity,
+                environment=(
+                    "cloud" if device_type in {"cloud", "remote"} else "local"
+                ),
             )
         )
 
@@ -2597,6 +2297,62 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 error=data.get("error") if isinstance(data.get("error"), str) else None,
             )
         )
+
+    async def on_runtime_workspace_cleanup_claim(self, sid: str, data: dict) -> dict:
+        """Claim one exact cleanup version before mutating Executor state."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        runtime_device_id = session.get("device_id")
+        if not user_id or not runtime_device_id:
+            return {"success": False, "error": "Device is not registered"}
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid cleanup claim payload"}
+        intent_id = data.get("intent_id")
+        if not isinstance(intent_id, str) or not intent_id:
+            return {"success": False, "error": "intent_id is required"}
+        try:
+            issue_version = int(data.get("issue_version"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "issue_version is required"}
+        claimed = await run_sync_in_executor(
+            partial(
+                _claim_workspace_cleanup_sync,
+                owner_user_id=int(user_id),
+                runtime_device_id=str(runtime_device_id),
+                intent_id=intent_id,
+                issue_version=issue_version,
+            )
+        )
+        return {"success": claimed}
+
+    async def on_runtime_workspace_cleanup_accept(self, sid: str, data: dict) -> dict:
+        """Acknowledge one exact Issue cleanup desired-state version."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        runtime_device_id = session.get("device_id")
+        if not user_id or not runtime_device_id:
+            return {"success": False, "error": "Device is not registered"}
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid cleanup acceptance payload"}
+        intent_id = data.get("intent_id")
+        if not isinstance(intent_id, str) or not intent_id:
+            return {"success": False, "error": "intent_id is required"}
+        try:
+            issue_version = int(data.get("issue_version"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "issue_version is required"}
+        accepted = await run_sync_in_executor(
+            partial(
+                _acknowledge_workspace_cleanup_sync,
+                owner_user_id=int(user_id),
+                runtime_device_id=str(runtime_device_id),
+                intent_id=intent_id,
+                issue_version=issue_version,
+            )
+        )
+        return {"success": accepted}
 
     async def on_device_status(self, sid: str, data: dict) -> dict:
         """
@@ -2994,7 +2750,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 event_type,
                 event_data,
             )
-            await _continue_projected_workflow(workflow_continuation)
 
         data = args[0]
         if not isinstance(data, dict):
@@ -3206,9 +2961,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 user_id,
                 True,
             )
-            await _continue_projected_workflow(
-                projected.get("workflow_continuation") if projected else None
-            )
             if projected and projected.get("message"):
                 message = projected["message"]
                 project_id = str(message["projectId"])
@@ -3325,9 +3077,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         projected = await run_sync_in_executor(
             _project_chat_runtime_event_sync, device_id, payload, user_id
         )
-        await _continue_projected_workflow(
-            projected.get("workflow_continuation") if projected else None
-        )
         if projected and projected.get("message"):
             message = projected["message"]
             project_id = str(message["projectId"])
@@ -3405,7 +3154,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
         status = local_task_terminal_status(event)
         result = event.result if isinstance(event.result, dict) else {}
         content = str(result.get("value") or event.error or "")
-        if status == "COMPLETED" and not content.strip():
+        waiting_for_user_input = _waits_for_user_input(event_data, payload, result)
+        if status == "COMPLETED" and not content.strip() and not waiting_for_user_input:
             logger.info(
                 "[RuntimeTaskNotification] Skipped empty Runtime reply: "
                 "user_id=%s device_id=%s local_task_id=%s event_type=%s",
@@ -3432,7 +3182,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         payload=payload,
                     ),
                     title=title or local_task_id,
-                    status=status,
+                    status=("waiting_user_input" if waiting_for_user_input else status),
                     content=content,
                     source=str(source_name) if source_name else None,
                 )

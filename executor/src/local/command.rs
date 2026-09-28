@@ -283,44 +283,16 @@ fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandRe
                     .unwrap_or_else(|_| ".".to_owned())
             },
         ))),
-        Some("project_workspace_root") => Some(match project_workspace_root_path() {
-            Ok(path) => CommandResult::ok(path),
-            Err(error) => CommandResult::error(error, 0.0, false),
-        }),
+        Some("project_workspace_root") => Some(CommandResult::ok(project_workspace_root_path())),
         _ => None,
     }
 }
 
 #[cfg(windows)]
-fn project_workspace_root_path() -> Result<String, String> {
-    if let Some(path) = non_empty_env_path("WEGENT_EXECUTOR_PROJECTS_DIR") {
-        return Ok(path.display().to_string());
-    }
-    if let Some(path) = non_empty_env_path("WECODE_HOME") {
-        return Ok(path
-            .join("wegent-executor")
-            .join("workspace")
-            .join("projects")
-            .display()
-            .to_string());
-    }
-    configured_home_dir()
-        .map(|home| {
-            home.join(".wecode")
-                .join("wegent-executor")
-                .join("workspace")
-                .join("projects")
-                .display()
-                .to_string()
-        })
-        .ok_or_else(|| "Home directory is not available".to_owned())
-}
-
-#[cfg(windows)]
-fn non_empty_env_path(key: &str) -> Option<std::path::PathBuf> {
-    std::env::var_os(key)
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
+fn project_workspace_root_path() -> String {
+    crate::workspace_paths::workspace_root()
+        .display()
+        .to_string()
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {

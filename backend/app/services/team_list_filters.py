@@ -8,9 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.kind import Kind
-from app.schemas.namespace import GroupRole
-from app.services.group_permission import check_group_permission
 from app.services.resource_library_service import _resource_json_text
+from app.services.team_access_policy import can_use_group_teams
 
 TeamSourceFilter = Literal["all", "mine", "personal", "group", "system"]
 TeamModeFilter = Literal["all", "chat", "code", "task", "knowledge", "video", "image"]
@@ -20,7 +19,7 @@ def validate_team_list_groups(
     db: Session, user_id: int, group_name: str | None, group_names: list[str] | None
 ) -> None:
     for namespace in set(group_names or []) | ({group_name} if group_name else set()):
-        if not check_group_permission(db, user_id, namespace, GroupRole.Reporter):
+        if not can_use_group_teams(db, user_id, namespace):
             raise HTTPException(status_code=403, detail="Group access denied")
 
 

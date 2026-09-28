@@ -16,6 +16,7 @@
   "error_task_deleted_desc": "此分享任务已被owner删除，无法访问。",
   "error_load_failed": "加载失败",
   "error_load_failed_desc": "无法加载分享任务，请稍后重试。",
+  "status_cancelled": "已取消",
   "go_home": "返回聊天页",
   "share_success_title": "任务分享成功",
   "share_success_message": "您的任务 {taskTitle} 已成功分享！",

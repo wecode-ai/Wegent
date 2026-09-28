@@ -72,11 +72,20 @@ class SkillRefMeta(BaseModel):
     is_public: bool = False
 
 
+class BaseGhostRef(BaseModel):
+    """Reference to a system Ghost used as the capability baseline."""
+
+    name: str
+    namespace: str = "default"
+    user_id: int = 0
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
+    baseGhostRef: Optional[BaseGhostRef] = None
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None

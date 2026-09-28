@@ -1,10 +1,14 @@
+export type LocalProxyMode = 'system' | 'direct' | 'custom'
+
 export interface LocalProxyConfig {
-  configured: boolean
+  mode: LocalProxyMode
+  proxyUrl: string
   proxyUrlMasked: string
   updatedAt: string | null
 }
 
 interface StoredLocalProxyConfig {
+  mode?: LocalProxyMode
   proxyUrl?: string
   updatedAt?: string
 }
@@ -14,6 +18,7 @@ export const LOCAL_PROXY_SETTINGS_CHANGED_EVENT = 'wework:local-proxy-settings-c
 const LOCAL_PROXY_SETTINGS_STORAGE_KEY = 'wework.local-proxy-settings'
 const MAX_PROXY_URL_BYTES = 2048
 const SUPPORTED_PROXY_SCHEMES = new Set(['http:', 'https:', 'socks5:'])
+const LOCAL_PROXY_MODES = new Set<LocalProxyMode>(['system', 'direct', 'custom'])
 
 function readStoredLocalProxyConfig(): StoredLocalProxyConfig {
   const raw = globalThis.localStorage?.getItem(LOCAL_PROXY_SETTINGS_STORAGE_KEY)
@@ -73,37 +78,41 @@ export function maskLocalProxyUrl(proxyUrl: string): string {
   }
 }
 
-export function getLocalProxyUrl(): string {
-  const proxyUrl = readStoredLocalProxyConfig().proxyUrl
-  return typeof proxyUrl === 'string' ? proxyUrl : ''
-}
-
 export function getLocalProxyConfig(): LocalProxyConfig {
   const stored = readStoredLocalProxyConfig()
   const proxyUrl = typeof stored.proxyUrl === 'string' ? stored.proxyUrl : ''
+  const storedMode = LOCAL_PROXY_MODES.has(stored.mode as LocalProxyMode)
+    ? (stored.mode as LocalProxyMode)
+    : null
+  const mode = storedMode ?? (proxyUrl ? 'custom' : 'system')
   return {
-    configured: proxyUrl.length > 0,
-    proxyUrlMasked: maskLocalProxyUrl(proxyUrl),
+    mode,
+    proxyUrl: mode === 'custom' ? proxyUrl : '',
+    proxyUrlMasked: mode === 'custom' ? maskLocalProxyUrl(proxyUrl) : '',
     updatedAt: typeof stored.updatedAt === 'string' ? stored.updatedAt : null,
   }
 }
 
-export function saveLocalProxyUrl(proxyUrl: string): LocalProxyConfig {
-  const normalizedProxyUrl = normalizeLocalProxyUrl(proxyUrl)
+export function saveLocalProxyConfig(mode: LocalProxyMode, proxyUrl = ''): LocalProxyConfig {
+  const normalizedProxyUrl = mode === 'custom' ? normalizeLocalProxyUrl(proxyUrl) : ''
+  if (mode === 'custom' && !normalizedProxyUrl) {
+    throw new Error('proxy_url is required for custom proxy mode')
+  }
   const updatedAt = new Date().toISOString()
 
-  if (normalizedProxyUrl) {
-    globalThis.localStorage?.setItem(
-      LOCAL_PROXY_SETTINGS_STORAGE_KEY,
-      JSON.stringify({
-        proxyUrl: normalizedProxyUrl,
-        updatedAt,
-      })
-    )
-  } else {
-    globalThis.localStorage?.removeItem(LOCAL_PROXY_SETTINGS_STORAGE_KEY)
-  }
+  globalThis.localStorage?.setItem(
+    LOCAL_PROXY_SETTINGS_STORAGE_KEY,
+    JSON.stringify({
+      mode,
+      proxyUrl: normalizedProxyUrl || undefined,
+      updatedAt,
+    })
+  )
 
   globalThis.dispatchEvent?.(new Event(LOCAL_PROXY_SETTINGS_CHANGED_EVENT))
   return getLocalProxyConfig()
+}
+
+export function saveLocalProxyUrl(proxyUrl: string): LocalProxyConfig {
+  return proxyUrl.trim() ? saveLocalProxyConfig('custom', proxyUrl) : saveLocalProxyConfig('system')
 }

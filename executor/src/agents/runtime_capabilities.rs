@@ -20,14 +20,16 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     agents::{
-        backend_url::{is_local_mode, request_backend_url_or_default},
+        backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
         claude_config_dir,
         claude_options::merge_claude_mcp_servers,
         claude_task_dir, extract_claude_options,
         skill_download::skill_download_concurrency,
     },
-    attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    logging::{log_executor_event, push_error_fields, task_fields},
+    attachments::{
+        device_runtime_attachment_dir, process_prompt, AttachmentPromptProcessor, AttachmentRecord,
+    },
+    logging::{log_executor_event, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
@@ -37,6 +39,9 @@ use crate::{
 };
 
 use super::claude_code::has_task_skill_names;
+
+mod codex;
+pub use codex::prepare_codex_runtime;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
@@ -120,7 +125,7 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
     };
 
     let attachment_subtask_id = attachment_subtask_id(&download_candidates, &request);
-    let (attachments_dir, project_layout) = resolve_attachments_dir(
+    let (attachments_dir, storage_scope) = resolve_attachments_dir(
         &request,
         &download_candidates,
         attachment_subtask_id.clone(),
@@ -133,7 +138,7 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
             ("attachment_count", download_candidates.len().to_string()),
             ("attachment_ids", attachment_ids(&download_candidates)),
             ("attachments_dir", attachments_dir.display().to_string()),
-            ("project_layout", project_layout.to_string()),
+            ("storage_scope", storage_scope.to_owned()),
             (
                 "api_base_url_present",
                 (!api_base_url.trim().is_empty()).to_string(),
@@ -218,7 +223,7 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
         return attachment_sync_response(&request.task_id, &request.subtask_id, &[], &failed);
     }
 
-    let (attachments_dir, project_layout) =
+    let (attachments_dir, storage_scope) =
         resolve_attachments_dir(&request, &attachments, attachment_subtask_id);
     log_runtime_event(
         &request,
@@ -227,7 +232,7 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
             ("attachment_count", attachments.len().to_string()),
             ("attachment_ids", attachment_ids(&attachments)),
             ("attachments_dir", attachments_dir.display().to_string()),
-            ("project_layout", project_layout.to_string()),
+            ("storage_scope", storage_scope.to_owned()),
         ],
     );
     let result = download_attachments(
@@ -495,19 +500,6 @@ fn inject_managed_wework_mcps(
     Ok(())
 }
 
-pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
-    let task_dir = request
-        .cwd()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(&request.task_id));
-    let codex_skills_dir = codex_skills_dir(&task_dir);
-    if let Err(error) = deploy_request_skills(request, &codex_skills_dir).await {
-        let mut fields = task_fields(&request.task_id, &request.subtask_id);
-        push_error_fields(&mut fields, error);
-        log_executor_event("codex Skill deployment failed", &fields);
-    }
-}
-
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let mut overrides = Vec::new();
     let mcp_servers = collect_request_mcp_servers(request);
@@ -745,12 +737,20 @@ fn resolve_attachments_dir(
     request: &ExecutionRequest,
     attachments: &[AttachmentRecord],
     fallback_subtask_id: String,
-) -> (PathBuf, bool) {
-    let (workspace, project_layout) = resolve_attachment_workspace(request);
+) -> (PathBuf, &'static str) {
     let attachment_subtask_id = attachments
         .iter()
         .find_map(|attachment| attachment.subtask_id.clone())
         .unwrap_or(fallback_subtask_id);
+    if is_local_mode() {
+        let task_id = runtime_attachment_task_id(request);
+        return (
+            device_runtime_attachment_dir(task_id, &attachment_subtask_id),
+            "device_private",
+        );
+    }
+
+    let (workspace, project_layout) = resolve_attachment_workspace(request);
     let attachments_dir = if project_layout {
         workspace
             .join(&request.task_id)
@@ -760,7 +760,23 @@ fn resolve_attachments_dir(
             .join(attachments_subdir_name(&request.task_id))
             .join(&attachment_subtask_id)
     };
-    (attachments_dir, project_layout)
+    let storage_scope = if project_layout {
+        "managed_project"
+    } else {
+        "managed_task"
+    };
+    (attachments_dir, storage_scope)
+}
+
+fn runtime_attachment_task_id(request: &ExecutionRequest) -> &str {
+    request
+        .extra
+        .get("runtimeLocalTaskId")
+        .or_else(|| request.extra.get("runtime_local_task_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&request.task_id)
 }
 
 fn mark_attachments_failed(attachments: &[AttachmentRecord], error: &str) -> Vec<AttachmentRecord> {
@@ -845,8 +861,39 @@ async fn download_attachments(
     task_id: &str,
     subtask_id: &str,
 ) -> AttachmentDownloadOutcome {
-    let _ = fs::create_dir_all(attachments_dir);
-    let client = reqwest::Client::new();
+    if let Err(error) = fs::create_dir_all(attachments_dir) {
+        let error = format!("failed to create attachment directory: {error}");
+        log_executor_event(
+            "attachment download directory create failed",
+            &[
+                ("task_id", task_id.to_owned()),
+                ("subtask_id", subtask_id.to_owned()),
+                ("target_dir", attachments_dir.display().to_string()),
+                ("error", error.clone()),
+            ],
+        );
+        return AttachmentDownloadOutcome {
+            success: Vec::new(),
+            failed: mark_attachments_failed(attachments, &error),
+        };
+    }
+    let client = match backend_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            log_executor_event(
+                "attachment download client unavailable",
+                &[
+                    ("task_id", task_id.to_owned()),
+                    ("subtask_id", subtask_id.to_owned()),
+                    ("error", error.clone()),
+                ],
+            );
+            return AttachmentDownloadOutcome {
+                success: Vec::new(),
+                failed: mark_attachments_failed(attachments, &error),
+            };
+        }
+    };
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut used_filenames = HashMap::new();
@@ -990,7 +1037,7 @@ async fn deploy_skills(
         )
     })?;
 
-    let client = reqwest::Client::new();
+    let client = backend_http_client()?;
     let results = stream::iter(plan.skills.iter().cloned())
         .map(|skill| {
             let client = &client;
@@ -1338,6 +1385,9 @@ async fn download_skill(
     skill_ref: Option<&SkillRef>,
     api_base_url: &str,
 ) -> Result<SkillDeploymentResult, String> {
+    if plan.auth_token.trim().is_empty() {
+        return Err("backend authentication is required to download Skill".to_owned());
+    }
     let Some((skill_id, namespace)) =
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {
@@ -2541,10 +2591,6 @@ fn executor_home() -> PathBuf {
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root")))
 }
 
-fn codex_skills_dir(task_dir: &Path) -> PathBuf {
-    task_dir.join(".codex/skills")
-}
-
 fn is_docker_mode() -> bool {
     !is_local_mode()
 }
@@ -2639,6 +2685,8 @@ fn toml_json_value(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod codex;
+
     use super::*;
     use std::io::Write;
     use tokio::{
@@ -2894,6 +2942,73 @@ mod tests {
     }
 
     #[test]
+    fn device_attachment_resolution_ignores_project_workspace() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+        let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let request = ExecutionRequest {
+            task_id: "runtime-123".to_owned(),
+            project_workspace_path: Some("/tmp/project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        let (path, storage_scope) = resolve_attachments_dir(
+            &request,
+            &[attachment(1, None, None, None)],
+            "turn-1".into(),
+        );
+
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/device-executor/workspace/attachments/runtime/runtime-123/203")
+        );
+        assert_eq!(storage_scope, "device_private");
+    }
+
+    #[test]
+    fn device_attachment_resolution_prefers_runtime_local_task_id() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+        let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", "/tmp/device-executor");
+        let mut request = ExecutionRequest {
+            task_id: "backend-task".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "runtimeLocalTaskId".to_owned(),
+            Value::String("runtime-local-task".to_owned()),
+        );
+
+        let (path, _) = resolve_attachments_dir(&request, &[], "turn-1".into());
+
+        assert_eq!(
+            path,
+            PathBuf::from(
+                "/tmp/device-executor/workspace/attachments/runtime/runtime-local-task/turn-1"
+            )
+        );
+    }
+
+    #[test]
+    fn managed_attachment_resolution_preserves_project_layout() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::remove("EXECUTOR_MODE");
+        let request = ExecutionRequest {
+            task_id: "task-123".to_owned(),
+            project_workspace_path: Some("/workspace/project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        let (path, storage_scope) = resolve_attachments_dir(&request, &[], "turn-1".into());
+
+        assert_eq!(
+            path,
+            PathBuf::from("/workspace/project/.wegent/attachments/task-123/turn-1")
+        );
+        assert_eq!(storage_scope, "managed_project");
+    }
+
+    #[test]
     fn classifies_prepared_success_and_failed_attachments() {
         let attachments = vec![
             attachment(1, Some("success"), Some("/workspace/a.txt"), None),
@@ -2952,11 +3067,25 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buffer = vec![0; 8192];
-                let read = stream.read(&mut buffer).await.unwrap();
-                let request = String::from_utf8_lossy(&buffer[..read]);
+                let mut request_bytes = Vec::new();
+                while !request_bytes.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut buffer = [0; 1024];
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0, "connection closed before request headers");
+                    request_bytes.extend_from_slice(&buffer[..read]);
+                    assert!(
+                        request_bytes.len() <= 8192,
+                        "request headers exceeded limit"
+                    );
+                }
+                let request = String::from_utf8_lossy(&request_bytes);
                 assert!(request.starts_with("GET /api/attachments/1/executor-download "));
-                assert!(request.contains("authorization: Bearer test-token\r\n"));
+                let authorization = request
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                    .map(|(_, value)| value.trim());
+                assert_eq!(authorization, Some("Bearer test-token"));
                 let body = b"image-bytes";
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2965,7 +3094,7 @@ mod tests {
                 stream.write_all(header.as_bytes()).await.unwrap();
                 stream.write_all(body).await.unwrap();
             });
-            let _workspace = EnvGuard::set("WORKSPACE_ROOT", temp.to_str().unwrap());
+            let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", temp.to_str().unwrap());
             let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
             let _task_api = EnvGuard::remove("TASK_API_DOMAIN");
             let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
@@ -2989,8 +3118,7 @@ mod tests {
             let prepared = prepare_claude_execution_request(request).await;
             let prompt = prepared.prompt.as_str().unwrap();
             let downloaded = temp
-                .join("72")
-                .join("72:executor:attachments")
+                .join("workspace/attachments/runtime/72")
                 .join("203")
                 .join("image.png");
 

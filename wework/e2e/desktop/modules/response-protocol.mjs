@@ -1,3 +1,5 @@
+import { gunzipSync } from 'node:zlib'
+
 import {
   ARTIFACT_CONTENT,
   ARTIFACT_NAME,
@@ -70,13 +72,13 @@ function responseCompleted(id, output) {
   }
 }
 
-function responseFailed(id, message) {
+function responseFailed(id, message, code = 'context_length_exceeded') {
   return {
     type: 'response.failed',
     response: {
       id,
       status: 'failed',
-      error: { code: 'context_length_exceeded', message },
+      error: { code, message },
     },
   }
 }
@@ -214,9 +216,10 @@ function streamingMarkdownReport() {
   return `${Array.from({ length: sectionCount }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
 }
 
-function streamingTextEvents(id, text) {
+function streamingTextEvents(id, text, phase) {
   const itemId = `${id}-message`
   const chunks = text.match(/[\s\S]{1,48}/g) ?? []
+  const phaseFields = phase ? { phase } : {}
   return {
     chunks,
     start: [
@@ -230,6 +233,7 @@ function streamingTextEvents(id, text) {
           status: 'in_progress',
           role: 'assistant',
           content: [],
+          ...phaseFields,
         },
       },
       {
@@ -257,6 +261,7 @@ function streamingTextEvents(id, text) {
           status: 'completed',
           role: 'assistant',
           content: [{ type: 'output_text', text, annotations: [] }],
+          ...phaseFields,
         },
       },
       responseCompleted(id),
@@ -362,7 +367,12 @@ function readRawRequestBody(request) {
     request.on('data', chunk => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     })
-    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('end', () => {
+      const body = Buffer.concat(chunks)
+      resolvePromise(
+        (body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body).toString('utf8')
+      )
+    })
     request.once('error', reject)
   })
 }
@@ -530,6 +540,17 @@ function selectConvertedTool(request, toolName, argumentsValue) {
 function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const searchedNamespace = requestToolSearchResults(request).find(
+    tool =>
+      tool?.type === 'namespace' &&
+      tool.tools?.some(candidate => candidate?.type === 'function' && candidate.name === toolName)
+  )
+  if (searchedNamespace) {
+    return {
+      mode: 'direct',
+      ...selectMcpTool(request, searchedNamespace.name, toolName, argumentsValue),
+    }
+  }
   const advertisesToolSearch = tools.some(
     tool =>
       tool?.type === 'tool_search' ||
@@ -595,7 +616,9 @@ function selectToolSearch(request, query) {
     `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
   )
   assert.equal(
-    tools.some(tool => tool?.type === 'namespace' && tool.name !== 'image_gen'),
+    tools.some(
+      tool => tool?.type === 'namespace' && !['collaboration', 'image_gen'].includes(tool.name)
+    ),
     false,
     'Real Codex eagerly advertised deferred namespace tools before tool_search'
   )
@@ -646,13 +669,13 @@ function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
 
-function selectShellToolCommand(request, command, workspacePath) {
+function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
       cmd: command,
       workdir: workspacePath,
-      yield_time_ms: 1000,
+      yield_time_ms: yieldTimeMs,
     })
   }
   if (tools.some(tool => tool?.name === 'shell_command')) {

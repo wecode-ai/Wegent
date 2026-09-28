@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  CodeWikiScheduledUpdate,
+  CodeWikiScheduledUpdateRequest,
   CodeWikiCreateRequest,
   CodeWikiGenerationStrategyCapabilities,
   CodeWikiListResponse,
@@ -122,4 +124,21 @@ export const codeWikiApi = {
       {}
     )
   },
+
+  scheduledUpdate: async (knowledgeBaseId: number): Promise<CodeWikiScheduledUpdate> =>
+    client.get<CodeWikiScheduledUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/scheduled-update`
+    ),
+
+  configureScheduledUpdate: async (
+    knowledgeBaseId: number,
+    data: CodeWikiScheduledUpdateRequest
+  ): Promise<CodeWikiScheduledUpdate> =>
+    client.put<CodeWikiScheduledUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/scheduled-update`,
+      data
+    ),
+
+  deleteScheduledUpdate: async (knowledgeBaseId: number): Promise<void> =>
+    client.delete(`/knowledge-bases/${knowledgeBaseId}/code-wiki/scheduled-update`),
 }

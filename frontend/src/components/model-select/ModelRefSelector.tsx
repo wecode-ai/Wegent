@@ -88,6 +88,8 @@ interface ModelRefSelectorProps {
   dataTestId: string
 }
 
+const ATTEMPTED_WITHOUT_TEAM = -1
+
 export function ModelRefSelector({
   value,
   onChange,
@@ -107,7 +109,6 @@ export function ModelRefSelector({
   // This allows re-attempting when the team ID changes or dialog reopens
   // ATTEMPTED_WITHOUT_TEAM (-1) is a sentinel value indicating we attempted
   // preselection before team info was loaded, allowing re-attempt when team info arrives
-  const ATTEMPTED_WITHOUT_TEAM = -1
   const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
   // Whether the current value is this effect's own guess rather than a real choice.
   // A guess made before the team id arrived could not consult the cache, so it has

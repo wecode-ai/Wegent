@@ -1,0 +1,13 @@
+/* Desktop-standard semantic sizes and overlay layers, shared by both hosts. */
+:root {
+  --text-chat: 14px;
+  --text-code: 12px;
+  --text-code-sm: 11px;
+  --z-chrome: 20;
+  --z-titlebar: 15;
+  --z-popover: 40;
+  --z-modal: 80;
+  --z-critical: 100;
+  --z-system: 1000;
+  --z-system-popover: 1010;
+}

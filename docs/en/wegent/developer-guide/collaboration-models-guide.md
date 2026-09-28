@@ -339,6 +339,13 @@ spec:
 
 ## Coordinate Configuration Details
 
+Both Claude Code and Codex executors use the first bot as the coordinator and the remaining members as native subagents.
+Codex registers a role for each member with its own instructions, model, and reasoning settings. Members without a model inherit the coordinator's model.
+For API models, the executor proxy routes each member to its own provider and credentials; credentials are never written to role files.
+Team members share Skills and MCP servers in the execution environment. Codex configuration or role-file deployment failures fail the task explicitly.
+
+With native Codex login, members can inherit that login and select another model. Members using an independent API provider require an API model for the coordinator as well.
+
 ### Complete YAML Configuration Example
 
 ```yaml

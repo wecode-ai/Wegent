@@ -294,7 +294,7 @@ def test_section_writer_has_a_bounded_persisted_assignment() -> None:
     assert "generation ID and Work Package ID" in prompt
     assert "state=passed" in prompt
     assert "only at the package's assigned paths" in prompt
-    assert "do not complete or fail" in prompt
+    assert "do not run plan, complete, or fail" in prompt.casefold()
 
 
 def test_section_writer_accepts_one_complete_adaptive_package() -> None:

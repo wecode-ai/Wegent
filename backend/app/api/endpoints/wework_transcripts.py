@@ -42,6 +42,7 @@ from app.services import wework_transcript_service
 from app.services.wework_transcript_service import WeworkTranscriptError
 from app.services.wework_transcript_storage import (
     WeworkTranscriptStorageError,
+    WeworkTranscriptStorageNotFoundError,
     wework_transcript_storage,
 )
 
@@ -351,5 +352,13 @@ def _translate(action):
             status_code=exc.status_code,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+    except WeworkTranscriptStorageNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except WeworkTranscriptStorageError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc

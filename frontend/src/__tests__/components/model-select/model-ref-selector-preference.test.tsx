@@ -13,7 +13,7 @@
  * often a different one was chosen and saved.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
 import { modelApis } from '@/apis/models'
@@ -127,6 +127,37 @@ describe('preselecting the remembered model', () => {
 
     await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalled())
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('shares one in-flight model request across selectors mounted together', async () => {
+    let resolveModels: ((value: { data: typeof MODELS }) => void) | undefined
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(
+      new Promise(resolve => {
+        resolveModels = resolve
+      })
+    )
+
+    render(
+      <>
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Select a model"
+          dataTestId="first-model-select"
+        />
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Select a model"
+          dataTestId="second-model-select"
+        />
+      </>
+    )
+
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      resolveModels?.({ data: MODELS })
+    })
   })
 })
 

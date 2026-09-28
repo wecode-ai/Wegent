@@ -247,11 +247,11 @@ fn session_file_paths(task_dir: PathBuf, request: &ExecutionRequest, marker: &st
 }
 
 fn workspace_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
+    // The task workspace is where the agent runs, so it owns the session
+    // markers. The remaining roots keep sessions readable for layouts written
+    // by the desktop app and by older executor versions.
+    let mut roots = vec![crate::workspace_paths::workspace_root()];
 
-    if let Some(root) = env_path("WORKSPACE_ROOT") {
-        roots.push(root);
-    }
     if let Some(root) = env_path("WEGENT_WORKSPACE_ROOT") {
         roots.push(root);
     }

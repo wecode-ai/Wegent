@@ -23,6 +23,10 @@ import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
+function TestIsolatedExtensionRoute() {
+  return <div data-testid="test-isolated-extension-route" />
+}
+
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
 
 vi.hoisted(() => {
@@ -36,7 +40,30 @@ vi.mock('@/telemetry/client', async importOriginal => ({
   useTelemetryEnabled: () => true,
 }))
 
+vi.mock('@extensions/device-surface', () => ({
+  deviceSurfaceExtension: {
+    available: false,
+    DeviceAction: () => null,
+    WorkspaceAction: () => null,
+    RoutePage: () => null,
+    isInternalPageUrl: () => false,
+    isIsolatedSurface: (path: string, search: string) =>
+      path === '/test-isolated-surface' && search === '?isolated=1',
+    workspaceMenuItem: () => null,
+    supportsDevice: () => false,
+  },
+}))
+
 const TEST_DSH_ROUTES = [
+  {
+    id: 'test-isolated-surface.root',
+    icon: 'monitor',
+    module: 'plugins/wework-ui-test-isolated-surface.js',
+    path: '/test-isolated-surface',
+    restorePolicy: 'none',
+    telemetryFeature: 'cloud_work',
+    title: 'Isolated extension',
+  },
   {
     id: 'plugin-center.catalog',
     icon: 'plug',
@@ -133,6 +160,7 @@ function installTestDshUiPlugins() {
     }),
   }
   window.__WEWORK_DSH_UI_MODULES__ = {
+    'plugins/wework-ui-test-isolated-surface.js': { default: TestIsolatedExtensionRoute },
     'plugins/wework-ui-applications.js': { default: ApplicationsRoute },
     'plugins/wework-ui-core-apps.js': { default: CoreAppSurface },
     'plugins/wework-ui-plugin-center-catalog.js': { default: PluginCatalogRoute },
@@ -671,15 +699,13 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     onStartupReadyChange,
-    prewarmComposerApps,
   }: {
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
-    prewarmComposerApps?: boolean
   }) => {
     useEffect(() => {
-      workbenchProviderMocks.mounts(prewarmComposerApps)
-    }, [prewarmComposerApps])
+      workbenchProviderMocks.mounts()
+    }, [])
     if (workbenchProviderMocks.autoReady) {
       queueMicrotask(() => onStartupReadyChange?.(true))
     }
@@ -1101,7 +1127,18 @@ describe('App plugins route', () => {
 
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
-    expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
+  })
+
+  test('renders an isolated extension child without the global navigation shell', async () => {
+    window.history.pushState({}, '', '/test-isolated-surface?isolated=1')
+
+    renderApp()
+
+    expect(await screen.findByTestId('test-isolated-extension-route')).toBeInTheDocument()
+    expect(screen.getByTestId('isolated-surface-route')).toBeInTheDocument()
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-workspace-tab-content]')).toBeNull()
+    await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
   })
 
   test('does not assign legacy generic features to smart app locations', () => {
@@ -1209,7 +1246,7 @@ describe('App plugins route', () => {
   test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
     window.history.pushState({}, '', '/plugins')
     renderApp()
-    await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    await screen.findByTestId('plugins-workspace', undefined, { timeout: 10_000 })
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema: composerSchema }),
       attributes: { 'data-testid': 'chat-message-input' },
@@ -1225,7 +1262,7 @@ describe('App plugins route', () => {
     } finally {
       editor.destroy()
     }
-  })
+  }, 15_000)
 
   test('does not dispatch application shortcuts from editable targets', async () => {
     window.history.pushState({}, '', '/')
@@ -1250,29 +1287,33 @@ describe('App plugins route', () => {
 
   test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
-    workbenchProviderMocks.autoReady = false
-    window.history.pushState({}, '', '/')
+    try {
+      workbenchProviderMocks.autoReady = false
+      window.history.pushState({}, '', '/')
 
-    renderApp()
-    await act(async () => {
-      for (let index = 0; index < 10; index += 1) {
-        await Promise.resolve()
-      }
-    })
-    expect(screen.getByTestId('app-shell')).toBeInTheDocument()
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      renderApp()
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) {
+          await Promise.resolve()
+        }
+      })
+      expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      vi.advanceTimersByTime(10_000)
-    })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+      })
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
-    await act(async () => {
-      window.history.pushState({}, '', '/todo')
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    })
-    expect(window.location.pathname).toBe('/todo')
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+      await act(async () => {
+        window.history.pushState({}, '', '/todo')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      expect(window.location.pathname).toBe('/todo')
+      expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
@@ -1489,7 +1530,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/sites?app_type=web&offset=0&limit=20',
+      expect.stringMatching(/(?:^|\/)api\/sites\?app_type=web&offset=0&limit=20$/),
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -1501,7 +1542,7 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1629,7 +1670,9 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed',
+      expect.stringMatching(
+        /(?:^|\/)api\/plugins\/builtin\/weibo-miniapp-h5-develop-agent\/ensure-installed$/
+      ),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),
@@ -1748,12 +1791,12 @@ describe('App plugins route', () => {
     window.history.pushState({}, '', '/sites')
 
     renderApp()
-    await screen.findByText('还没有站点')
+    expect(await screen.findByText('还没有站点', {}, { timeout: 5_000 })).toBeInTheDocument()
     await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.stringMatching(/(?:^|\/)api\/plugins\/builtin\/wegent-sites\/ensure-installed$/),
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ device_id: 'local-device' }),

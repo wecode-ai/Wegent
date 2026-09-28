@@ -1,9 +1,22 @@
+import { pluginTrialMessages } from "./composer/pluginTrialMessages";
+import { pluginPickerMessages } from "./composer/pluginPickerMessages";
+import { quickPhraseMessages } from "./composer/quickPhraseMessages";
+import { contextUsageMessages } from "./composer/contextUsageMessages";
+import { autocompleteMessages } from "./composer/autocompleteMessages";
+import { queueMessages } from "./conversation/queueMessages";
+import { projectWorkMessages } from "./controls/projectWorkMessages";
+import { conversationMessages } from "./conversation/messages";
+import { boardCardMessages } from "./issue-card/messages";
+import { composerMessages } from "./controls/messages";
+import { modelMessages } from "./controls/modelMessages";
+import { markdownMessages } from "./markdown/MarkdownServices";
+import { activityMessages } from "./issue-detail/activityMessages";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { runtimeProfileMessages } from './runtime-profile/messages'
-import { executionEnvironmentMessages } from './execution-environment/messages'
+import { runtimeProfileMessages } from "./runtime-profile/messages";
+import { executionEnvironmentMessages } from "./execution-environment/messages";
 
 export type CollaborationLocale = "zh-CN" | "en";
 
@@ -29,7 +42,6 @@ export const collaborationMessages = {
     collaborationGroups: "协作小组",
     automaticProcessing: "自动处理",
     projectFiles: "文件与产物",
-    projectManager: "项目管理者",
     currentUser: "我自己",
     createIssue: "新建 Issue",
     issueTitle: "标题",
@@ -44,15 +56,15 @@ export const collaborationMessages = {
     issueDueDate: "截止日期",
     issueTags: "标签",
     noIssues: "暂无 Issue",
-    emptyProjectProgress: "开始协作",
-    emptyProjectTitle: "创建第一个 Issue",
-    emptyProjectHint: "先描述要完成的目标，创建后再决定由成员还是智能体执行。",
-    emptyProjectStepIssue: "创建 Issue",
-    emptyProjectStepIssueHint: "描述要完成的目标",
-    emptyProjectStepAssign: "分配执行者",
-    emptyProjectStepAssignHint: "选择成员或智能体",
-    emptyProjectStepDeliver: "执行并交付",
-    emptyProjectStepDeliverHint: "结果自动回到 Issue",
+    emptyProjectProgress: "快速开始",
+    emptyProjectTitle: "从第一个 Issue 开始",
+    emptyProjectHint: "写清目标和预期结果，再选择负责人推进。",
+    emptyProjectStepIssue: "明确目标",
+    emptyProjectStepIssueHint: "写下要解决的问题和预期结果",
+    emptyProjectStepAssign: "选择负责人",
+    emptyProjectStepAssignHint: "分配给成员、智能体或协作小组",
+    emptyProjectStepDeliver: "跟踪交付",
+    emptyProjectStepDeliverHint: "进展和结果都沉淀在 Issue 中",
     assignments: "分配",
     assignmentSource: "分配来源",
     executionStatus: "执行状态",
@@ -135,7 +147,6 @@ export const collaborationMessages = {
     collaborationGroups: "Collaboration groups",
     automaticProcessing: "Automatic processing",
     projectFiles: "Files & deliverables",
-    projectManager: "Project manager",
     currentUser: "Me",
     createIssue: "New issue",
     issueTitle: "Title",
@@ -150,16 +161,17 @@ export const collaborationMessages = {
     issueDueDate: "Due date",
     issueTags: "Tags",
     noIssues: "No issues",
-    emptyProjectProgress: "Getting started",
-    emptyProjectTitle: "Create the first issue",
+    emptyProjectProgress: "Quick start",
+    emptyProjectTitle: "Start with your first issue",
     emptyProjectHint:
-      "Describe the outcome first, then choose a member or agent to execute it.",
-    emptyProjectStepIssue: "Create an issue",
-    emptyProjectStepIssueHint: "Describe the desired outcome",
-    emptyProjectStepAssign: "Assign an executor",
-    emptyProjectStepAssignHint: "Choose a member or agent",
-    emptyProjectStepDeliver: "Execute and deliver",
-    emptyProjectStepDeliverHint: "Results return to the issue",
+      "Define the goal and expected outcome, then choose an owner to move it forward.",
+    emptyProjectStepIssue: "Define the goal",
+    emptyProjectStepIssueHint: "Describe the problem and expected outcome",
+    emptyProjectStepAssign: "Choose an owner",
+    emptyProjectStepAssignHint:
+      "Assign a member, agent, or collaboration group",
+    emptyProjectStepDeliver: "Track delivery",
+    emptyProjectStepDeliverHint: "Keep progress and results in the issue",
     assignments: "Assignments",
     assignmentSource: "Assignment source",
     executionStatus: "Execution",
@@ -228,17 +240,26 @@ export const collaborationMessages = {
 export type CollaborationMessageKey =
   keyof (typeof collaborationMessages)["zh-CN"];
 
-export type CollaborationTranslate = (
+export type CollaborationTranslate = ((
   key: string,
   fallback?: string,
   options?: Record<string, string | number>,
-) => string;
+) => string) & { locale?: CollaborationLocale };
 
 const sharedMessages: Record<
   CollaborationLocale,
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "common.actions": "操作",
+    "issue_creation.owner": "负责人",
+    "issue_creation.user": "成员",
+    "issue_creation.agent": "智能体",
+    "issue_creation.group": "协作小组",
+    "issue_creation.unassigned": "未分配",
+    "issue_creation.search_members": "搜索成员、智能体或协作小组",
+    "issue_creation.invalid_reference":
+      "引用不属于当前项目或已失效，请删除后重新 @ 或 # 选择。",
     "common.add": "添加",
     "common.cancel": "取消",
     "common.close": "关闭",
@@ -247,8 +268,8 @@ const sharedMessages: Record<
     "common.remove": "移除",
     "common.retry": "重试",
     "common.save": "保存",
-    'todo.codex_environment_hint':
-      '任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。',
+    "todo.codex_environment_hint":
+      "任务会在所选执行环境的独立工作目录中运行，并关联当前协作项目。",
     "todo.status_inbox": "收集箱",
     "todo.status_pending": "待开始",
     "todo.status_in_progress": "进行中",
@@ -334,14 +355,30 @@ const sharedMessages: Record<
     "todo.manage_project_description": "管理项目成员、标签和看板布局。",
     "todo.project_members": "项目成员",
     "todo.project_members_description":
-      "直接管理项目成员。空间成员可复用，项目也可以单独邀请成员。",
+      "管理成员访问和项目角色。填写职责与能力后会自动保存，AI 托管会据此选择合适的负责人。",
     "todo.manage_members": "管理成员",
     "todo.collapse_management": "收起管理",
     "todo.member_count": "{{count}} 位成员",
+    "todo.project_member": "成员",
+    "todo.project_member_capability": "职责与能力",
+    "todo.project_member_capability_placeholder": "例如：前端开发、产品验收",
+    "todo.project_member_capability_label": "{{name}} 的职责与能力",
+    "todo.project_member_role": "项目角色",
+    "todo.project_member_role_label": "{{name}} 的项目角色",
+    "todo.new_project_member_role_label": "新成员的项目角色",
+    "todo.project_member_actions": "成员操作",
     "todo.member_search_placeholder": "添加成员：搜索用户名或邮箱",
     "todo.adding": "添加中…",
     "todo.private_project": "私有项目",
+    "todo.private_project_description": "仅项目成员可以进入。",
     "todo.public_project": "公开项目",
+    "todo.public_project_description":
+      "所有登录用户按所选角色进入；任务可见范围由安全级别控制。",
+    "todo.public_access_role": "所有登录用户的角色",
+    "todo.default_issue_security": "新任务默认可见范围",
+    "todo.issue_security": "任务可见范围",
+    "todo.issue_security_open": "项目可访问者可见",
+    "todo.issue_security_related": "仅相关人员可见",
     "todo.project_tags": "标签",
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
@@ -414,6 +451,8 @@ const sharedMessages: Record<
     "todo.remove_name": "删除 {{name}}",
     "todo.not_set": "未设置",
     "todo.create_issue_failed": "创建任务失败",
+    "todo.create_execution_environment_required":
+      "项目执行环境尚未初始化。请先在项目设置中初始化环境，再把任务分配给智能体或协作小组。",
     "todo.save_issue_failed": "保存任务失败",
     "todo.add_collaborator_failed": "添加参与者失败",
     "todo.remove_collaborator_failed": "移除参与者失败",
@@ -432,13 +471,18 @@ const sharedMessages: Record<
     "todo.priority_high": "高",
     "todo.priority_urgent": "紧急",
     "todo.assignee": "负责人",
-    "todo.add_assignee": "添加负责人",
+    "todo.search_assignee": "搜索负责人",
+    "todo.no_matching_assignee": "没有匹配的负责人",
+    "todo.assignee_add_member": "添加人员",
+    "todo.assignee_add_agent": "添加智能体",
     "todo.members": "成员",
     "todo.agents": "机器人",
     "todo.agent_teams": "Wegent 智能体",
     "todo.parent_issue": "父任务",
     "todo.top_level_issue": "顶层任务",
     "todo.no_parent_issue": "无父任务",
+    "todo.search_parent_issue": "搜索父任务",
+    "todo.no_matching_parent_issue": "没有匹配的父任务",
     "todo.due_date": "截止时间",
     "todo.add_date": "添加日期",
     "todo.creator": "创建人",
@@ -457,6 +501,7 @@ const sharedMessages: Record<
     "todo.saving": "保存中…",
     "todo.exit_full_screen": "退出全屏",
     "todo.full_screen": "全屏显示",
+    "todo.issue_details": "任务详情",
     "todo.close_issue_detail": "关闭任务详情",
     "todo.manual_trigger": "手动触发",
     "todo.scheduled_trigger": "定时触发",
@@ -482,6 +527,23 @@ const sharedMessages: Record<
     "todo.activity": "动态",
     "todo.activity_unavailable": "动态服务当前不可用",
     "todo.activity_empty": "还没有动态",
+    "todo.expand_content": "展开全文",
+    "todo.collapse_content": "收起全文",
+    "todo.reply_placeholder": "回复…",
+    "todo.send_message": "发送消息",
+    "todo.comment_placeholder": "留下评论…",
+    "todo.execution_settings": "执行设置",
+    "todo.show_text_attachment": "在文本框中显示",
+    "todo.pasted_text_attachment": "粘贴的文本",
+    "todo.adding_pasted_text_attachment": "正在添加粘贴的文本…",
+    "todo.appshot_attachment": "应用快照",
+    "todo.remove_attachment": "移除附件",
+    "todo.attachments_uploading": "附件仍在上传中",
+    "todo.send_failed": "消息发送失败",
+    "todo.attach_file": "添加附件",
+    "todo.execution_count": "{{count}} 条运行动态",
+    "todo.activity_loading": "正在加载动态…",
+
     "todo.assignment_empty_hint":
       "选择成员或智能体完成分配；其他项目成员仍可主动参与。",
     "todo.current_assignment": "当前分配",
@@ -489,20 +551,21 @@ const sharedMessages: Record<
     "todo.waiting_to_start": "等待开始",
     "todo.manual_assignment": "Issue 内手动分配",
     "todo.project_dispatch_policy": "项目调度策略",
+    "dispatch.runtime_cancelled": "执行已终止",
+    "dispatch.delivery_submitted": "已提交交付",
     "todo.agent": "智能体",
     "todo.team": "智能体团队",
     "todo.member": "成员",
     "todo.execution_succeeded": "已完成",
     "todo.execution_failed": "失败",
     "todo.execution_cancelled": "已取消",
+    "todo.execution_skipped": "已跳过",
     "todo.execution_unknown": "状态待同步",
     "todo.execution_waiting_approval": "等待审批",
     "todo.execution_waiting_runtime": "等待设备或模型配置",
     "todo.execution_manager_run": "AI 调度",
-    "todo.execution_manager_completed": "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
-    "todo.workflow_children_waiting_runtime": "子任务等待设备或模型配置",
-    "todo.workflow_children_pending": "已分派，等待子任务执行",
-    "todo.workflow_children_review": "子任务执行已结束，等待验收",
+    "todo.execution_manager_completed":
+      "调度已完成；步骤执行与整个 Issue 的完成状态请查看上方进度。",
     "todo.view_child_task": "查看子任务",
     "todo.execution_waiting_device": "等待执行设备",
     "todo.execution_queued": "排队中",
@@ -512,7 +575,7 @@ const sharedMessages: Record<
     "todo.someone": "项目成员",
     "todo.assigned_to": "分配给",
     "todo.execution_run": "执行任务",
-    "todo.comment_or_assign": "发表评论，使用 @ 分配给成员或智能体",
+    "todo.comment_or_assign": "留下评论，输入 @ 提及成员或智能体",
     "todo.send_comment": "发送",
     "todo.assignment_non_exclusive": "普通评论与 @ 分配都会进入同一时间线。",
     "todo.sub_issues": "子任务",
@@ -527,24 +590,19 @@ const sharedMessages: Record<
     "notifications.ask_body": "可以选择是否向负责人发送通知。",
     "notifications.without_notification": "不通知",
     "notifications.with_notification": "通知",
-    "todo.workflow_plan_title": "AI 编排方案",
-    "todo.workflow_plan_idle": "等待触发",
-    "todo.workflow_plan_planning": "AI 正在生成方案",
-    "todo.workflow_plan_awaiting_approval": "等待人工确认",
-    "todo.workflow_plan_assigning": "正在创建并分配任务",
-    "todo.workflow_plan_executing": "子任务执行中",
-    "todo.workflow_plan_reviewing": "等待统一验收",
-    "todo.workflow_plan_paused": "已暂停",
-    "todo.workflow_plan_completed": "已完成",
-    "todo.workflow_plan_failed": "生成方案失败",
-    "todo.workflow_plan_retry": "重新生成",
-    "todo.workflow_plan_replan": "要求重规划",
-    "todo.workflow_plan_approve": "确认并执行",
-    "todo.workflow_plan_accept": "验收并完成",
-    "todo.workflow_plan_resume": "继续执行",
-    "todo.workflow_plan_pause": "暂停",
-    "todo.workflow_plan_rerun": "再次执行",
     "todo.assignment_chain_trigger": "查看指派详情",
+    "todo.delete_issue": "删除任务",
+    "todo.delete_issue_action": "删除任务 {{title}}",
+    "todo.delete_issue_title": "删除任务？",
+    "todo.delete_issue_description": "“{{title}}”将从看板中隐藏。",
+    "todo.delete_issue_children_description":
+      "“{{title}}”及其子任务将从看板中隐藏。",
+    "todo.delete_issue_execution_hint": "该任务正在执行的 AI 运行会被停止。",
+    "todo.delete_issue_recycle_hint": "删除的数据会保留，不会立即永久删除。",
+    "todo.delete_issue_failed": "删除任务失败",
+    "todo.deleting": "删除中…",
+    "todo.confirm_delete": "确认删除",
+    "todo.issue_actions": "任务操作",
     "todo.current_running_task": "当前运行任务",
     "todo.execution_tasks": "执行任务",
     "todo.execution_duration": "执行时长",
@@ -553,64 +611,12 @@ const sharedMessages: Record<
     "todo.no_linked_task": "暂无关联任务",
     "todo.no_running_task": "暂无运行中的任务",
     "todo.status_history_trigger": "查看状态历史",
-    "todo.workflow_error_assignee": "请检查任务负责人配置",
-    "todo.workflow_error_generic": "工作流执行失败",
-    "todo.workflow_error_model": "请检查模型配置",
-    "todo.workflow_error_offline": "执行设备离线",
-    "todo.workflow_error_timeout": "工作流执行超时",
     "todo.deliverable_type_code_snapshot": "代码快照",
     "todo.deliverable_type_file": "文件",
     "todo.deliverable_type_git_branch": "Git 分支",
     "todo.deliverable_type_pull_request": "PR/MR",
     "todo.deliverable_type_text": "文本",
     "todo.deliverable_type_url": "链接",
-    "todo.workflow_action_failed": "节点操作失败",
-    "todo.workflow_add_stage_task": "添加任务",
-    "todo.workflow_ai_execution": "AI 执行",
-    "todo.workflow_approve_stage": "批准进入下一阶段",
-    "todo.workflow_branch_collector_error": "采集器不可用",
-    "todo.workflow_branch_collector_poll": "轮询采集中",
-    "todo.workflow_branch_collector_webhook": "Webhook 待注册",
-    "todo.workflow_complete_stage": "完成并继续",
-    "todo.workflow_deliverable_fulfilled": "已提交",
-    "todo.workflow_deliverable_missing": "待提交",
-    "todo.workflow_deliverables_missing_count": "还缺 {{count}} 项交付物",
-    "todo.workflow_force_advance": "强制推进",
-    "todo.workflow_force_reason": "强制继续原因",
-    "todo.workflow_git_branch": "分支名",
-    "todo.workflow_git_commit": "提交 SHA",
-    "todo.workflow_loop": "循环",
-    "todo.workflow_node_awaiting_approval": "待人工批准",
-    "todo.workflow_node_awaiting_deliverables": "待补充交付物",
-    "todo.workflow_node_blocked": "等待前置任务",
-    "todo.workflow_node_changes_requested": "已驳回，待修改",
-    "todo.workflow_node_completed": "已完成",
-    "todo.workflow_node_failed": "执行失败",
-    "todo.workflow_node_forced_completed": "已强制推进",
-    "todo.workflow_node_queued": "排队中",
-    "todo.workflow_node_reacting": "处理事件中",
-    "todo.workflow_node_ready": "可开始",
-    "todo.workflow_node_running": "执行中",
-    "todo.workflow_node_waiting": "等待事件",
-    "todo.workflow_pr_base": "目标分支",
-    "todo.workflow_pr_head": "来源分支",
-    "todo.workflow_pr_number": "编号",
-    "todo.workflow_reject_stage": "驳回",
-    "todo.workflow_required_deliverables": "必要交付物",
-    "todo.workflow_run": "运行",
-    "todo.workflow_run_again": "重新运行",
-    "todo.workflow_stage_human_execution": "手动执行",
-    "todo.workflow_start_work": "开始处理",
-    "todo.workflow_structure_node": "流程控制",
-    "todo.workflow_submit_deliverables": "补充交付物",
-    "todo.workflow_task_count": "{{count}} 个任务",
-    "todo.workflow_task_status_archived": "已归档",
-    "todo.workflow_task_status_cancelled": "已取消",
-    "todo.workflow_task_status_failed": "失败",
-    "todo.workflow_task_status_pending": "等待执行",
-    "todo.workflow_task_status_running": "执行中",
-    "todo.workflow_task_status_succeeded": "成功",
-    "todo.workflow_manager": "工作流管理器",
     "todo.collaboration_groups": "协作小组",
     "todo.collaboration_groups_description":
       "组织人与智能体共同处理 Issue，设置负责人、成员职责和可选工作阶段。",
@@ -619,17 +625,31 @@ const sharedMessages: Record<
       "协作小组服务当前不可用。Issue 的手动负责人设置不受影响。",
     "todo.current_user": "我自己",
     "todo.assignment_source": "分配来源",
-    "todo.assignment_mode": "分配方式",
+    "todo.agent_executor_from_definition": "执行器由智能体定义",
     "todo.shared_agent": "共享智能体",
+    "todo.shared_agent_execution_hint":
+      "所选智能体保留自身执行器与能力配置，具体运行环境在任务开始时解析。",
+    "todo.local_agent_resource_unavailable":
+      "无法读取智能体资源配置，请重新登录后重试",
+    "todo.local_agent_runtime_unsupported":
+      "本地项目仅支持使用 Codex 或 Claude Code 执行器的智能体",
     "todo.project_owned_agent": "项目智能体",
+    "todo.edit_project_agent": "编辑",
+    "todo.update_project_agent_failed": "更新项目智能体失败",
     "todo.codex_runtime_selection_hint":
       "运行环境在启动任务时选择，不与智能体绑定。",
-    "todo.workflow_open_task": "打开任务",
-    "todo.workflow_outcome_passed": "已通过验收",
-    "todo.workflow_runtime_title": "执行记录",
     "workbench.quick_view_conversation": "查看对话",
   },
   en: {
+    "common.actions": "Actions",
+    "issue_creation.owner": "Assignee",
+    "issue_creation.user": "People",
+    "issue_creation.agent": "Agents",
+    "issue_creation.group": "Teams",
+    "issue_creation.unassigned": "Unassigned",
+    "issue_creation.search_members": "Search people, agents or teams",
+    "issue_creation.invalid_reference":
+      "A reference is unavailable in this project. Remove it and select it again with @ or #.",
     "common.add": "Add",
     "common.cancel": "Cancel",
     "common.close": "Close",
@@ -638,8 +658,8 @@ const sharedMessages: Record<
     "common.remove": "Remove",
     "common.retry": "Retry",
     "common.save": "Save",
-    'todo.codex_environment_hint':
-      'Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.',
+    "todo.codex_environment_hint":
+      "Tasks run in their own working directories on the selected execution environment and remain linked to this collaboration project.",
     "todo.status_inbox": "Inbox",
     "todo.status_pending": "To do",
     "todo.status_in_progress": "In progress",
@@ -728,14 +748,32 @@ const sharedMessages: Record<
       "Manage project members, tags, and board layout.",
     "todo.project_members": "Project members",
     "todo.project_members_description":
-      "Manage project members directly. Reuse space members or invite members to this project only.",
+      "Manage member access and project roles. Capabilities save automatically and help AI-managed rules choose the right assignee.",
     "todo.manage_members": "Manage members",
     "todo.collapse_management": "Collapse",
     "todo.member_count": "{{count}} members",
+    "todo.project_member": "Member",
+    "todo.project_member_capability": "Responsibilities and capabilities",
+    "todo.project_member_capability_placeholder":
+      "For example, frontend development or product acceptance",
+    "todo.project_member_capability_label":
+      "Responsibilities and capabilities for {{name}}",
+    "todo.project_member_role": "Project role",
+    "todo.project_member_role_label": "Project role for {{name}}",
+    "todo.new_project_member_role_label": "Project role for the new member",
+    "todo.project_member_actions": "Member actions",
     "todo.member_search_placeholder": "Add members by name or email",
     "todo.adding": "Adding…",
     "todo.private_project": "Private project",
+    "todo.private_project_description": "Only project members can enter.",
     "todo.public_project": "Public project",
+    "todo.public_project_description":
+      "All signed-in users receive the selected role. Issue security controls visibility.",
+    "todo.public_access_role": "Role for all signed-in users",
+    "todo.default_issue_security": "Default visibility for new issues",
+    "todo.issue_security": "Issue visibility",
+    "todo.issue_security_open": "Visible to project users",
+    "todo.issue_security_related": "Related people only",
     "todo.project_tags": "Tags",
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
@@ -812,6 +850,8 @@ const sharedMessages: Record<
     "todo.remove_name": "Remove {{name}}",
     "todo.not_set": "Not set",
     "todo.create_issue_failed": "Failed to create issue",
+    "todo.create_execution_environment_required":
+      "The project execution environment is not initialized. Initialize it in project settings before assigning work to an agent or collaboration group.",
     "todo.save_issue_failed": "Failed to save issue",
     "todo.add_collaborator_failed": "Failed to add participant",
     "todo.remove_collaborator_failed": "Failed to remove participant",
@@ -830,13 +870,18 @@ const sharedMessages: Record<
     "todo.priority_high": "High",
     "todo.priority_urgent": "Urgent",
     "todo.assignee": "Assignee",
-    "todo.add_assignee": "Add assignee",
+    "todo.search_assignee": "Search assignees",
+    "todo.no_matching_assignee": "No matching assignees",
+    "todo.assignee_add_member": "Add member",
+    "todo.assignee_add_agent": "Add agent",
     "todo.members": "Members",
     "todo.agents": "Bots",
     "todo.agent_teams": "Wegent agents",
     "todo.parent_issue": "Parent issue",
     "todo.top_level_issue": "Top-level issue",
     "todo.no_parent_issue": "No parent issue",
+    "todo.search_parent_issue": "Search parent issues",
+    "todo.no_matching_parent_issue": "No matching parent issues",
     "todo.due_date": "Due date",
     "todo.add_date": "Add date",
     "todo.creator": "Creator",
@@ -855,6 +900,7 @@ const sharedMessages: Record<
     "todo.saving": "Saving…",
     "todo.exit_full_screen": "Exit full screen",
     "todo.full_screen": "Full screen",
+    "todo.issue_details": "Issue details",
     "todo.close_issue_detail": "Close issue details",
     "todo.manual_trigger": "Manual trigger",
     "todo.scheduled_trigger": "Scheduled trigger",
@@ -880,6 +926,23 @@ const sharedMessages: Record<
     "todo.activity": "Activity",
     "todo.activity_unavailable": "Activity is currently unavailable",
     "todo.activity_empty": "No activity yet",
+    "todo.expand_content": "Show more",
+    "todo.collapse_content": "Show less",
+    "todo.reply_placeholder": "Reply…",
+    "todo.send_message": "Send message",
+    "todo.comment_placeholder": "Leave a comment…",
+    "todo.execution_settings": "Execution settings",
+    "todo.show_text_attachment": "Show in text box",
+    "todo.pasted_text_attachment": "Pasted text",
+    "todo.adding_pasted_text_attachment": "Adding pasted text…",
+    "todo.appshot_attachment": "Appshot",
+    "todo.remove_attachment": "Remove attachment",
+    "todo.attachments_uploading": "Attachments are still uploading",
+    "todo.send_failed": "Failed to send message",
+    "todo.attach_file": "Attach files",
+    "todo.execution_count": "{{count}} execution events",
+    "todo.activity_loading": "Loading activity…",
+
     "todo.assignment_empty_hint":
       "Choose a member or agent to assign; other project members can still participate.",
     "todo.current_assignment": "Current assignment",
@@ -887,20 +950,22 @@ const sharedMessages: Record<
     "todo.waiting_to_start": "Waiting to start",
     "todo.manual_assignment": "Assigned manually in the issue",
     "todo.project_dispatch_policy": "Project dispatch policy",
+    "dispatch.runtime_cancelled": "Execution stopped",
+    "dispatch.delivery_submitted": "Delivery submitted",
     "todo.agent": "Agent",
     "todo.team": "Agent team",
     "todo.member": "Member",
     "todo.execution_succeeded": "Completed",
     "todo.execution_failed": "Failed",
     "todo.execution_cancelled": "Cancelled",
+    "todo.execution_skipped": "Skipped",
     "todo.execution_unknown": "Status pending sync",
     "todo.execution_waiting_approval": "Waiting for approval",
-    "todo.execution_waiting_runtime": "Waiting for device or model configuration",
+    "todo.execution_waiting_runtime":
+      "Waiting for device or model configuration",
     "todo.execution_manager_run": "AI coordination",
-    "todo.execution_manager_completed": "Coordination finished. See the progress above for step execution and overall Issue completion.",
-    "todo.workflow_children_waiting_runtime": "Subtasks need device or model configuration",
-    "todo.workflow_children_pending": "Assigned, waiting for subtasks to run",
-    "todo.workflow_children_review": "Subtask execution ended, awaiting review",
+    "todo.execution_manager_completed":
+      "Coordination finished. See the progress above for step execution and overall Issue completion.",
     "todo.view_child_task": "View subtask",
     "todo.execution_waiting_device": "Waiting for device",
     "todo.execution_queued": "Queued",
@@ -911,7 +976,7 @@ const sharedMessages: Record<
     "todo.assigned_to": "assigned to",
     "todo.execution_run": "Run",
     "todo.comment_or_assign":
-      "Add a comment. Use @ to assign a member or agent",
+      "Leave a comment. Use @ to mention a member or agent",
     "todo.send_comment": "Send",
     "todo.assignment_non_exclusive":
       "Comments and @ assignments appear in the same timeline.",
@@ -928,24 +993,22 @@ const sharedMessages: Record<
       "Choose whether to send the assignee a notification.",
     "notifications.without_notification": "Do not notify",
     "notifications.with_notification": "Notify",
-    "todo.workflow_plan_title": "AI orchestration plan",
-    "todo.workflow_plan_idle": "Waiting to start",
-    "todo.workflow_plan_planning": "AI is generating a plan",
-    "todo.workflow_plan_awaiting_approval": "Waiting for approval",
-    "todo.workflow_plan_assigning": "Creating and assigning tasks",
-    "todo.workflow_plan_executing": "Subtasks are running",
-    "todo.workflow_plan_reviewing": "Waiting for final review",
-    "todo.workflow_plan_paused": "Paused",
-    "todo.workflow_plan_completed": "Completed",
-    "todo.workflow_plan_failed": "Failed to generate plan",
-    "todo.workflow_plan_retry": "Generate again",
-    "todo.workflow_plan_replan": "Request replanning",
-    "todo.workflow_plan_approve": "Approve and run",
-    "todo.workflow_plan_accept": "Accept and complete",
-    "todo.workflow_plan_resume": "Resume",
-    "todo.workflow_plan_pause": "Pause",
-    "todo.workflow_plan_rerun": "Run again",
     "todo.assignment_chain_trigger": "View assignment details",
+    "todo.delete_issue": "Delete issue",
+    "todo.delete_issue_action": "Delete issue {{title}}",
+    "todo.delete_issue_title": "Delete this issue?",
+    "todo.delete_issue_description":
+      "“{{title}}” will be hidden from the board.",
+    "todo.delete_issue_children_description":
+      "“{{title}}” and its sub-issues will be hidden from the board.",
+    "todo.delete_issue_execution_hint":
+      "Any AI run in progress on this issue will be stopped.",
+    "todo.delete_issue_recycle_hint":
+      "Deleted data is kept and is not permanently removed right away.",
+    "todo.delete_issue_failed": "Failed to delete the issue",
+    "todo.deleting": "Deleting…",
+    "todo.confirm_delete": "Delete",
+    "todo.issue_actions": "Issue actions",
     "todo.current_running_task": "Current running task",
     "todo.execution_tasks": "Execution tasks",
     "todo.execution_duration": "Execution duration",
@@ -954,65 +1017,12 @@ const sharedMessages: Record<
     "todo.no_linked_task": "No linked tasks",
     "todo.no_running_task": "No running tasks",
     "todo.status_history_trigger": "View status history",
-    "todo.workflow_error_assignee": "Check the task assignee configuration",
-    "todo.workflow_error_generic": "Workflow execution failed",
-    "todo.workflow_error_model": "Check the model configuration",
-    "todo.workflow_error_offline": "The execution device is offline",
-    "todo.workflow_error_timeout": "Workflow execution timed out",
     "todo.deliverable_type_code_snapshot": "Code snapshot",
     "todo.deliverable_type_file": "File",
     "todo.deliverable_type_git_branch": "Git branch",
     "todo.deliverable_type_pull_request": "PR/MR",
     "todo.deliverable_type_text": "Text",
     "todo.deliverable_type_url": "URL",
-    "todo.workflow_action_failed": "Stage action failed",
-    "todo.workflow_add_stage_task": "Add task",
-    "todo.workflow_ai_execution": "AI execution",
-    "todo.workflow_approve_stage": "Approve next stage",
-    "todo.workflow_branch_collector_error": "Collector unavailable",
-    "todo.workflow_branch_collector_poll": "Polling collector active",
-    "todo.workflow_branch_collector_webhook": "Webhook pending registration",
-    "todo.workflow_complete_stage": "Complete and continue",
-    "todo.workflow_deliverable_fulfilled": "Submitted",
-    "todo.workflow_deliverable_missing": "Missing",
-    "todo.workflow_deliverables_missing_count":
-      "{{count}} deliverables still missing",
-    "todo.workflow_force_advance": "Force advance",
-    "todo.workflow_force_reason": "Reason for force advance",
-    "todo.workflow_git_branch": "Branch",
-    "todo.workflow_git_commit": "Commit SHA",
-    "todo.workflow_loop": "Loop",
-    "todo.workflow_node_awaiting_approval": "Awaiting approval",
-    "todo.workflow_node_awaiting_deliverables": "Awaiting deliverables",
-    "todo.workflow_node_blocked": "Waiting for prerequisites",
-    "todo.workflow_node_changes_requested": "Changes requested",
-    "todo.workflow_node_completed": "Completed",
-    "todo.workflow_node_failed": "Failed",
-    "todo.workflow_node_forced_completed": "Force advanced",
-    "todo.workflow_node_queued": "Queued",
-    "todo.workflow_node_reacting": "Handling event",
-    "todo.workflow_node_ready": "Ready",
-    "todo.workflow_node_running": "Running",
-    "todo.workflow_node_waiting": "Waiting for events",
-    "todo.workflow_pr_base": "Base branch",
-    "todo.workflow_pr_head": "Head branch",
-    "todo.workflow_pr_number": "Number",
-    "todo.workflow_reject_stage": "Reject",
-    "todo.workflow_required_deliverables": "Required deliverables",
-    "todo.workflow_run": "Run",
-    "todo.workflow_run_again": "Run again",
-    "todo.workflow_stage_human_execution": "Manual execution",
-    "todo.workflow_start_work": "Start work",
-    "todo.workflow_structure_node": "Flow control",
-    "todo.workflow_submit_deliverables": "Submit deliverables",
-    "todo.workflow_task_count": "{{count}} tasks",
-    "todo.workflow_task_status_archived": "Archived",
-    "todo.workflow_task_status_cancelled": "Cancelled",
-    "todo.workflow_task_status_failed": "Failed",
-    "todo.workflow_task_status_pending": "Waiting",
-    "todo.workflow_task_status_running": "Running",
-    "todo.workflow_task_status_succeeded": "Succeeded",
-    "todo.workflow_manager": "Workflow manager",
     "todo.collaboration_groups": "Collaboration groups",
     "todo.collaboration_groups_description":
       "Organize people and agents to handle issues, with trigger, coordination, and output policies in one group.",
@@ -1022,14 +1032,19 @@ const sharedMessages: Record<
       "The collaboration group service is unavailable. Manual Issue assignment is unaffected.",
     "todo.current_user": "Me",
     "todo.assignment_source": "Assignment source",
-    "todo.assignment_mode": "Assignment mode",
+    "todo.agent_executor_from_definition": "Agent-defined executor",
     "todo.shared_agent": "Shared agent",
+    "todo.shared_agent_execution_hint":
+      "The selected agent keeps its own executor and capabilities. The execution environment is resolved when the task starts.",
+    "todo.local_agent_resource_unavailable":
+      "The Agent resource configuration is unavailable. Sign in and try again.",
+    "todo.local_agent_runtime_unsupported":
+      "Local projects support only Agents that use the Codex or Claude Code runtime.",
     "todo.project_owned_agent": "Project agent",
+    "todo.edit_project_agent": "Edit",
+    "todo.update_project_agent_failed": "Failed to update the project agent",
     "todo.codex_runtime_selection_hint":
       "Choose an execution environment when starting a run; it is not bound to the agent.",
-    "todo.workflow_open_task": "Open task",
-    "todo.workflow_outcome_passed": "Review passed",
-    "todo.workflow_runtime_title": "Execution history",
     "workbench.quick_view_conversation": "View conversation",
   },
 };
@@ -1038,14 +1053,39 @@ export function createCollaborationTranslator(
   locale: CollaborationLocale,
 ): CollaborationTranslate {
   const messages = sharedMessages[locale];
-  return (key, fallback, options) => {
+  const pluralRules = new Intl.PluralRules(locale);
+  const translate: CollaborationTranslate = (key, fallback, options) => {
+    const conversationKey =
+      typeof options?.count === "number"
+        ? `${key}_${pluralRules.select(options.count)}`
+        : key;
     let value =
-      runtimeProfileMessages[locale][key] ?? executionEnvironmentMessages[locale][key] ?? messages[key] ?? fallback ?? key
+      autocompleteMessages[locale][key] ??
+      contextUsageMessages[locale][key] ??
+      pluginPickerMessages[locale][key] ??
+      pluginTrialMessages[locale][key] ??
+      quickPhraseMessages[locale][key] ??
+      queueMessages[locale][key] ??
+      projectWorkMessages[locale][key] ??
+      composerShellMessages[locale][key] ??
+      activityMessages[locale][key] ??
+      conversationMessages[locale][conversationKey] ??
+      conversationMessages[locale][key] ??
+      composerMessages[locale][key] ??
+      modelMessages[locale][key] ??
+      boardCardMessages[locale][key] ??
+      markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
+      runtimeProfileMessages[locale][key] ??
+      executionEnvironmentMessages[locale][key] ??
+      messages[key] ??
+      fallback ??
+      key;
     for (const [name, replacement] of Object.entries(options ?? {})) {
       value = value.split(`{{${name}}}`).join(String(replacement));
     }
     return value;
   };
+  return Object.assign(translate, { locale });
 }
 
 const standardStatusIds = [
@@ -1161,3 +1201,4 @@ export const collaborationMyWorkMessages: Record<
     "collaboration.back_to_projects": "Back to projects",
   },
 };
+import { composerShellMessages } from "./composer/shellMessages";

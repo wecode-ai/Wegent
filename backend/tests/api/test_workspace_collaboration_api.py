@@ -110,12 +110,8 @@ def test_workspace_persists_shared_execution_environment_defaults(
             {"command": "corepack enable", "working_directory": "wegent"},
             {"command": "pnpm install", "working_directory": "wegent"},
         ],
-        "status": "preparing",
         "fingerprint": environment["fingerprint"],
-        "prepared_device_id": "",
-        "prepared_workspace_path": "",
-        "prepared_at": None,
-        "error": "",
+        "devices": {},
     }
     assert len(environment["fingerprint"]) == 64
 
@@ -223,12 +219,8 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     )
     assert binding_response.status_code == 201
     initialized_state = {
-        "repositories": [],
-        "setup_steps": [],
         "status": "ready",
-        "fingerprint": "a" * 64,
-        "prepared_device_id": device.name,
-        "prepared_workspace_path": "/workspace/initialized",
+        "workspace_path": "/workspace/initialized",
         "prepared_at": None,
         "error": "",
     }
@@ -247,7 +239,12 @@ def test_workspace_execution_environment_initialize_preserves_namespace(
     assert initialize_response.status_code == 200
     initialized_workspace = initialize_response.json()
     assert initialized_workspace["namespace"] == group_name
-    assert initialized_workspace["execution_environment"] == initialized_state
+    assert initialized_workspace["execution_environment"] == {
+        "repositories": [],
+        "setup_steps": [],
+        "fingerprint": "",
+        "devices": {device.name: initialized_state},
+    }
     stored_workspace = test_db.get(Kind, int(workspace["id"]))
     assert stored_workspace is not None
     assert stored_workspace.namespace == group_name
@@ -775,6 +772,40 @@ def test_collaboration_group_rejects_stage_assignee_outside_members(
     )
 
 
+def test_collaboration_group_rejects_leader_as_stage_executor(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+) -> None:
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"负责人阶段校验 {uuid.uuid4().hex[:6]}"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/collaboration-groups",
+        headers=_auth(test_token),
+        json={
+            "name": "负责人只协调",
+            "leader": {"kind": "human", "id": str(test_user.id)},
+            "members": [{"kind": "human", "id": str(test_user.id)}],
+            "stages": [
+                {
+                    "id": "review",
+                    "name": "评审",
+                    "assignee": {"kind": "human", "id": str(test_user.id)},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Collaboration group leader cannot execute a stage"
+    )
+
+
 def _project_agent(
     test_db: Session,
     *,
@@ -1080,7 +1111,7 @@ def test_issue_actions_are_authorized_independently(
     )
     assert project_response.status_code == 201
     project = project_response.json()
-    for user, role in ((reporter, "Reporter"), (maintainer, "Maintainer")):
+    for user, role in ((reporter, "Developer"), (maintainer, "Maintainer")):
         response = test_client.post(
             f"/api/v1/cloud-projects/{project['id']}/members",
             headers=_auth(test_token),
@@ -1102,7 +1133,7 @@ def test_issue_actions_are_authorized_independently(
     )
     assert reporter_view.status_code == 200
     assert reporter_view.json()["permissions"] == {
-        "edit_content": False,
+        "edit_content": True,
         "comment": True,
         "assign": False,
         "execute": True,
@@ -1111,7 +1142,7 @@ def test_issue_actions_are_authorized_independently(
         test_client.post(
             f"/api/v1/loop-items/{issue['id']}/comments",
             headers=_auth(reporter_token),
-            json={"body": "Reporter 可以评论"},
+            json={"body": "Developer 可以评论"},
         ).status_code
         == 201
     )
@@ -1119,9 +1150,9 @@ def test_issue_actions_are_authorized_independently(
         test_client.patch(
             f"/api/v1/loop-items/{issue['id']}",
             headers=_auth(reporter_token),
-            json={"version": issue["version"], "title": "不允许修改"},
+            json={"version": issue["version"], "title": "允许修改"},
         ).status_code
-        == 403
+        == 200
     )
     assert (
         test_client.post(
@@ -1196,7 +1227,7 @@ def test_project_maintainer_can_add_project_member_without_workspace_membership(
     response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "RestrictedAnalyst"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
 
     assert response.status_code == 201
@@ -1226,7 +1257,7 @@ def test_project_member_can_read_minimal_parent_workspace_navigation_context(
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
 
@@ -1279,7 +1310,7 @@ def test_invalid_project_member_role_cannot_read_project_or_navigation_context(
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(maintainer_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
     membership = test_db.get(ResourceMember, member_response.json()["id"])
@@ -1519,7 +1550,6 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import board_team_execution
     from app.tasks import robot_queue_tasks
 
     workspace, project, maintainer, maintainer_token = (
@@ -1546,13 +1576,7 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     assert issue_response.status_code == 201
     issue = issue_response.json()
 
-    dispatch = AsyncMock(return_value=None)
     consume_queues = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        board_team_execution,
-        "dispatch_board_team_assignment",
-        dispatch,
-    )
     monkeypatch.setattr(
         robot_queue_tasks,
         "consume_queues_background",
@@ -1608,12 +1632,6 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     assert execution.execution_environment == "wegent"
     assert execution.status == "queued"
 
-    dispatch.assert_awaited_once()
-    dispatched_item = dispatch.await_args.kwargs["item"]
-    assert isinstance(dispatched_item, LoopItem)
-    assert dispatched_item.id == issue["id"]
-    assert dispatched_item.assignee_agent_id == agent.id
-    assert dispatch.await_args.kwargs["user"].id == maintainer.id
     consume_queues.assert_awaited_once_with()
 
 
@@ -1624,7 +1642,6 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import board_team_execution
     from app.tasks import robot_queue_tasks
 
     workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
@@ -1677,16 +1694,7 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
         original_commit()
         committed = True
 
-    async def dispatch_after_commit(*_args: object, **_kwargs: object) -> None:
-        assert committed is True
-
     monkeypatch.setattr(test_db, "commit", commit_once)
-    dispatch = AsyncMock(side_effect=dispatch_after_commit)
-    monkeypatch.setattr(
-        board_team_execution,
-        "dispatch_board_team_assignment",
-        dispatch,
-    )
     monkeypatch.setattr(
         robot_queue_tasks,
         "consume_queues_background",
@@ -1707,7 +1715,6 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
     assert response.status_code == 201
     assert commit_calls == 1
     assert response.json()["assignment"]["comment_id"] is not None
-    dispatch.assert_awaited_once()
 
 
 def test_internal_assignment_failure_rolls_back_comment_assignment_and_notification(
@@ -1723,7 +1730,7 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     member_response = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": target.id, "role": "Reporter"},
+        json={"user_id": target.id, "role": "Viewer"},
     )
     assert member_response.status_code == 201
     issue = test_client.post(
@@ -1787,8 +1794,6 @@ def test_agent_assignment_uses_project_agent_without_workspace_authorization(
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import board_team_execution
-
     _, project, _, maintainer_token = _workspace_project_with_maintainer(
         test_client, test_db, test_token
     )
@@ -1807,13 +1812,6 @@ def test_agent_assignment_uses_project_agent_without_workspace_authorization(
     original_assignment_ids = {
         comment.id for comment in _assignment_comments(test_db, issue["id"])
     }
-    dispatch = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        board_team_execution,
-        "dispatch_board_team_assignment",
-        dispatch,
-    )
-
     response = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/assignments",
         headers=_auth(maintainer_token),
@@ -1834,7 +1832,6 @@ def test_agent_assignment_uses_project_agent_without_workspace_authorization(
         .count()
         == 1
     )
-    dispatch.assert_awaited_once()
 
 
 def test_agent_assignment_rejects_agent_from_another_project(
@@ -1844,8 +1841,6 @@ def test_agent_assignment_rejects_agent_from_another_project(
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import board_team_execution
-
     workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
         test_client, test_db, test_token
     )
@@ -1877,13 +1872,6 @@ def test_agent_assignment_rejects_agent_from_another_project(
     original_assignment_ids = {
         comment.id for comment in _assignment_comments(test_db, issue["id"])
     }
-    dispatch = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        board_team_execution,
-        "dispatch_board_team_assignment",
-        dispatch,
-    )
-
     response = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/assignments",
         headers=_auth(maintainer_token),
@@ -1905,4 +1893,3 @@ def test_agent_assignment_rejects_agent_from_another_project(
         .count()
         == 0
     )
-    dispatch.assert_not_awaited()

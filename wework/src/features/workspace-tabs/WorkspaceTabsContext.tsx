@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { navigateTo, replaceTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo, replaceTo } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -27,6 +27,7 @@ import {
 import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { projectSpaceRouteRequestsDefaultProject } from '@/features/todo/projectSpaceRoute'
+import { writeSettingsReturnPath } from './settingsReturnPath'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -324,6 +325,7 @@ export function WorkspaceTabsProvider({
   children,
 }: WorkspaceTabsProviderProps) {
   const startupTabApplied = useRef(false)
+  const previousPathnameRef = useRef(pathname)
   const [state, dispatch] = useReducer(
     workspaceTabsReducer,
     undefined,
@@ -341,6 +343,13 @@ export function WorkspaceTabsProvider({
   }, [fixedTabs])
 
   useLayoutEffect(() => {
+    const enteringSettings =
+      isSettingsRoute(pathname) && !isSettingsRoute(previousPathnameRef.current)
+    if (enteringSettings) {
+      const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
+      if (activeTab) writeSettingsReturnPath(activeTab.contentRoute)
+    }
+    previousPathnameRef.current = pathname
     dispatch({ type: 'routeChanged', pathname, search, labels })
   }, [labels, pathname, search])
 

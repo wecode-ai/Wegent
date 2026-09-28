@@ -28,7 +28,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.complex.title': 'Complex',
         'settings:team.simple.executor.complex.description':
           'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
-        'settings:team.simple.executor.coding_runtime_label': 'Coding engine',
+        'settings:team.simple.executor.coding_runtime_label': 'Execution engine',
+        'settings:team.simple.executor.coding_runtime_description':
+          'Choose an engine that matches the model.',
         'settings:team.simple.executor.codex.title': 'Codex',
         'settings:team.simple.executor.codex.description': 'Codex description.',
         'settings:team.simple.executor.claude_code.title': 'Claude Code',
@@ -81,6 +83,25 @@ describe('ExecutorModeSelector', () => {
     expect(screen.getByText('Chat executor.')).toBeInTheDocument()
   })
 
+  it('renders only the work styles exposed by the simplified form', () => {
+    render(
+      <ExecutorModeSelector
+        value="simple"
+        onChange={jest.fn()}
+        shells={shells}
+        customShellName=""
+        onCustomShellChange={jest.fn()}
+        codingRuntime="codex"
+        onCodingRuntimeChange={jest.fn()}
+        visibleModes={['simple', 'complex']}
+      />
+    )
+
+    expect(screen.getByTestId('simple-executor-simple-card')).toBeInTheDocument()
+    expect(screen.getByTestId('simple-executor-complex-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('simple-executor-custom-card')).not.toBeInTheDocument()
+  })
+
   it('shows custom shell select when custom executor is selected', () => {
     const onCustomShellChange = jest.fn()
 
@@ -121,14 +142,14 @@ describe('ExecutorModeSelector', () => {
   })
 
   it('uses user-facing runtime terminology in localized custom descriptions', () => {
-    expect(zhSettings.team.simple.executor.title).toBe('运行方式')
-    expect(zhSettings.team.simple.executor.simple.title).toBe('日常对话')
-    expect(zhSettings.team.simple.executor.complex.title).toBe('复杂任务与编程')
+    expect(zhSettings.team.simple.executor.title).toBe('用途')
+    expect(zhSettings.team.simple.executor.simple.title).toBe('日常问答')
+    expect(zhSettings.team.simple.executor.complex.title).toBe('编程与复杂任务')
     expect(zhSettings.team.simple.executor.simple.description).not.toContain('Chat')
     expect(zhSettings.team.simple.executor.custom.description).toBe(
       '使用你创建的运行环境，适合特殊需求。'
     )
-    expect(enSettings.team.simple.executor.title).toBe('How it runs')
+    expect(enSettings.team.simple.executor.title).toBe('Use case')
     expect(enSettings.team.simple.executor.custom.description).toBe(
       'Use a runtime you created for specialized needs.'
     )
@@ -193,7 +214,9 @@ describe('ExecutorModeSelector', () => {
       />
     )
 
-    expect(screen.getByText('Coding engine')).toBeInTheDocument()
+    expect(screen.getByText('Execution engine')).toBeInTheDocument()
+    expect(screen.getByText('Codex description.')).toBeInTheDocument()
+    expect(screen.getByText('Claude Code description.')).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Codex' })).toBeChecked()
 
     fireEvent.click(screen.getByTestId('simple-coding-runtime-claude_code-card'))

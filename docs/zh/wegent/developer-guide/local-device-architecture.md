@@ -130,6 +130,8 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
 
+任务创建期间可能已经分配 provider thread ID，但首个 turn 尚未物化。若 runtime handle 只有不带 turn ID 的本地用户消息 presentation，且没有完成消息、transcript 快照、`lastTurnId` 或 subtask turn ID，executor 必须把该任务视为未物化会话：transcript 返回本地 presentation，导航返回空列表，不调用 provider 的分页历史接口。项目看板只在对应 workspace tab 处于激活状态时预加载绑定任务的 transcript，并且同一挂载周期内每个任务地址最多尝试一次；失败不会因任务时间戳或状态刷新而自动重试，重新挂载后才允许再次加载。
+
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
 同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
@@ -139,6 +141,8 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 收到明确错误后，用户通过“切换模型并重试”发起的是一个新的回合：它复用原 task 和 thread 的可移植上下文，并只向新选择的上游发送一次请求。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
+
+上游 Responses 接口按位置把 `function_call` 与其紧随其后的 `function_call_output` 配对，因此编码时必须把同一轮的文本条目放在该轮调用/结果组之外：assistant 轮的文本与思考排在调用之前，user 轮的文本排在工具结果之后。若报文里出现调用、文本、结果三者交替的排布，即使客户端已经给出全部结果，也会被判成该调用缺少结果而拒绝。
 
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
@@ -160,7 +164,7 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
-助手文本在流式阶段始终先作为过程文本进入 Wework。`item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具后以 commentary 完成同一 item。executor 因此必须等待 item 完成和回合成功结束后才提交 final content，避免界面把已经可见的最终内容降级回过程块。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
+助手文本会按照流式开始事件的 phase 进入 Wework，但 `item/started` 携带的 phase 只是暂定状态：Codex 可能先把 item 标为 `final_answer`，再在继续调用工具前以 `commentary` 完成同一 item。完成事件中的明确 phase 是权威值；若它把当前流式 final 改判为过程文本，executor 会清除该活跃 final，并发送携带同一 provider item ID 和 `replacesItemId` 的过程块，让 Wework 原位替换暂定 final，而不是同时保留两份内容或提前结束回合。只有完成事件没有明确 phase 时，executor 才回退到流式阶段跟踪的 phase。已完成的明确 `final` 或 `final_answer` item 优先；若该回合没有明确 final item，则最后一段已完成的助手文本成为兜底最终结果。
 
 Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
@@ -236,7 +240,7 @@ sequenceDiagram
 | `cloud`  | Wegent 云设备服务              | WebSocket | 云设备创建、重启、释放流程          |
 | `remote` | 用户自管 Docker 容器或远端主机 | WebSocket | Wework 连接设置中的远程 Docker 命令 |
 
-`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
+`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl 和 createdAt 等非敏感元数据。
 
 远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
 
@@ -470,6 +474,34 @@ flowchart TB
     style DR fill:#14B8A6,color:#fff
     style EX fill:#14B8A6,color:#fff
 ```
+
+### 本地协作小组编排
+
+本地项目、智能体和协作小组由 Wework 通过本地 Executor 管理，并持久化在
+Executor 的本地 SQLite 数据库中。云端项目及其成员、智能体和协作小组仍由
+Backend 管理。界面中的“本地”和“云端”切换只负责选择当前资源域，不能把两个域
+的数据合并成同一个列表，也不能让本地资源调用邀请云端成员等仅属于云端的能力。
+
+当本地 Issue 指派给协作小组时，Executor 从所属项目的
+`collaboration_groups` 配置中读取负责人、成员和协作规则。没有负责人的小组不会
+启动自动编排；有固定阶段的小组按阶段顺序创建工作流节点。使用“负责人协调”且
+未配置固定阶段时，Executor 先创建负责人节点，由负责人根据 Issue 内容规划后续
+工作。
+
+负责人运行时只能通过任务作用域内的 `wework_space` 工具读取当前 Issue、查询
+当前协作小组允许的候选人，并调用 `submit_workflow_plan` 提交一次工作计划。计划
+在同一事务内校验：
+
+- 调用来自当前 Issue 的活跃协作工作流；
+- 每个 `client_key` 唯一，且任务包含标题和负责人；
+- 负责人必须属于当前协作小组；
+- 智能体必须处于当前项目并保持启用；
+- 同一个工作流只能成功提交一次计划。
+
+校验通过后，Executor 将计划展开为持久化工作流节点，并按依赖顺序创建或推进
+子任务。校验失败时不写入部分节点，原 Issue 和工作流保持可诊断的一致状态。本地
+工作流不调用云端项目空间的分配或结果上报接口；云端协作继续使用 Backend 的项目
+空间工作流。
 
 ### 任务状态流转
 

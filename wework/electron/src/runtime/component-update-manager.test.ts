@@ -295,6 +295,35 @@ describe('ComponentUpdateManager', () => {
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
   })
 
+  test('retries component downloads that Chromium reports as network errors', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+    const logs: Array<Record<string, unknown>> = []
+    let assetRequests = 0
+    const manager = new ComponentUpdateManager({
+      resourcesRoot: fixture.resources,
+      dataDirectory: fixture.data,
+      updateBaseUrl,
+      currentAppVersion: appVersion,
+      platform: 'darwin',
+      arch: 'arm64',
+      retryDelay: async () => undefined,
+      log: event => logs.push(event),
+      fetch: async input => {
+        const url = String(input)
+        if (url.endsWith('.json')) return Response.json(update.manifest)
+        assetRequests++
+        if (assetRequests < 3) throw new Error('net::ERR_CONNECTION_RESET')
+        return new Response(update.archive)
+      },
+    })
+
+    await expect(manager.stageAvailableUpdate()).resolves.toBe(true)
+
+    expect(assetRequests).toBe(3)
+    expect(logs.filter(event => event.event === 'component-download-retry')).toHaveLength(2)
+  })
+
   test('does not retry component integrity failures', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-v2')

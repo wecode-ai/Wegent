@@ -481,6 +481,13 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   - 使用可见性切换按钮 (👁️) 显示/隐藏密钥
 - **Base URL**: 可选的自定义 API 端点 (用于代理或自托管服务)
 
+**模型 Spec JSON 专家模式**:
+- 对话框默认使用 **可视化配置**；切换到 **JSON 配置** 后，可以编辑完整的 Model CRD `spec`，包括 `modelConfig`、能力、类型专属配置及表单尚未支持的未来字段。
+- 例如，不接受 `developer` 消息角色的 OpenAI 兼容模型，可以将 `spec.modelConfig.env.supports_developer_role` 设为 `false`。
+- JSON 模式是唯一数据源，保存时不会再被隐藏的表单字段覆盖；切回表单会解析并回填所有已支持字段，未知字段继续保留在原始快照中。
+- 缺少对象类型 `modelConfig.env` 等无法由表单安全表达的配置会停留在 JSON 模式。编辑器会校验 JSON 结构和递归不安全键，并且会**明文显示 `api_key` 等敏感信息**，请勿复制、分享或截取包含编辑器的画面。
+- 新增字段如需影响运行时行为，仍需对应的后端或执行器支持。
+
 选择的提供商会保存为 `spec.protocol`，对应的 API 格式（例如 OpenAI Chat Completions 保存为 `chat/completions`，OpenAI Responses 保存为 `responses`）会保存为 `spec.apiFormat`。如果界面提供 **Wework 可用** 开关，它会控制 `spec.isWeworkAvailable`，只有标记为可用的模型才会分发到 wework 桌面客户端。
 
 #### 步骤 3: 测试连接

@@ -1,4 +1,6 @@
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
+import { findRuntimeTaskProjectWork } from '@/features/workbench/workbenchRuntimeHelpers'
 
 export interface WorkbenchPaneIdentity {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -53,15 +55,17 @@ export function resolveRuntimeWorkbenchPane(
       return key === paneKey
     })
     if (!task) continue
+    const currentRuntimeTask = {
+      deviceId: workspace.deviceId,
+      taskId: task.taskId,
+      threadId: task.threadId,
+      workspacePath: task.workspacePath || workspace.workspacePath,
+      runtimeHandle: task.runtimeHandle,
+    }
+    const projectWork = findRuntimeTaskProjectWork(runtimeWork, currentRuntimeTask)
     return {
-      currentRuntimeTask: {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        threadId: task.threadId,
-        workspacePath: task.workspacePath || workspace.workspacePath,
-        runtimeHandle: task.runtimeHandle,
-      },
-      currentProject: null,
+      currentRuntimeTask,
+      currentProject: projectWork ? runtimeProjectToProject(projectWork) : null,
     }
   }
   return null

@@ -1,0 +1,305 @@
+import { layout, prepare } from '@chenglou/pretext'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import { isImageAttachment } from '../issue-detail/attachmentPresentation'
+import { COLLAPSED_PROCESSING_HEIGHT } from './blocks/ToolBlocksDisplay'
+
+const DEFAULT_LAYOUT_WIDTH = 720
+const MIN_TEXT_WIDTH = 160
+const ASSISTANT_FONT =
+  '13px Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+const USER_FONT = '13px Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+const ASSISTANT_LINE_HEIGHT = 24
+const USER_LINE_HEIGHT = 20
+const USER_CONTENT_HORIZONTAL_PADDING = 32
+const USER_MAX_WIDTH_RATIO = 0.8
+const HOVER_ACTION_HEIGHT = 20
+const MIN_ASSISTANT_ROW_HEIGHT = 44
+const MIN_USER_ROW_HEIGHT = 48
+const COLLAPSED_USER_TEXT_HEIGHT = 176
+const USER_COLLAPSE_BUTTON_HEIGHT = 36
+const IMAGE_ATTACHMENT_HEIGHT = 80
+const DOCUMENT_ATTACHMENT_HEIGHT = 34
+const FAILED_ASSISTANT_CARD_HEIGHT = 128
+const FINAL_ARTIFACT_CARD_HEIGHT = 76
+const MESSAGE_VERTICAL_BUFFER = 12
+const WIDTH_BUCKET_SIZE = 32
+const MAX_LAYOUT_CACHE_SIZE = 1200
+const STREAMING_MESSAGE_INTRINSIC_HEIGHT = 220
+// `MarkdownCodeBlock` renders fenced code in a horizontally scrolling `<pre>`: `--text-code` at
+// `line-height: 1.8`, a 40px header, 24px of padding and 20px of margin.
+const CODE_LINE_HEIGHT = 22
+const CODE_BLOCK_CHROME_HEIGHT = 84
+const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/
+const FENCE_CLOSE_PATTERN = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+
+let pretextMeasurementAvailable = true
+const messageLayoutHeightCache = new Map<string, number>()
+let messageObjectLayoutHeightCache = new WeakMap<WorkbenchMessage, Map<number, number>>()
+
+export function getMessagePretextIntrinsicHeight(
+  message: WorkbenchMessage,
+  containerWidth: number
+): number {
+  if (message.status === 'streaming') {
+    return STREAMING_MESSAGE_INTRINSIC_HEIGHT
+  }
+
+  const width = normalizeLayoutWidth(containerWidth)
+  const objectCachedHeight = messageObjectLayoutHeightCache.get(message)?.get(width)
+  if (objectCachedHeight !== undefined) return objectCachedHeight
+
+  const cacheKey = getMessageLayoutCacheKey(message, width)
+  const cachedHeight = messageLayoutHeightCache.get(cacheKey)
+  if (cachedHeight !== undefined) {
+    setObjectCachedLayoutHeight(message, width, cachedHeight)
+    return cachedHeight
+  }
+
+  const height =
+    message.role === 'user'
+      ? estimateUserMessageHeight(message, width)
+      : estimateAssistantMessageHeight(message, width)
+
+  setCachedLayoutHeight(cacheKey, height)
+  setObjectCachedLayoutHeight(message, width, height)
+  return height
+}
+
+export function clearMessagePretextLayoutCache() {
+  messageLayoutHeightCache.clear()
+  messageObjectLayoutHeightCache = new WeakMap()
+  pretextMeasurementAvailable = true
+}
+
+function setObjectCachedLayoutHeight(message: WorkbenchMessage, width: number, height: number) {
+  const cachedByWidth = messageObjectLayoutHeightCache.get(message)
+  if (cachedByWidth) {
+    cachedByWidth.set(width, height)
+    return
+  }
+  messageObjectLayoutHeightCache.set(message, new Map([[width, height]]))
+}
+
+function estimateUserMessageHeight(message: WorkbenchMessage, containerWidth: number): number {
+  const contentWidth = Math.max(
+    MIN_TEXT_WIDTH,
+    Math.floor(containerWidth * USER_MAX_WIDTH_RATIO) - USER_CONTENT_HORIZONTAL_PADDING
+  )
+  const textHeight = message.content
+    ? measurePretextHeight(message.content, USER_FONT, contentWidth, USER_LINE_HEIGHT)
+    : 0
+  const collapsedTextHeight = shouldCollapseUserMessage(message.content)
+    ? Math.min(textHeight, COLLAPSED_USER_TEXT_HEIGHT) + USER_COLLAPSE_BUTTON_HEIGHT
+    : textHeight
+  const attachmentHeight = estimateAttachmentStackHeight(message.attachments)
+  const contentHeight =
+    (collapsedTextHeight > 0 ? collapsedTextHeight + MESSAGE_VERTICAL_BUFFER : 0) + attachmentHeight
+
+  return Math.max(MIN_USER_ROW_HEIGHT, contentHeight + HOVER_ACTION_HEIGHT)
+}
+
+function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidth: number): number {
+  if (message.status === 'failed' && !message.content.trim()) {
+    return FAILED_ASSISTANT_CARD_HEIGHT + HOVER_ACTION_HEIGHT
+  }
+
+  const textHeight = message.content.trim()
+    ? measureAssistantMarkdownHeight(message.content, containerWidth)
+    : 0
+  // A finished turn renders its process section collapsed: one summary row, however many blocks it ran.
+  // The per-block rows only exist once the reader opens it, and that re-measure is a real layout change,
+  // so budgeting a block row per block counted heights that were never on screen — the conversation's
+  // height then fell by exactly that much as each row was reached and measured.
+  const blockHeight = (message.blocks?.length ?? 0) > 0 ? COLLAPSED_PROCESSING_HEIGHT : 0
+  const finalArtifactsHeight =
+    (message.references?.length || message.memoryCitations?.length || message.fileChanges
+      ? FINAL_ARTIFACT_CARD_HEIGHT
+      : 0) + (message.status === 'failed' ? FAILED_ASSISTANT_CARD_HEIGHT : 0)
+
+  return Math.max(
+    MIN_ASSISTANT_ROW_HEIGHT,
+    textHeight + blockHeight + finalArtifactsHeight + HOVER_ACTION_HEIGHT + MESSAGE_VERTICAL_BUFFER
+  )
+}
+
+/**
+ * Fenced code does not wrap in the transcript — `MarkdownCodeBlock` renders it in a horizontally
+ * scrolling `<pre>` — so measuring the raw source as wrapped text counts every long code line as two
+ * or more lines. For a code-heavy answer that made the intrinsic height several times the height the
+ * answer actually renders at, which is what pushed the conversation's content height down (and the
+ * scrollbar with it) while the reader scrolled up through it.
+ */
+function measureAssistantMarkdownHeight(source: string, containerWidth: number): number {
+  let height = 0
+  for (const block of splitMarkdownCodeBlocks(source)) {
+    height +=
+      block.kind === 'code'
+        ? Math.max(1, block.lineCount) * CODE_LINE_HEIGHT + CODE_BLOCK_CHROME_HEIGHT
+        : measurePretextHeight(block.content, ASSISTANT_FONT, containerWidth, ASSISTANT_LINE_HEIGHT)
+  }
+  return height
+}
+
+type MarkdownCodeBlock = { kind: 'text'; content: string } | { kind: 'code'; lineCount: number }
+
+/** Splits markdown into the wrapped prose the renderer reflows and the fenced code it does not. */
+function splitMarkdownCodeBlocks(source: string): MarkdownCodeBlock[] {
+  const blocks: MarkdownCodeBlock[] = []
+  let prose = ''
+  let openFence: { marker: string; length: number; code: string } | null = null
+  for (const line of source.match(/.*(?:\n|$)/g) ?? []) {
+    const trimmedLine = line.replace(/\r?\n$/, '')
+    if (openFence) {
+      const closing = trimmedLine.match(FENCE_CLOSE_PATTERN)?.[1]
+      if (closing?.startsWith(openFence.marker) && closing.length >= openFence.length) {
+        blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
+        openFence = null
+        continue
+      }
+      openFence.code += line
+      continue
+    }
+    const opening = trimmedLine.match(FENCE_OPEN_PATTERN)?.[1]
+    if (opening) {
+      if (prose) {
+        blocks.push({ kind: 'text', content: prose })
+        prose = ''
+      }
+      openFence = {
+        marker: opening[0] ?? '`',
+        length: opening.length,
+        code: '',
+      }
+      continue
+    }
+    prose += line
+  }
+  if (openFence) {
+    blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
+  }
+  if (prose) {
+    blocks.push({ kind: 'text', content: prose })
+  }
+  return blocks
+}
+
+function countLines(text: string): number {
+  const trimmed = text.replace(/\n$/, '')
+  return trimmed ? trimmed.split('\n').length : 0
+}
+
+function measurePretextHeight(
+  text: string,
+  font: string,
+  width: number,
+  lineHeight: number
+): number {
+  if (!pretextMeasurementAvailable) {
+    return estimateFallbackTextHeight(text, width, lineHeight)
+  }
+
+  try {
+    const prepared = prepare(text, font, { whiteSpace: 'pre-wrap' })
+    return layout(prepared, Math.max(MIN_TEXT_WIDTH, width), lineHeight).height
+  } catch {
+    pretextMeasurementAvailable = false
+    return estimateFallbackTextHeight(text, width, lineHeight)
+  }
+}
+
+function estimateFallbackTextHeight(text: string, width: number, lineHeight: number): number {
+  const averageCharacterWidth = 7
+  const charactersPerLine = Math.max(1, Math.floor(width / averageCharacterWidth))
+  const lineCount = text.split('\n').reduce((count, line) => {
+    return count + Math.max(1, Math.ceil(line.length / charactersPerLine))
+  }, 0)
+
+  return lineCount * lineHeight
+}
+
+function estimateAttachmentStackHeight(attachments: Attachment[] | undefined): number {
+  if (!attachments?.length) return 0
+
+  const hasImages = attachments.some(isImageAttachment)
+  const documentCount = attachments.filter(attachment => !isImageAttachment(attachment)).length
+  return (
+    (hasImages ? IMAGE_ATTACHMENT_HEIGHT + MESSAGE_VERTICAL_BUFFER : 0) +
+    documentCount * (DOCUMENT_ATTACHMENT_HEIGHT + MESSAGE_VERTICAL_BUFFER)
+  )
+}
+
+function shouldCollapseUserMessage(content: string): boolean {
+  return content.length > 600 || content.split('\n').length > 10
+}
+
+function normalizeLayoutWidth(width: number): number {
+  const normalizedWidth = Number.isFinite(width) && width > 0 ? width : DEFAULT_LAYOUT_WIDTH
+  return Math.max(
+    MIN_TEXT_WIDTH,
+    Math.round(normalizedWidth / WIDTH_BUCKET_SIZE) * WIDTH_BUCKET_SIZE
+  )
+}
+
+function getMessageLayoutCacheKey(message: WorkbenchMessage, width: number): string {
+  return [
+    width,
+    message.id,
+    message.role,
+    message.status,
+    message.runtimeStatus ?? '',
+    stableTextHash(message.content),
+    message.error ? stableTextHash(message.error) : '',
+    getBlockSignature(message),
+    getAttachmentSignature(message.attachments),
+    message.references?.length ?? 0,
+    message.memoryCitations?.length ?? 0,
+    message.fileChanges
+      ? `${message.fileChanges.status}:${message.fileChanges.file_count}:${message.fileChanges.additions}:${message.fileChanges.deletions}`
+      : '',
+  ].join('|')
+}
+
+function getBlockSignature(message: WorkbenchMessage): string {
+  return (message.blocks ?? [])
+    .map(block => {
+      if (block.type === 'thinking' || block.type === 'text' || block.type === 'plan') {
+        return `${block.id}:${block.type}:${block.status}:${block.content.length}`
+      }
+      if (block.type === 'file_changes') {
+        return `${block.id}:${block.type}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
+      }
+      if (block.type === 'subagent') {
+        return `${block.id}:${block.type}:${block.status}:${block.agentStatus ?? ''}:${block.output?.length ?? 0}:${block.summary?.length ?? 0}:${block.children?.length ?? 0}`
+      }
+      return `${block.id}:${block.type}:${block.status}:${String(block.toolOutput ?? '').length}`
+    })
+    .join(',')
+}
+
+function getAttachmentSignature(attachments: Attachment[] | undefined): string {
+  return (attachments ?? [])
+    .map(
+      attachment =>
+        `${attachment.id}:${attachment.status}:${attachment.file_size}:${attachment.mime_type}`
+    )
+    .join(',')
+}
+
+function stableTextHash(text: string): string {
+  let hash = 0
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) | 0
+  }
+  return `${text.length}:${hash}`
+}
+
+function setCachedLayoutHeight(cacheKey: string, height: number) {
+  if (messageLayoutHeightCache.size >= MAX_LAYOUT_CACHE_SIZE) {
+    const oldestKey = messageLayoutHeightCache.keys().next().value
+    if (oldestKey) {
+      messageLayoutHeightCache.delete(oldestKey)
+    }
+  }
+  messageLayoutHeightCache.set(cacheKey, height)
+}

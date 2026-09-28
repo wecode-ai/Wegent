@@ -12,6 +12,17 @@ import {
 } from "./IssueDetailDraft";
 
 describe("IssueDetailCore", () => {
+  it("retains collaboration group ownership when opening an Issue", () => {
+    expect(issueAssigneeTarget({ assignee_group_id: "squad-1" })).toBe(
+      "group:squad-1",
+    );
+    expect(parseIssueAssigneeTarget("group:squad-1")).toEqual({
+      assigneeUserId: null,
+      assigneeAgentId: null,
+      assigneeTeamId: null,
+      assigneeGroupId: "squad-1",
+    });
+  });
   it("formats attachment sizes consistently for Web and Wework adapters", () => {
     expect(formatIssueAttachmentSize(512)).toBe("512 B");
     expect(formatIssueAttachmentSize(1536)).toBe("1.5 KB");

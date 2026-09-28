@@ -18,6 +18,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from knowledge_engine.embedding.contract import ensure_vector_contract
 from knowledge_engine.embedding.errors import (
     EmbeddingDimensionMismatchError,
     EmbeddingResponseFormatError,
@@ -31,7 +32,6 @@ class CustomEmbedding(BaseEmbedding):
     model: str
     headers: dict[str, str]
     api_key: Optional[str] = None
-    _dimension: Optional[int] = None
     _configured_dimension: Optional[int] = None
     _encoding_format: Optional[str] = None
 
@@ -62,7 +62,6 @@ class CustomEmbedding(BaseEmbedding):
         )
 
         if dimensions is not None:
-            self._dimension = dimensions
             self._configured_dimension = dimensions
         if encoding_format is not None:
             self._encoding_format = encoding_format
@@ -156,17 +155,10 @@ class CustomEmbedding(BaseEmbedding):
                 )
             embedding = [float(value) for value in response_embedding]
 
-        actual_dimension = len(embedding)
-        if (
-            self._configured_dimension is not None
-            and actual_dimension != self._configured_dimension
-        ):
-            raise EmbeddingDimensionMismatchError(
-                model=self.model,
-                expected=self._configured_dimension,
-                actual=actual_dimension,
-            )
-        if self._dimension is None:
-            self._dimension = actual_dimension
+        ensure_vector_contract(
+            model=self.model,
+            declared=self._configured_dimension,
+            vectors=[embedding],
+        )
 
         return embedding

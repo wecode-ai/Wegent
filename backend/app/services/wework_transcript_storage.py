@@ -4,16 +4,51 @@
 
 """Private object storage for archived Wework transcripts."""
 
+import logging
 from typing import BinaryIO, Iterator
 
 from minio import Minio
+from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class WeworkTranscriptStorageError(RuntimeError):
     """Raised when transcript object storage is unavailable."""
+
+    code = "transcript_storage_unavailable"
+
+
+class WeworkTranscriptStorageNotFoundError(WeworkTranscriptStorageError):
+    """Raised when transcript metadata points to a missing object."""
+
+    code = "archive_not_found"
+
+
+def _failure(
+    operation: str,
+    exc: Exception,
+    **context: object,
+) -> WeworkTranscriptStorageError:
+    """Log the underlying object-storage failure and describe it to the caller.
+
+    The reported reason distinguishes an authorization failure from a missing
+    bucket or an unreachable endpoint; without it every failure looks identical
+    to whoever reads the error on the device.
+    """
+    reason = _reason(exc)
+    logger.error(operation, exc_info=True, extra={**context, "storage_reason": reason})
+    return WeworkTranscriptStorageError(f"{operation} ({reason})")
+
+
+def _reason(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    return type(exc).__name__
 
 
 class WeworkTranscriptStorage:
@@ -31,6 +66,14 @@ class WeworkTranscriptStorage:
             access_key = settings.ATTACHMENT_S3_ACCESS_KEY
             secret_key = settings.ATTACHMENT_S3_SECRET_KEY
             if not endpoint or not access_key or not secret_key:
+                logger.error(
+                    "Wework transcript object storage is not configured",
+                    extra={
+                        "endpoint_configured": bool(endpoint),
+                        "access_key_configured": bool(access_key),
+                        "secret_key_configured": bool(secret_key),
+                    },
+                )
                 raise WeworkTranscriptStorageError(
                     "Wework transcript object storage is unavailable"
                 )
@@ -48,19 +91,38 @@ class WeworkTranscriptStorage:
             try:
                 if not client.bucket_exists(self.bucket):
                     client.make_bucket(self.bucket)
+                    logger.info(
+                        "Created Wework transcript bucket",
+                        extra={"bucket": self.bucket},
+                    )
             except Exception as exc:
-                raise WeworkTranscriptStorageError(
-                    "Wework transcript object storage is unavailable"
+                raise _failure(
+                    "Wework transcript object storage is unavailable",
+                    exc,
+                    bucket=self.bucket,
                 ) from exc
             self._client = client
         return self._client
 
     def stream(self, object_key: str) -> Iterator[bytes]:
+        client = self.client
         try:
-            response = self.client.get_object(self.bucket, object_key)
+            response = client.get_object(self.bucket, object_key)
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                raise WeworkTranscriptStorageNotFoundError(
+                    "Wework transcript segment not found"
+                ) from exc
+            raise _failure(
+                "Failed to read transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
         except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to read transcript segment"
+            raise _failure(
+                "Failed to read transcript segment",
+                exc,
+                bucket=self.bucket,
             ) from exc
         return self._stream_response(response)
 
@@ -78,8 +140,9 @@ class WeworkTranscriptStorage:
         stream: BinaryIO,
         size_bytes: int,
     ) -> None:
+        client = self.client
         try:
-            self.client.put_object(
+            client.put_object(
                 self.bucket,
                 object_key,
                 stream,
@@ -87,16 +150,41 @@ class WeworkTranscriptStorage:
                 content_type="application/octet-stream",
             )
         except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to store transcript segment"
+            raise _failure(
+                "Failed to store transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+
+    def exists(self, object_key: str) -> bool:
+        client = self.client
+        try:
+            client.stat_object(self.bucket, object_key)
+            return True
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                return False
+            raise _failure(
+                "Failed to inspect transcript segment",
+                exc,
+                bucket=self.bucket,
+            ) from exc
+        except Exception as exc:
+            raise _failure(
+                "Failed to inspect transcript segment",
+                exc,
+                bucket=self.bucket,
             ) from exc
 
     def delete(self, object_key: str) -> None:
+        client = self.client
         try:
-            self.client.remove_object(self.bucket, object_key)
+            client.remove_object(self.bucket, object_key)
         except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to delete obsolete transcript segment"
+            raise _failure(
+                "Failed to delete obsolete transcript segment",
+                exc,
+                bucket=self.bucket,
             ) from exc
 
 

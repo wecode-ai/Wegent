@@ -1,3 +1,4 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Loader2, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -48,7 +49,7 @@ function WorkbenchSearchDialogPanel({
   onOpenRuntimeTask,
 }: Omit<WorkbenchSearchDialogProps, 'open'>) {
   const { t } = useTranslation('common')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(onClose)
   const searchCacheRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
   const cloudResultsRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
   const [query, setQuery] = useState('')
@@ -58,10 +59,6 @@ function WorkbenchSearchDialogPanel({
   const [error, setError] = useState<string | null>(null)
   const [searchedQuery, setSearchedQuery] = useState('')
   const trimmedQuery = query.trim()
-
-  useEffect(() => {
-    window.setTimeout(() => inputRef.current?.focus(), 0)
-  }, [])
 
   useEffect(() => {
     const handleCloudResults = (event: Event) => {
@@ -154,13 +151,16 @@ function WorkbenchSearchDialogPanel({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('workbench.search_conversations')}
         data-testid="workbench-search-dialog"
         className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-popover text-text-primary shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-[0.5px] ring-border"
       >
         <div className="flex h-14 items-center gap-3 border-b border-border/70 px-4">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input
-            ref={inputRef}
             data-testid="workbench-search-input"
             value={query}
             onChange={event => {
@@ -178,11 +178,6 @@ function WorkbenchSearchDialogPanel({
               }
             }}
             onKeyDown={event => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                onClose()
-                return
-              }
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
                 setSelectedIndex(index => Math.min(index + 1, Math.max(items.length - 1, 0)))

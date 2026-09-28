@@ -348,6 +348,22 @@ The URL does not contain `workspacePath`. On refresh or shared links, the fronte
 
 New conversation and no-project entry points use the root path or regular conversation path, not placeholder parameters such as `projectId=0`. Project selection state is restored from the runtime workspace reference and the current conversation context.
 
+## New-task send state and diagnostics
+
+After sending, the frontend displays the user message and loads history while the executor may still be preparing a worktree, before registering the LocalTask. When no task link, provider session, or known execution exists, an empty transcript must omit `running` to represent unknown state. Returning `running=false` would prematurely settle the frontend send. Known running and completed states still use explicit booleans.
+
+Explicit sends update the shared `RuntimeTaskLifecycleStore` directly. Switching tabs or hiding the initiating view must not block `sendRequested`, `sendAccepted`, or send-failure updates. Background list and transcript synchronization remain subject to view ownership.
+
+Hidden workbenches kept mounted must not subscribe to global project creation, workspace binding, or cloud device settings events. Only the `routeActive` workbench handles these interactions, preventing duplicate portal dialogs after switching tabs. When a known task fails before creating its provider session, its transcript must still return `running=false` so clients can settle the pending state.
+
+Electron startup readiness must be idempotent: after startup completes, notifications from navigation or remounting must not show and focus the main window again, stealing focus from a popout. Concurrent notifications share one completion operation; a failed operation can be attempted again.
+
+When a page does not recover after reload, inspect Electron's `[renderer-load]` events. Correlate loading, DOM readiness, completion, failure, and prevented unload events by `webContentsId`. These events omit page URLs to avoid exposing query parameters.
+
+When restoring a local task's project-space context, use the project ID in its binding to read the item without scanning the project list again. The `project-space-context-resolved/failed` diagnostics record lookup duration and whether the current view applied the result, distinguishing lookup timeouts from stale responses.
+
+To investigate a blank interval after sending, correlate `deviceId + taskId` between `runtime-launch.log` in the Electron log directory and executor logs. The former records transcript receipt, lifecycle transitions, waiting-indicator state, and `web_contents_id`; executor `runtime worktree stage` entries measure lock waits, preflight, Git worktree creation, and persistence. A backend `running=true` response does not prove that the frontend rendered a waiting indicator: compare both timelines. Message bodies are not required for these diagnostics. Changes to Electron log capture or the executor require restarting the corresponding process; frontend hot reload does not update either process.
+
 ## Compatibility
 
 Wegent-native Task/Subtask flows remain available for existing chat, shared task, and historical task URL paths. Wework sidebar, mobile drawer, project task display, and new task creation use the runtime work API instead of the DB task list or Backend `projects` table.

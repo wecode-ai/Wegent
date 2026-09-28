@@ -130,8 +130,7 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
 `cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
-`cloud-worktree-archive-restore`, `cloud-worktree-device-restart`,
-`context-compaction`, `runtime-task-queue`, `runtime-terminal-convergence`,
+`cloud-worktree-archive-restore`, `context-compaction`, `runtime-task-queue`,
 `executor-stream-recovery`, `running-conversation-history`,
 `codex-notification-isolation`, `split-workbench`, `native-window-startup`,
 `native-window-chrome`, `renderer-storage`, `tray-lifecycle`, `window-lifecycle`,
@@ -148,13 +147,15 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
-Actions matrix jobs and Cloud uses fifteen. Every job runs its
-checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
-contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The thirty-two matrix jobs still provide
+Actions matrix jobs and Cloud uses fifteen. A Core job runs at most two isolated
+checkpoints concurrently so three complete Electron, Executor, and real-backend
+stacks cannot contend for one runner's CPU; Cloud jobs retain up to three
+concurrent checkpoints. Checkpoints that share the Collaboration cloud runtime
+or have demonstrated timing contention remain serialized through an exclusive
+resource lock. The thirty-two Core and Cloud matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to keep the complete suite inside its ten-minute critical-path
-budget; a new or materially slower checkpoint requires rebalancing instead of
+durations and capped to bound the complete suite's critical path; a new or
+materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures. The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
 dedicated shard; the notification scenario uses a targeted 30-second render
@@ -163,18 +164,32 @@ application, Executor, and Codex artifact. Electron package preparation builds
 the Harness runtime, Node execution runtime, and Executor concurrently; the
 Harness preparation owns the single DSH application Vite build so the same
 frontend is not compiled twice. Every Core and Cloud shard downloads and reuses
-that artifact instead of rebuilding Vite, Electron, and Executor. Rust builds
+that artifact instead of rebuilding Vite, Electron, and Executor. Desktop shards
+start only after the shared build succeeds and download it directly through the
+GitHub artifact action. This prevents many runners from sitting idle while
+polling during the build, allowing Lint, Tests, and Platform E2E to acquire
+runners promptly without adding matrix jobs or dropping checkpoints.
+Both the Rust gateway and Executor use debug profiles so E2E does not spend time
+on unused release optimization. Test artifacts also disable dev-profile
+debuginfo because diagnostics do not retain those symbols; generating and then
+stripping them only extends a cold build. Rust builds
 reuse both the `main`-owned Cargo target cache and sccache compiler units: the
 target cache bounds PR and first-run latency, while sccache reduces incremental
 compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the thirty-two shards. Desktop E2E and its cache
+upload and download time across the shards. Source changes under `backend-rs/**`
+or `executor/**` select the desktop target-cache warmup so `main` does not refresh
+that cache only when a lockfile changes. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The macOS Inspector path also uses the debug
+Executor profile and disables dev-profile debuginfo. It builds a release
+Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
+or a non-pull-request run), because optimized code generation is relevant to
+memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -317,13 +332,32 @@ On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` set
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
+The hybrid Backend launcher gives Python Uvicorn a 2,400-second upstream HTTP
+keep-alive, longer than the workflow's longest 35-minute hybrid E2E job.
+`brz-http-gateway` 0.1.4 builds a hyper-util connection pool without installing
+its idle-connection timer. If Uvicorn expires an idle socket first, the gateway
+can reuse that upstream-closed connection and incorrectly return `502 fallback
+upstream unavailable`. Bounding the upstream lifetime beyond the job prevents
+that stale-socket window in this local hybrid launcher. The setting affects only
+the local Rust-to-Python fallback connection and does not disable keep-alive
+between external clients and the gateway.
+
 Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
+
+The `plugin-account-auth` scenario uses shorter scheduling intervals only when
+an E2E reconciliation marker is configured and emits one precise retry signal
+after the test changes credential state. Production retains the 15-second
+automatic synchronization period and 60-second failure backoff. The DWS manual
+revocation assertion no longer sleeps for a fixed 32 seconds. It waits for two
+completed reconciliation markers from the real Executor while continuously
+asserting that the grant remains revoked, so the optimization removes idle time
+without dropping account migration, cloud execution, or revocation coverage.
 
 The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Electron renderer, Executor, and Codex app-server to verify marketplace discovery, installation, the install-time local authorization dialog, insertion of the plugin reference into the chat composer, unmatched resume auth text not opening a local auth card, composer filtering after uninstall, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for the critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
-The memory scenario is macOS-only. It keeps the bottom Terminal mounted, executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. Each sample also forces renderer garbage collection through the Electron DevTools Protocol and reads actual JS heap usage. It writes the samples, DOM node counts, active-assistant content summary, and aggregate metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit physical-footprint peak growth to 384 MiB, settled growth after completion to 232 MiB, the full physical-footprint range within the settled window to 16 MiB, and the post-GC JS heap peak across the workload to 200 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 512 additional nodes relative to baseline by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH`, and `WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES`. For focused very-long-stream reproduction, use `WEWORK_E2E_MEMORY_SECTION_COUNT` and `WEWORK_E2E_MEMORY_CHUNK_DELAY_MS` to configure response sections and chunk delay. The completion budget remains fixed at 30 seconds and cannot be relaxed through an environment variable.
+The memory scenario is macOS-only. It keeps the bottom Terminal mounted, executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. Each sample also forces renderer garbage collection through the Electron DevTools Protocol and reads actual JS heap usage. It writes the samples, DOM node counts, active-assistant content summary, and aggregate metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit physical-footprint peak growth to 384 MiB, settled growth after completion to 232 MiB, the full physical-footprint range within the settled window to 16 MiB, and the post-GC JS heap peak across the workload to 200 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 576 additional nodes relative to baseline by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH`, and `WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES`. For focused very-long-stream reproduction, use `WEWORK_E2E_MEMORY_SECTION_COUNT` and `WEWORK_E2E_MEMORY_CHUNK_DELAY_MS` to configure response sections and chunk delay. The completion budget remains fixed at 30 seconds and cannot be relaxed through an environment variable.
 
 The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. Relative to the stable baseline, both the peak and active settled plateau may grow by at most 320 MiB, while the settled sampling window may vary by at most 64 MiB. The limits can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 

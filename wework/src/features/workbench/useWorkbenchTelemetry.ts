@@ -10,6 +10,10 @@ import {
   settleRuntimeRunTraceId,
 } from '@/telemetry/traceId'
 import { peekGenerationOutcome, takeGenerationOutcome } from './runtimeGenerationOutcome'
+import {
+  publishPluginInvocationDevices,
+  publishPluginInvocationTask,
+} from '@/features/plugins/pluginInvocationTelemetry'
 
 interface WorkbenchTelemetryInput {
   currentProject: ProjectWithTasks | null
@@ -73,7 +77,9 @@ export function useWorkbenchTelemetry({
   useEffect(() => {
     lifecycleRef.current = lifecycle
     devicesRef.current = devices
+    publishPluginInvocationDevices(devices)
     lifecycle.tasks.forEach((snapshot, key) => {
+      publishPluginInvocationTask(snapshot.address.deviceId, snapshot.address.taskId, snapshot.task)
       const previous = tasksRef.current.get(key)
       const nextRunning = snapshot.derived.isRunning
       const nextTurnActive = snapshot.derived.isTurnActive

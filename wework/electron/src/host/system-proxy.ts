@@ -6,7 +6,16 @@ const PROXY_SCHEMES: Record<string, string> = {
   SOCKS5: 'socks5',
 }
 
-export const CODEX_SYSTEM_PROXY_PROBE_URL = 'https://chatgpt.com/backend-api/codex'
+export async function resolveSystemProxy(
+  session: { resolveProxy(url: string): Promise<string> },
+  targetUrl: string
+): Promise<string | null> {
+  const url = new URL(targetUrl)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('System proxy target must be an HTTP or HTTPS URL')
+  }
+  return proxyRulesToUrl(await session.resolveProxy(url.href))
+}
 
 function validProxyEndpoint(endpoint: string): boolean {
   const match = endpoint.match(/^(?:\[[^\]]+\]|[^:/\s]+):(\d+)$/)

@@ -42,6 +42,8 @@ WORKDIR /app
 
 # Install system packages for document generation (AlmaLinux uses dnf)
 RUN dnf install -y \
+    # Codex Linux sandbox helper
+    bubblewrap \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     # Document and PDF utilities
@@ -50,7 +52,7 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
-    && npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
+    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.142.5 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

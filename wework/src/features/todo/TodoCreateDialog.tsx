@@ -17,7 +17,8 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks } from '@/types/api'
 import type { TodoViewState } from './TodoDetailPanel'
@@ -73,7 +74,7 @@ export function TodoCreateDialog({
   const [error, setError] = useState<string | null>(null)
   const selectedProject = projects.find(project => project.id === projectId) ?? projects[0]
 
-  useEscapeKey(() => {
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!submitting) onClose()
   }, true)
 
@@ -91,6 +92,7 @@ export function TodoCreateDialog({
   }
 
   const submit = async (runImmediately: boolean) => {
+    if (submitting) return
     if (!markdown.trim()) {
       setError(t('todo.create_content_required', '请填写任务信息'))
       return
@@ -118,7 +120,12 @@ export function TodoCreateDialog({
         if (event.currentTarget === event.target && !submitting) onClose()
       }}
     >
-      <section
+      <DialogForm
+        ref={dialogRef}
+        onSubmit={event => {
+          event.preventDefault()
+          void submit(false)
+        }}
         data-testid="todo-create-dialog"
         role="dialog"
         aria-modal="true"
@@ -397,9 +404,8 @@ export function TodoCreateDialog({
               {t('workbench.cancel', '取消')}
             </button>
             <button
-              type="button"
+              type="submit"
               data-testid="todo-create-submit"
-              onClick={() => void submit(false)}
               disabled={submitting}
               className="flex h-[34px] items-center gap-1.5 rounded-md border border-primary/30 bg-background px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:opacity-50"
             >
@@ -418,7 +424,7 @@ export function TodoCreateDialog({
             </button>
           </div>
         </footer>
-      </section>
+      </DialogForm>
     </div>
   )
 }

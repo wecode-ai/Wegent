@@ -69,6 +69,12 @@ export function reduceRuntimeTaskLifecycle(
         queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
       const activeTurnId =
         queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
+      const hasInteractionStatus = Object.hasOwn(event.task, 'interactionStatus')
+      const interactionStatus = terminalStatus
+        ? null
+        : hasInteractionStatus
+          ? (event.task.interactionStatus ?? null)
+          : state.interactionStatus
 
       const nextState: RuntimeTaskLifecycleState = {
         ...state,
@@ -77,6 +83,7 @@ export function reduceRuntimeTaskLifecycle(
         executionPhase,
         turnPhase,
         activeTurnId,
+        interactionStatus,
         goalStatus:
           event.task.goalStatus === undefined || state.hasAuthoritativeGoalStatus
             ? state.goalStatus
@@ -100,6 +107,7 @@ export function reduceRuntimeTaskLifecycle(
         turnPhase: 'submitting',
         turnOutcome: null,
         expectedExecutorRunning: true,
+        interactionStatus: null,
         unread: false,
       }
 
@@ -231,6 +239,25 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
+    case 'user_input_requested':
+      return {
+        ...state,
+        executionPhase: 'running',
+        interactionStatus: 'waitingForUserInput',
+        expectedExecutorRunning: true,
+      }
+
+    case 'user_input_responded':
+      return state.interactionStatus === null
+        ? state
+        : {
+            ...state,
+            interactionStatus: null,
+            executionPhase: 'running',
+            turnPhase: state.turnPhase === 'idle' ? 'awaiting' : state.turnPhase,
+            expectedExecutorRunning: true,
+          }
+
     case 'goal_status_received': {
       const goalJustSettled =
         state.goalStatus === 'active' &&
@@ -243,6 +270,7 @@ export function reduceRuntimeTaskLifecycle(
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
+            interactionStatus: null,
             goalStatus: event.goalStatus,
             hasAuthoritativeGoalStatus: true,
             expectedExecutorRunning: false,

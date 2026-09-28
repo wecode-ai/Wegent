@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import { writeSharedComposer } from '../../utils/collaboration-test-support'
+import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
@@ -146,7 +148,9 @@ test.describe('Collaboration module', () => {
     )
 
     await page.getByTestId('collaboration-workspace-project-create').click()
+    await page.getByTestId('collaboration-workspace-project-create-blank').click()
     await page.getByTestId('collaboration-project-name-input').fill(projectName)
+    await page.getByTestId('collaboration-project-create-advanced').click()
     await page
       .getByTestId('collaboration-project-description-input')
       .fill('Web and Wework share this collaboration core.')
@@ -161,6 +165,7 @@ test.describe('Collaboration module', () => {
     expect(projectId).not.toBe('')
     await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
+    await initializeProjectExecutionEnvironment(page)
     await page.getByTestId('collaboration-issue-create').click()
     await page.getByTestId('cloud-todo-title').fill(issueTitle)
     await page
@@ -176,6 +181,15 @@ test.describe('Collaboration module', () => {
       )
     )
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+    await expect(page.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-has-conversation',
+      'false'
+    )
+    await expect(page.locator('.issue-drawer-detail')).toHaveCSS('border-right-width', '1px')
+    await expect(page.getByTestId('cloud-todo-detail-scroll')).toHaveCSS('scrollbar-width', 'none')
+    await expect(page.getByTestId('collaboration-issue-comment-form')).toHaveClass(
+      'task-detail-new-comment'
+    )
     const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
@@ -185,9 +199,20 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('cloud-todo-save').click()
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
 
-    await page.getByTestId('collaboration-issue-comment').fill(comment)
+    await writeSharedComposer(page.getByTestId('collaboration-issue-comment'), comment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
+    await expect(page.getByTestId('collaboration-current-assignment')).toHaveCount(0)
+    const commentCard = page.locator('.task-detail-comment-card').filter({ hasText: comment })
+    await expect(commentCard).toHaveCSS('border-top-width', '1px')
+    await expect(commentCard.locator('.task-detail-comment-inline-composer')).toBeVisible()
+    const reply = `Thread reply ${Date.now()}`
+    await writeSharedComposer(
+      commentCard.locator('[data-testid^="collaboration-chat-reply-input-"]'),
+      reply
+    )
+    await commentCard.locator('.task-detail-comment-send').click()
+    await expect(commentCard.locator('.task-detail-comment-replies')).toContainText(reply)
 
     const authToken = (await page.context().cookies()).find(
       cookie => cookie.name === 'auth_token'
@@ -202,19 +227,14 @@ test.describe('Collaboration module', () => {
     const assignedMember = memberList.items[0]
     const assignedMemberName = assignedMember?.user_name
     if (!assignedMember || !assignedMemberName) throw new Error('Workspace owner member is missing')
-    await page.getByTestId('collaboration-issue-comment').click()
-    await page.getByTestId('collaboration-issue-mention-trigger').click()
+    await writeSharedComposer(page.getByTestId('collaboration-issue-comment'), '@')
     await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
     const assignmentComposer = page.getByTestId('collaboration-issue-comment')
-    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} `)
-    await expect(assignmentComposer).toBeFocused()
-    await expect
-      .poll(() =>
-        assignmentComposer.evaluate((element: HTMLTextAreaElement) => element.selectionStart)
-      )
-      .toBe(assignedMemberName.length + 2)
+    await expect(
+      assignmentComposer.locator('[data-composer-reference-kind="member"]')
+    ).toHaveAttribute('data-composer-skill-label', assignedMemberName)
     await assignmentComposer.pressSequentially(assignmentComment)
-    await expect(assignmentComposer).toHaveValue(`@${assignedMemberName} ${assignmentComment}`)
+    await expect(assignmentComposer).toContainText(assignmentComment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)
@@ -248,6 +268,7 @@ test.describe('Collaboration module', () => {
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
+    await expect(page.getByTestId('collaboration-comments')).toContainText(reply)
     await capture(page, testInfo, '03-persisted-issue')
   })
 })

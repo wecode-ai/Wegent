@@ -38,6 +38,7 @@ interface KNavigationProps {
 
 const mockPush = jest.fn()
 const mockToastSuccess = jest.mocked(toast.success)
+const mockToastWarning = jest.mocked(toast.warning)
 
 const mockRouter: KNavigationProps = { push: mockPush }
 
@@ -54,7 +55,7 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('sonner', () => ({
-  toast: { success: jest.fn() },
+  toast: { success: jest.fn(), warning: jest.fn() },
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -180,6 +181,15 @@ jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', 
               resolved_name: 'Wegent',
               resolved_description: 'Agent platform',
               execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+              scheduled_update: {
+                enabled: true,
+                cadence: 'daily',
+                interval_days: 1,
+                weekday: 0,
+                hour: 9,
+                minute: 0,
+                timezone: 'Asia/Shanghai',
+              },
             })
           }
         >
@@ -230,7 +240,7 @@ jest.mock('@/features/knowledge/document/components/EditKnowledgeBaseDialog', ()
 }))
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { create: jest.fn() },
+  codeWikiApi: { create: jest.fn(), configureScheduledUpdate: jest.fn() },
 }))
 
 import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
@@ -250,6 +260,7 @@ jest.mock('@/apis/knowledge', () => {
 const mockGetKnowledgeBase = jest.mocked(getKnowledgeBase)
 const mockCreateKnowledgeBase = jest.mocked(createKnowledgeBase)
 const mockCreateCodeWiki = jest.mocked(codeWikiApi.create)
+const mockConfigureScheduledUpdate = jest.mocked(codeWikiApi.configureScheduledUpdate)
 
 jest.mock('@/apis/user', () => ({
   userApis: {
@@ -318,12 +329,15 @@ function resetMockTree() {
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
   })
+  mockConfigureScheduledUpdate.mockReset()
+  mockConfigureScheduledUpdate.mockResolvedValue({} as never)
 }
 
 describe('KnowledgeDocumentPageMobile detail view switch', () => {
   beforeEach(() => {
     mockPush.mockReset()
     mockToastSuccess.mockReset()
+    mockToastWarning.mockReset()
     resetMockTree()
   })
 
@@ -444,6 +458,20 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     })
     expect(mockToastSuccess).toHaveBeenCalledWith('codeWiki.create.created')
     expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it('warns when mobile creation succeeds but its scheduled update does not', async () => {
+    mockConfigureScheduledUpdate.mockRejectedValue(new Error('schedule unavailable'))
+    render(<KnowledgeDocumentPageMobile />)
+
+    await userEvent.click(screen.getByTestId('create-code-wiki'))
+    await userEvent.click(screen.getByTestId('submit-code-wiki'))
+
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledWith('codeWiki.create.scheduleNotConfigured')
+    })
+    expect(mockToastSuccess).not.toHaveBeenCalledWith('codeWiki.create.created')
+    expect(mockTree.refreshPersonal).toHaveBeenCalledTimes(1)
   })
 
   it('8) code wiki owners can reach the existing KB configuration dialog', async () => {

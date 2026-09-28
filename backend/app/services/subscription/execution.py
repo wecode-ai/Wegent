@@ -897,16 +897,23 @@ class BackgroundExecutionManager:
         # Refresh the execution object after atomic update
         db.refresh(execution)
 
-        # Update subscription statistics (only for terminal states to avoid double counting)
-        # Note: COMPLETED_SILENT is intentionally excluded from stats updates because:
-        # - Silent executions are designed for routine monitoring tasks
-        # - They are hidden from the timeline by default
-        # - Including them would pollute subscription metrics with routine checks
+        # Update subscription statistics only for terminal states to avoid double
+        # counting. The projection decides whether a silent result is meaningful:
+        # ordinary subscriptions keep excluding it, while a Code Wiki schedule is
+        # itself a routine check and must expose that the check actually happened.
         if status in (
             BackgroundExecutionStatus.COMPLETED,
+            BackgroundExecutionStatus.COMPLETED_SILENT,
             BackgroundExecutionStatus.FAILED,
         ):
-            self._update_subscription_statistics(db, execution, status, now_utc)
+            self._update_subscription_statistics(
+                db,
+                execution,
+                status,
+                now_utc,
+                result_summary=result_summary,
+                error_message=error_message,
+            )
 
         db.commit()
 
@@ -1060,6 +1067,9 @@ class BackgroundExecutionManager:
         execution: BackgroundExecution,
         status: BackgroundExecutionStatus,
         now_utc: datetime,
+        *,
+        result_summary: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
         """
         Update subscription statistics after execution completion.
@@ -1080,6 +1090,14 @@ class BackgroundExecutionManager:
         )
         if not subscription:
             return
+
+        if status == BackgroundExecutionStatus.COMPLETED_SILENT:
+            from app.services.knowledge.code_wiki.scheduled_update import (
+                is_code_wiki_scheduled_update,
+            )
+
+            if not is_code_wiki_scheduled_update(subscription):
+                return
 
         # Preserve _internal field before updating
         internal = subscription.json.get("_internal", {})
@@ -1106,6 +1124,7 @@ class BackgroundExecutionManager:
         # Update _internal statistics as well
         internal["last_execution_time"] = now_utc.isoformat()
         internal["last_execution_status"] = status.value
+        internal["last_execution_message"] = result_summary or error_message or ""
         internal["execution_count"] = (internal.get("execution_count", 0) or 0) + 1
         if status == BackgroundExecutionStatus.COMPLETED:
             internal["success_count"] = (internal.get("success_count", 0) or 0) + 1

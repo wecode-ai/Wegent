@@ -1,3 +1,4 @@
+import type { RuntimeConversationClient } from "@wegent/chat-core";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -17,7 +18,10 @@ import type {
   CollaborationPlatformResources,
   CollaborationPriority,
   CollaborationProject,
+  CollaborationProjectVisibility,
   CollaborationRole,
+  CollaborationWorkspaceRole,
+  CollaborationWorkspaceMember,
   CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
@@ -34,8 +38,11 @@ export interface WorkspaceProjectCreateInput {
   name: string;
   description?: string;
   taskProvider?: "local" | "github" | "gitlab" | "dingtalk_aitable";
-  visibility?: "private" | "public";
+  visibility?: CollaborationProjectVisibility;
+  publicAccess?: { role: "Developer" | "Viewer" };
+  defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
+  includeDefaultAgent?: boolean;
 }
 
 export interface WorkspaceProjectUpdateInput {
@@ -43,7 +50,9 @@ export interface WorkspaceProjectUpdateInput {
   name?: string;
   description?: string;
   tags?: string[];
-  visibility?: "private" | "public";
+  visibility?: CollaborationProjectVisibility;
+  publicAccess?: { role: "Developer" | "Viewer" };
+  defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
   cardDisplay?: CollaborationProject["card_display"];
@@ -105,8 +114,11 @@ export interface WorkspaceTaskBinding {
   taskTitle: string | null;
   backendTaskId: number | null;
   modelSelection?: Record<string, unknown> | null;
-  workflowNodeId?: string | null;
   bindingType?: "system" | "user";
+  humanAssignmentId?: string | null;
+  dispatchId?: string | null;
+  dispatchRoundId?: string | null;
+  assignmentId?: string | null;
   linkedAt: string;
 }
 
@@ -124,31 +136,31 @@ export interface WorkspaceIssueCreateInput {
   tags?: string[];
   localProjectId?: number | null;
   localProjectName?: string | null;
-  workflow?: Record<string, unknown> | null;
-  executionConfig?: Record<string, unknown> | null;
-  automationRuleId?: string | null;
+  assigneeUserId?: number | null;
+  assigneeGroupId?: string | null;
+  assigneeAgentId?: string | null;
+  notifyAssignee?: boolean;
 }
 
 export interface WorkspaceIssueUpdateInput {
   version: number;
+  securityLevel?: "open" | "related";
   title?: string;
   description?: string;
   status?: string;
   priority?: CollaborationPriority;
   parentId?: string | null;
   assigneeUserId?: number | null;
+  assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
   dueAt?: string | null;
   tags?: string[];
-  workflow?: Record<string, unknown> | null;
-  executionConfig?: Record<string, unknown> | null;
-  automationRuleId?: string | null;
 }
 
 export interface WorkspaceIssueAssignmentInput {
   version: number;
-  assigneeType: "user" | "agent" | "team";
+  assigneeType: "user" | "agent" | "team" | "group";
   assigneeId: string;
   notifyAssignee?: boolean;
 }
@@ -156,7 +168,6 @@ export interface WorkspaceIssueAssignmentInput {
 export interface WorkspaceAssignmentCreateInput {
   targetType: "human" | "agent";
   targetId: string;
-  workflowStep?: string | null;
   commentBody?: string;
   notifyTarget?: boolean;
 }
@@ -188,11 +199,11 @@ export interface WorkspaceUpdateInput {
 
 export interface WorkspaceMemberCreateInput {
   userId: number;
-  role?: Exclude<CollaborationRole, "Owner">;
+  role?: Exclude<CollaborationWorkspaceRole, "Owner">;
 }
 
 export interface WorkspaceMemberUpdateInput {
-  role: Exclude<CollaborationRole, "Owner">;
+  role: Exclude<CollaborationWorkspaceRole, "Owner">;
 }
 
 export interface WorkspaceAgentCreateInput {
@@ -244,29 +255,6 @@ export interface WorkspaceIssueCollaborator {
   createdAt: string;
 }
 
-export type WorkspaceWorkflowPlanStatus =
-  | "idle"
-  | "planning"
-  | "awaiting_approval"
-  | "dispatching"
-  | "running"
-  | "awaiting_review"
-  | "paused"
-  | "completed"
-  | "failed";
-
-export interface WorkspaceWorkflowPlan {
-  runId: string;
-  issueId: string;
-  stageId: string;
-  planVersion: number;
-  approvalPolicy: "required" | "automatic";
-  status: WorkspaceWorkflowPlanStatus;
-  summary: string;
-  items: Array<Record<string, unknown>>;
-  managerRun?: Record<string, unknown> | null;
-}
-
 export interface WorkspaceDeliveryAsset {
   id: string;
   kind: string;
@@ -311,12 +299,37 @@ export interface WorkspaceAutomationRule {
   id: string;
   projectId: string;
   name: string;
+  prompt: string;
+  triggerType: "manual" | "schedule" | "event" | "workflow";
+  eventType: import("../automation/types").AutomationEventType | null;
+  eventConfig: Record<string, unknown>;
+  cronExpression: string | null;
+  timezone: string;
+  executionDeviceId: string | null;
+  targetKind: import("../automation/types").AutomationTargetKind;
+  targetId: string;
+  targetName: string;
   enabled: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: import("../automation/types").AutomationRunStatus | null;
   version: number;
-  targetKind?: "human" | "agent" | "collaboration_group" | null;
-  targetId?: string | null;
-  targetName?: string | null;
-  [key: string]: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceAutomationInput {
+  name: string;
+  prompt: string;
+  triggerType: "manual" | "schedule" | "event" | "workflow";
+  eventType: import("../automation/types").AutomationEventType | null;
+  eventConfig: Record<string, unknown>;
+  cronExpression: string | null;
+  timezone: string;
+  executionDeviceId: string | null;
+  targetKind: import("../automation/types").AutomationTargetKind;
+  targetId: string;
+  enabled: boolean;
 }
 
 export interface WorkspaceAutomationRun {
@@ -393,6 +406,7 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
+  systemPrompt?: string;
   [key: string]: unknown;
 }
 
@@ -489,7 +503,10 @@ export interface SharedWorkspaceIssuesApi {
     projectId: string,
     input: { parentId: string | null; status: string; issueIds: string[] },
   ): Promise<CollaborationIssue[]>;
-  markRead(issueId: string): Promise<CollaborationIssue>;
+  markRead(
+    issueId: string,
+    activitySequence?: number,
+  ): Promise<CollaborationIssue>;
 }
 
 export interface SharedWorkspaceCommentsApi {
@@ -521,16 +538,16 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceUpdateInput,
   ): Promise<CollaborationWorkspace>;
   archive(workspaceId: string, version: number): Promise<void>;
-  listMembers(workspaceId: string): Promise<CollaborationMember[]>;
+  listMembers(workspaceId: string): Promise<CollaborationWorkspaceMember[]>;
   addMember(
     workspaceId: string,
     input: WorkspaceMemberCreateInput,
-  ): Promise<CollaborationMember>;
+  ): Promise<CollaborationWorkspaceMember>;
   updateMember(
     workspaceId: string,
     userId: number,
     input: WorkspaceMemberUpdateInput,
-  ): Promise<CollaborationMember>;
+  ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
   listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
   addAgent(
@@ -570,6 +587,41 @@ export interface SharedCollaborationWorkspacesApi {
 
 export interface SharedCollaborationResourcesApi {
   list(): Promise<CollaborationPlatformResources>;
+  removeAgent?(agent: CollaborationOwnedAgent): Promise<void>;
+}
+
+/**
+ * One repository the signed-in user can clone, as returned by the connected
+ * Git providers. This is the same catalog the conversation repository selector
+ * uses, so both surfaces offer identical choices.
+ */
+export interface WorkspaceGitRepository {
+  id: number;
+  /** Short repository name, for example "wegent". */
+  name: string;
+  /** Provider path, for example "wecode-ai/Wegent". */
+  fullName: string;
+  cloneUrl: string;
+  gitDomain: string;
+  provider: string;
+}
+
+export interface WorkspaceGitBranch {
+  name: string;
+  default: boolean;
+}
+
+/** Identity a provider needs to resolve branches for one repository. */
+export type WorkspaceGitRepositoryRef = Pick<
+  WorkspaceGitRepository,
+  "fullName" | "gitDomain" | "provider"
+>;
+
+export interface SharedWorkspaceGitRepositoriesApi {
+  list(): Promise<WorkspaceGitRepository[]>;
+  listBranches(
+    repository: WorkspaceGitRepositoryRef,
+  ): Promise<WorkspaceGitBranch[]>;
 }
 
 export interface SharedWorkspaceAttachmentsApi {
@@ -596,25 +648,15 @@ export interface SharedWorkspaceCollaboratorsApi {
 
 export interface SharedWorkspaceTaskBindingsApi {
   list(issueId: string, projectId?: string): Promise<WorkspaceTaskBinding[]>;
-}
-
-export interface SharedWorkspaceWorkflowPlansApi {
-  get?(issueId: string): Promise<WorkspaceWorkflowPlan | null>;
-  approve?(issueId: string): Promise<WorkspaceWorkflowPlan>;
-  approveReview?(issueId: string): Promise<WorkspaceWorkflowPlan>;
-  pause?(issueId: string): Promise<WorkspaceWorkflowPlan>;
-  resume?(issueId: string): Promise<WorkspaceWorkflowPlan>;
-  replan?(issueId: string): Promise<WorkspaceWorkflowPlan>;
-  decideNode(
+  bindTask(
     issueId: string,
-    workflowNodeId: string,
-    action: "approve" | "reject" | "force_advance",
-    reason?: string,
-  ): Promise<CollaborationIssue>;
-  getStageContext(
+    task: import("@wegent/chat-core/runtime").RuntimeTaskAddress,
+    title?: string | null,
+  ): Promise<void>;
+  unbindTask(
     issueId: string,
-    workflowNodeId: string,
-  ): Promise<Record<string, unknown> & { compiledTaskInstruction: string }>;
+    task: import("@wegent/chat-core/runtime").RuntimeTaskAddress,
+  ): Promise<void>;
 }
 
 export interface SharedWorkspaceMembersApi {
@@ -699,16 +741,16 @@ export interface SharedWorkspaceAutomationsApi {
   list(projectId: string): Promise<WorkspaceAutomationRule[]>;
   create(
     projectId: string,
-    input: Record<string, unknown>,
+    input: WorkspaceAutomationInput,
   ): Promise<WorkspaceAutomationRule>;
   migrateWorkflow(
     projectId: string,
-    input: Record<string, unknown>,
+    input: Record<string, unknown> & { automation: WorkspaceAutomationInput },
   ): Promise<{ automation: WorkspaceAutomationRule; projectVersion: number }>;
   update(
     projectId: string,
     automationId: string,
-    input: Record<string, unknown> & { version: number },
+    input: Partial<WorkspaceAutomationInput> & { version: number },
   ): Promise<WorkspaceAutomationRule>;
   remove(
     projectId: string,
@@ -716,12 +758,6 @@ export interface SharedWorkspaceAutomationsApi {
   ): Promise<{ projectVersion: number; workflowAutomationId: string | null }>;
   runNow(
     projectId: string,
-    automationId: string,
-  ): Promise<WorkspaceAutomationRun>;
-  runWorkflowNode(
-    projectId: string,
-    issueId: string,
-    workflowNodeId: string,
     automationId: string,
   ): Promise<WorkspaceAutomationRun>;
   listRuns(
@@ -801,9 +837,54 @@ export interface SharedWorkspaceAgentsApi {
  * Transport envelopes and casing conversion belong in the host adapter.
  * Electron runtime orchestration does not belong here.
  */
+export type RuntimeDeviceAccess = "allowed" | "app-local-only" | "unavailable";
+
+export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
+  /** Absent for in-process hosts; remote hosts must supply their device policy. */
+  checkDeviceAccess?(
+    deviceIds: string[],
+  ): Promise<Record<string, RuntimeDeviceAccess>>;
+  quickPhrases?: ReturnType<
+    typeof import("@wegent/chat-core/composer-quick-phrases").createQuickPhrasePreferencesStore
+  >;
+  composer?: ReturnType<
+    typeof import("@wegent/chat-core/runtime-composer-api").createRuntimeComposerApi
+  >;
+  executeCommand: import("@wegent/chat-core/runtime-file-changes").RuntimeFileChangesPort["executeCommand"];
+  fileChangesFromError(cause: unknown): unknown;
+  listDevices(): Promise<
+    import("@wegent/chat-core/execution-project").DeviceInfo[]
+  >;
+  subscribeChatStream(
+    handlers: import("@wegent/chat-core/runtime-stream-types").ChatStreamHandlers,
+  ): Promise<() => void>;
+  work: ReturnType<
+    typeof import("@wegent/chat-core/runtime-conversation-api").createRuntimeConversationApi
+  >;
+  listModels(
+    deviceId: string,
+  ): Promise<import("@wegent/chat-core/models").UnifiedModel[]>;
+  uploadAttachment(
+    file: File,
+    onProgress?: (progress: number) => void,
+  ): Promise<import("@wegent/chat-core/runtime").Attachment>;
+  deleteAttachment(id: number): Promise<void>;
+  openModelSettings(): void;
+  readAttachment(id: number): Promise<Blob>;
+  readWorkspaceFile(
+    reference: import("@wegent/chat-core/runtime").RuntimeWorkspaceFileReference,
+    mimeType?: string,
+  ): Promise<Blob>;
+}
+
 export interface SharedWorkspaceApi {
+  /** Device-addressed execution transcripts and live runtime events. */
+  runtime?: SharedWorkspaceRuntimeApi;
+  /** Live project threads, when supported by the host. */
+  activity?: import("@wegent/chat-core").ProjectChatClient;
   workspaces?: SharedCollaborationWorkspacesApi;
   resources?: SharedCollaborationResourcesApi;
+  gitRepositories?: SharedWorkspaceGitRepositoriesApi;
   projects: SharedWorkspaceProjectsApi;
   myWork?: SharedWorkspaceMyWorkApi;
   issues: SharedWorkspaceIssuesApi;
@@ -812,7 +893,6 @@ export interface SharedWorkspaceApi {
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;
-  workflowPlans: SharedWorkspaceWorkflowPlansApi;
   members: SharedWorkspaceMembersApi;
   files: SharedWorkspaceFilesApi;
   deliveries: SharedWorkspaceDeliveriesApi;
@@ -839,13 +919,17 @@ export interface WeworkWorkspaceRuntimePort {
   findCloudContextForTask(task: WorkspaceRuntimeTaskAddress): Promise<{
     project: CollaborationProject;
     issueId: string | null;
-    workflowNodeId?: string | null;
   }>;
   bindTask(
     issueId: string,
     task: WorkspaceRuntimeTaskAddress,
     taskTitle?: string | null,
-    workflowNodeId?: string | null,
+    dispatch?: {
+      humanAssignmentId: string;
+      dispatchId: string;
+      dispatchRoundId: string;
+      assignmentId: string;
+    } | null,
   ): Promise<void>;
   unbindTask(issueId: string, task: WorkspaceRuntimeTaskAddress): Promise<void>;
   unbindCloudContext(task: WorkspaceRuntimeTaskAddress): Promise<void>;
@@ -855,24 +939,10 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskStatus(
-    task: WorkspaceRuntimeTaskAddress,
-    executionStatus:
-      | "queued"
-      | "running"
-      | "succeeded"
-      | "failed"
-      | "cancelled"
-      | "archived",
-  ): Promise<CollaborationIssue | null>;
   updateTrackedTaskTitle(
     task: WorkspaceRuntimeTaskAddress,
     title: string,
   ): Promise<CollaborationIssue | null>;
-  claimNextExecution(input: {
-    executionDeviceId: string;
-    leaseSeconds: number;
-  }): Promise<CollaborationExecution | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

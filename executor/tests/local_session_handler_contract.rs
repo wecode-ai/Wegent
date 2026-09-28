@@ -190,7 +190,6 @@ async fn running_session_gateway_proxies_http_and_websocket_to_code_server() {
     let _lock = env_lock();
     let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
-    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
     let _password = EnvGuard::set("CODE_SERVER_PASSWORD", "configured-secret");
     let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_addr = upstream_listener.local_addr().unwrap();
@@ -324,7 +323,6 @@ async fn running_session_gateway_supports_code_server_without_auth_cookie() {
     let _lock = env_lock();
     let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
-    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
     let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_addr = upstream_listener.local_addr().unwrap();
     let upstream = Router::new()
@@ -375,19 +373,15 @@ async fn running_session_gateway_supports_code_server_without_auth_cookie() {
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Serializes process-wide gateway environment overrides.
-async fn dynamic_session_gateway_preserves_explicit_public_base_url() {
+async fn session_gateway_reports_its_bound_port() {
     let _lock = env_lock();
     let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
-    let _public_base_url = EnvGuard::set(
-        "DEVICE_PUBLIC_BASE_URL",
-        "https://gateway.example.com/sessions",
-    );
     let handler = Arc::new(Mutex::new(LocalSessionHandler::new(
-        "https://gateway.example.com/sessions",
+        "http://localhost:17888",
         true,
         18080,
-        temp_root("gateway-explicit-public-url"),
+        temp_root("gateway-bound-port"),
         Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
             RecordingTerminal::default(),
         )))),
@@ -400,7 +394,7 @@ async fn dynamic_session_gateway_preserves_explicit_public_base_url() {
 
     assert_eq!(
         handler.lock().unwrap().public_base_url,
-        "https://gateway.example.com/sessions"
+        format!("http://localhost:{}", gateway.local_addr.port())
     );
     drop(gateway);
 }

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.execution.dispatcher import ExecutionDispatcher
+from app.services.execution.emitters import status_updating
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import EventType, ExecutionRequest
 
@@ -206,6 +207,76 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
     emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
     assert [event.type for event in emitted_events] == [EventType.CANCELLED.value]
     session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opening", [True, False])
+@pytest.mark.parametrize("delivery_fails", [True, False])
+async def test_cancelled_sse_owner_persists_terminal_state(
+    monkeypatch, opening, delivery_fails
+) -> None:
+    """Lease loss must close the stream and finish the persisted running turn."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(task_id=101, subtask_id=60, message_id=201)
+    emitter = AsyncMock()
+    if delivery_fails:
+        emitter.emit_cancelled.side_effect = RuntimeError("card unavailable")
+    stream = _BlockingStream()
+    create_blocker = _BlockingCreate() if opening else None
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+    persisted = AsyncMock()
+    monkeypatch.setattr(
+        status_updating, "collect_completed_result", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(status_updating, "persist_completed_result", persisted)
+    monkeypatch.setattr(
+        status_updating.StatusUpdatingEmitter,
+        "_publish_task_completed_event",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(dispatcher, "_recover_executor_if_needed", AsyncMock())
+    monkeypatch.setattr(dispatcher, "_update_subtask_to_running", AsyncMock())
+    monkeypatch.setattr(
+        dispatcher.router, "route", MagicMock(return_value=_sse_target())
+    )
+    with (
+        patch.dict(
+            "sys.modules",
+            {"openai": _build_fake_openai_module(stream, create_blocker)},
+        ),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={"model": "test-model", "input": "hello", "metadata": {}},
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        dispatch_task = asyncio.create_task(
+            dispatcher.dispatch(request, emitter=emitter)
+        )
+        started = create_blocker.started if opening else stream.iteration_started
+        await asyncio.wait_for(started.wait(), timeout=1)
+        dispatch_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(dispatch_task, timeout=1)
+
+    if opening:
+        assert create_blocker.cancelled.is_set()
+    else:
+        assert stream.iteration_cancelled.is_set()
+        assert stream.closed.is_set()
+    session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+    persisted.assert_awaited_once_with(
+        subtask_id=request.subtask_id,
+        task_id=request.task_id,
+        status="CANCELLED",
+        result={},
+        executor_name=None,
+        executor_namespace=None,
+    )
+    emitter.emit_cancelled.assert_awaited_once_with(request.task_id, request.subtask_id)
+    emitter.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

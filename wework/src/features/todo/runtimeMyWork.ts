@@ -3,11 +3,7 @@ import {
   getRuntimeTaskLifecycleKey,
   type RuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import {
-  runtimeTaskBoardState,
-  runtimeTaskTrackingExecutionStatus,
-  type RuntimeTaskTrackingExecutionStatus,
-} from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeProjectSpaceRef,
@@ -33,8 +29,6 @@ export interface RuntimeIssueBinding {
   device_id: string
   task_id: string
 }
-
-type RuntimeBoundIssueStatus = 'pending' | 'in_progress' | 'in_review'
 
 function runtimeTaskKey(address: Pick<RuntimeTaskAddress, 'deviceId' | 'taskId'>): string {
   return `${address.deviceId}\0${address.taskId}`
@@ -104,50 +98,52 @@ function workspaceItems(
   target: RuntimeMyWorkProjectionTarget,
   lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
 ): RuntimeMyWorkItem[] {
-  return workspace.tasks.map(task => {
-    const runtimeAddress: RuntimeTaskAddress = {
-      deviceId: workspace.deviceId,
-      taskId: task.taskId,
-      runtime: task.runtime,
-      threadId: task.threadId,
-      workspacePath: task.workspacePath || workspace.workspacePath,
-      workspaceKind: task.workspaceKind ?? workspace.workspaceKind,
-      worktreeId: task.worktreeId ?? workspace.worktreeId,
-      runtimeHandle: task.runtimeHandle,
-    }
-    const lifecycle = taskBoardStatus(task, runtimeAddress, lifecycleSnapshot)
-    return {
-      id: `runtime:${encodeURIComponent(workspace.deviceId)}:${encodeURIComponent(task.taskId)}`,
-      cloud_project_id: target.projectId,
-      sequence_number: 0,
-      parent_id: null,
-      created_by_user_id: target.createdByUserId,
-      can_view_detail: true,
-      can_edit: false,
-      detail_loaded: true,
-      assignee_user_id: null,
-      assignee_agent_id: null,
-      execution_id: null,
-      execution_state: lifecycle.execution_state,
-      title: task.title,
-      description: '',
-      status: lifecycle.status,
-      priority: 'none',
-      due_at: null,
-      tags: [],
-      sort_order: 0,
-      current_delivery_id: null,
-      version: 0,
-      created_at: timestamp(task.createdAt),
-      updated_at: timestamp(task.updatedAt ?? task.createdAt),
-      completed_at: task.completedAt == null ? null : timestamp(task.completedAt),
-      local_project_id: localProject.id,
-      local_project_name: localProject.name,
-      project_store: target.projectStore,
-      runtime_address: runtimeAddress,
-      cloud_issue_id: runtimeIssueId(task),
-    }
-  })
+  return workspace.tasks
+    .filter(task => task.status?.toLowerCase() !== 'archived')
+    .map(task => {
+      const runtimeAddress: RuntimeTaskAddress = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        runtime: task.runtime,
+        threadId: task.threadId,
+        workspacePath: task.workspacePath || workspace.workspacePath,
+        workspaceKind: task.workspaceKind ?? workspace.workspaceKind,
+        worktreeId: task.worktreeId ?? workspace.worktreeId,
+        runtimeHandle: task.runtimeHandle,
+      }
+      const lifecycle = taskBoardStatus(task, runtimeAddress, lifecycleSnapshot)
+      return {
+        id: `runtime:${encodeURIComponent(workspace.deviceId)}:${encodeURIComponent(task.taskId)}`,
+        cloud_project_id: target.projectId,
+        sequence_number: 0,
+        parent_id: null,
+        created_by_user_id: target.createdByUserId,
+        can_view_detail: true,
+        can_edit: false,
+        detail_loaded: true,
+        assignee_user_id: null,
+        assignee_agent_id: null,
+        execution_id: null,
+        execution_state: lifecycle.execution_state,
+        title: task.title,
+        description: '',
+        status: lifecycle.status,
+        priority: 'none',
+        due_at: null,
+        tags: [],
+        sort_order: 0,
+        current_delivery_id: null,
+        version: 0,
+        created_at: timestamp(task.createdAt),
+        updated_at: timestamp(task.updatedAt ?? task.createdAt),
+        completed_at: task.completedAt == null ? null : timestamp(task.completedAt),
+        local_project_id: localProject.id,
+        local_project_name: localProject.name,
+        project_store: target.projectStore,
+        runtime_address: runtimeAddress,
+        cloud_issue_id: runtimeIssueId(task),
+      }
+    })
 }
 
 export function runtimeMyWorkItems(
@@ -217,49 +213,6 @@ export function mergeRuntimeMyWorkItems<T extends CloudLoopItem>(
       return !boundIssueId || !issueIds.has(boundIssueId)
     }),
   ]
-}
-
-function boundIssueStatus(
-  statuses: RuntimeTaskTrackingExecutionStatus[]
-): RuntimeBoundIssueStatus | null {
-  if (statuses.includes('running')) return 'in_progress'
-  if (statuses.includes('queued')) return 'pending'
-  if (
-    statuses.some(status => status === 'succeeded' || status === 'failed' || status === 'cancelled')
-  ) {
-    return 'in_review'
-  }
-  return null
-}
-
-export function projectBoundRuntimeTaskStatuses<T extends CloudLoopItem>(
-  items: T[],
-  bindings: RuntimeIssueBinding[],
-  lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
-): T[] {
-  if (!lifecycleSnapshot) return items
-  const statusesByIssue = new Map<string, RuntimeTaskTrackingExecutionStatus[]>()
-  for (const binding of bindings) {
-    if (!binding.loop_item_id) continue
-    const lifecycle = lifecycleSnapshot.tasks.get(
-      getRuntimeTaskLifecycleKey({
-        deviceId: binding.device_id,
-        taskId: binding.task_id,
-      })
-    )
-    if (!lifecycle) continue
-    const status = runtimeTaskTrackingExecutionStatus(lifecycle)
-    if (!status) continue
-    statusesByIssue.set(binding.loop_item_id, [
-      ...(statusesByIssue.get(binding.loop_item_id) ?? []),
-      status,
-    ])
-  }
-  if (statusesByIssue.size === 0) return items
-  return items.map(item => {
-    const status = boundIssueStatus(statusesByIssue.get(item.id) ?? [])
-    return status && item.status !== status ? { ...item, status } : item
-  })
 }
 
 export function isRuntimeMyWorkItem(item: CloudLoopItem): item is RuntimeMyWorkItem {

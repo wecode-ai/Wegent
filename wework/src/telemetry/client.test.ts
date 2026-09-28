@@ -79,6 +79,27 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('prompt')
   })
 
+  test('isolates a synchronous PostHog failure and continues the capture batch', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+    posthogMocks.capture.mockImplementationOnce(() => {
+      throw new Error('PostHog unavailable')
+    })
+
+    expect(() => {
+      track('app_started', { surface: 'main' })
+      track('task_started', { execution_target: 'local' })
+    }).not.toThrow()
+
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture).toHaveBeenCalledTimes(2)
+    expect(posthogMocks.capture).toHaveBeenLastCalledWith(
+      'task_started',
+      expect.objectContaining({ execution_target: 'local' })
+    )
+  })
+
   test('drops invalid enum values from event properties', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
@@ -238,8 +259,10 @@ describe('telemetry client', () => {
     const { installTelemetry } = await import('./client')
     await installTelemetry(true)
 
+    expect(posthogMocks.optIn).toHaveBeenCalledTimes(1)
     expect(posthogMocks.init.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
+        advanced_disable_flags: true,
         opt_out_persistence_by_default: true,
         person_profiles: 'never',
         request_batching: true,
@@ -603,15 +626,23 @@ describe('telemetry client', () => {
     )
   })
 
-  test('drops plugin and board identifiers from feature events', async () => {
+  test('keeps stable plugin identity and drops raw plugin details', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
 
     track('plugin_installed', {
       source: 'local',
+      plugin_distribution: 'personal',
+      plugin_id: 'personal/private-plugin',
       plugin_name: 'private-plugin',
       marketplace_id: 'private-marketplace',
-    } as { source: 'local'; plugin_name: string; marketplace_id: string })
+    } as {
+      source: 'local'
+      plugin_distribution: 'personal'
+      plugin_id: string
+      plugin_name: string
+      marketplace_id: string
+    })
     track('board_item_created', {
       has_parent: true,
       source: 'cloud',
@@ -622,7 +653,36 @@ describe('telemetry client', () => {
 
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('plugin_name')
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('marketplace_id')
+    expect(posthogMocks.capture.mock.calls[0]?.[1]).toHaveProperty(
+      'plugin_id',
+      'personal/private-plugin'
+    )
     expect(posthogMocks.capture.mock.calls[1]?.[1]).not.toHaveProperty('item_id')
+  })
+
+  test('keeps a safe catalog plugin id and drops invalid values', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('plugin_invocation_succeeded', {
+      capability_type: 'skill',
+      execution_surface: 'task',
+      executor_location: 'local',
+      plugin_distribution: 'enterprise',
+      plugin_id: 'wegent/sina-email',
+    })
+    track('plugin_invocation_succeeded', {
+      capability_type: 'skill',
+      execution_surface: 'task',
+      executor_location: 'local',
+      plugin_distribution: 'personal',
+      plugin_id: 'private plugin name',
+    })
+
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture.mock.calls[0]?.[1]).toHaveProperty('plugin_id', 'wegent/sina-email')
+    expect(posthogMocks.capture.mock.calls[1]?.[1]).not.toHaveProperty('plugin_id')
   })
 
   test('drops resource details from generic feature action events', async () => {

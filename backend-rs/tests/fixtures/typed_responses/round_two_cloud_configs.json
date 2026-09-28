@@ -1,0 +1,2789 @@
+[
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": false,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": false,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": false,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": false
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 0
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 0,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "x",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "x",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "x",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "x",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": false,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": 0,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": 1.0,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": "",
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": "x",
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": [],
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": {},
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": [
+        null,
+        {
+          "id": 1
+        }
+      ],
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": false,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": 0,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": 1.0,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": "",
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": "x",
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": [],
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": {},
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": [
+        null,
+        {
+          "id": 1
+        }
+      ],
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": []
+    }
+  ],
+  [
+    {
+      "show_assignee": true,
+      "show_priority": true,
+      "show_tags": true,
+      "show_date": true
+    },
+    {
+      "auto_retry_on_failure": false,
+      "max_retry_count": 1
+    },
+    {
+      "version": 1,
+      "stage_mode": "none",
+      "advancement_policy": "manual",
+      "coordinator_prompt": "",
+      "approval_policy": "required",
+      "ai_automation_rule_id": null,
+      "execution_config": null,
+      "nodes": [
+        null,
+        {
+          "id": 1
+        }
+      ]
+    }
+  ]
+]

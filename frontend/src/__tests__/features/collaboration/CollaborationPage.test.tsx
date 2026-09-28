@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
@@ -52,6 +52,15 @@ jest.mock(
 
 jest.mock('@/features/layout/components/UserFloatingMenu', () => ({
   UserFloatingMenu: () => <div data-testid="user-floating-menu" />,
+}))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: {
+      id: 7,
+      user_name: 'current-user',
+    },
+  }),
 }))
 
 jest.mock('@/apis/groups', () => ({
@@ -113,6 +122,10 @@ describe('CollaborationPage platform routing', () => {
       workspaceLocations: ['cloud'],
       sidebarPresentation: 'context',
     })
+    expect(capturedHost?.currentUser).toEqual({
+      id: 7,
+      name: 'current-user',
+    })
     expect(capturedHost?.projectAgentConfiguration).toEqual(
       expect.objectContaining({
         renderDialog: expect.any(Function),
@@ -122,10 +135,9 @@ describe('CollaborationPage platform routing', () => {
       })
     )
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
-    expect(screen.getByTestId('collaboration-page-main').parentElement?.parentElement).toHaveClass(
-      '[--collaboration-primary-background:rgb(var(--color-primary))]',
-      '[--collaboration-primary-foreground:rgb(var(--color-primary-contrast))]'
-    )
+    const theme = screen.getByTestId('collaboration-page-main').closest('.collaboration-theme')
+    expect(theme).toHaveAttribute('data-theme', 'light')
+    expect(theme).toHaveStyle({ display: 'contents', '--font-size-ui': '14px' })
     expect(screen.getByTestId('collaboration-context-sidebar')).toBeInTheDocument()
     expect(screen.queryByTestId('task-sidebar-system-navigation')).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-context-sidebar')).toContainElement(
@@ -139,6 +151,18 @@ describe('CollaborationPage platform routing', () => {
     capturedHost?.manageResource?.('environments', 'device/21')
 
     expect(mockPush).toHaveBeenCalledWith('/devices?deviceId=device%2F21')
+  })
+
+  it.each([
+    ['agents', '/collaboration/agents'],
+    ['teams', '/collaboration/teams'],
+    ['devices', '/collaboration/devices'],
+  ])('opens the cloud %s resource center from the Web collaboration sidebar', (kind, path) => {
+    render(<CollaborationPage />)
+
+    fireEvent.click(screen.getByTestId(`collaboration-nav-${kind}`))
+
+    expect(mockPush).toHaveBeenCalledWith(path)
   })
 
   it('opens device registration from execution environment management', () => {
@@ -324,6 +348,22 @@ describe('CollaborationPage platform routing', () => {
       '/collaboration/runs'
     )
   })
+
+  it.each(['agents', 'teams', 'devices'] as const)(
+    'round-trips the %s resource root without treating it as a legacy project',
+    rootView => {
+      mockPathname = `/collaboration/${rootView}`
+
+      render(<CollaborationPage />)
+
+      expect(mockReplace).not.toHaveBeenCalled()
+      expect(mockGetProject).not.toHaveBeenCalled()
+      expect(capturedHost?.location).toEqual(
+        expect.objectContaining({ rootView, workspaceId: null, projectId: null })
+      )
+      expect(collaborationLocationPath(capturedHost!.location)).toBe(mockPathname)
+    }
+  )
 
   it('opens My Work as a first-class collaboration root view', () => {
     mockPathname = '/collaboration/my-work'

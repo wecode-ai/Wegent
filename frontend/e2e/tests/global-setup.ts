@@ -155,6 +155,19 @@ async function markAdminSetupComplete(request: APIRequestContext, token: string)
   console.log(`Admin setup API returned ${response.status()} - may already be complete`)
 }
 
+async function configurePetVisibility(request: APIRequestContext, token: string): Promise<void> {
+  const url = `${apiBaseUrl}/api/users/me/pet`
+  const headers = { Authorization: `Bearer ${token}` }
+  // Provision the pet before updating its persisted visibility preference.
+  const petResponse = await request.get(url, { headers })
+  expect(petResponse.ok(), 'Failed to provision the E2E account pet').toBe(true)
+
+  // Keep the optional draggable widget from covering controls in unrelated flows.
+  const updateResponse = await request.put(url, { headers, data: { is_visible: false } })
+  expect(updateResponse.ok(), 'Failed to configure E2E pet visibility').toBe(true)
+  expect(await updateResponse.json()).toMatchObject({ is_visible: false })
+}
+
 /**
  * Global setup - run once before all tests
  * Authenticates and saves storage state for reuse
@@ -181,6 +194,7 @@ setup('authenticate', async ({ request }) => {
   )
 
   await markAdminSetupComplete(request, authToken)
+  await configurePetVisibility(request, authToken)
 
   const storageState = buildStorageState(appBaseUrl, authToken, tokenExpiryMs)
   await fsPromises.writeFile(authFile, JSON.stringify(storageState, null, 2))

@@ -29,6 +29,7 @@ class LoopItemCreate(BaseModel):
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
@@ -47,6 +48,7 @@ class LoopItemCreate(BaseModel):
             value is not None
             for value in (
                 self.assignee_user_id,
+                self.assignee_group_id,
                 self.assignee_agent_id,
                 self.assignee_team_id,
             )
@@ -59,10 +61,12 @@ class LoopItemCreate(BaseModel):
 class LoopItemUpdate(BaseModel):
     notify_assignee: bool = True
     version: int = Field(ge=1)
+    security_level: Literal["open", "related"] | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_group_id: str | None = Field(default=None, max_length=64)
     assignee_agent_id: str | None = Field(default=None, max_length=64)
     assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
@@ -79,10 +83,13 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if "security_level" in self.model_fields_set and self.security_level is None:
+            raise ValueError("security_level cannot be null")
         values = [
             value
             for field, value in (
                 ("assignee_user_id", self.assignee_user_id),
+                ("assignee_group_id", self.assignee_group_id),
                 ("assignee_agent_id", self.assignee_agent_id),
                 ("assignee_team_id", self.assignee_team_id),
             )
@@ -108,6 +115,10 @@ class LoopItemPermissions(BaseModel):
     execute: bool = False
 
 
+class LoopItemRead(BaseModel):
+    activity_sequence: int | None = Field(default=None, ge=0)
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -119,6 +130,8 @@ class LoopItemResponse(BaseModel):
     description: str
     status: str
     assignee_user_id: int | None
+    assignee_group_id: str | None = None
+    assignee_group_name: str | None = None
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
     assignee_agent_name: str | None = None
@@ -149,10 +162,12 @@ class LoopItemResponse(BaseModel):
     created_by_user_id: int
     created_by_user_name: str | None = None
     can_view_detail: bool = True
+    security_level: Literal["open", "related"] = "open"
     can_edit: bool = True
     permissions: LoopItemPermissions = Field(default_factory=LoopItemPermissions)
     detail_loaded: bool = True
     content_revision: int = 1
+    activity_read_sequence: int = 0
     is_unread: bool = False
     current_delivery_id: str | None
     version: int
@@ -398,6 +413,30 @@ class LoopItemTaskBind(BaseModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    human_assignment_id: str | None = Field(
+        default=None,
+        alias="humanAssignmentId",
+        min_length=1,
+        max_length=64,
+    )
+    dispatch_id: str | None = Field(
+        default=None,
+        alias="dispatchId",
+        min_length=1,
+        max_length=255,
+    )
+    dispatch_round_id: str | None = Field(
+        default=None,
+        alias="dispatchRoundId",
+        min_length=1,
+        max_length=128,
+    )
+    assignment_id: str | None = Field(
+        default=None,
+        alias="assignmentId",
+        min_length=1,
+        max_length=128,
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -416,6 +455,10 @@ class LoopItemTaskBindingResponse(BaseModel):
         alias="modelSelection",
     )
     workflow_node_id: str | None = None
+    human_assignment_id: str | None = None
+    dispatch_id: str | None = None
+    dispatch_round_id: str | None = None
+    assignment_id: str | None = None
     change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime

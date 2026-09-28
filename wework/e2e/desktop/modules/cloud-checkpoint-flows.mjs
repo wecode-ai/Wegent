@@ -40,6 +40,7 @@ import {
 import {
   verifyAnthropicEmptyResponseRecovery,
   verifyFollowUpSendRejectionNotice,
+  verifyModelServiceConnectionError,
   verifyRateLimitRecovery,
   verifyReconnectRecovery,
 } from './resilience-flows.mjs'
@@ -127,7 +128,9 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
-  await control.command('click', '[data-testid="remote-project-source-existing"]')
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -673,7 +676,6 @@ async function verifyCloudCheckpoint({
     case 'cloud-worktree-queued-cancel':
     case 'cloud-worktree-tools':
     case 'cloud-worktree-archive-restore':
-    case 'cloud-worktree-device-restart':
       await verifyCloudWorktreeCheckpoint({
         checkpoint,
         cloudEnvironment,
@@ -758,6 +760,8 @@ async function verifyCloudCheckpoint({
       await verifyRetryFailureRestoration(control, composerSelector)
       setPhase('cloud-rate-limit')
       await verifyRateLimitRecovery({ composerSelector, control })
+      setPhase('cloud-model-service-connection-error')
+      await verifyModelServiceConnectionError({ composerSelector, control })
       setPhase('cloud-reconnect')
       await verifyReconnectRecovery({ composerSelector, control })
       setPhase('cloud-anthropic-empty')
@@ -787,6 +791,14 @@ async function verifyCloudCheckpoint({
         appIdentifier,
         composerSelector,
         control,
+        runtimeAttachmentRoot: join(
+          resultDir,
+          'cloud-executor-home',
+          'workspace',
+          'attachments',
+          'runtime'
+        ),
+        workspacePath,
       })
       setPhase('cloud-pasted-zip')
       await verifyPastedZipAttachment({ composerSelector, control })

@@ -459,12 +459,14 @@ export function KnowledgeBaseForm({
               label={t('knowledge:document.knowledgeBase.allowDocumentDownload')}
               description={t('knowledge:document.knowledgeBase.allowDocumentDownloadDescription')}
             >
-              <Switch
-                id="knowledge-base-allow-document-download"
-                checked={allowDocumentDownload ?? true}
-                onCheckedChange={onAllowDocumentDownloadChange}
-                data-testid="knowledge-base-allow-document-download"
-              />
+              <div className="flex justify-end">
+                <Switch
+                  id="knowledge-base-allow-document-download"
+                  checked={allowDocumentDownload ?? true}
+                  onCheckedChange={onAllowDocumentDownloadChange}
+                  data-testid="knowledge-base-allow-document-download"
+                />
+              </div>
             </SimpleConfigRow>
             <SimpleConfigRow
               label={t('knowledge:document.knowledgeBase.directAccessRange')}

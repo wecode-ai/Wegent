@@ -228,7 +228,7 @@ export function StandaloneBlankProjectDialog({
     [devices, preferredDeviceId]
   )
 
-  useEscapeKey(onClose, !submitting)
+  useEscapeKey(onClose, open && !submitting)
 
   if (!open) return null
 

@@ -6,6 +6,7 @@
 
 from datetime import datetime
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -90,47 +91,69 @@ def list_referenced_capabilities(
     namespace: str,
 ) -> list[Kind]:
     """Return source Kinds referenced into the requested visible namespace."""
-    if kind not in REFERENCE_KINDS:
-        return []
-    entity_type = "user"
-    entity_id = str(user_id)
-    if namespace != "default":
-        target = (
-            db.query(Namespace)
-            .filter(
-                Namespace.name == namespace,
-                Namespace.is_active.is_(True),
-            )
-            .first()
-        )
-        if target is None:
-            return []
-        entity_type = "namespace"
-        entity_id = str(target.id)
+    return list_referenced_capabilities_by_namespace(
+        db, kind=kind, user_id=user_id, namespaces=[namespace]
+    )[namespace]
 
-    source_ids = [
-        row.resource_id
-        for row in db.query(ResourceMember)
+
+def list_referenced_capabilities_by_namespace(
+    db: Session,
+    *,
+    kind: str,
+    user_id: int,
+    namespaces: list[str],
+) -> dict[str, list[Kind]]:
+    """Batch references for caller-selected namespaces, preserving target scope."""
+    result: dict[str, list[Kind]] = {name: [] for name in namespaces}
+    if kind not in REFERENCE_KINDS or not result:
+        return result
+    targets: dict[tuple[str, str], str] = {}
+    if "default" in result:
+        targets[("user", str(user_id))] = "default"
+    group_names = [name for name in result if name != "default"]
+    if group_names:
+        for target in (
+            db.query(Namespace.id, Namespace.name)
+            .filter(Namespace.name.in_(group_names), Namespace.is_active.is_(True))
+            .all()
+        ):
+            targets[("namespace", str(target.id))] = target.name
+    if not targets:
+        return result
+    target_filters = [
+        and_(
+            ResourceMember.entity_type == entity_type,
+            ResourceMember.entity_id.in_(
+                [
+                    entity_id
+                    for target_type, entity_id in targets
+                    if target_type == entity_type
+                ]
+            ),
+        )
+        for entity_type in {target_type for target_type, _ in targets}
+    ]
+    rows = (
+        db.query(ResourceMember.entity_type, ResourceMember.entity_id, Kind)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
         .filter(
             ResourceMember.resource_type == kind,
-            ResourceMember.entity_type == entity_type,
-            ResourceMember.entity_id == entity_id,
             ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        .all()
-    ]
-    if not source_ids:
-        return []
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.id.in_(source_ids),
+            or_(*target_filters),
             Kind.kind == kind,
             Kind.user_id != 0,
             Kind.is_active.is_(True),
         )
+        .order_by(Kind.id)
         .all()
     )
+    seen: set[tuple[str, int]] = set()
+    for entity_type, entity_id, source in rows:
+        namespace = targets[(entity_type, entity_id)]
+        if (namespace, source.id) not in seen:
+            result[namespace].append(source)
+            seen.add((namespace, source.id))
+    return result
 
 
 def get_referenced_capability(

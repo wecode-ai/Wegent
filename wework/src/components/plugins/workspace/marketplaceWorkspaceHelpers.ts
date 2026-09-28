@@ -22,6 +22,7 @@ import { resolvePluginLogo } from '../plugin-assets'
 import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
+  linkedCloudPluginId,
   mergeInstalledPlugins,
   storeDirMatchesPluginKey,
 } from '../installedPluginMerge'
@@ -57,7 +58,18 @@ export interface PluginShareState {
   access: PluginAccessResponse
 }
 
-export const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const DEFAULT_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const E2E_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 5_000
+
+export function resolveCloudMarketplaceRevalidateIntervalMs(isE2E: boolean): number {
+  return isE2E
+    ? E2E_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS
+    : DEFAULT_CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS
+}
+
+export const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = resolveCloudMarketplaceRevalidateIntervalMs(
+  import.meta.env.VITE_WEWORK_E2E === 'true'
+)
 export const INSTALLED_STRIP_VISIBLE_COUNT = 12
 export const INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT = 4
 export const MARKETPLACE_SEARCH_RESULT_BATCH_SIZE = 40
@@ -419,6 +431,28 @@ export function findInstalledPluginForMarketplaceItem(
         storeDirMatchesPluginKey(String(plugin.raw.spec.source.pluginKey || ''), item.name)
     ) ?? null
   )
+}
+
+export function resolveMarketplaceUninstallId(
+  item: PluginMarketplaceItem,
+  plugins: InstalledPluginItem[]
+): string | number {
+  const installed = findInstalledPluginForMarketplaceItem(item, plugins)
+  if (installed) return installed.id
+
+  const linkedLocal = plugins.find(plugin => {
+    if (isCloudManagedInstalledPlugin(plugin.raw)) return false
+    const cloudPluginId = linkedCloudPluginId(plugin.raw)
+    return cloudPluginId !== null && String(cloudPluginId) === String(item.id)
+  })
+  if (linkedLocal) return linkedLocal.id
+  if (item.installedPluginId !== null && item.installedPluginId !== undefined) {
+    return item.installedPluginId
+  }
+  if (typeof item.manifest?.marketplaceId === 'string' && item.manifest.marketplaceId) {
+    return `${item.name}@${item.manifest.marketplaceId}`
+  }
+  return item.id
 }
 
 export function localMarketplaceKey(id: string): string {

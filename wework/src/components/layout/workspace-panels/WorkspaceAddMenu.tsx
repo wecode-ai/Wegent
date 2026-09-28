@@ -10,23 +10,17 @@ import {
 } from 'react'
 import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 import { track } from '@/telemetry/client'
+import type { AnalyticsEventMap } from '@/telemetry/events'
 
 const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MENU_WIDTH = 240
 const EMBEDDED_BROWSER_OCCLUSION_ID = 'workspace-add-menu'
-const WORKSPACE_PANEL_TYPES = new Set([
-  'review',
-  'terminal',
-  'browser',
-  'chat',
-  'files',
-  'desktop',
-] as const)
+const WORKSPACE_PANEL_TYPES = new Set(['review', 'terminal', 'browser', 'chat', 'files'] as const)
 
 function workspacePanelType(id: string) {
   return WORKSPACE_PANEL_TYPES.has(id as never)
-    ? (id as 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop')
+    ? (id as 'review' | 'terminal' | 'browser' | 'chat' | 'files')
     : 'other'
 }
 
@@ -39,6 +33,7 @@ export interface WorkspaceAddMenuItem {
   disabled?: boolean
   shortcut?: string
   title?: string
+  telemetryPanel?: AnalyticsEventMap['workspace_panel_added']['panel']
 }
 
 interface WorkspaceAddMenuProps {
@@ -154,7 +149,7 @@ export function WorkspaceAddMenu({
     setOpen(false)
     setPosition(null)
     await item.onSelect()
-    track('workspace_panel_added', { panel: workspacePanelType(item.id) })
+    track('workspace_panel_added', { panel: item.telemetryPanel ?? workspacePanelType(item.id) })
   }
 
   return (

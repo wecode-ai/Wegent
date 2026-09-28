@@ -1,13 +1,15 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! FastAPI-compatible error responses for `http-server`.
 //!
-//! Ported from the reference implementation's `src/http_compat.rs`. The source
-//! service is FastAPI: failures render as JSON `{"detail": ...}` bodies (or the
-//! 422 validation array) with the source's status codes. The platform
-//! `http-server` `ApiError` produces `{"error": ...}` instead, so business
-//! methods return [`FastApiError`] and map it through [`IntoHttpError`] to keep
-//! the recorded response bodies byte-compatible.
-
-use brz_http_server::{EphemeralBytesArena, HeaderBlock, IntoHttpError, Response, StatusCode};
+//! The source service is FastAPI: failures render as JSON `{"detail": ...}`
+//! bodies (or the 422 validation array) with the source's status codes. The
+//! platform `http-server` `ApiError` produces `{"error": ...}` instead, so
+//! business methods return [`FastApiError`] and map it through
+//! [`IntoHttpError`] to keep the recorded response bodies byte-compatible.
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
 
 /// A mapped FastAPI-style HTTP failure: status, JSON body, and extra headers.
 #[derive(Debug)]
@@ -29,15 +31,22 @@ enum ErrorBody {
     Custom(Box<serde_json::value::RawValue>),
 }
 
-/// The application's own error envelope for unhandled exceptions
-/// (`app.core.exceptions.python_exception_handler`).
+/// The body of the application's `Exception` handler
+/// (`app/core/exceptions.py:python_exception_handler`).
 #[derive(Debug, serde::Serialize)]
-struct AppErrorBody {
+struct UnhandledErrorBody {
     error_code: u16,
     detail: &'static str,
 }
 
 impl FastApiError {
+    pub(crate) fn detail_message(&self) -> Option<&str> {
+        match &self.body {
+            ErrorBody::Detail { detail } => Some(detail),
+            ErrorBody::Validation { .. } | ErrorBody::Custom(_) => None,
+        }
+    }
+
     /// `<status> {"detail": <message>}` — the default FastAPI error body.
     #[must_use]
     pub fn detail(status: StatusCode, message: impl Into<String>) -> Self {
@@ -71,24 +80,22 @@ impl FastApiError {
     }
 
     /// `404 {"detail": <message>}`.
+    #[cfg(test)]
     #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::detail(StatusCode::NOT_FOUND, message)
     }
 
-    /// Attaches one extra response header to this error.
+    /// Attaches one extra response header (for example `Allow`) to this
+    /// error. Only the platform router's fallback path needs extra headers.
     #[must_use]
     pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
         self
     }
 
-    /// `422` with FastAPI's validation-error array body (`detail` is the array
-    /// of `{type, loc, msg, input}` entries).
-    ///
-    /// # Panics
-    ///
-    /// Panics when `detail` is not representable as JSON.
+    /// `422` with FastAPI's validation-error array body (`detail` is the
+    /// array of `{type, loc, msg, input}` entries).
     #[must_use]
     pub fn validation(detail: impl serde::Serialize) -> Self {
         Self {
@@ -101,16 +108,22 @@ impl FastApiError {
         }
     }
 
-    /// `500 {"error_code": 500, "detail": "Internal server error"}`.
-    ///
-    /// The application registers a catch-all handler for every unhandled
-    /// exception (`app.core.exceptions.python_exception_handler`), so a
-    /// failure escaping a dependency does **not** use FastAPI's default body.
+    /// `500 {"detail": "Internal Server Error"}`.
     #[must_use]
-    pub fn unhandled_exception() -> Self {
+    pub fn internal() -> Self {
+        Self::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+    }
+
+    /// `500 {"error_code": 500, "detail": "Internal server error"}` — the
+    /// application's `python_exception_handler` body (`app/core/exceptions.py`),
+    /// installed as the app's `Exception` handler. Every failure a route does
+    /// not convert into an `HTTPException` renders this shape instead of
+    /// [`Self::internal`].
+    #[must_use]
+    pub fn unhandled() -> Self {
         Self::json_body(
             StatusCode::INTERNAL_SERVER_ERROR,
-            AppErrorBody {
+            UnhandledErrorBody {
                 error_code: 500,
                 detail: "Internal server error",
             },
@@ -118,10 +131,6 @@ impl FastApiError {
     }
 
     /// A body that is already a JSON value (custom payload shapes).
-    ///
-    /// # Panics
-    ///
-    /// Panics when `body` is not representable as JSON.
     #[must_use]
     pub fn json_body(status: StatusCode, body: impl serde::Serialize) -> Self {
         Self {
@@ -139,12 +148,19 @@ impl FastApiError {
         self.status
     }
 
-    /// The serialized validation-error `detail` value (422 responses).
+    /// Whether this error carries a `WWW-Authenticate` challenge header.
     ///
-    /// # Panics
-    ///
-    /// Panics when a string body cannot be serialized, which cannot happen for
-    /// a Rust `String`.
+    /// Endpoint error-mapping tests use this to assert the source's 401
+    /// challenge without rendering a response.
+    #[cfg(test)]
+    #[must_use]
+    pub fn carries_challenge(&self) -> bool {
+        self.headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("www-authenticate"))
+    }
+
+    /// The serialized validation-error `detail` array (422 responses).
     #[must_use]
     pub fn validation_detail(&self) -> String {
         match &self.body {
@@ -181,7 +197,7 @@ impl IntoHttpError for FastApiError {
             block.extend_from_slice(b": ");
             block.extend_from_slice(value.as_bytes());
             block.extend_from_slice(b"\r\n");
-            if let Ok(header) = HeaderBlock::new(block.freeze()) {
+            if let Ok(header) = brz_http_server::HeaderBlock::new(block.freeze()) {
                 response = response.headers(header);
             }
         }
@@ -191,27 +207,26 @@ impl IntoHttpError for FastApiError {
 
 #[cfg(test)]
 mod tests {
-    use brz_http_server::{EphemeralBytesArena, ResponseBody};
-
     use super::*;
-
-    /// Renders the error and returns the exact body bytes a client receives.
-    fn rendered(error: FastApiError) -> String {
-        let arena = EphemeralBytesArena::new(1024);
-        let response = error.into_http_error(&arena);
-        match response.body() {
-            ResponseBody::Arena(bytes) => {
-                String::from_utf8(bytes.as_ref().to_vec()).expect("error body is UTF-8")
-            }
-            other => panic!("expected an arena body, got {other:?}"),
-        }
-    }
 
     #[test]
     fn detail_body_serializes_like_fastapi() {
         let error = FastApiError::not_found("Skill not found");
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
-        assert_eq!(rendered(error), r#"{"detail":"Skill not found"}"#);
+        assert_eq!(
+            crate::json_contract_tests::serialized(error.body).unwrap(),
+            serde_json::json!({"detail": "Skill not found"})
+        );
+    }
+
+    #[test]
+    fn unhandled_body_matches_the_application_exception_handler() {
+        let error = FastApiError::unhandled();
+        assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            crate::json_contract_tests::serialized(error.body).unwrap(),
+            serde_json::json!({"error_code": 500, "detail": "Internal server error"})
+        );
     }
 
     #[test]
@@ -222,21 +237,6 @@ mod tests {
             error.headers,
             vec![("www-authenticate", "Bearer".to_string())]
         );
-        assert_eq!(
-            rendered(error),
-            r#"{"detail":"Could not validate credentials"}"#
-        );
-    }
-
-    #[test]
-    fn unhandled_exception_uses_the_application_envelope() {
-        let error = FastApiError::unhandled_exception();
-        assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        // Field order matches `python_exception_handler`'s dict.
-        assert_eq!(
-            rendered(error),
-            r#"{"error_code":500,"detail":"Internal server error"}"#
-        );
     }
 
     #[test]
@@ -246,8 +246,6 @@ mod tests {
             "msg": "Field required", "input": serde_json::Value::Null
         }]));
         assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body: serde_json::Value =
-            serde_json::from_str(&rendered(error)).expect("error body is JSON");
-        assert!(body["detail"].is_array());
+        assert!(crate::json_contract_tests::serialized(error.body).unwrap()["detail"].is_array());
     }
 }

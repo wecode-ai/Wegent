@@ -1201,11 +1201,38 @@ def _transfer_resources_to_owner(
         from_user_id: Source user ID
         to_user_id: Target user ID (group owner)
     """
-    # Transfer all Kind resources in this namespace
+    # Retarget denormalized Code Wiki schedule references before changing the
+    # owning Kind identity they currently match. The caller commits this together
+    # with the member removal, so readers never observe a half-transferred pair.
+    code_wikis = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.namespace == group_name,
+            Kind.user_id == from_user_id,
+            Kind.is_active.is_(True),
+        )
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        retarget_scheduled_update,
+    )
+
+    for knowledge_base in code_wikis:
+        if ((knowledge_base.json or {}).get("spec") or {}).get("kbType") == "code_wiki":
+            retarget_scheduled_update(
+                db,
+                knowledge_base=knowledge_base,
+                name=knowledge_base.name,
+                namespace=knowledge_base.namespace,
+                user_id=to_user_id,
+            )
+
+    # Transfer all Kind resources in this namespace.
     db.query(Kind).filter(
         Kind.namespace == group_name,
         Kind.user_id == from_user_id,
-        Kind.is_active == True,
+        Kind.is_active.is_(True),
     ).update({"user_id": to_user_id})
-
-    db.commit()

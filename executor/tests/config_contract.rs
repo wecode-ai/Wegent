@@ -166,7 +166,9 @@ fn environment_overrides_connection_and_device_fields() {
 
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
-    assert_eq!(config.connection.backend_url, "http://localhost:8000");
+    // The override applied, but a loopback backend URL is unreachable from the
+    // remote device that owns this socket, so its origin replaces it.
+    assert_eq!(config.connection.backend_url, "https://socket.example.com");
     assert_eq!(config.connection.socket_url, "wss://socket.example.com");
     assert_eq!(config.connection.auth_token, "wg-test");
     assert_eq!(config.device_id, "device-1");

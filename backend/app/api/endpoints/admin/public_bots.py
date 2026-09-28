@@ -21,7 +21,7 @@ from app.schemas.admin import (
     PublicBotResponse,
     PublicBotUpdate,
 )
-from app.schemas.kind import Ghost, Model, SkillRefMeta
+from app.schemas.kind import Ghost, Model, SkillRefMeta, resolve_model_category
 from app.services.adapters.shell_utils import get_shell_info_by_name
 
 logger = logging.getLogger(__name__)
@@ -32,10 +32,8 @@ router = APIRouter()
 def _get_model_category_type(model: Kind) -> str:
     """Return a model category, preserving the legacy LLM default."""
     model_json = model.json if isinstance(model.json, dict) else {}
-    spec = model_json.get("spec", {}) if isinstance(model_json, dict) else {}
-    if not isinstance(spec, dict):
-        return "llm"
-    return str(spec.get("modelType") or "llm").lower()
+    spec = model_json.get("spec") if isinstance(model_json, dict) else None
+    return resolve_model_category(spec)
 
 
 def _get_bot_ref_info(

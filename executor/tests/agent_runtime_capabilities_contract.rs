@@ -638,6 +638,77 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
 }
 
 #[tokio::test]
+async fn local_claude_runtime_downloads_project_attachments_outside_the_project() {
+    let _lock = env_lock().await;
+    let executor_home = unique_dir("local-claude-runtime-home");
+    let project_workspace = unique_dir("local-claude-project-workspace");
+    fs::create_dir_all(&project_workspace).unwrap();
+    let log_path = unique_dir("local-claude-runtime-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request_headers(&mut stream).await;
+        assert!(request.starts_with("GET /api/attachments/56/executor-download "));
+        let body = b"private attachment";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(body).await.unwrap();
+    });
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "runtime-7792".to_owned(),
+        subtask_id: "turn-101".to_owned(),
+        prompt: json!("summarize [attachment:56]"),
+        bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        auth_token: Some("task-token".to_owned()),
+        project_workspace_path: Some(project_workspace.display().to_string()),
+        extra: serde_json::Map::from_iter([(
+            "attachments".to_owned(),
+            json!([{
+                "id": 56,
+                "original_filename": "note.txt",
+                "mime_type": "text/plain",
+                "file_size": 18,
+                "subtask_id": "turn-101"
+            }]),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "ok".to_owned()
+        }
+    );
+    server.await.unwrap();
+    let expected_path =
+        executor_home.join("workspace/attachments/runtime/runtime-7792/turn-101/note.txt");
+    assert_eq!(
+        fs::read_to_string(&expected_path).unwrap(),
+        "private attachment"
+    );
+    assert!(!project_workspace.join(".wegent").exists());
+    let query = read_json(&log_path.with_extension("stdin"));
+    let prompt = query["message"]["content"].as_str().unwrap();
+    assert!(prompt.contains(&expected_path.display().to_string()));
+}
+
+#[tokio::test]
 async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
     let _lock = env_lock().await;
     let workspace_root = unique_dir("claude-runtime-api-retry-workspace");
@@ -652,7 +723,8 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
     let request = ExecutionRequest {
         task_id: "7793".to_owned(),
         subtask_id: "99".to_owned(),
-        prompt: json!("retry api errors"),
+        // Exceed a normal pipe buffer to expose a fake process that closes stdin early.
+        prompt: json!(format!("retry api errors {}", "x".repeat(128 * 1024))),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
@@ -1209,6 +1281,7 @@ fn write_fake_claude_deferred_once() -> PathBuf {
     fs::write(
         &path,
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"session-deferred"}'
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"session-deferred","stop_reason":"tool_deferred","usage":{},"deferred_tool_use":{"id":"tool-1","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{"questions":[]}}}'
 "#,
@@ -1229,6 +1302,7 @@ fn write_fake_claude_deferred_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-retry"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-retry","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-1","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1264,6 +1338,7 @@ fn write_fake_claude_stale_defer_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1321,6 +1396,7 @@ fn write_fake_claude_answer_drain_with_new_defer(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer-new-defer"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-new-defer","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1373,6 +1449,7 @@ fn write_fake_claude_api_error_then_completed(marker: &Path) -> PathBuf {
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-api-error"}}'
   printf '%s\n' '{{"type":"result","subtype":"error","is_error":true,"session_id":"session-api-error","result":"API Error: Cannot read properties of undefined (reading message)"}}'
   exit 0

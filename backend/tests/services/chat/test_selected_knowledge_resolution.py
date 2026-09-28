@@ -139,10 +139,23 @@ def test_access_mode_is_resolved_against_all_effective_internal_sources(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("with_enricher", [False, True])
 async def test_request_build_keeps_unselected_task_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    with_enricher: bool,
 ) -> None:
     from app.services.chat.trigger import unified as trigger_unified
+    from app.services.execution import skill_generation
+
+    # Startup registers plugin hooks globally; make this scenario independent
+    # of test order and cover both the plain and plugin-enabled request path.
+    monkeypatch.setattr(
+        skill_generation,
+        "_context_enrichers",
+        [lambda generation, *_args: generation] if with_enricher else [],
+    )
+    for method in ("get_attachments_by_subtask", "get_attachments_by_task"):
+        monkeypatch.setattr(trigger_unified.context_service, method, lambda *_args: [])
 
     monkeypatch.setattr(
         "app.services.chat.task_default_knowledge_bases."
@@ -205,6 +218,10 @@ async def test_request_build_keeps_unselected_task_defaults(
 
     with (
         patch.object(trigger_unified, "SessionLocal", return_value=_KnowledgeDB()),
+        patch(
+            "app.services.chat.trigger.request_preparation.SessionLocal",
+            return_value=_KnowledgeDB(),
+        ),
         patch(
             "app.services.execution.TaskRequestBuilder",
             return_value=builder,

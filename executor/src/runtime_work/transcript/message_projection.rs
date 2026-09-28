@@ -73,6 +73,18 @@ impl AssistantTurnAccumulation {
             || !self.memory_citations.is_empty()
     }
 
+    pub(super) fn has_only_context_compaction_output(&self) -> bool {
+        !self.blocks.is_empty()
+            && self.assistant_parts.is_empty()
+            && self.memory_citations.is_empty()
+            && self.file_changes.is_none()
+            && self.blocks.iter().all(|block| {
+                string_field(block, "tool_name")
+                    .or_else(|| string_field(block, "toolName"))
+                    .is_some_and(|name| name == "context_compaction")
+            })
+    }
+
     pub(super) fn assistant_part_count(&self) -> usize {
         self.assistant_parts.len()
     }
@@ -189,11 +201,16 @@ pub(super) fn push_accumulated_assistant(
         format!("{}-{}", context.turn_id, *segment_index)
     };
     let runtime_items = assistant.runtime_items();
+    let message_created_at = assistant
+        .assistant_parts
+        .first()
+        .map(|part| part.created_at)
+        .unwrap_or(context.created_at);
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         message_id: &message_id,
         turn_id: context.turn_id,
         subtask_id: context.subtask_id,
-        created_at: context.created_at,
+        created_at: message_created_at,
         completed_at: context.completed_at,
         status: context.status,
         error: context.error,

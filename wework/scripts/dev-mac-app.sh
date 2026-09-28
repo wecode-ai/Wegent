@@ -6,14 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
-EXECUTOR_ISOLATION="false"
+EXECUTOR_ISOLATION="stable"
 ELECTRON_ARGS=()
 ISOLATED_EXECUTOR_HOME=""
-MANAGED_SOURCE_EXECUTOR="false"
 MANAGED_DWS_BINARY="false"
 MANAGED_HARNESS_RUNTIME="false"
-MANAGED_SOURCE_EXECUTOR_BINARY=""
-EXECUTOR_BINARY_TEMP=""
 WEWORK_APP_WATCH_PID=""
 WEWORK_APP_WATCH_READY_FILE=""
 
@@ -28,7 +25,7 @@ Usage: bash wework/scripts/dev-mac-app.sh [options] [-- electron-options]
 
 Options:
   --executor-isolation      Use a temporary Executor Home for this launch.
-  --shared-executor-home    Use the release app's Executor Home (default).
+  --shared-executor-home    Use the release app's Executor Home.
   --no-executor-isolation   Alias for --shared-executor-home.
   -h, --help                Show this help message.
 
@@ -49,11 +46,11 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --executor-isolation)
-      EXECUTOR_ISOLATION="true"
+      EXECUTOR_ISOLATION="temporary"
       shift
       ;;
     --shared-executor-home|--no-executor-isolation)
-      EXECUTOR_ISOLATION="false"
+      EXECUTOR_ISOLATION="shared"
       shift
       ;;
     -h|--help)
@@ -175,9 +172,6 @@ cleanup() {
   if [ -n "$WEWORK_APP_WATCH_READY_FILE" ]; then
     rm -f "$WEWORK_APP_WATCH_READY_FILE"
   fi
-  if [ -n "$EXECUTOR_BINARY_TEMP" ]; then
-    rm -f "$EXECUTOR_BINARY_TEMP"
-  fi
 }
 
 trap cleanup EXIT
@@ -234,17 +228,15 @@ export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
 export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
 export ELECTRON_GET_USE_PROXY="${ELECTRON_GET_USE_PROXY:-true}"
 unset WEGENT_EXECUTOR_BINARY
+PREBUILD_SOURCE_EXECUTOR="false"
 if [ -n "${WEWORK_DEV_EXECUTOR_PATH:-}" ]; then
   export WEWORK_EXECUTOR_PATH="$WEWORK_DEV_EXECUTOR_PATH"
 else
   export WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"
-  MANAGED_SOURCE_EXECUTOR="true"
   configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
-  MANAGED_SOURCE_EXECUTOR_BINARY="$(
-    cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
-  )"
-  export WEGENT_EXECUTOR_BINARY="$WEWORK_DIR/node_modules/.cache/wework-executor-dev/wegent-executor"
+  export WEGENT_EXECUTOR_DEV_RELOAD="${WEGENT_EXECUTOR_DEV_RELOAD:-1}"
   export WEGENT_EXECUTOR_DEV_BUILD_ID="$WEWORK_DEV_INSTANCE_ID"
+  PREBUILD_SOURCE_EXECUTOR="true"
 fi
 export WEWORK_DEV_CACHE_ROOT="${WEWORK_DEV_CACHE_ROOT:-$HOME/Library/Caches/wegent/wework-dev}"
 export WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT:-$WEWORK_DEV_CACHE_ROOT/harness-runtime}"
@@ -271,9 +263,15 @@ else
   MANAGED_DWS_BINARY="true"
 fi
 
-if [ "$EXECUTOR_ISOLATION" = "true" ]; then
+if [ "$EXECUTOR_ISOLATION" = "temporary" ]; then
   ISOLATED_EXECUTOR_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wework-dev-executor.XXXXXX")"
   export WEGENT_EXECUTOR_HOME="$ISOLATED_EXECUTOR_HOME"
+elif [ "$EXECUTOR_ISOLATION" = "stable" ] && [ -z "${WEGENT_EXECUTOR_HOME:-}" ]; then
+  export WEGENT_EXECUTOR_HOME="$WEWORK_USER_DATA_DIR/executor"
+fi
+
+if [ "$EXECUTOR_ISOLATION" != "shared" ] && [ -z "${WEGENT_RUNTIME_INSTANCE_ID:-}" ]; then
+  export WEGENT_RUNTIME_INSTANCE_ID="runtime-dev-$WEWORK_DEV_INSTANCE_ID"
 fi
 
 print_configuration() {
@@ -305,6 +303,9 @@ fi
 
 cd "$WEWORK_DIR"
 node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"
+if [ "$PREBUILD_SOURCE_EXECUTOR" = "true" ]; then
+  cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
+fi
 if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
@@ -323,15 +324,6 @@ if [ "$MANAGED_HARNESS_RUNTIME" = "true" ]; then
   node "$SCRIPT_DIR/prepare-harness-runtime.mjs" --materialize
 fi
 
-if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
-  cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
-  mkdir -p "$(dirname "$WEGENT_EXECUTOR_BINARY")"
-  EXECUTOR_BINARY_TEMP="$WEGENT_EXECUTOR_BINARY.tmp.$$"
-  cp "$MANAGED_SOURCE_EXECUTOR_BINARY" "$EXECUTOR_BINARY_TEMP"
-  chmod 0755 "$EXECUTOR_BINARY_TEMP"
-  mv -f "$EXECUTOR_BINARY_TEMP" "$WEGENT_EXECUTOR_BINARY"
-  EXECUTOR_BINARY_TEMP=""
-fi
 if [ ! -x "$WEWORK_EXECUTOR_PATH" ]; then
   echo "Error: Executor command is not executable: $WEWORK_EXECUTOR_PATH" >&2
   exit 1
@@ -361,10 +353,7 @@ export WEWORK_APP_WATCH_READY_FILE
 node "$SCRIPT_DIR/dev-wework-app-watch.mjs" &
 WEWORK_APP_WATCH_PID="$!"
 
-for _ in $(seq 1 240); do
-  if [ -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
-    break
-  fi
+while [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; do
   if ! kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
     wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
     echo "Error: Original Wework application build watcher exited before becoming ready." >&2
@@ -372,10 +361,6 @@ for _ in $(seq 1 240); do
   fi
   sleep 0.25
 done
-if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
-  echo "Error: Original Wework application build watcher did not become ready." >&2
-  exit 1
-fi
 
 # The parent Wework terminal may expose the release app's Electron-backed Node
 # runtime. A source checkout must create its own Node launcher, while the

@@ -1,0 +1,97 @@
+import type { DeviceInfo, ProjectWithTasks } from '@wegent/chat-core/execution-project'
+import type { RuntimeDeviceWorkspace } from '@wegent/chat-core/runtime-task-api-types'
+import { isLocalStandaloneDevice } from '@wegent/chat-core/device-selection'
+const PROJECT_MENU_VERTICAL_PADDING = 12
+const PROJECT_MENU_SEARCH_BLOCK_HEIGHT = 42
+const PROJECT_MENU_ROW_HEIGHT = 56
+const PROJECT_MENU_ROW_GAP = 2
+const PROJECT_MENU_VISIBLE_PROJECT_ROWS = 4
+const PROJECT_MENU_EMPTY_STATE_HEIGHT = 42
+const PROJECT_MENU_DIVIDER_BLOCK_HEIGHT = 13
+const PROJECT_MENU_ACTION_HEIGHT = 32
+const PROJECT_MENU_ACTION_GAP = 2
+
+function getStackHeight(itemCount: number, itemHeight: number, gap: number) {
+  if (itemCount <= 0) return 0
+  return itemCount * itemHeight + (itemCount - 1) * gap
+}
+
+function extractNetworkHost(value?: string | null): string | null {
+  if (!value) return null
+  const trimmedValue = value.trim()
+  if (!trimmedValue) return null
+
+  const bracketMatch = trimmedValue.match(/^\[([^\]]+)\](?::\d+)?$/)
+  if (bracketMatch?.[1]) return bracketMatch[1]
+
+  const colonParts = trimmedValue.split(':')
+  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
+    return colonParts[0]
+  }
+
+  return trimmedValue
+}
+
+function isLoopbackNetworkHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
+}
+
+function getDisplayableNetworkHost(value?: string | null): string | null {
+  const host = extractNetworkHost(value)
+  if (!host || isLoopbackNetworkHost(host)) return null
+  return host
+}
+
+export function getDisplayableIp(value?: string | null): string | null {
+  const host = getDisplayableNetworkHost(value)
+  if (!host) return null
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':')) return host
+  return null
+}
+
+export function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
+  return project.config?.execution?.deviceId ?? project.config?.device_id
+}
+
+export { isLocalStandaloneDevice }
+
+export function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
+  return Boolean(device && isLocalStandaloneDevice(device))
+}
+
+export function getProjectMenuDeviceLabel(
+  device: DeviceInfo | undefined,
+  workspace: RuntimeDeviceWorkspace | null
+): string | null {
+  if (isLocalProjectWorkspaceDevice(device)) return null
+
+  return (
+    getDisplayableIp(device?.runtime_transfer_host) ??
+    getDisplayableIp(device?.client_ip) ??
+    getDisplayableIp(workspace?.deviceName) ??
+    getDisplayableIp(workspace?.deviceId)
+  )
+}
+
+export function getProjectMenuFitHeight(projectCount: number, hasCreateProjectOption: boolean) {
+  const visibleProjectCount = Math.min(projectCount, PROJECT_MENU_VISIBLE_PROJECT_ROWS)
+  const projectListHeight =
+    visibleProjectCount > 0
+      ? getStackHeight(visibleProjectCount, PROJECT_MENU_ROW_HEIGHT, PROJECT_MENU_ROW_GAP)
+      : PROJECT_MENU_EMPTY_STATE_HEIGHT
+  const actionCount = hasCreateProjectOption ? 3 : 1
+  const actionHeight = getStackHeight(
+    actionCount,
+    PROJECT_MENU_ACTION_HEIGHT,
+    PROJECT_MENU_ACTION_GAP
+  )
+
+  return (
+    PROJECT_MENU_VERTICAL_PADDING +
+    PROJECT_MENU_SEARCH_BLOCK_HEIGHT +
+    projectListHeight +
+    PROJECT_MENU_DIVIDER_BLOCK_HEIGHT +
+    actionHeight
+  )
+}

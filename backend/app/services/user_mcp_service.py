@@ -145,6 +145,38 @@ class UserMCPService:
         return mcps
 
     @staticmethod
+    def get_provider_service_credentials(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, str]:
+        """Return all decrypted credential values of a provider service.
+
+        Unlike ``get_provider_service_config`` this exposes every stored
+        credential key (url, api_key, ...) for server-side connectors that
+        need more than an MCP URL.
+        """
+        prefs = UserMCPService.load_preferences(preferences)
+        service = (
+            ((prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {})
+            .get(MCP_SERVICES_KEY, {})
+            .get(service_id)
+        ) or {}
+        credentials = service.get(MCP_CREDENTIALS_KEY)
+        if not isinstance(credentials, dict):
+            return {}
+
+        decrypted: dict[str, str] = {}
+        for key, value in credentials.items():
+            if not isinstance(value, str) or not value:
+                continue
+            if is_data_encrypted(value):
+                decrypted[key] = decrypt_sensitive_data(value) or ""
+            else:
+                decrypted[key] = value
+        return decrypted
+
+    @staticmethod
     def get_enabled_decrypted_mcp_preferences(
         preferences: str | dict[str, Any] | None,
     ) -> dict[str, Any]:

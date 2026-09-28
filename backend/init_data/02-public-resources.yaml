@@ -216,8 +216,9 @@ spec:
     Must explain item. Write complete, source-grounded pages only at the package's
     assigned paths. Validate applicable Mermaid diagrams before submission. Do not edit
     coordinator-owned or another package's pages. Do not open or submit Plan, QA, or
-    Recheck reviews; do not complete or fail the generation; do not delegate further.
-    Your durable result is the pages accepted by wiki_submit, not your prose response.
+    Recheck reviews. Do not run plan, complete, or fail; those generation-level actions
+    belong to the Coordinator. Do not delegate further. Your durable result is the
+    pages accepted by wiki_submit, not your prose response.
 status:
   state: Available
 ---

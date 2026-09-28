@@ -9,7 +9,7 @@ import { useLocalExecutorCloudConnectionStatus } from '@/features/cloud-connecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { scheduleIdleTask } from '@/features/idle-tasks/idleTaskScheduler'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { createSocketClient } from '@wegent/chat-core'
 import { runCurrentDevicePluginAutoUpdate } from './pluginAutoUpdate'
 
@@ -69,7 +69,7 @@ export function PluginAutoUpdateCoordinator() {
     let connectedTriggerSeen = false
     let cancelScheduledUpdate: (() => void) | null = null
 
-    const runUpdatePass = async () => {
+    const runUpdatePass = async (): Promise<boolean> => {
       const result = await runCurrentDevicePluginAutoUpdate({
         listLocalInstalledPlugins: () =>
           localPluginApi.listInstalledPlugins({ refresh: true, shareInflight: true }),
@@ -83,7 +83,7 @@ export function PluginAutoUpdateCoordinator() {
         !result ||
         (result.updatedCount === 0 && result.failedCount === 0 && !result.deviceSyncPerformed)
       ) {
-        return
+        return false
       }
 
       clearLocalCodexPluginsReadStateCache()
@@ -98,6 +98,7 @@ export function PluginAutoUpdateCoordinator() {
         console.warn('[Plugins] Automatic plugin updates failed', result.failures)
         track('operation_failed', { operation: 'plugin_auto_update' })
       }
+      return result.failures.some(failure => failure.retryable === true)
     }
 
     const drainUpdateRequests = async () => {
@@ -107,7 +108,7 @@ export function PluginAutoUpdateCoordinator() {
         while (pending && !disposed) {
           pending = false
           try {
-            await runUpdatePass()
+            pending = await runUpdatePass()
           } catch (error) {
             console.warn('[Plugins] Automatic update check failed', error)
             track('operation_failed', { operation: 'plugin_auto_update' })

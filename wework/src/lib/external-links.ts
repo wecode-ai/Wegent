@@ -1,3 +1,5 @@
+import { isHttpUrl } from '@wegent/chat-core/http-url'
+export { isHttpUrl } from '@wegent/chat-core/http-url'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
 import { requestEmbeddedBrowserOpen } from './embedded-browser'
@@ -5,17 +7,6 @@ import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferen
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
-}
-
-export function isHttpUrl(value: string | null | undefined): value is string {
-  if (!value) return false
-
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 export function isLocalHttpUrl(value: string | null | undefined): value is string {

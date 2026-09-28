@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.services.loop_items.service import MY_WORK_ITEM_LIMIT, loop_item_service
+"""Loop item service modules.
 
-__all__ = ["MY_WORK_ITEM_LIMIT", "loop_item_service"]
+Import concrete modules directly so lightweight helpers do not initialize the
+full service dependency graph.
+"""

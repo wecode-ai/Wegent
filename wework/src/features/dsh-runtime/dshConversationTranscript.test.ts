@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 
-import { loadDshConversationTranscript } from './dshConversationTranscript'
+import {
+  isConversationAssetRequestAuthorized,
+  loadDshConversationTranscript,
+  readConversationAssetChunk,
+  resolveConversationAssetPath,
+} from './dshConversationTranscript'
 
 describe('loadDshConversationTranscript', () => {
   test('loads full content and projects only the user-visible conversation model', async () => {
@@ -141,5 +146,135 @@ describe('loadDshConversationTranscript', () => {
 
     expect(result.complete).toBe(false)
     expect(result.title).toBe('Conversation')
+  })
+
+  test('authorizes every local asset referenced by the exported conversation', async () => {
+    const snapshot = {
+      reference: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        workspacePath: '/workspace/task-1',
+      },
+      title: 'Conversation',
+      complete: true,
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'done',
+          items: [
+            {
+              id: 'user-1',
+              type: 'user_message' as const,
+              content: '![Relative](../shared/evidence.png)',
+              status: 'done',
+              attachments: [
+                {
+                  id: 1,
+                  filename: 'brief.pdf',
+                  fileSize: 42,
+                  mimeType: 'application/pdf',
+                  localPath: '/Users/me/Documents/brief.pdf',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(
+      isConversationAssetRequestAuthorized(snapshot, {
+        path: '/Users/me/Documents/brief.pdf',
+        workspacePath: '/workspace/task-1',
+        offset: 0,
+        length: 128,
+      })
+    ).toBe(true)
+    expect(
+      isConversationAssetRequestAuthorized(snapshot, {
+        path: '../shared/evidence.png',
+        workspacePath: '/workspace/task-1',
+        offset: 0,
+        length: 128,
+      })
+    ).toBe(true)
+    expect(
+      isConversationAssetRequestAuthorized(snapshot, {
+        path: '/Users/me/.ssh/id_rsa',
+        workspacePath: '/workspace/task-1',
+        offset: 0,
+        length: 128,
+      })
+    ).toBe(false)
+    expect(
+      resolveConversationAssetPath({
+        path: '../shared/evidence.png',
+        workspacePath: '/workspace/task-1',
+      })
+    ).toBe('/workspace/shared/evidence.png')
+  })
+
+  test('reads an authorized conversation asset through the host reader', async () => {
+    const snapshot = {
+      reference: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        workspacePath: '/workspace',
+      },
+      title: 'Conversation',
+      complete: true,
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'done',
+          items: [
+            {
+              id: 'user-1',
+              type: 'user_message' as const,
+              content: 'See the attachment.',
+              status: 'done',
+              attachments: [
+                {
+                  id: 1,
+                  filename: 'outside.txt',
+                  fileSize: 7,
+                  mimeType: 'text/plain',
+                  localPath: '/outside/conversation/outside.txt',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const readFileChunk = vi.fn().mockResolvedValue({
+      chunkBase64: 'Y29udGVudA==',
+      bytesRead: 7,
+      eof: true,
+      size: 7,
+    })
+
+    await expect(
+      readConversationAssetChunk(
+        snapshot,
+        {
+          path: '/outside/conversation/outside.txt',
+          workspacePath: '/workspace',
+          offset: 0,
+          length: 1024,
+        },
+        readFileChunk
+      )
+    ).resolves.toEqual({
+      chunkBase64: 'Y29udGVudA==',
+      bytesRead: 7,
+      eof: true,
+      size: 7,
+    })
+    expect(readFileChunk).toHaveBeenCalledWith({
+      path: '/outside/conversation/outside.txt',
+      offset: 0,
+      length: 1024,
+    })
   })
 })

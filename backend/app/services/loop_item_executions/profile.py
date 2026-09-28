@@ -83,13 +83,20 @@ def _execution_environment_config(
         for step in (selected_steps if isinstance(selected_steps, list) else [])
         if isinstance(step, dict) and str(step.get("command") or "").strip()
     ]
+    devices = selected_config.get("devices")
     return {
         "repositories": repositories,
         "setup_steps": setup_steps,
-        "status": selected_config.get("status"),
         "fingerprint": selected_config.get("fingerprint"),
-        "prepared_device_id": selected_config.get("prepared_device_id"),
-        "prepared_workspace_path": selected_config.get("prepared_workspace_path"),
+        "devices": (
+            {
+                str(key): value
+                for key, value in devices.items()
+                if isinstance(value, dict)
+            }
+            if isinstance(devices, dict)
+            else {}
+        ),
     }
 
 
@@ -277,7 +284,6 @@ class WeworkExecutionProfile:
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
-    manager_mode: bool = False
     workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     additional_skills: tuple[Any, ...] = ()
@@ -388,32 +394,6 @@ class WeworkExecutionProfile:
         )
 
     @classmethod
-    def for_automation_manager(
-        cls,
-        *,
-        owner_user_id: int,
-        display_name: str,
-        instruction: str,
-        model: str,
-        model_type: str | None = None,
-        model_options: dict[str, str] | None = None,
-        local_project_id: int = 0,
-    ) -> "WeworkExecutionProfile":
-        if not model:
-            raise ValueError("Custom AI manager model is required")
-        return cls(
-            owner_user_id=owner_user_id,
-            display_name=display_name or "AI 托管",
-            execution_prompt="",
-            instruction=instruction,
-            model=model,
-            model_type=model_type,
-            model_options=dict(model_options or {}),
-            local_project_id=local_project_id,
-            manager_mode=True,
-        )
-
-    @classmethod
     def for_generic_robot(
         cls,
         *,
@@ -459,28 +439,12 @@ class WeworkExecutionProfile:
         project_id: str,
         task_id: str,
         execution_id: int,
-        workflow_stage_input: dict[str, Any] | None = None,
     ) -> str:
-        if self.manager_mode:
-            return self.instruction.strip()
-        from app.services.workflow_stage_context import compiled_workflow_stage_input
-
-        stage_instruction = (
-            str(
-                compiled_workflow_stage_input(workflow_stage_input).get(
-                    "compiled_task_instruction"
-                )
-                or ""
-            )
-            if workflow_stage_input
-            else ""
-        )
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
             execution_id=execution_id,
             execution_prompt=self.execution_prompt,
-            stage_instruction=stage_instruction,
         )
 
     def build_runtime_request(
@@ -561,15 +525,22 @@ class WeworkExecutionProfile:
             project_id=str(project.id),
             task_id=task_id,
             execution_id=execution_id,
-            workflow_stage_input=(
-                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
-            ),
         )
-        title = str(getattr(task, "title", "") or "")
+        if origin_context.get("comment_trigger_message_id"):
+            prompt = str(origin_context["comment_prompt"])
+        title = str(
+            origin_context.get("workflow_task_title")
+            or getattr(task, "title", "")
+            or ""
+        )
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
-            "type": "project_automation" if self.manager_mode else "board_task",
+            "type": (
+                "board_comment"
+                if origin_context.get("comment_trigger_message_id")
+                else "board_task"
+            ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
             "executionId": execution_id,
@@ -578,6 +549,19 @@ class WeworkExecutionProfile:
                 f"{str(getattr(task, 'id', ''))}"
             ),
         }
+        dispatch_id = str(origin_context.get("dispatch_id") or "")
+        dispatch_task_id = str(origin_context.get("dispatch_task_id") or "")
+        dispatch_role = str(origin_context.get("dispatch_role") or "")
+        manager_agent_id = str(origin_context.get("manager_agent_id") or "")
+        if dispatch_id and dispatch_task_id and dispatch_role:
+            origin.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": dispatch_task_id,
+                    "dispatchRole": dispatch_role,
+                    "managerAgentId": manager_agent_id,
+                }
+            )
         if isinstance(workflow_stage_input, dict):
             target_stage = workflow_stage_input.get("target_stage")
             if isinstance(target_stage, dict):
@@ -587,8 +571,6 @@ class WeworkExecutionProfile:
                     target_stage.get("name") or workflow_stage_id
                 )
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
-        if self.manager_mode:
-            origin["automationRole"] = "manager"
         configured_runtime = origin_context.get("runtime")
         runtime, shell_type = native_runtime_contract(
             configured_runtime if configured_runtime is not None else self.runtime
@@ -615,6 +597,24 @@ class WeworkExecutionProfile:
                 ],
             }
         ]
+        coordinate_bots = origin_context.get("coordinate_bots")
+        if coordinate_bots is not None:
+            if not isinstance(coordinate_bots, list) or not all(
+                isinstance(value, dict) for value in coordinate_bots
+            ):
+                raise WeworkExecutionProfileError(
+                    "Coordinate bots must be a list of objects"
+                )
+            if not coordinate_bots:
+                raise WeworkExecutionProfileError(
+                    "Coordinate execution requires at least one bot"
+                )
+            bot = [dict(value) for value in coordinate_bots]
+            origin["collaborationMode"] = str(
+                origin_context.get("collaborationMode")
+                or origin_context.get("collaboration_mode")
+                or "coordinate"
+            )
         configured_additional_context = origin_context.get("additional_context")
         additional_context: dict[str, dict[str, Any]] = (
             dict(configured_additional_context)
@@ -640,18 +640,24 @@ class WeworkExecutionProfile:
 
         configured_execution = origin_context.get("execution")
         environment_config = _execution_environment_config(db, project)
-        environment_status = environment_config.get("status")
-        if environment_status in {"uninitialized", "preparing", "error"}:
-            raise WeworkExecutionProfileError(
-                "Project execution environment is not ready"
-            )
-        environment_workspace_path = (
-            str(environment_config.get("prepared_workspace_path") or "")
-            if str(environment_config.get("prepared_device_id") or "")
-            == execution_device_id
-            and environment_config.get("status") == "ready"
-            else ""
+        device_states = environment_config["devices"]
+        # A configured environment only runs on devices that finished preparing
+        # it; every other device stops at preflight so it never clones a fresh
+        # copy outside the prepared workspace.
+        environment_configured = bool(
+            environment_config["repositories"]
+            or environment_config["fingerprint"]
+            or device_states
         )
+        environment_workspace_path = ""
+        if environment_configured:
+            device_state = device_states.get(execution_device_id)
+            device_state = device_state if isinstance(device_state, dict) else {}
+            if str(device_state.get("status") or "") != "ready":
+                raise WeworkExecutionProfileError(
+                    "Project execution environment is not ready"
+                )
+            environment_workspace_path = str(device_state.get("workspace_path") or "")
         environment_uses_worktree = bool(
             environment_workspace_path and environment_config.get("repositories")
         )

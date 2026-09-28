@@ -62,6 +62,7 @@ fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
                 ("PATH", "/bin"),
                 ("HOME", home.as_str()),
                 ("CUSTOM_ENV", "contract"),
+                ("TERM", "unknown"),
             ],
             30,
             100,

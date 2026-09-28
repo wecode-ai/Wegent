@@ -137,7 +137,7 @@ describe('conversation mentions', () => {
         ...SOURCE_ADDRESS,
         runtimeHandle: null,
       },
-      { includeFullContent: true, refresh: true }
+      { includeFullContent: true, conversationContextOnly: true, refresh: true }
     )
     expect(context?.cloudCollaboration.value).toBe('Current project: Wegent')
     expect(context?.referencedConversations.kind).toBe('application')

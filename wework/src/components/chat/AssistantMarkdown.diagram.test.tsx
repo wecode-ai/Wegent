@@ -2,7 +2,7 @@ import { render, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
-vi.mock('./MarkdownDiagramPreview', () => ({
+vi.mock('@wegent/collaboration/markdown/MarkdownDiagramPreview', () => ({
   MarkdownDiagramPreview: ({ code, language }: { code: string; language: string }) => (
     <div data-testid="diagram-preview" data-code={code} data-language={language} />
   ),

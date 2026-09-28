@@ -40,6 +40,10 @@ metadata:
 spec:
   systemPrompt: |
     You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process.
+  baseGhostRef:
+    name: system-default-ghost
+    namespace: default
+    user_id: 0
   mcpServers:
     github:
       env:
@@ -65,8 +69,11 @@ spec:
 | `metadata.name`      | string | 是   | Ghost 的唯一标识符                                  |
 | `metadata.namespace` | string | 是   | 命名空间，通常为 `default`                          |
 | `spec.systemPrompt`  | string | 是   | 定义智能体个性和能力的系统提示词                    |
+| `spec.baseGhostRef`  | object | 否   | 作为通用能力基线的 Ghost 引用，只支持一层继承       |
 | `spec.mcpServers`    | object | 否   | MCP 服务器配置,定义智能体的工具能力                 |
 | `spec.skills`        | array  | 否   | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
+
+`baseGhostRef` 包含 `name`、`namespace` 和 `user_id`。运行时只继承基础 Ghost 的 MCP、Skills、预加载 Skills 和插件；当前 Ghost 的同名配置优先，当前 Ghost 的 `systemPrompt` 始终保留。系统会先合并配置，再执行一次模型请求，不会分别调用两个 Ghost。嵌套的 `baseGhostRef` 不受支持。
 
 ### 业务方 MCP 服务器身份校验
 
@@ -185,6 +192,8 @@ metadata:
   namespace: default
 spec:
   isVisible: true
+  allowedUsersEnabled: true
+  allowedUsers: ["alice", "bob"]
   modelGroup: "主分组"
   modelSubGroup: "快速"
   modelConfig:
@@ -202,6 +211,8 @@ spec:
 | `metadata.name`        | string | 是   | Model 的唯一标识符                 |
 | `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
 | `spec.isVisible`       | boolean | 否  | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析 |
+| `spec.allowedUsers`    | array   | 否  | 公共模型的用户名白名单；仅在 `allowedUsersEnabled` 为 `true` 时生效。开关关闭时列表保留但不限制访问 |
+| `spec.allowedUsersEnabled` | boolean | 否 | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
 | `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
@@ -330,6 +341,9 @@ spec:
   connectionMode: websocket
   bindShell: claudecode
   isDefault: false
+  clientIp: 10.0.0.24
+  runtimeTransferHost: 10.0.0.24
+  runtimeTransferPort: 17888
   capabilities: null
   remoteConfig:
     provider: docker
@@ -337,7 +351,6 @@ spec:
     deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
     deviceName: alice-remote-a931
     backendUrl: https://backend.example.com
-    publicBaseUrl: http://localhost:17888
     createdAt: "2026-06-17T10:00:00"
 status:
   state: Available
@@ -345,21 +358,24 @@ status:
 
 ### 字段说明
 
-| 字段                  | 类型                       | 必填 | 说明                                                  |
-| --------------------- | -------------------------- | ---- | ----------------------------------------------------- |
-| `metadata.name`       | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
-| `metadata.namespace`  | string                     | 是   | 命名空间，通常为 `default`                            |
-| `spec.deviceId`       | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
-| `spec.displayName`    | string                     | 否   | 前端展示名称                                          |
-| `spec.deviceType`     | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
-| `spec.connectionMode` | `websocket`                | 是   | 设备连接后端的方式                                    |
-| `spec.bindShell`      | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
-| `spec.isDefault`      | boolean                    | 否   | 是否为同类型默认设备                                  |
-| `spec.capabilities`   | array 或 null              | 否   | 设备能力标签                                          |
-| `spec.cloudConfig`    | object                     | 否   | 云设备元数据，仅云设备使用                            |
-| `spec.remoteConfig`   | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
+| 字段                       | 类型                       | 必填 | 说明                                                  |
+| -------------------------- | -------------------------- | ---- | ----------------------------------------------------- |
+| `metadata.name`            | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
+| `metadata.namespace`       | string                     | 是   | 命名空间，通常为 `default`                            |
+| `spec.deviceId`            | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
+| `spec.displayName`         | string                     | 否   | 前端展示名称                                          |
+| `spec.deviceType`          | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
+| `spec.connectionMode`      | `websocket`                | 是   | 设备连接后端的方式                                    |
+| `spec.bindShell`           | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
+| `spec.isDefault`           | boolean                    | 否   | 是否为同类型默认设备                                  |
+| `spec.clientIp`            | string                     | 否   | Backend 从设备连接观测到的客户端 IP                   |
+| `spec.runtimeTransferHost` | string                     | 否   | Executor 上报且可供其他机器访问的设备地址             |
+| `spec.runtimeTransferPort` | integer                    | 否   | Executor session gateway 实际监听端口                 |
+| `spec.capabilities`        | array 或 null              | 否   | 设备能力标签                                          |
+| `spec.cloudConfig`         | object                     | 否   | 云设备元数据，仅云设备使用                            |
+| `spec.remoteConfig`        | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
 
-`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成；`publicBaseUrl` 是浏览器访问设备 session gateway 的地址。
+`runtimeTransferHost` 必须是其他机器可访问的地址；回环、未指定、链路本地和组播地址不会用于生成设备访问地址。`runtimeTransferPort` 由 Executor 上报；旧版 Executor 未上报该字段时，Backend 使用默认端口 `17888`。远程设备的浏览器访问地址由 Backend 生成：优先使用它观测到的设备地址，其次使用 `runtimeTransferHost`，再拼上 `runtimeTransferPort`。`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成。
 
 ---
 

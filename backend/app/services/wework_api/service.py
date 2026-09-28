@@ -58,8 +58,10 @@ async def _target(
                 "previous_response_id must identify the latest completed turn; branching is not supported",
             )
         identifier = previous.identity.conversation_id
-    if identifier:
+        item = previous.conversation
+    elif identifier:
         item = await native.find_conversation(db, user_id, identifier)
+    if identifier:
         if item["running"]:
             raise HTTPException(409, "Conversation is already running")
         if item["runtime"] != "codex":
@@ -106,6 +108,12 @@ async def _dispatch(
         ):
             raise HTTPException(502, "Runtime returned a different task identity")
     else:
+        handle = address.runtime_handle or {}
+        previous_selection = handle.get("modelSelection") or {}
+        previous_options = previous_selection.get("options") or {}
+        selection = selection.model_copy(
+            update={"options": {**previous_options, **selection.options}}
+        )
         ack = await runtime.send_runtime_message(
             db=db,
             user_id=user_id,

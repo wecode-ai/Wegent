@@ -19,7 +19,7 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push' | 'inbox_message'
 
-export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
+export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud' | 'remote'
 
 export interface SubscriptionExecutionTarget {
   type: SubscriptionExecutionTargetType
@@ -99,6 +99,7 @@ export interface SubscriptionSkillRef {
 // Subscription configuration
 export interface Subscription {
   id: number
+  code_wiki_id?: number
   user_id: number
   name: string
   namespace: string
@@ -131,6 +132,7 @@ export interface Subscription {
   webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
   last_execution_status?: string
+  last_execution_message?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Skill references

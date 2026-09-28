@@ -185,4 +185,28 @@ describe('QuickPhraseMenu', () => {
       })
     )
   })
+
+  test('keeps the stash visible on deletion failure and clears the error after retry', async () => {
+    appPreferenceMocks.get.mockResolvedValue({
+      quickPhrases: [
+        {
+          id: 'stash-images',
+          title: '两张图片',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/one.png'],
+        },
+      ],
+    })
+    appPreferenceMocks.update
+      .mockRejectedValueOnce(new Error('Cannot delete stash'))
+      .mockResolvedValue(undefined)
+    render(<QuickPhraseMenu onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('quick-phrase-button'))
+    fireEvent.click(screen.getByTestId('quick-phrase-stash-delete-stash-images'))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Cannot delete stash'))
+    expect(screen.getByTestId('quick-phrase-stash-stash-images')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('quick-phrase-stash-delete-stash-images'))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
 })

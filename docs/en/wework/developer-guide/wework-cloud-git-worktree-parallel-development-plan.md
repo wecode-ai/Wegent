@@ -7,6 +7,7 @@ sidebar_position: 20
 ## 1. Document status
 
 - Created: August 17, 2026
+- Last updated: September 21, 2026
 - Status: core implementation, the real-Electron cloud lifecycle, and the Remote Docker container lifecycle are complete; only managed-production persistent-volume and instance-replacement acceptance still require the target environment
 - Objective: let local devices, managed cloud devices, and user-managed Remote Docker devices share one managed Git Worktree capability
 - Delivery model: one primary agent owns the goal, shared contracts, integration, and final verification; sub-agents implement disjoint workstreams in parallel
@@ -56,6 +57,55 @@ Required invariants:
 15. Restart reconciliation never auto-resumes an agent. Valid Worktrees may become manageable again while interrupted tasks remain failed or interrupted.
 16. Deletion requires Runtime stop acknowledgement before task archival, snapshot creation, and directory removal.
 17. A single Executor process owns each Executor Home in the first release.
+
+### Automatic collaboration workspaces and Issue cleanup
+
+Collaboration task creation does not expose a Worktree choice to the user.
+Before sending, Wework checks the target Executor's Worktree capability and Git
+preflight. It automatically selects an isolated Worktree when available and
+selects the current project workspace before task creation when it is not.
+Deterministic failures after Worktree creation has started still fail directly
+and never fall back silently to the base workspace.
+
+When a collaboration project is generated from a local directory, the local
+Executor reads the Git top-level directory, `origin` URL, and current branch for
+the first workspace root and writes them into the project's
+`execution_environment`. Existing projects are backfilled only when they do not
+already have execution-environment configuration, so user configuration is
+preserved.
+
+Issue lifecycle cleanup separates the control plane from the data plane:
+
+```mermaid
+sequenceDiagram
+  participant B as Backend
+  participant E as Same Executor
+  participant L as Executor-local Worktree store
+  B->>B: Issue completed<br/>persist release desired state + due_at
+  B-->>E: notify runtime.tasks.available when due
+  E->>B: pull + claim exact Issue version
+  E->>L: resolve local Worktree from Runtime task IDs
+  alt A linked task is still running
+    E-->>B: do not ACK; retry after lease expiry
+  else Cleanup is safe
+    E->>L: archive, preserve snapshot, remove directory
+    E->>B: ACK exact Issue version
+  end
+  B->>B: Issue reopened<br/>publish retain desired state
+```
+
+- Backend persists only the Issue version, Executor device, Runtime task IDs,
+  action, and due time. It never stores Worktree IDs, paths, or filesystem
+  state.
+- The Executor that created a Worktree exclusively owns the Runtime-task-to-
+  Worktree mapping.
+- Completed Issues retain their Worktrees for seven days by default, configured
+  by `WORKTREE_CLEANUP_RETENTION_DAYS`. When the intent is due, Backend wakes the
+  original execution target and that Executor performs cleanup locally.
+- Reopening an Issue before cleanup changes the desired action to `retain`; the
+  Executor acknowledges the new version without modifying the local Worktree.
+- Executor-only devices do not need Wework. They receive tasks and cleanup
+  intents through the existing `/local-executor` pull channel.
 
 ## 3. Scope
 

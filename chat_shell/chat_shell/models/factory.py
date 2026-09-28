@@ -91,6 +91,33 @@ def _mask_api_key(api_key: str) -> str:
     return "***" if api_key else "EMPTY"
 
 
+def _is_explicit_false(value: Any) -> bool:
+    """Return whether a config value explicitly disables a feature."""
+    if value is False:
+        return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {"false", "0", "no", "off"}
+    return False
+
+
+def _supports_developer_role(
+    *,
+    provider: str,
+    model_config: dict[str, Any],
+) -> bool:
+    """Return whether the target model accepts the OpenAI developer role.
+
+    OpenAI-compatible providers keep the current default behavior for
+    compatibility: ``provider=openai`` models support developer messages unless
+    explicitly configured with ``supports_developer_role=false``.
+    """
+    if _is_explicit_false(model_config.get("supports_developer_role")):
+        return False
+
+    return provider == "openai"
+
+
 class LangChainModelFactory:
     """Factory for creating LangChain chat model instances from model config.
 
@@ -307,6 +334,10 @@ class LangChainModelFactory:
         model._wegent_provider = provider  # type: ignore[attr-defined]
         model._wegent_model_id = cfg["model_id"]  # type: ignore[attr-defined]
         model._wegent_api_format = cfg.get("api_format") or ""  # type: ignore[attr-defined]
+        model._wegent_supports_developer_role = _supports_developer_role(  # type: ignore[attr-defined]
+            provider=provider,
+            model_config=model_config,
+        )
 
         return model
 

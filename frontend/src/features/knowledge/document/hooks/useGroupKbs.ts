@@ -66,6 +66,13 @@ export function useGroupKbs({
   const [groupKbs, setGroupKbs] = useState<KnowledgeBase[]>([])
   const [isGroupKbsLoading, setIsGroupKbsLoading] = useState(false)
   const [reloadCounter, setReloadCounter] = useState(0)
+  const selectedGroup = groups.find(group => group.id === selectedGroupId)
+  const selectedGroupType = selectedGroup?.type
+  const selectedGroupName = selectedGroup?.name
+  const personalCreatedByMeForEffect =
+    selectedGroupType === 'personal' ? personalCreatedByMe : undefined
+  const personalSharedWithMeForEffect =
+    selectedGroupType === 'personal' ? personalSharedWithMe : undefined
 
   const reload = useCallback(() => {
     setReloadCounter(c => c + 1)
@@ -84,19 +91,21 @@ export function useGroupKbs({
     const loadGroupKbs = async () => {
       setIsGroupKbsLoading(true)
       try {
-        const selectedGroup = groups.find(g => g.id === selectedGroupId)
-        if (!selectedGroup) return
+        if (!selectedGroupType) return
 
         let kbs: KnowledgeBase[] = []
-        if (selectedGroup.type === 'personal') {
+        if (selectedGroupType === 'personal') {
           // Use the pre-grouped personal KBs from the sidebar hook
-          const personalKbs = [...personalCreatedByMe, ...personalSharedWithMe]
+          const personalKbs = [
+            ...(personalCreatedByMeForEffect || []),
+            ...(personalSharedWithMeForEffect || []),
+          ]
           kbs = personalKbs.map(toKnowledgeBase)
-        } else if (selectedGroup.type === 'organization') {
+        } else if (selectedGroupType === 'organization') {
           const res = await listKnowledgeBases('organization')
           kbs = res.items || []
-        } else if (selectedGroup.type === 'group' && selectedGroup.name) {
-          const res = await listKnowledgeBases('group', selectedGroup.name)
+        } else if (selectedGroupType === 'group' && selectedGroupName) {
+          const res = await listKnowledgeBases('group', selectedGroupName)
           kbs = res.items || []
         }
 
@@ -120,7 +129,14 @@ export function useGroupKbs({
     return () => {
       isCancelled = true
     }
-  }, [selectedGroupId, groups, personalCreatedByMe, personalSharedWithMe, reloadCounter])
+  }, [
+    selectedGroupId,
+    selectedGroupType,
+    selectedGroupName,
+    personalCreatedByMeForEffect,
+    personalSharedWithMeForEffect,
+    reloadCounter,
+  ])
 
   return { groupKbs, isGroupKbsLoading, toKnowledgeBase: useCallback(toKnowledgeBase, []), reload }
 }

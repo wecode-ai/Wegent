@@ -13,6 +13,98 @@ from app.schemas.kind import SkillRefMeta
 from app.services.adapters.bot_kinds import BotKindsService
 
 
+def bot_create(**overrides):
+    return BotCreate(
+        name="test-bot",
+        shell_name="Codex",
+        agent_config={},
+        **overrides,
+    )
+
+
+def test_create_capability_mode_defaults_to_follow_device_without_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(bot_create()) == "follow_device"
+    )
+
+
+def test_create_capability_mode_preserves_legacy_explicit_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(skills=["interactive"])
+        )
+        == "manual"
+    )
+
+
+def test_create_capability_mode_is_manual_when_inheriting_base_capabilities():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(inherit_base_capabilities=True)
+        )
+        == "manual"
+    )
+
+
+def test_resolve_default_base_ghost_ref_uses_two_point_queries(mocker):
+    query = mocker.Mock()
+    query.filter.return_value = query
+    query.first.side_effect = [
+        SimpleNamespace(json={"kind": "Team"}),
+        SimpleNamespace(json={"kind": "Bot"}),
+    ]
+    db = mocker.Mock()
+    db.query.return_value = query
+    mocker.patch(
+        "app.services.adapters.bot_kinds.Team.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                members=[
+                    SimpleNamespace(
+                        role="leader",
+                        botRef=SimpleNamespace(
+                            name="chat-bot",
+                            namespace="default",
+                        ),
+                    )
+                ]
+            )
+        ),
+    )
+    mocker.patch(
+        "app.services.adapters.bot_kinds.Bot.model_validate",
+        return_value=SimpleNamespace(
+            spec=SimpleNamespace(
+                ghostRef=SimpleNamespace(
+                    name="chat-ghost",
+                    namespace="default",
+                )
+            )
+        ),
+    )
+
+    result = BotKindsService.resolve_default_base_ghost_ref(db)
+
+    assert result == {
+        "name": "chat-ghost",
+        "namespace": "default",
+        "user_id": 0,
+    }
+    assert query.first.call_count == 2
+
+
+def test_create_capability_mode_respects_explicit_follow_device():
+    assert (
+        BotKindsService._resolve_create_capability_mode(
+            bot_create(
+                capability_mode="follow_device",
+                skills=["interactive"],
+            )
+        )
+        == "follow_device"
+    )
+
+
 def test_get_skill_refs_handles_duplicate_group_skill_names_without_crash(mocker):
     service = BotKindsService(Kind)
 
@@ -355,6 +447,14 @@ def test_create_with_user_resolves_explicit_skill_refs_before_persisting(mocker)
             agent_config={},
             skills=["h52wbox-cloud"],
             skill_refs={"h52wbox-cloud": skill_ref},
+            plugins=[
+                {
+                    "id": "quality-gate@team-market",
+                    "pluginName": "quality-gate",
+                    "marketplaceId": "team-market",
+                    "displayName": "Quality Gate",
+                }
+            ],
         ),
         user_id=1,
     )
@@ -363,5 +463,6 @@ def test_create_with_user_resolves_explicit_skill_refs_before_persisting(mocker)
         obj for obj in added_objects if isinstance(obj, Kind) and obj.kind == "Ghost"
     )
     assert ghost.json["spec"]["skill_refs"]["h52wbox-cloud"]["skill_id"] == 92
+    assert ghost.json["spec"]["plugins"][0]["id"] == "quality-gate@team-market"
     resolve_refs.assert_called_once()
     legacy_validation.assert_not_called()

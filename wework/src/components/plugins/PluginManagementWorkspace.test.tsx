@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearPluginMarketplaceCache,
+  getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
@@ -280,5 +281,64 @@ describe('PluginManagementWorkspace cache', () => {
       expect.stringContaining('/plugins/marketplace/901/access'),
       expect.anything()
     )
+  })
+
+  test('commits uninstall to the shared inventory without waiting for a catalog refresh', async () => {
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const installed = cachedInstalledPlugin()
+    installed.id = 267250
+    installed.name = '产品设计'
+    installed.raw.metadata.labels = { id: 267250 }
+    installed.raw.spec.pluginId = 901
+    installed.raw.spec.source.pluginKey = 'product-design'
+    installed.raw.spec.displayName = installed.name
+    const marketplaceItem = {
+      id: 901,
+      remotePluginId: 'product-design',
+      name: 'product-design',
+      displayName: installed.name,
+      description: '',
+      featured: true,
+      installed: true,
+      installedPluginId: 267250,
+      enabled: true,
+      sourceType: 'marketplace' as const,
+      visibility: 'public' as const,
+      ownerUserId: 1,
+      components: installed.raw.spec.components,
+      manifest: { marketplaceId: 'openai-curated-remote' },
+      latestReleaseId: 6,
+    } satisfies PluginMarketplaceItem
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [marketplaceItem],
+      installedPlugins: [installed],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
+        return new Promise<Response>(() => {
+          // A slow catalog refresh must not delay the committed uninstall state.
+        })
+      })
+    )
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(screen.getByTestId('installed-plugin-actions-267250'))
+    await userEvent.click(screen.getByTestId('installed-plugin-uninstall-267250'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    await waitFor(() => expect(screen.queryByText('产品设计')).not.toBeInTheDocument())
+    expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems).toEqual([
+      expect.objectContaining({ installed: false, installedPluginId: null, enabled: false }),
+    ])
   })
 })

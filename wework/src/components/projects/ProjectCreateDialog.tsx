@@ -2,7 +2,8 @@ import { ArrowUpCircle, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
 import {
@@ -263,7 +264,9 @@ function ProjectCreateDialogContent({
       )
   const isMobileSheet = presentation === 'mobileSheet'
 
-  useEscapeKey(onClose, !submitting)
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!submitting) onClose()
+  })
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
@@ -563,8 +566,16 @@ function ProjectCreateDialogContent({
           : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4'
       }
     >
-      <div
+      <DialogForm
         data-testid="project-create-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        ref={dialogRef}
+        onSubmit={event => {
+          event.preventDefault()
+          void handleSubmit()
+        }}
         className={
           isMobileSheet
             ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-border border-b-0 bg-popover p-5 pb-[max(24px,env(safe-area-inset-bottom))] text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
@@ -720,10 +731,9 @@ function ProjectCreateDialogContent({
             {t('workbench.cancel', '取消')}
           </button>
           <button
-            type="button"
+            type="submit"
             data-testid="create-project-button"
             disabled={!canSubmit || submitting}
-            onClick={() => void handleSubmit()}
             aria-busy={submitting}
             className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
@@ -733,7 +743,7 @@ function ProjectCreateDialogContent({
             {isEditing ? t('workbench.save', '保存') : t('workbench.create_project', '创建项目')}
           </button>
         </div>
-      </div>
+      </DialogForm>
     </div>,
     document.body
   )

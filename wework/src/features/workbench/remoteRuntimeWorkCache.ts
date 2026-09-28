@@ -11,8 +11,8 @@ import type {
 } from '@/types/api'
 import { EMPTY_RUNTIME_WORK, mergeRuntimeWorkLists } from './workbenchCloudStatus'
 
-const REMOTE_RUNTIME_WORK_CACHE_VERSION = 2
-const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v2'
+const REMOTE_RUNTIME_WORK_CACHE_VERSION = 3
+const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v3'
 
 type PersistedRuntimeTask = Pick<
   RuntimeTaskSummary,
@@ -26,6 +26,7 @@ type PersistedRuntimeTask = Pick<
   | 'runtime'
   | 'createdAt'
   | 'updatedAt'
+  | 'recencyAt'
   | 'pinned'
   | 'pinnedOrder'
   | 'sidebarOrder'
@@ -216,6 +217,9 @@ function parsePersistedTask(value: unknown, workspacePath: string): PersistedRun
       : {}),
     ...(typeof task.updatedAt === 'string' || typeof task.updatedAt === 'number'
       ? { updatedAt: task.updatedAt }
+      : {}),
+    ...(typeof task.recencyAt === 'string' || typeof task.recencyAt === 'number'
+      ? { recencyAt: task.recencyAt }
       : {}),
     ...(booleanValue(task.pinned) !== undefined ? { pinned: booleanValue(task.pinned) } : {}),
     ...(nullableNumberValue(task.pinnedOrder) !== undefined

@@ -206,7 +206,10 @@ pub(crate) async fn ensure_browser_mcp_http_endpoint() -> Result<BrowserMcpEndpo
 
 async fn endpoint_is_reachable(endpoint: &BrowserMcpEndpoint) -> bool {
     let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
-    reqwest::Client::new()
+    let Ok(client) = reqwest::Client::builder().no_proxy().build() else {
+        return false;
+    };
+    client
         .get(health_url)
         .bearer_auth(&endpoint.token)
         .timeout(Duration::from_secs(1))
@@ -392,7 +395,7 @@ mod tests {
         assert_eq!(endpoint.url, same_endpoint.url);
         assert_eq!(endpoint.token, same_endpoint.token);
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let unauthorized = client
             .post(&endpoint.url)
             .json(&json!({

@@ -1,7 +1,7 @@
 """Wework inbox API contracts."""
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -59,3 +59,45 @@ class InboxView(BaseModel):
     items: list[NotificationView]
     unread_count: int
     next_offset: int | None
+
+
+class NotificationChannelPreference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    in_app: bool = True
+    system: bool | None = None
+    im: bool | None = None
+
+
+class NotificationPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tasks: NotificationChannelPreference = Field(
+        default_factory=lambda: NotificationChannelPreference(
+            in_app=True,
+            system=False,
+            im=None,
+        )
+    )
+    collaboration: NotificationChannelPreference = Field(
+        default_factory=lambda: NotificationChannelPreference(
+            in_app=True,
+            system=True,
+            im=True,
+        )
+    )
+    general: NotificationChannelPreference = Field(
+        default_factory=lambda: NotificationChannelPreference(
+            in_app=True,
+            system=None,
+            im=True,
+        )
+    )
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: Literal["tasks", "collaboration", "general"]
+    channel: Literal["in_app", "system", "im"]
+    enabled: bool

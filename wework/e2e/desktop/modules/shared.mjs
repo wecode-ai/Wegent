@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
+import { reservePort } from '../port-reservation.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -216,6 +217,10 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
 const CHECKPOINT_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK: create a completed task for downstream checkpoints.'
 const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE'
+const LATE_BOUND_PROJECT_SPACE_PROMPT =
+  'WEWORK_DESKTOP_E2E_LATE_BOUND_PROJECT_SPACE: inspect the bound Issue attachments.'
+const LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_LATE_BOUND_PROJECT_SPACE_COMPLETE'
 const MESSAGE_EDIT_ORIGINAL_PROMPT =
   'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL: answer before this message is edited.'
 const MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL_COMPLETE'
@@ -257,11 +262,24 @@ const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context win
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RATE_LIMIT_PROMPT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT: recover from one model 429.'
 const RATE_LIMIT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT_COMPLETE'
+const MODEL_SERVICE_CONNECTION_PROMPT =
+  'WEWORK_DESKTOP_E2E_MODEL_SERVICE_CONNECTION: show the failed endpoint.'
+const MODEL_SERVICE_CONNECTION_ENDPOINT =
+  'https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses'
+const MODEL_SERVICE_CONNECTION_ERROR = `unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (${MODEL_SERVICE_CONNECTION_ENDPOINT})"}`
 const ANTHROPIC_EMPTY_PROMPT =
   'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY: recover when Kimi reports tokens without output.'
 const ANTHROPIC_EMPTY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
+const MODEL_PROXY_RESTART_INITIAL_PROMPT =
+  'WEWORK_DESKTOP_E2E_MODEL_PROXY_RESTART_INITIAL: establish a persisted Codex conversation.'
+const MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_MODEL_PROXY_RESTART_INITIAL_COMPLETE'
+const MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_MODEL_PROXY_RESTART_FOLLOW_UP: continue after the executor restarts.'
+const MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const CONCURRENT_MEMORY_TASK_COUNT = 10
@@ -1017,18 +1035,6 @@ async function runChecked(command, args, options = {}) {
   })
 }
 
-async function reservePort() {
-  const server = createServer()
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolvePromise)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-  await new Promise(resolvePromise => server.close(resolvePromise))
-  return address.port
-}
-
 class BlockingNetworkProxy {
   constructor() {
     this.requests = []
@@ -1425,10 +1431,10 @@ async function selectE2EModel(
   control,
   modelIds = DEFAULT_MODEL_ID,
   modelLabels = DEFAULT_MODEL_LABEL,
-  composerSelector = ''
+  composerSelector = '',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
-  const expectedProviderId = expectedModelProviderId(modelIds)
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1551,6 +1557,7 @@ export {
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_CONTROL_SERVER_PORT,
+  MODEL_REQUEST_TIMEOUT_MS,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   COMPOSER_READY_STABILITY_MS,
   DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
@@ -1645,6 +1652,8 @@ export {
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   CHECKPOINT_TASK_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  LATE_BOUND_PROJECT_SPACE_PROMPT,
+  LATE_BOUND_PROJECT_SPACE_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_UPDATED_PROMPT,
@@ -1673,10 +1682,17 @@ export {
   RETRY_COMPLETION_TEXT,
   RATE_LIMIT_PROMPT,
   RATE_LIMIT_COMPLETION_TEXT,
+  MODEL_SERVICE_CONNECTION_PROMPT,
+  MODEL_SERVICE_CONNECTION_ENDPOINT,
+  MODEL_SERVICE_CONNECTION_ERROR,
   ANTHROPIC_EMPTY_PROMPT,
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
   RECONNECT_PROMPT,
   RECONNECT_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_INITIAL_PROMPT,
+  MODEL_PROXY_RESTART_INITIAL_COMPLETION_TEXT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
+  MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
   MEMORY_PROMPT,
   MEMORY_COMPLETION_TEXT,
   CONCURRENT_MEMORY_TASK_COUNT,

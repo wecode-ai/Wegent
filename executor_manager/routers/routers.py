@@ -265,6 +265,17 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             f"[Callback] Summary: event_type={event_type}, task_id={task_id}, "
             f"subtask_id={subtask_id}, keys={sorted(event_data.keys())}"
         )
+        if event_type == "error":
+            error_data = event_data.get("data")
+            if isinstance(error_data, dict):
+                logger.warning(
+                    "[Callback] Executor error: task_id=%s, subtask_id=%s, "
+                    "code=%s, message=%s",
+                    task_id,
+                    subtask_id,
+                    _to_log_preview(str(error_data.get("code", ""))),
+                    _to_log_preview(str(error_data.get("message", ""))),
+                )
 
         # Set task context for tracing
         set_task_context(task_id=task_id, subtask_id=subtask_id)
@@ -885,8 +896,9 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     This endpoint creates a validation task that runs inside the target image container.
     The validation is asynchronous - results are returned via callback mechanism.
 
-    For ClaudeCode: checks Node.js 20.x, claude-code CLI, SQLite 3.50+, Python 3.12
-    For Agno: checks Python 3.12
+    For Codex: checks Codex CLI and app-server support
+    For ClaudeCode: checks Node.js 20+, claude-code CLI, Python 3.12+
+    For Agno: checks Python 3.12+, SQLite 3.50+
     For Dify: No check needed (external_api type)
 
     The validation task will:
@@ -914,7 +926,7 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         }
 
     # Validate shell_type
-    if shell_type not in ["ClaudeCode", "Agno"]:
+    if shell_type not in ["Codex", "ClaudeCode", "Agno"]:
         return {
             "status": "error",
             "message": f"Unknown shell type: {shell_type}",

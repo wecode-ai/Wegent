@@ -1,12 +1,41 @@
 import type { HttpClient } from './http'
 
+/** The structured detail a notification carries about what it points at. */
+export interface WeworkNotificationPayload {
+  projectId?: string
+  projectName?: string
+  itemId?: string
+  itemKey?: string
+  itemTitle?: string
+  itemStatus?: string
+  itemPriority?: string
+  itemDueAt?: string
+  actorName?: string
+  commentId?: string
+  commentPreview?: string
+  replyPreview?: string
+  status?: string
+  executionId?: string
+  action?: string
+  idempotencyKey?: string
+  issueId?: string
+  dispatchTaskId?: string
+  humanAssignmentId?: string
+  dispatchId?: string
+  roundId?: string
+  assignmentId?: string
+  taskTitle?: string
+  instructions?: string
+  workflowStageId?: string
+}
+
 export interface WeworkNotification {
   id: string
   kind: string
   title: string
   body: string
   url: string | null
-  payload: Record<string, string>
+  payload: WeworkNotificationPayload
   created_at: string
   read_at: string | null
 }
@@ -17,12 +46,41 @@ export interface WeworkInbox {
   next_offset: number | null
 }
 
+export type WeworkNotificationCategory = 'collaboration' | 'general'
+export type WeworkNotificationPreferenceCategory = 'tasks' | WeworkNotificationCategory
+export type WeworkNotificationChannel = 'in_app' | 'system' | 'im'
+
+export interface WeworkNotificationChannelPreference {
+  in_app: boolean
+  system: boolean | null
+  im: boolean | null
+}
+
+export interface WeworkNotificationPreferences {
+  tasks: WeworkNotificationChannelPreference
+  collaboration: WeworkNotificationChannelPreference
+  general: WeworkNotificationChannelPreference
+}
+
+export interface WeworkNotificationPreferenceUpdate {
+  category: WeworkNotificationPreferenceCategory
+  channel: WeworkNotificationChannel
+  enabled: boolean
+}
+
 export function createNotificationsApi(client: HttpClient) {
   const path = '/v1/wework-notifications'
   return {
-    list: (offset = 0): Promise<WeworkInbox> => client.get(`${path}?offset=${offset}`),
+    list: (offset = 0, category?: WeworkNotificationCategory): Promise<WeworkInbox> =>
+      client.get(
+        `${path}?offset=${offset}${category ? `&category=${encodeURIComponent(category)}` : ''}`
+      ),
     read: (id: string): Promise<WeworkNotification> =>
       client.post(`${path}/${encodeURIComponent(id)}/read`, {}),
     readAll: (): Promise<void> => client.post(`${path}/read-all`, {}),
+    getPreferences: (): Promise<WeworkNotificationPreferences> => client.get(`${path}/preferences`),
+    updatePreferences: (
+      data: WeworkNotificationPreferenceUpdate
+    ): Promise<WeworkNotificationPreferences> => client.put(`${path}/preferences`, data),
   }
 }

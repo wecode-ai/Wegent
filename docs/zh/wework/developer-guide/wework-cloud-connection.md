@@ -151,6 +151,8 @@ Wework 管理的 Agent 环境和 macOS 用户级入口使用同一套分发规�
 
 模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
 
+模型选择器的本地目录和云端目录互相独立。本地目录依赖本机 Executor 状态和桌面偏好，这些前置条件失败时只能降级为“仅本地自定义模型”，不得让整个列表失败，也不得阻止云端目录加载；云端目录必须在同一个 `listModels` 调用里独立发起。内容无法解析的桌面偏好文件会先隔离为 `app-preferences.json.corrupt-<时间戳>`，然后按默认值继续；读权限、文件占用之类的操作性错误不会被隔离，仍按错误上报。因此一个坏文件只会丢掉被隔离的偏好，不会让用户永久看不到任何模型。
+
 目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`；选择云端或远程设备时，Wework 会在发送前按需同步该模型的 Codex 能力目录，并把任务所需的模型连接配置直接交给目标 Executor。
 
 本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。
@@ -191,7 +193,11 @@ DeepSeek V4-Flash 和 V4-Pro 是内置 provider profile：上游地址为 `https
 
 本地设备代理保存后不会立即中断正在运行的 Codex 任务。界面会提示用户手动重启 Codex；用户确认后，Wework 只重启当前 App 本机 executor 内维护的 persistent Codex app-server，不会终止机器上其他 Codex 进程。新 Codex app-server 启动时会获得代理相关环境变量，后续新对话会使用该代理。
 
-Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。对于用户在 Codex `config.toml` 中配置的自定义模型 provider，该转发器会使用任务携带的同一份本地设备代理访问上游；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
+本地代理配置显式区分三种模式：`system` 跟随系统代理，`direct` 强制直连，`custom` 使用 Wework 保存的代理 URL。旧版已保存 URL 的配置读取为 `custom`，未配置的设备读取为 `system`。`direct` 模式不会调用 Electron 的系统代理解析器，并向 Codex 运行时传入空代理。
+
+`system` 模式会通过 Electron 按实际目标 URL 解析系统代理（包括 PAC），不缓存全局代理地址。例如，PAC 可要求 ChatGPT 走代理、Wegent 内网模型网关直连；不能把 ChatGPT 的解析结果复用到内网请求。创建任务、续聊和切换模型时重新解析。设置页分别展示已保存的模式和实际连接结果；当系统没有为当前地址使用代理时，显示“直连（系统未使用代理）”。云端执行请求不使用本机的 PAC。
+
+Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。云端模型网关、本地自定义模型及独立 harness 都根据各自的请求地址选择代理；Codex `config.toml` 自定义 provider 的地址通过 `config/read` 读取。视觉辅助模型独立解析自己的目标地址，明确的 `DIRECT` 不得继承主模型代理。Codex 官方账号连接仍在启动时按 ChatGPT 地址配置进程代理，因此更改它的代理后仍需要重启 Codex。日志不输出代理凭据。
 
 ## 本机认证状态
 

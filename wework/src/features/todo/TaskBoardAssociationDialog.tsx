@@ -1,9 +1,9 @@
 import { LayoutDashboard, Plus, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sameProjectSpace, projectSpaceRef } from './projectSpaceSelection'
 
@@ -31,10 +31,15 @@ export function TaskBoardAssociationDialog({
   onSelect,
 }: TaskBoardAssociationDialogProps) {
   const { t } = useTranslation('common')
-  const dialogRef = useRef<HTMLDivElement | null>(null)
-  const previousFocusRef = useRef<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
   const [moveChoice, setMoveChoice] = useState<AssociationChoice | null>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => {
+      if (!pending && !moveChoice) onClose()
+    },
+    Boolean(project),
+    'button:not(:disabled)'
+  )
 
   const moving =
     Boolean(currentProject && project) &&
@@ -47,23 +52,6 @@ export function TaskBoardAssociationDialog({
         normalized ? `${item.id} ${item.title}`.toLocaleLowerCase().includes(normalized) : true
       )
   }, [items, query])
-
-  useEscapeKey(() => {
-    if (!pending && !moveChoice) onClose()
-  })
-
-  useEffect(() => {
-    if (!project) return
-    previousFocusRef.current = document.activeElement as HTMLElement | null
-    const frame = window.requestAnimationFrame(() => {
-      dialogRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-    })
-    return () => {
-      window.cancelAnimationFrame(frame)
-      previousFocusRef.current?.focus()
-      previousFocusRef.current = null
-    }
-  }, [project])
 
   if (!project) return null
 

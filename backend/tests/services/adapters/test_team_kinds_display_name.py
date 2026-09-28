@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime
+import os
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -93,6 +95,39 @@ def test_update_team_persists_display_name_in_metadata(test_db, test_user):
     test_db.refresh(team)
     assert result["displayName"] == "Spec Dev Team"
     assert team.json["metadata"]["displayName"] == "Spec Dev Team"
+
+
+def test_update_team_stores_updated_at_as_utc(test_db, test_user, monkeypatch):
+    old_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+    try:
+        team = _create_team_kind(test_db, test_user.id)
+        before_update = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            seconds=1
+        )
+
+        team_kinds_service.update_with_user(
+            test_db,
+            team_id=team.id,
+            obj_in=TeamUpdate(displayName="UTC Team"),
+            user_id=test_user.id,
+        )
+
+        after_update = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            seconds=1
+        )
+        test_db.refresh(team)
+        assert before_update <= team.updated_at <= after_update
+    finally:
+        if old_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", old_tz)
+        if hasattr(time, "tzset"):
+            time.tzset()
 
 
 def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):

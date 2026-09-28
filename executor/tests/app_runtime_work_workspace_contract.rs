@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
+#[path = "support/runtime_project_removal.rs"]
+mod runtime_project_removal;
+
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
@@ -1358,10 +1361,84 @@ async fn runtime_task_list_puts_new_unlisted_tasks_before_manual_project_order()
     assert_eq!(
         tasks
             .iter()
-            .map(|task| task["sidebarOrder"].as_u64().expect("sidebar order"))
+            .map(|task| task["sidebarOrder"].as_u64())
             .collect::<Vec<_>>(),
-        vec![0, 1, 2]
+        vec![None, None, Some(0)]
     );
+}
+
+#[tokio::test]
+async fn runtime_task_list_ignores_stale_manual_order_without_matching_threads() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-stale-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-stale-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Wegent"],
+            "project-order": ["/repo/Wegent"],
+            "thread-workspace-root-hints": {
+                "thread-older": "/repo/Wegent",
+                "thread-newer": "/repo/Wegent"
+            },
+            "sidebar-project-thread-orders": {
+                "/repo/Wegent": {
+                    "threadIds": ["stale-thread"],
+                    "sortKey": "manual"
+                }
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-older",
+            "cwd": "/tmp/outside-a",
+            "name": "Older",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000010000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-newer",
+            "cwd": "/tmp/outside-b",
+            "name": "Newer",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000030000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-stale-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["tasks"]
+        .as_array()
+        .expect("workspace tasks");
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec!["thread-newer", "thread-older"]
+    );
+    assert!(tasks.iter().all(|task| task["sidebarOrder"].is_null()));
 }
 
 #[tokio::test]

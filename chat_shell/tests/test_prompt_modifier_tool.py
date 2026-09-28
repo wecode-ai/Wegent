@@ -232,6 +232,7 @@ class TestPromptModifierFunction:
         # Arrange
         mock_llm = MagicMock()
         mock_llm._wegent_provider = "openai"
+        mock_llm._wegent_supports_developer_role = True
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -262,6 +263,7 @@ class TestPromptModifierFunction:
         # Arrange
         mock_llm = MagicMock()
         mock_llm._wegent_provider = "openai"
+        mock_llm._wegent_supports_developer_role = True
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -288,6 +290,7 @@ class TestPromptModifierFunction:
         # Arrange
         mock_llm = MagicMock()
         mock_llm._wegent_provider = "anthropic"
+        mock_llm._wegent_supports_developer_role = False
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -311,6 +314,66 @@ class TestPromptModifierFunction:
         assert isinstance(result[1], HumanMessage)
         assert "Test instructions" in result[1].content
         assert result[2].content == "Hello"
+
+    def test_prompt_modifier_uses_human_context_message_for_openai_compatible_qwen(
+        self,
+    ):
+        """Test that OpenAI-compatible models can opt out of developer messages."""
+        # Arrange
+        mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
+        mock_llm._wegent_model_id = "qwen3.6-plus"
+        mock_llm._wegent_supports_developer_role = False
+        registry = ToolRegistry()
+        load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
+        load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
+        registry.register(load_skill)
+
+        builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)
+        prompt_modifier = builder._create_prompt_modifier()
+
+        messages = [
+            SystemMessage(content="Original system prompt"),
+            HumanMessage(content="Hello"),
+        ]
+        state = {"messages": messages}
+
+        # Act
+        result = prompt_modifier(state)
+
+        # Assert
+        assert len(result) == 3
+        assert result[0].content == "Original system prompt"
+        assert isinstance(result[1], HumanMessage)
+        assert "<application_skill_context>" in result[1].content
+        assert "Test instructions" in result[1].content
+        assert result[2].content == "Hello"
+
+    def test_prompt_modifier_defaults_to_human_context_when_capability_missing(self):
+        """Test that missing capability metadata defaults to a safe user message."""
+        # Arrange
+        mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
+        registry = ToolRegistry()
+        load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
+        load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
+        registry.register(load_skill)
+
+        builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)
+        prompt_modifier = builder._create_prompt_modifier()
+
+        messages = [
+            SystemMessage(content="Original system prompt"),
+            HumanMessage(content="Hello"),
+        ]
+        state = {"messages": messages}
+
+        # Act
+        result = prompt_modifier(state)
+
+        # Assert
+        assert isinstance(result[1], HumanMessage)
+        assert "Test instructions" in result[1].content
 
     def test_prompt_modifier_handles_empty_messages(self):
         """Test that prompt_modifier handles empty messages list."""
@@ -338,6 +401,7 @@ class TestPromptModifierFunction:
         # Arrange
         mock_llm = MagicMock()
         mock_llm._wegent_provider = "openai"
+        mock_llm._wegent_supports_developer_role = True
         registry = ToolRegistry()
 
         tool1 = LoadSkillTool(user_id=1, skill_names=["skill1"], skill_metadata={})
@@ -382,6 +446,7 @@ class TestPromptModifierFunction:
         # Arrange
         mock_llm = MagicMock()
         mock_llm._wegent_provider = "openai"
+        mock_llm._wegent_supports_developer_role = True
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Skill instructions"})

@@ -3,10 +3,29 @@ import {
   type HarnessAppInstallation,
   type HarnessAppPreview,
 } from '@/api/local/harnessApps'
-import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
+import type {
+  SmartAppMarketplaceItem,
+  SmartAppsApi,
+  SmartAppSubmissionCompleteResponse,
+} from '@/api/smartApps'
 import type { SmartAppIdentityContext } from '@/telemetry/facts'
 import { beginOperation } from '@/telemetry/operationBus'
 import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
+
+export function beginSmartAppPublication() {
+  const request = beginOperation('smart_app.publish_request')
+  return {
+    submitted(result: SmartAppSubmissionCompleteResponse) {
+      if (!request.succeed()) return
+      if (result.submission.status === 'published') beginOperation('smart_app.publish').succeed()
+      else if (result.submission.status === 'rejected')
+        beginOperation('smart_app.publish').fail('confirm')
+    },
+    fail() {
+      request.fail('request')
+    },
+  }
+}
 
 export interface MarketplaceSmartAppPreparation {
   readonly intent: 'install' | 'update'
@@ -95,7 +114,10 @@ export async function installMarketplaceSmartApp(
     throw error
   }
 
-  attempt.succeed({ context: { smartApp: smartAppContext(installation) } })
+  const details = { context: { smartApp: smartAppContext(installation) } }
+  if (installation.state === 'installed' || installation.state === 'running')
+    attempt.succeed(details)
+  else attempt.fail('confirm', details)
   return installation
 }
 
@@ -131,6 +153,9 @@ export async function importSmartAppPackage(path: string): Promise<HarnessAppIns
     throw error
   }
 
-  attempt.succeed({ context: { smartApp: smartAppContext(installation) } })
+  const details = { context: { smartApp: smartAppContext(installation) } }
+  if (installation.state === 'installed' || installation.state === 'running')
+    attempt.succeed(details)
+  else attempt.fail('confirm', details)
   return installation
 }

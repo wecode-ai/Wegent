@@ -163,7 +163,7 @@
         "transferOwnership": "转让Owner权限",
         "cannotLeave": "无法直接离开群组（需先转让Owner）"
       },
-      "RestrictedAnalyst": "只能查看对话，无法访问知识库内容以保护敏感信息"
+      "RestrictedAnalyst": "可使用智能体对话；知识库仅限授权范围内检索，不可直接浏览文档"
     }
   }
 }

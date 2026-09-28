@@ -30,6 +30,7 @@ describe('parseChatError', () => {
     ['only claude models are supported', 'model_protocol_error'],
     ['out of memory', 'container_oom'],
     ['peer closed connection without response', 'network_error'],
+    ['unexpected status 502 Bad Gateway', 'timeout_error'],
     ['请求超时，请稍后重试', 'timeout_error'],
     [
       'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议"}}',
@@ -37,5 +38,16 @@ describe('parseChatError', () => {
     ],
   ])('classifies %s as %s', (message, type) => {
     expect(parseChatError(message).type).toBe(type)
+  })
+
+  test('reports the model service endpoint when the local proxy cannot connect', () => {
+    const parsed = parseChatError(
+      'unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses)"}'
+    )
+
+    expect(parsed.type).toBe('model_service_connection_error')
+    expect(parsed.endpoint).toBe(
+      'https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses'
+    )
   })
 })

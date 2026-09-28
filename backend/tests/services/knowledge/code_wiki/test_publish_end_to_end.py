@@ -293,6 +293,47 @@ def test_a_second_publish_replaces_the_content_and_keeps_the_document(
     assert published_generation_id(knowledge_base) == second.id
 
 
+def test_a_new_runner_deletes_the_previous_runners_superseded_attachment(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    generation: Callable[[], WikiGeneration],
+) -> None:
+    first = generation()
+    _page(test_db, first, "index", "first owner")
+    enqueued: list[int] = []
+    _publish(test_db, knowledge_base, first, test_user, enqueued)
+    old_attachment_id = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == knowledge_base.id)
+        .one()
+        .attachment_id
+    )
+
+    runner = User(
+        user_name="next-runner",
+        email="next-runner@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(runner)
+    test_db.flush()
+    second = generation()
+    second.user_id = runner.id
+    _page(test_db, second, "index", "second owner")
+
+    _publish(test_db, knowledge_base, second, runner, enqueued)
+
+    assert test_db.get(SubtaskContext, old_attachment_id) is None
+    document = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == knowledge_base.id)
+        .one()
+    )
+    assert document.user_id == test_user.id
+    assert test_db.get(SubtaskContext, document.attachment_id).user_id == runner.id
+
+
 def test_an_unchanged_page_writes_no_new_attachment(
     test_db: Session, knowledge_base: Kind, test_user: User, generation
 ):

@@ -14,4 +14,11 @@ describe('CompositedSpinner', () => {
     expect(spinner).toHaveClass('animate-spin', 'will-change-transform')
     expect(spinner.querySelector('svg')).not.toHaveClass('animate-spin')
   })
+
+  test('preserves caller size overrides after moving into the shared package', () => {
+    render(<CompositedSpinner data-testid="spinner" iconClassName="h-3 w-3" />)
+    const icon = screen.getByTestId('spinner').querySelector('svg')
+    expect(icon).toHaveClass('h-3', 'w-3')
+    expect(icon).not.toHaveClass('h-full', 'w-full')
+  })
 })

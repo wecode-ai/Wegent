@@ -7,9 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.schemas.runtime_work import (
+    LocalTaskSummary,
     NormalizedRuntimeMessage,
     RuntimeTaskAddress,
     RuntimeTranscriptRequest,
@@ -18,6 +20,7 @@ from app.schemas.runtime_work import (
 from app.schemas.wework_api import WeworkResponseObject
 from app.services import runtime_work_service as runtime
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
+from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.wework_api.identity import (
     ResponseIdentity,
     conversation_address,
@@ -66,34 +69,40 @@ async def conversations(
 ) -> list[dict]:
     work = await runtime.list_runtime_work(db=db, user_id=user_id, device_id=device_id)
     items = []
-    for workspace in work.chats:
+    workspaces = list(work.chats)
+    for project in work.projects:
+        workspaces.extend(project.device_workspaces)
+    for workspace in workspaces:
         for task in workspace.tasks:
-            items.append(
-                {
-                    "id": conversation_id(workspace.device_id, task.local_task_id),
-                    "object": "conversation",
-                    "title": task.title,
-                    "created_at": timestamp(task.created_at),
-                    "updated_at": timestamp(task.updated_at),
-                    "running": task.running,
-                    "status": task.status,
-                    "device_id": workspace.device_id,
-                    "runtime": task.runtime,
-                    "model": (
-                        task.model_selection.model_name if task.model_selection else ""
-                    ),
-                    "_turn_status": task.turn_status,
-                    "_address": RuntimeTaskAddress(
-                        deviceId=workspace.device_id,
-                        taskId=task.local_task_id,
-                        workspacePath=task.workspace_path,
-                        runtimeHandle=task.runtime_handle,
-                    ),
-                }
-            )
+            items.append(_conversation(workspace.device_id, task))
     return sorted(
         items, key=lambda item: (item["updated_at"], item["id"]), reverse=True
     )
+
+
+def _conversation(device_id: str, task: LocalTaskSummary) -> dict:
+    handle = dict(task.runtime_handle or {})
+    if task.model_selection:
+        handle["modelSelection"] = task.model_selection.model_dump(by_alias=True)
+    return {
+        "id": conversation_id(device_id, task.local_task_id),
+        "object": "conversation",
+        "title": task.title,
+        "created_at": timestamp(task.created_at),
+        "updated_at": timestamp(task.updated_at),
+        "running": task.running,
+        "status": task.status,
+        "device_id": device_id,
+        "runtime": task.runtime,
+        "model": task.model_selection.model_name if task.model_selection else "",
+        "_turn_status": task.turn_status,
+        "_address": RuntimeTaskAddress(
+            deviceId=device_id,
+            taskId=task.local_task_id,
+            workspacePath=task.workspace_path,
+            runtimeHandle=handle,
+        ),
+    }
 
 
 async def ensure_device_online(user_id: int, device_id: str) -> None:
@@ -108,15 +117,38 @@ async def ensure_device_online(user_id: int, device_id: str) -> None:
         ) from exc
 
 
+@trace_async("wework_api.task_lookup", "wework.api")
 async def find_conversation(db: Session, user_id: int, identifier: str) -> dict:
-    device_id, _ = conversation_address(identifier)
-    await ensure_device_online(user_id, device_id)
-    for item in await conversations(db, user_id, device_id):
-        if item["id"] == identifier:
-            return item
-    raise HTTPException(
-        404, "Conversation unavailable; its owning device must be online"
-    )
+    device_id, task_id = conversation_address(identifier)
+    # RPC validates device ownership and the live route before reading one task.
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.get",
+            payload={"taskId": task_id},
+        )
+    except RuntimeRpcError as exc:
+        status = {
+            "device_not_found": 404,
+            "device_offline": 503,
+            "runtime_route_missing": 503,
+            "remote_control_disabled": 403,
+        }.get(exc.code, 502)
+        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc
+    if result.get("success") is not True:
+        code = result.get("code") or "runtime_task_lookup_failed"
+        raise HTTPException(
+            404 if code == "task_not_found" else 502,
+            {"code": code, "message": result.get("error") or "Task lookup failed"},
+        )
+    try:
+        task = LocalTaskSummary.model_validate(result.get("task"))
+    except ValidationError as exc:
+        raise HTTPException(502, "Runtime returned invalid task metadata") from exc
+    if task.local_task_id != task_id:
+        raise HTTPException(502, "Runtime returned a different task identity")
+    return _conversation(device_id, task)
 
 
 async def transcript(

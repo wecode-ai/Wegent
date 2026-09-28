@@ -1,8 +1,8 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import type { FileTreeDirectoryHandle, FileTreeItemHandle } from '@pierre/trees'
 import { RefreshCw, Search } from 'lucide-react'
-import type { CSSProperties, DragEvent as ReactDragEvent } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import type { DragEvent as ReactDragEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
@@ -12,82 +12,10 @@ import {
   type WorkspaceTreeModel,
 } from './workspaceFileTreeModel'
 
-const PIERRE_WORKSPACE_FILE_TREE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-bg-muted-override: rgb(var(--color-muted));
-    --trees-fg-override: rgb(var(--color-text-secondary));
-    --trees-fg-muted-override: rgb(var(--color-text-muted));
-    --trees-border-color-override: rgb(var(--color-border));
-    --trees-selected-bg-override: rgb(var(--color-bg-surface));
-    --trees-selected-fg-override: rgb(var(--color-text-primary));
-    --trees-selected-focused-border-color-override: rgb(var(--color-primary));
-    --trees-focus-ring-color-override: rgb(var(--color-primary) / 0.35);
-    --trees-focus-ring-width-override: 1px;
-    --trees-focus-ring-offset-override: 0px;
-    --trees-gap-override: 2px;
-    --trees-level-gap-override: 6px;
-    --trees-item-padding-x-override: 4px;
-    --trees-item-margin-x-override: 0px;
-    --trees-padding-inline-override: 4px;
-    --trees-indent-guide-bg-override: rgb(var(--color-border));
-    --trees-scrollbar-thumb-override: rgb(var(--color-text-muted) / 0.55);
-    --trees-file-icon-color: rgb(var(--color-text-muted));
-    --trees-file-icon-color-default: rgb(var(--color-text-muted));
-    --trees-icon-blue: rgb(var(--color-text-muted));
-    --trees-icon-cyan: rgb(var(--color-text-muted));
-    --trees-icon-green: rgb(var(--color-text-muted));
-    --trees-icon-indigo: rgb(var(--color-text-muted));
-    --trees-icon-mauve: rgb(var(--color-text-muted));
-    --trees-icon-orange: rgb(var(--color-text-muted));
-    --trees-icon-pink: rgb(var(--color-text-muted));
-    --trees-icon-purple: rgb(var(--color-text-muted));
-    --trees-icon-red: rgb(var(--color-text-muted));
-    --trees-icon-teal: rgb(var(--color-text-muted));
-    --trees-icon-vermilion: rgb(var(--color-text-muted));
-    --trees-icon-yellow: rgb(var(--color-text-muted));
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: rgb(var(--color-text-secondary));
-    background: transparent !important;
-  }
-  button[data-type='item'] {
-    box-sizing: border-box;
-    border-radius: 6px;
-    color: rgb(var(--color-text-secondary));
-    background: transparent;
-    background-clip: padding-box;
-  }
-  button[data-type='item']:hover {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted));
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected] {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted)) !important;
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),
-  button[data-type='item'][data-item-selected='true'] + [data-item-selected='true'] {
-    border-radius: 6px !important;
-  }
-  button[data-type='item'][data-item-focused='true']::before,
-  button[data-type='item']:focus-visible::before {
-    outline: none;
-    box-shadow: inset 0 0 0 1px var(--trees-focus-ring-color);
-  }
-  button[data-type='item'][data-item-focused='true'][data-item-selected='true']::before,
-  button[data-type='item'][data-item-selected='true']:focus-visible::before {
-    box-shadow: inset 0 0 0 1px var(--trees-selected-focused-border-color);
-  }
-`
+import { PIERRE_WORKSPACE_FILE_TREE_CSS } from './workspaceFileTreeStyles'
 
 interface WorkspaceFileTreeProps {
+  visible?: boolean
   rootPath: string
   activeDirectoryPath: string
   entriesByPath: Record<string, WorkspaceFileEntry[]>
@@ -117,26 +45,35 @@ function WorkspacePierreFileTree({
   modelKey,
   treeModel,
   query,
+  visible,
   onOpenDirectory,
   onOpenFile,
 }: {
   modelKey: string
   treeModel: WorkspaceTreeModel
   query: string
+  visible: boolean
   onOpenDirectory: (entry: WorkspaceFileEntry) => void
   onOpenFile: (entry: WorkspaceFileEntry) => void
 }) {
+  const current = useRef({ treeModel, onOpenDirectory, onOpenFile })
+  const syncingSelection = useRef(false)
+  useLayoutEffect(() => {
+    current.current = { treeModel, onOpenDirectory, onOpenFile }
+  }, [treeModel, onOpenDirectory, onOpenFile])
   const { model } = useFileTree({
     density: 'compact',
     dragAndDrop: {
       canDrop: () => false,
     },
     flattenEmptyDirectories: true,
-    icons: { set: 'complete', colored: false },
+    icons: { set: 'complete', colored: true },
     initialExpandedPaths: treeModel.expandedTreePaths,
     initialSelectedPaths: treeModel.selectedTreePath ? [treeModel.selectedTreePath] : [],
     itemHeight: 28,
     onSelectionChange: selectedPaths => {
+      if (syncingSelection.current) return
+      const { treeModel, onOpenDirectory, onOpenFile } = current.current
       const nextPath = selectedPaths[0]
       if (!nextPath) return
 
@@ -175,6 +112,26 @@ function WorkspacePierreFileTree({
     })
   }, [model, treeModel.expandedTreePaths])
 
+  useEffect(() => {
+    const path = treeModel.selectedTreePath
+    if (!visible || !path || !model.getItem(path)) return
+    syncingSelection.current = true
+    try {
+      const segments = path.split('/')
+      for (let index = 1; index < segments.length; index += 1) {
+        const item = model.getItem(`${segments.slice(0, index).join('/')}/`)
+        if (isDirectoryHandle(item)) item.expand()
+      }
+      for (const selected of model.getSelectedPaths()) {
+        if (selected !== path) model.getItem(selected)?.deselect()
+      }
+      model.getItem(path)?.select()
+      model.scrollToPath(path, { offset: 'center', focus: false })
+    } finally {
+      syncingSelection.current = false
+    }
+  }, [model, treeModel.selectedTreePath, visible])
+
   const handleDragStart = (event: ReactDragEvent<HTMLDivElement>) => {
     const row = event.nativeEvent
       .composedPath()
@@ -203,19 +160,13 @@ function WorkspacePierreFileTree({
         data-testid="workspace-file-tree-pierre"
         model={model}
         className="block h-full min-h-0 w-full"
-        style={
-          {
-            '--trees-border-color-override': 'rgb(var(--color-border))',
-            '--trees-fg-override': 'rgb(var(--color-text-secondary))',
-            '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
-          } as CSSProperties
-        }
       />
     </div>
   )
 }
 
 export function WorkspaceFileTree({
+  visible = true,
   rootPath,
   activeDirectoryPath,
   entriesByPath,
@@ -228,7 +179,8 @@ export function WorkspaceFileTree({
   onRefresh,
 }: WorkspaceFileTreeProps) {
   const { t } = useTranslation('common')
-  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState({ path: selectedPath, value: '' })
+  const query = search.path === selectedPath ? search.value : ''
   const treeModel = useMemo(
     () =>
       createWorkspaceTreeModel({
@@ -256,7 +208,7 @@ export function WorkspaceFileTree({
           <input
             data-testid="workspace-file-search-input"
             value={query}
-            onChange={event => setQuery(event.target.value)}
+            onChange={event => setSearch({ path: selectedPath, value: event.target.value })}
             placeholder={t('workbench.workspace_file_search', '筛选文件...')}
             aria-label={t('workbench.workspace_file_search', '筛选文件...')}
             className="min-w-0 flex-1 bg-transparent text-xs leading-4 outline-none placeholder:text-text-muted"
@@ -297,6 +249,7 @@ export function WorkspaceFileTree({
             modelKey={modelKey}
             treeModel={treeModel}
             query={query}
+            visible={visible}
             onOpenDirectory={onOpenDirectory}
             onOpenFile={onOpenFile}
           />

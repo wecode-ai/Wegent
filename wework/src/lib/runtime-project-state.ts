@@ -23,6 +23,28 @@ export function getRuntimeProjectSidebarStateKey(project: RuntimeProjectRef): st
   return project.sidebarStateKey?.trim() || project.key
 }
 
+export function buildRuntimeRemoteProjectStateId(hostId: string, projectKey: string): string {
+  return `wegent-remote:${encodeURIComponent(hostId)}:${encodeURIComponent(projectKey)}`
+}
+
+export function parseRuntimeRemoteProjectStateId(
+  stateId: string
+): { hostId: string; projectKey: string } | null {
+  const prefix = 'wegent-remote:'
+  if (!stateId.startsWith(prefix)) return null
+  const encodedIdentity = stateId.slice(prefix.length)
+  const separatorIndex = encodedIdentity.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex === encodedIdentity.length - 1) return null
+
+  try {
+    const hostId = decodeURIComponent(encodedIdentity.slice(0, separatorIndex)).trim()
+    const projectKey = decodeURIComponent(encodedIdentity.slice(separatorIndex + 1)).trim()
+    return hostId && projectKey ? { hostId, projectKey } : null
+  } catch {
+    return null
+  }
+}
+
 export function getRuntimeRemoteProjectRegistrations(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   localStateDeviceId: string | null | undefined
@@ -35,7 +57,7 @@ export function getRuntimeRemoteProjectRegistrations(
     if (!workspace) return
     const hostId = workspace.remoteHostId?.trim() || workspace.deviceId.trim()
     const stateKey = projectWork.project.sidebarStateKey?.trim()
-    const id = stateKey || createRemoteProjectStateId(hostId, projectWork.project.key)
+    const id = stateKey || buildRuntimeRemoteProjectStateId(hostId, projectWork.project.key)
     registrations.set(id, {
       id,
       hostId,
@@ -66,7 +88,7 @@ export function getRuntimeProjectActivation(
     deviceId: localStateDeviceId,
     projectKey: remoteHostId
       ? projectWork.project.sidebarStateKey?.trim() ||
-        createRemoteProjectStateId(remoteHostId, projectWork.project.key)
+        buildRuntimeRemoteProjectStateId(remoteHostId, projectWork.project.key)
       : getRuntimeProjectSidebarStateKey(projectWork.project),
     workspacePath: remoteWorkspace?.workspacePath ?? workspace.workspacePath,
     ...(remoteHostId ? { remoteHostId } : {}),
@@ -110,8 +132,4 @@ function getRemoteProjectWorkspace(projectWork: RuntimeProjectWork, localStateDe
     ) ??
     null
   )
-}
-
-function createRemoteProjectStateId(hostId: string, projectKey: string): string {
-  return `wegent-remote:${encodeURIComponent(hostId)}:${encodeURIComponent(projectKey)}`
 }

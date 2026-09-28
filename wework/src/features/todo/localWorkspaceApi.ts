@@ -1,0 +1,856 @@
+import {
+  mapAutomationExecutionCatalog,
+  type CollaborationExecutionEnvironmentConfig,
+  type CollaborationMember,
+  type CollaborationGroup,
+  type CollaborationProject,
+  type CollaborationWorkspace,
+  type SharedWorkspaceApi,
+  type WorkspaceAutomationRule,
+} from '@wegent/collaboration'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  isDefaultWorkItemProject,
+  type CloudProject,
+} from '@/api/deliveries'
+import {
+  createWeworkAutomationSharedWorkspaceApi,
+  createWeworkDeliverySharedWorkspaceApi,
+} from '@/features/collaboration'
+import type {
+  ProjectSpaceApis,
+  ProjectSpaceDetailServices,
+} from '@/features/workbench/workbenchServices'
+import type { LocalProjectChatAgentCreateInput } from '@/api/local/localDelivery'
+import {
+  ensureDefaultLocalAgent,
+  isDefaultLocalAgent,
+  isDefaultLocalAgentName,
+} from '@/features/collaboration/defaultLocalAgent'
+import { sha256Hex } from '@/api/fileHash'
+export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
+
+function assertValidCollaborationGroup(
+  leader: CollaborationGroup['leader'],
+  members: CollaborationGroup['members'],
+  stages: CollaborationGroup['stages']
+) {
+  const identity = (member: CollaborationGroup['leader']) => `${member.kind}:${member.id}`
+  const leaderIdentity = identity(leader)
+  const memberIdentities = members.map(identity)
+  const uniqueMemberIdentities = new Set(memberIdentities)
+  if (uniqueMemberIdentities.size !== memberIdentities.length) {
+    throw new Error('Collaboration group members must be unique')
+  }
+  if (!uniqueMemberIdentities.has(leaderIdentity)) {
+    throw new Error('Leader must be a member of the collaboration group')
+  }
+  stages.forEach(stage => {
+    if (!stage.assignee) return
+    const assigneeIdentity = identity(stage.assignee)
+    if (!uniqueMemberIdentities.has(assigneeIdentity)) {
+      throw new Error('Collaboration group stage assignee must be a group member')
+    }
+    if (assigneeIdentity === leaderIdentity) {
+      throw new Error('Collaboration group leader cannot execute a stage')
+    }
+  })
+}
+
+export function createLocalWorkspaceApi(
+  deliveryApi: ProjectSpaceApis['local'] | undefined,
+  userId: number,
+  userName: string,
+  userEmail: string | null,
+  detailServices?: ProjectSpaceDetailServices,
+  locale: 'zh-CN' | 'en' = 'zh-CN'
+): SharedWorkspaceApi | null {
+  if (!deliveryApi) return null
+  const delivery = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+  const automation = createWeworkAutomationSharedWorkspaceApi(
+    deliveryApi,
+    detailServices?.projectAutomationApi,
+    detailServices?.projectIncomingHookApi
+  )
+  const decorateProject = (project: CollaborationProject): CollaborationProject => ({
+    ...project,
+    workspace_id: LOCAL_WORKSPACE_ID,
+    current_user_id: userId,
+    current_user_name: userName,
+  })
+  const projects = async () =>
+    (await delivery.projects.list())
+      .filter(project => !isDefaultWorkItemProject(project as CloudProject))
+      .map(decorateProject)
+  const executionEnvironments = async () => {
+    const devices = await detailServices?.deviceApi.listDevices()
+    const now = new Date().toISOString()
+    return (devices ?? [])
+      .filter(device => device.device_type === 'local' || device.device_type === 'app')
+      .map(device => ({
+        id: `device:${device.device_id}`,
+        device_id: device.id,
+        device_key: device.device_id,
+        is_current_device: true,
+        name: device.name,
+        kind: 'local_device' as const,
+        coding_tools: ['codex'],
+        owner_type: 'workspace' as const,
+        owner_id: LOCAL_WORKSPACE_ID,
+        owner_name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+        status:
+          device.status === 'online' || device.status === 'busy'
+            ? ('online' as const)
+            : ('offline' as const),
+        updated_at: now,
+      }))
+  }
+  const executionEnvironmentFingerprint = async (
+    configuration: CollaborationExecutionEnvironmentConfig
+  ) =>
+    sha256Hex(
+      new Blob([
+        JSON.stringify({
+          repositories: configuration.repositories.map(repository => ({
+            name: repository.name.trim(),
+            url: repository.url.trim(),
+            ref: repository.ref.trim(),
+            path: repository.path.trim(),
+            primary: repository.primary,
+          })),
+          setup_steps: configuration.setup_steps
+            .filter(step => step.command.trim())
+            .map(step => ({
+              command: step.command.trim(),
+              working_directory: step.working_directory.trim(),
+            })),
+        }),
+      ])
+    )
+  const commandOutputRecord = (value: unknown): Record<string, unknown> => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>
+    }
+    if (typeof value !== 'string') return {}
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {}
+    } catch {
+      return {}
+    }
+  }
+  const initializeProjectExecutionEnvironment = async (
+    projectId: string,
+    input: { deviceId: number; version: number }
+  ): Promise<CollaborationProject> => {
+    const deviceApi = detailServices?.deviceApi
+    if (!deviceApi) {
+      throw new Error(
+        locale === 'zh-CN' ? '当前设备执行服务不可用' : 'The current device executor is unavailable'
+      )
+    }
+    const [project, environments] = await Promise.all([
+      delivery.projects.get(projectId),
+      executionEnvironments(),
+    ])
+    const environment = environments.find(candidate => candidate.device_id === input.deviceId)
+    if (!environment?.device_key?.trim()) {
+      throw new Error(locale === 'zh-CN' ? '未找到执行设备' : 'Execution device was not found')
+    }
+    const deviceKey = environment.device_key.trim()
+    if (environment.status !== 'online') {
+      throw new Error(locale === 'zh-CN' ? '执行设备当前不在线' : 'Execution device is offline')
+    }
+    const configuration: CollaborationExecutionEnvironmentConfig =
+      project.execution_environment ?? {
+        repositories: [],
+        setup_steps: [],
+      }
+    const fingerprint = await executionEnvironmentFingerprint(configuration)
+    const baseConfiguration: CollaborationExecutionEnvironmentConfig = {
+      repositories: configuration.repositories,
+      setup_steps: configuration.setup_steps,
+      fingerprint,
+      devices:
+        configuration.fingerprint === fingerprint ? { ...(configuration.devices ?? {}) } : {},
+    }
+    const persistDeviceState = async (
+      state: NonNullable<CollaborationExecutionEnvironmentConfig['devices']>[string]
+    ) =>
+      decorateProject(
+        await deliveryApi.updateCloudProject(projectId, {
+          version: project.version,
+          execution_environment: {
+            ...baseConfiguration,
+            devices: {
+              ...baseConfiguration.devices,
+              [deviceKey]: state,
+            },
+          } as CollaborationExecutionEnvironmentConfig,
+        })
+      )
+    try {
+      const response = await deviceApi.executeCommand(deviceKey, {
+        command_key: 'environment_prepare',
+        args: [
+          JSON.stringify({
+            environmentId: `${projectId}-${fingerprint.slice(0, 12)}`,
+            repositories: baseConfiguration.repositories,
+            setupSteps: baseConfiguration.setup_steps.map(step => ({
+              command: step.command,
+              workingDirectory: step.working_directory,
+            })),
+            fingerprint,
+          }),
+        ],
+        timeout_seconds: 1800,
+        max_output_bytes: 65536,
+      })
+      const workspacePath = String(commandOutputRecord(response.stdout).workspacePath ?? '').trim()
+      if (!response.success || !workspacePath) {
+        return persistDeviceState({
+          status: 'error',
+          workspace_path: '',
+          prepared_at: null,
+          error:
+            response.error ||
+            response.stderr ||
+            (locale === 'zh-CN'
+              ? '执行环境初始化失败'
+              : 'Execution environment initialization failed'),
+        })
+      }
+      return persistDeviceState({
+        status: 'ready',
+        workspace_path: workspacePath,
+        prepared_at: new Date().toISOString(),
+        error: '',
+      })
+    } catch (error) {
+      return persistDeviceState({
+        status: 'error',
+        workspace_path: '',
+        prepared_at: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : locale === 'zh-CN'
+              ? '执行环境初始化失败'
+              : 'Execution environment initialization failed',
+      })
+    }
+  }
+  const workspace = async (): Promise<CollaborationWorkspace> => {
+    const [items, environments, agents, backingProject] = await Promise.all([
+      projects(),
+      executionEnvironments(),
+      localAgentResources(),
+      delivery.projects.get(DEFAULT_WORK_ITEM_PROJECT_ID),
+    ])
+    const now = new Date().toISOString()
+    return {
+      id: LOCAL_WORKSPACE_ID,
+      location: 'local',
+      name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+      namespace: 'default',
+      description:
+        locale === 'zh-CN'
+          ? '保存在当前设备上的项目、Issue 与执行资源。'
+          : 'Projects, issues, and execution resources stored on this device.',
+      access_role: 'Owner',
+      member_count: 1,
+      agent_count: agents.length,
+      execution_environment_count: environments.length,
+      project_count: items.length,
+      created_by_user_id: userId,
+      version: backingProject.version,
+      execution_environment: backingProject.execution_environment,
+      created_at: now,
+      updated_at: now,
+    }
+  }
+  const unavailable = async (): Promise<never> => {
+    throw new Error(
+      locale === 'zh-CN'
+        ? '本地空间不支持此操作'
+        : 'This operation is not available in the local space'
+    )
+  }
+  const currentMember = async (): Promise<CollaborationMember[]> => [
+    {
+      id: userId,
+      user_id: userId,
+      user_name: userName,
+      email: userEmail,
+      role: 'Owner',
+    },
+  ]
+  const projectAgentApi = detailServices?.localProjectChatAgentApi
+  const listProjectAgents = async (projectId: string) =>
+    (await projectAgentApi?.list(projectId))?.map(agent => ({
+      ...agent,
+      agent_id: agent.name,
+      deletable: !isDefaultLocalAgent(agent),
+      name: agent.displayName || agent.name,
+    })) ?? []
+  const projectChatClient = detailServices?.projectChatClient
+  const localAgentResources = async () => {
+    const listedAgents = projectAgentApi
+      ? await projectAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID).catch(error => {
+          console.warn('[Wework] Failed to list local Agents', error)
+          return []
+        })
+      : []
+    const defaultAgent = projectAgentApi
+      ? await ensureDefaultLocalAgent(
+          projectAgentApi,
+          DEFAULT_WORK_ITEM_PROJECT_ID,
+          locale,
+          listedAgents
+        ).catch(error => {
+          console.warn('[Wework] Failed to ensure the default local Agent', error)
+          return null
+        })
+      : null
+    const agents =
+      defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
+        ? [...listedAgents, defaultAgent]
+        : listedAgents
+    const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
+    return agents.map(agent => ({
+      id: agent.id,
+      agent_id: agent.name,
+      name: agent.displayName || agent.name,
+      location: 'local' as const,
+      version: agent.version,
+      capability_description: agent.capabilityDescription,
+      system_prompt: agent.systemPrompt,
+      runtime: agent.runtime,
+      owner_type: 'workspace' as const,
+      owner_id: LOCAL_WORKSPACE_ID,
+      owner_name: ownerName,
+      deletable: !isDefaultLocalAgent(agent),
+      status: agent.status === 'active' ? ('available' as const) : ('unavailable' as const),
+      execution_environment_ids: agent.executionDeviceId
+        ? [`device:${agent.executionDeviceId}`]
+        : [],
+      project_binding_input: {
+        name: agent.name,
+        displayName: agent.displayName,
+        namespace: agent.namespace,
+        runtime: agent.runtime,
+        model: agent.model,
+        modelType: agent.modelType,
+        modelNamespace: agent.modelNamespace,
+        capabilityDescription: agent.capabilityDescription,
+        capabilityMode: agent.capabilityMode,
+        systemPrompt: agent.systemPrompt,
+        additionalSkills: agent.additionalSkills,
+        mcpServers: agent.mcpServers,
+        visibility: agent.visibility,
+        executionEnvironment: agent.executionEnvironment,
+        executionMode: agent.executionMode,
+        executionDeviceId: agent.executionDeviceId,
+        localProjectId: agent.localProjectId,
+        maxConcurrentExecutions: agent.maxConcurrentExecutions,
+        workspacePolicy: agent.workspacePolicy,
+        plugins: agent.plugins,
+      },
+    }))
+  }
+  const projectCollaborationGroups = async (projectId: string): Promise<CollaborationGroup[]> => {
+    const project = await delivery.projects.get(projectId)
+    return project.collaboration_groups ?? []
+  }
+  const persistProjectCollaborationGroups = async (
+    projectId: string,
+    groups: CollaborationGroup[]
+  ) => {
+    const project = await delivery.projects.get(projectId)
+    await delivery.projects.update(projectId, {
+      version: project.version,
+      collaborationGroups: groups,
+    })
+  }
+  const issueProjectId = async (issueId: string) =>
+    String((await delivery.issues.get(issueId)).cloud_project_id)
+  const projectAutomaticProcessingRules = async (
+    projectId: string
+  ): Promise<WorkspaceAutomationRule[]> => {
+    const project = await delivery.projects.get(projectId)
+    return project.automatic_processing_rules ?? []
+  }
+  const persistProjectAutomaticProcessingRules = async (
+    projectId: string,
+    rules: WorkspaceAutomationRule[]
+  ) => {
+    const project = await delivery.projects.get(projectId)
+    const updated = await delivery.projects.update(projectId, {
+      version: project.version,
+      automaticProcessingRules: rules,
+    })
+    return updated.version
+  }
+  const automationTargetName = async (
+    projectId: string,
+    targetKind: WorkspaceAutomationRule['targetKind'],
+    targetId: string
+  ) => {
+    if (targetKind === 'human') {
+      return (
+        (await currentMember()).find(member => String(member.user_id) === targetId)?.user_name ??
+        targetId
+      )
+    }
+    if (targetKind === 'agent') {
+      return (
+        (await listProjectAgents(projectId)).find(agent => agent.id === targetId)?.name ?? targetId
+      )
+    }
+    return (
+      (await projectCollaborationGroups(projectId)).find(group => group.id === targetId)?.name ??
+      targetId
+    )
+  }
+  const localAutomations: NonNullable<SharedWorkspaceApi['automations']> = {
+    list: projectAutomaticProcessingRules,
+    async create(projectId, input) {
+      const now = new Date().toISOString()
+      const rule: WorkspaceAutomationRule = {
+        ...input,
+        id: crypto.randomUUID(),
+        projectId,
+        name: String(input.name ?? ''),
+        enabled: input.enabled !== false,
+        targetName: await automationTargetName(projectId, input.targetKind, input.targetId),
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      }
+      const rules = await projectAutomaticProcessingRules(projectId)
+      await persistProjectAutomaticProcessingRules(projectId, [...rules, rule])
+      return rule
+    },
+    migrateWorkflow: unavailable,
+    async update(projectId, automationId, input) {
+      const rules = await projectAutomaticProcessingRules(projectId)
+      const current = rules.find(rule => rule.id === automationId)
+      if (!current) {
+        throw new Error(
+          locale === 'zh-CN' ? '未找到自动处理规则' : 'Automatic processing rule was not found'
+        )
+      }
+      if (current.version !== input.version) {
+        throw new Error(
+          locale === 'zh-CN'
+            ? '自动处理规则已被更新，请刷新后重试'
+            : 'The automatic processing rule changed. Refresh and try again.'
+        )
+      }
+      const updated: WorkspaceAutomationRule = {
+        ...current,
+        ...input,
+        id: current.id,
+        projectId,
+        name: String(input.name ?? current.name),
+        enabled: input.enabled === undefined ? current.enabled : input.enabled !== false,
+        version: current.version + 1,
+        updatedAt: new Date().toISOString(),
+      }
+      await persistProjectAutomaticProcessingRules(
+        projectId,
+        rules.map(rule => (rule.id === automationId ? updated : rule))
+      )
+      return updated
+    },
+    async remove(projectId, automationId) {
+      const rules = await projectAutomaticProcessingRules(projectId)
+      const nextRules = rules.filter(rule => rule.id !== automationId)
+      if (nextRules.length === rules.length) {
+        throw new Error(
+          locale === 'zh-CN' ? '未找到自动处理规则' : 'Automatic processing rule was not found'
+        )
+      }
+      const projectVersion = await persistProjectAutomaticProcessingRules(projectId, nextRules)
+      return { projectVersion, workflowAutomationId: null }
+    },
+    async runNow(projectId, automationId) {
+      if (!detailServices?.localProjectAutomationApi) return unavailable()
+      const runs = await detailServices.localProjectAutomationApi.run(projectId, automationId)
+      if (!runs.length)
+        throw new Error(locale === 'zh-CN' ? '没有可处理的 Issue' : 'No open Issues to process')
+      return runs[0]
+    },
+    listRuns: (projectId, automationId) =>
+      detailServices?.localProjectAutomationApi?.listRuns(projectId, automationId) ?? unavailable(),
+    cancelRun: (projectId, runId) =>
+      detailServices?.localProjectAutomationApi?.cancelRun(projectId, runId) ?? unavailable(),
+    retryRun: (projectId, runId) =>
+      detailServices?.localProjectAutomationApi?.retryRun(projectId, runId) ?? unavailable(),
+  }
+
+  return {
+    ...(delivery as unknown as SharedWorkspaceApi),
+    automationExecutionCatalog: {
+      async load() {
+        const [devices, models, runtimeProfiles] = await Promise.all([
+          detailServices?.deviceApi.listDevices() ?? [],
+          detailServices?.modelApi.listModels() ?? { data: [] },
+          detailServices?.runtimeProfileApi?.list() ?? [],
+        ])
+        return mapAutomationExecutionCatalog({ items: devices }, models, runtimeProfiles)
+      },
+      loadPlugins: async () => [],
+    },
+    automations: localAutomations,
+    ...(automation.incomingHooks
+      ? {
+          incomingHooks: {
+            ...automation.incomingHooks,
+            listEvents: unavailable,
+          },
+        }
+      : {}),
+    workspaces: {
+      list: async () => [await workspace()],
+      get: workspace,
+      create: unavailable,
+      async update(_workspaceId, input) {
+        const updated = await delivery.projects.update(DEFAULT_WORK_ITEM_PROJECT_ID, {
+          version: input.version,
+          executionEnvironment: input.executionEnvironment,
+        })
+        return {
+          ...(await workspace()),
+          version: updated.version,
+          execution_environment: updated.execution_environment,
+        }
+      },
+      archive: unavailable,
+      listMembers: currentMember,
+      addMember: unavailable,
+      updateMember: unavailable,
+      removeMember: unavailable,
+      listAgents: localAgentResources,
+      addAgent: unavailable,
+      removeAgent: unavailable,
+      listCollaborationGroups: () => projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID),
+      createCollaborationGroup: (_workspaceId, input) =>
+        createCollaborationGroup(DEFAULT_WORK_ITEM_PROJECT_ID, input),
+      updateCollaborationGroup: (_workspaceId, groupId, input) =>
+        updateCollaborationGroup(DEFAULT_WORK_ITEM_PROJECT_ID, groupId, input),
+      removeCollaborationGroup: (_workspaceId, groupId) =>
+        removeCollaborationGroup(DEFAULT_WORK_ITEM_PROJECT_ID, groupId),
+      listExecutionEnvironments: executionEnvironments,
+      addExecutionEnvironment: unavailable,
+      removeExecutionEnvironment: unavailable,
+      async initializeExecutionEnvironment(_workspaceId, input) {
+        const project = await initializeProjectExecutionEnvironment(
+          DEFAULT_WORK_ITEM_PROJECT_ID,
+          input
+        )
+        const current = await workspace()
+        return {
+          ...current,
+          version: project.version,
+          execution_environment: project.execution_environment,
+        }
+      },
+    },
+    resources: {
+      list: async () => ({
+        agents: await localAgentResources(),
+        execution_environments: await executionEnvironments(),
+      }),
+      async removeAgent(agent) {
+        if (!projectAgentApi || agent.version == null) {
+          throw new Error(
+            locale === 'zh-CN' ? '无法删除这个本地智能体' : 'This local agent cannot be deleted'
+          )
+        }
+        if (
+          agent.deletable === false ||
+          isDefaultLocalAgentName(agent.agent_id) ||
+          isDefaultLocalAgentName(agent.name)
+        ) {
+          throw new Error(
+            locale === 'zh-CN'
+              ? '默认本地智能体不能删除'
+              : 'The default local Agent cannot be deleted'
+          )
+        }
+        await projectAgentApi.archive(DEFAULT_WORK_ITEM_PROJECT_ID, agent.id, agent.version)
+      },
+    },
+    comments: projectChatClient
+      ? {
+          async list(issueId) {
+            const { snapshot, unsubscribe } = await projectChatClient.subscribe(
+              await issueProjectId(issueId),
+              issueId,
+              0,
+              () => undefined
+            )
+            unsubscribe()
+            return snapshot.messages.map(message => ({
+              id: message.messageId,
+              body: message.content,
+              author: message.sender.name,
+              web_url: null,
+              created_at: message.createdAt,
+              updated_at: message.updatedAt,
+            }))
+          },
+          async create(issueId, body) {
+            const message = await projectChatClient.send({
+              projectId: await issueProjectId(issueId),
+              taskId: issueId,
+              clientMessageId: crypto.randomUUID(),
+              text: body,
+            })
+            return {
+              id: message.messageId,
+              body: message.content,
+              author: message.sender.name,
+              web_url: null,
+              created_at: message.createdAt,
+              updated_at: message.updatedAt,
+            }
+          },
+        }
+      : {
+          list: async () => [],
+          create: unavailable,
+        },
+    agents: projectAgentApi
+      ? {
+          list: listProjectAgents,
+          create: async (projectId, input) => ({
+            ...(await projectAgentApi.create(projectId, toLocalAgentCreateInput(input))),
+          }),
+          update: async (projectId, agentId, input) => {
+            if (input.status === 'archived') {
+              const existing = (await projectAgentApi.list(projectId)).find(
+                agent => agent.id === agentId
+              )
+              if (existing && isDefaultLocalAgent(existing)) {
+                throw new Error(
+                  locale === 'zh-CN'
+                    ? '默认本地智能体不能停用'
+                    : 'The default local Agent cannot be archived'
+                )
+              }
+            }
+            return {
+              ...(await projectAgentApi.update(
+                projectId,
+                agentId,
+                input as Parameters<typeof projectAgentApi.update>[2]
+              )),
+            }
+          },
+        }
+      : {
+          list: async () => [],
+          create: unavailable,
+          update: unavailable,
+        },
+    projects: {
+      ...delivery.projects,
+      list: projects,
+      get: async projectId => decorateProject(await delivery.projects.get(projectId)),
+      create: async input => {
+        const { includeDefaultAgent = true, ...projectInput } = input
+        const project = decorateProject(await delivery.projects.create(projectInput))
+        if (projectAgentApi && includeDefaultAgent) {
+          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
+            console.warn(
+              `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
+              error
+            )
+          })
+        }
+        return project
+      },
+      update: async (projectId, input) =>
+        decorateProject(await delivery.projects.update(projectId, input)),
+      listExecutionEnvironments: executionEnvironments,
+      addExecutionEnvironment: unavailable,
+      removeExecutionEnvironment: unavailable,
+      initializeExecutionEnvironment: initializeProjectExecutionEnvironment,
+      importMessages: unavailable,
+      listCollaborationGroups: projectCollaborationGroups,
+      createCollaborationGroup,
+      updateCollaborationGroup,
+      removeCollaborationGroup,
+      async addCollaborationGroup(projectId, groupId) {
+        const groups = await projectCollaborationGroups(projectId)
+        const existing = groups.find(group => group.id === groupId)
+        if (existing) return existing
+        const source = (await projectCollaborationGroups(DEFAULT_WORK_ITEM_PROJECT_ID)).find(
+          group => group.id === groupId
+        )
+        if (!source) throw new Error('Collaboration group was not found')
+        await persistProjectCollaborationGroups(projectId, [...groups, source])
+        return source
+      },
+    },
+    issues: {
+      ...delivery.issues,
+      async getBoardSnapshot(projectId) {
+        const [snapshot, agents] = await Promise.all([
+          delivery.issues.getBoardSnapshot(projectId),
+          listProjectAgents(projectId),
+        ])
+        return {
+          ...snapshot,
+          agents,
+          members: await currentMember(),
+        }
+      },
+    },
+    members: {
+      ...delivery.members,
+      list: currentMember,
+    },
+  }
+
+  async function createCollaborationGroup(
+    projectId: string,
+    input: Parameters<NonNullable<SharedWorkspaceApi['projects']['createCollaborationGroup']>>[1]
+  ) {
+    const now = new Date().toISOString()
+    const groups = await projectCollaborationGroups(projectId)
+    const group: CollaborationGroup = {
+      id: `local-group-${crypto.randomUUID()}`,
+      workspace_id: LOCAL_WORKSPACE_ID,
+      owner_type: projectId === DEFAULT_WORK_ITEM_PROJECT_ID ? 'workspace' : 'project',
+      owner_id: projectId === DEFAULT_WORK_ITEM_PROJECT_ID ? LOCAL_WORKSPACE_ID : projectId,
+      name: input.name,
+      description: input.description ?? '',
+      instructions: input.instructions ?? '',
+      leader: {
+        ...input.leader,
+        responsibility: input.leader.responsibility ?? '',
+      },
+      members: input.members.map(member => ({
+        ...member,
+        responsibility: member.responsibility ?? '',
+      })),
+      coordination_mode: 'manager',
+      stages: (input.stages ?? []).map(stage => ({
+        id: stage.id,
+        name: stage.name,
+        description: stage.description ?? '',
+        assignee: stage.assignee
+          ? {
+              ...stage.assignee,
+              responsibility: stage.assignee.responsibility ?? '',
+            }
+          : null,
+      })),
+      execution_requirements: {
+        required_tags: input.executionRequirements?.requiredTags ?? [],
+      },
+      version: 1,
+      created_by_user_id: userId,
+      created_at: now,
+      updated_at: now,
+    }
+    assertValidCollaborationGroup(group.leader, group.members, group.stages)
+    await persistProjectCollaborationGroups(projectId, [...groups, group])
+    return group
+  }
+
+  async function updateCollaborationGroup(
+    projectId: string,
+    groupId: string,
+    input: Parameters<NonNullable<SharedWorkspaceApi['projects']['updateCollaborationGroup']>>[2]
+  ) {
+    const groups = await projectCollaborationGroups(projectId)
+    const current = groups.find(group => group.id === groupId)
+    if (!current) throw new Error('Collaboration group was not found')
+    if (current.version !== input.version) {
+      throw new Error('Collaboration group changed; reload and try again')
+    }
+    const updated: CollaborationGroup = {
+      ...current,
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+      ...(input.leader === undefined
+        ? {}
+        : {
+            leader: {
+              ...input.leader,
+              responsibility: input.leader.responsibility ?? '',
+            },
+          }),
+      ...(input.members === undefined
+        ? {}
+        : {
+            members: input.members.map(member => ({
+              ...member,
+              responsibility: member.responsibility ?? '',
+            })),
+          }),
+      ...(input.stages === undefined
+        ? {}
+        : {
+            stages: input.stages.map(stage => ({
+              id: stage.id,
+              name: stage.name,
+              description: stage.description ?? '',
+              assignee: stage.assignee
+                ? {
+                    ...stage.assignee,
+                    responsibility: stage.assignee.responsibility ?? '',
+                  }
+                : null,
+            })),
+          }),
+      ...(input.executionRequirements === undefined
+        ? {}
+        : {
+            execution_requirements: {
+              required_tags: input.executionRequirements.requiredTags,
+            },
+          }),
+      version: current.version + 1,
+      updated_at: new Date().toISOString(),
+    }
+    assertValidCollaborationGroup(updated.leader, updated.members, updated.stages)
+    await persistProjectCollaborationGroups(
+      projectId,
+      groups.map(group => (group.id === groupId ? updated : group))
+    )
+    return updated
+  }
+
+  async function removeCollaborationGroup(projectId: string, groupId: string) {
+    const groups = await projectCollaborationGroups(projectId)
+    await persistProjectCollaborationGroups(
+      projectId,
+      groups.filter(group => group.id !== groupId)
+    )
+  }
+}
+
+function toLocalAgentCreateInput(input: Record<string, unknown>): LocalProjectChatAgentCreateInput {
+  if (typeof input.name !== 'string' || !input.name.trim()) {
+    throw new Error('Local Agent name is required')
+  }
+  if (input.runtime !== 'codex' && input.runtime !== 'claude_code') {
+    throw new Error('Local Agent runtime is invalid')
+  }
+  return {
+    ...input,
+    name: input.name,
+    runtime: input.runtime,
+  } as LocalProjectChatAgentCreateInput
+}

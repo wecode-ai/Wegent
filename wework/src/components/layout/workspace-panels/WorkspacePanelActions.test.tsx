@@ -11,6 +11,7 @@ import {
   pickLocalWorkspaceOpenerExe,
 } from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
+import { getPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
 
 vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
@@ -117,6 +118,7 @@ describe('WorkspacePanelActions', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     setWindowWidth(originalInnerWidth)
     Object.defineProperty(window.navigator, 'userAgent', {
       configurable: true,
@@ -482,6 +484,12 @@ describe('WorkspacePanelActions', () => {
         path: '/Users/me/project38',
       })
     )
+    expect(getPreferredWorkspaceOpener('/Users/me/project38')).toBe('intellij-idea')
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+    expect(openLocalWorkspaceMock).toHaveBeenLastCalledWith({
+      opener: 'intellij-idea',
+      path: '/Users/me/project38',
+    })
   })
 
   test('on Windows, hides unavailable openers and lets the user add a custom opener', async () => {
@@ -629,7 +637,7 @@ describe('WorkspacePanelActions', () => {
 
     const button = screen.getByTestId('open-code-server-titlebar-button')
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'workbench.project_ide_unavailable_tooltip')
+    expect(button).not.toHaveAttribute('title')
     await userEvent.click(button)
     expect(startProjectCodeServerMock).not.toHaveBeenCalled()
     expect(startDeviceCodeServerMock).not.toHaveBeenCalled()

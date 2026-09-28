@@ -1,6 +1,20 @@
+export {
+  getConversationScrollSnapshot,
+  hasConversationScrollSnapshot,
+  cacheConversationScrollSnapshot,
+  getConversationVirtualMeasurements,
+  cacheConversationVirtualMeasurements,
+  type ConversationScrollSnapshot,
+} from '@wegent/collaboration/conversation/conversationViewportCache'
+import {
+  evictConversationViewport,
+  clearConversationViewportCache,
+  getConversationViewportCacheStats,
+} from '@wegent/collaboration/conversation/conversationViewportCache'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
+  DeviceInfo,
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
   RuntimeGuidanceAppliedPayload,
@@ -8,6 +22,7 @@ import type {
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -15,7 +30,6 @@ import type {
   RuntimeSubagentStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { VirtualItem } from '@tanstack/react-virtual'
 import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
@@ -23,6 +37,7 @@ import {
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
+import { isAnsweredRequestUserInputBlock } from '@wegent/chat-core/runtime-user-input'
 import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
@@ -59,20 +74,14 @@ const hydrationByConversation = new Map<
 const queuedMessagesByConversation = new Map<string, RuntimePaneQueuedMessage[]>()
 const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
-const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
-const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 const pendingStreamingNotifications = new Map<string, () => void>()
 const terminalConversationEvictionTimers = new Map<
   string,
   ReturnType<typeof globalThis.setTimeout>
 >()
 const goalSnapshotVersionsByConversation = new Map<string, number>()
+const canonicalDeviceIdByAlias = new Map<string, string>()
 let nextRuntimeGoalSnapshotVersion = 1
-
-export interface ConversationScrollSnapshot {
-  distanceFromBottomPx: number
-  pinnedToBottom: boolean
-}
 
 export interface RuntimeConversationMetadata {
   goal: RuntimeGoal | null
@@ -198,7 +207,10 @@ export function settleRuntimeConversationSubagents(address: RuntimeTaskAddress):
 
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
-  return projectRuntimeConversationMessages(key, touchEntry(turnsByConversation, key) ?? [])
+  return projectRuntimeConversationMessages(
+    key,
+    touchEntry(turnsByConversation, key) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
+  )
 }
 
 export function getRuntimeConversationTurns(
@@ -215,7 +227,7 @@ export function getRuntimeConversationMessagesForLogicalAddress(
   if (turnsByConversation.has(exactKey) || address.deviceId !== 'local-device') {
     return projectRuntimeConversationMessages(
       exactKey,
-      touchEntry(turnsByConversation, exactKey) ?? []
+      touchEntry(turnsByConversation, exactKey) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
     )
   }
 
@@ -297,6 +309,14 @@ export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): 
   return token
 }
 
+export function runtimeConversationHydrationHasUpdates(
+  address: RuntimeTaskAddress,
+  token: symbol
+): boolean {
+  const hydration = hydrationByConversation.get(runtimeConversationKey(address))
+  return hydration?.token === token && hydration.bufferedActions.length > 0
+}
+
 export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
@@ -352,9 +372,30 @@ export function replaceRuntimeConversationSnapshot(
   snapshotTurns: RuntimeConversationTurn[]
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
-  cacheRuntimeConversationTurns(key, snapshotTurns)
+  const localTurnsById = new Map(
+    (turnsByConversation.get(key) ?? []).flatMap(turn =>
+      turn.id === null ? [] : ([[turn.id, turn]] as const)
+    )
+  )
+  const turns = snapshotTurns.map(snapshotTurn => {
+    if (snapshotTurn.id === null) return snapshotTurn
+    const localTurn = localTurnsById.get(snapshotTurn.id)
+    if (!localTurn) return snapshotTurn
+
+    const mergedTurn = mergeRuntimeConversationTurns([localTurn], [snapshotTurn])[0]
+    const authoritativeItemIds = new Set(snapshotTurn.items.map(item => item.id))
+    return {
+      ...mergedTurn,
+      items: mergedTurn.items.filter(
+        item =>
+          authoritativeItemIds.has(item.id) ||
+          (item.type === 'block' && isAnsweredRequestUserInputBlock(item.block))
+      ),
+    }
+  })
+  cacheRuntimeConversationTurns(key, turns)
   notifyRuntimeConversation(key)
-  return projectRuntimeConversationMessages(key, snapshotTurns)
+  return projectRuntimeConversationMessages(key, turns)
 }
 
 export function runtimeConversationSnapshotSettlesLatestTurn(
@@ -795,30 +836,29 @@ export function cacheRuntimeConversationQueuePausedByKey(key: string, paused: bo
 }
 
 export function runtimeConversationKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.taskId}`
+  return `${canonicalRuntimeConversationDeviceId(address.deviceId)}:${address.taskId}`
 }
 
-export function getConversationScrollSnapshot(key: string): ConversationScrollSnapshot | undefined {
-  return touchEntry(scrollSnapshotsByConversation, key)
-}
-
-export function hasConversationScrollSnapshot(key: string): boolean {
-  return scrollSnapshotsByConversation.has(key)
-}
-
-export function cacheConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
-  cacheBoundedEntry(scrollSnapshotsByConversation, key, snapshot)
-}
-
-export function getConversationVirtualMeasurements(key: string): VirtualItem[] | undefined {
-  return touchEntry(virtualMeasurementsByConversation, key)
-}
-
-export function cacheConversationVirtualMeasurements(key: string, measurements: VirtualItem[]) {
-  virtualMeasurementsByConversation.delete(key)
-  if (measurements.length > 0) {
-    cacheBoundedEntry(virtualMeasurementsByConversation, key, measurements)
+export function syncRuntimeConversationDeviceAliases(devices: DeviceInfo[]): void {
+  for (const device of devices) {
+    const canonicalDeviceId = device.device_id.trim()
+    if (!canonicalDeviceId) continue
+    for (const alias of getWorkbenchDeviceIds(device)) {
+      canonicalDeviceIdByAlias.set(alias, canonicalDeviceId)
+    }
   }
+}
+
+function canonicalRuntimeConversationDeviceId(deviceId: string): string {
+  let current = deviceId.trim()
+  const visited = new Set<string>()
+  while (!visited.has(current)) {
+    visited.add(current)
+    const canonical = canonicalDeviceIdByAlias.get(current)
+    if (!canonical || canonical === current) break
+    current = canonical
+  }
+  return current
 }
 
 function updateRuntimeConversationMetadata(
@@ -928,15 +968,13 @@ function evictRuntimeConversationKey(key: string) {
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
   interruptedGuidanceIdsByConversation.delete(key)
-  scrollSnapshotsByConversation.delete(key)
-  virtualMeasurementsByConversation.delete(key)
+  evictConversationViewport(key)
 }
 
 export function getRuntimeConversationCacheStats() {
   return {
     messageEntries: turnsByConversation.size,
-    scrollSnapshotEntries: scrollSnapshotsByConversation.size,
-    virtualMeasurementEntries: virtualMeasurementsByConversation.size,
+    ...getConversationViewportCacheStats(),
   }
 }
 
@@ -957,8 +995,8 @@ export function clearRuntimeConversationCacheForTests() {
   queuedMessagesByConversation.clear()
   queuedMessagesPausedByConversation.clear()
   interruptedGuidanceIdsByConversation.clear()
-  scrollSnapshotsByConversation.clear()
-  virtualMeasurementsByConversation.clear()
+  canonicalDeviceIdByAlias.clear()
+  clearConversationViewportCache()
 }
 
 function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
@@ -1028,6 +1066,18 @@ function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTu
     cancelPendingStreamingNotification(evictedKey)
     cancelTerminalConversationEviction(evictedKey)
   })
+  const queuedMessages = queuedMessagesByConversation.get(key)
+  if (queuedMessages) {
+    const remaining = queuedMessages.filter(
+      message =>
+        message.status !== 'sending' ||
+        message.deliveryMode !== 'message' ||
+        !turns.some(turn => turn.id !== null && turnContainsClientUserMessage(turn, message.id))
+    )
+    if (remaining.length !== queuedMessages.length) {
+      cacheRuntimeConversationQueuedMessagesByKey(key, remaining)
+    }
+  }
   scheduleTerminalConversationEviction(key)
 }
 

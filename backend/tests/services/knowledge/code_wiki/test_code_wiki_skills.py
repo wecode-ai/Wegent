@@ -51,6 +51,8 @@ def test_wiki_submit_owns_the_page_write_contract() -> None:
         "`complete` again",
         "Before the first submit",
         "Before ending the run",
+        "bounded Section Writer",
+        "must not run `plan`, `complete`, or `fail`",
         "Do not report the generation as complete",
         "full-rebuild review checkpoint",
         "REVIEW_CONTRACT.md",

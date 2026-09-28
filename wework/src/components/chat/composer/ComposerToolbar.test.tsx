@@ -1,12 +1,12 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getPlatform } from '@/lib/platform'
+import { getPlatform } from '@wegent/collaboration/controls/platform'
 import { ComposerToolbar } from './ComposerToolbar'
 
 let resizeCallback: ResizeObserverCallback | null = null
 
-vi.mock('@/lib/platform', () => ({
+vi.mock('@wegent/collaboration/controls/platform', () => ({
   getPlatform: vi.fn(() => 'mac'),
 }))
 
@@ -60,6 +60,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -104,6 +105,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -122,6 +124,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -158,6 +161,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -168,7 +172,7 @@ describe('ComposerToolbar', () => {
     expect(permission.compareDocumentPosition(contextUsage)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  it('wraps whole toolbar groups and lets the active mode pill shrink in narrow composers', () => {
+  it('reserves feature widths and lets model actions use the remaining toolbar space', () => {
     render(
       <ComposerToolbar
         canSend={false}
@@ -181,6 +185,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -191,10 +196,42 @@ describe('ComposerToolbar', () => {
     const goalPill = screen.getByTestId('goal-draft-pill')
 
     expect(toolbar).toHaveClass('flex-wrap', 'gap-x-2', 'gap-y-1')
-    expect(features).toHaveClass('flex-auto', 'min-w-0', 'flex-wrap', 'gap-x-2', 'gap-y-1')
-    expect(actions).toHaveClass('ml-auto', 'shrink-0')
+    expect(features).toHaveClass('min-w-0', 'max-w-full', 'flex-wrap', 'gap-x-2', 'gap-y-1')
+    expect(features).not.toHaveClass('flex-auto')
+    expect(actions).toHaveClass('ml-auto', 'min-w-40', 'flex-1', 'justify-end')
     expect(goalPill).toHaveClass('min-w-8', 'max-w-full', 'shrink', 'overflow-hidden')
     expect(goalPill.querySelector('span')).toHaveClass('min-w-0', 'truncate')
+  })
+
+  it('renders the unavailable model selector after the catalog has returned models', () => {
+    const unavailableModel = {
+      name: 'codex-official-unavailable',
+      type: 'runtime' as const,
+      displayName: 'CodeX 模型不可用',
+      provider: 'local' as const,
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'unavailable' as const,
+    }
+
+    render(
+      <ComposerToolbar
+        canSend={false}
+        models={[unavailableModel]}
+        selectedModel={null}
+        activeModel={unavailableModel}
+        selectedModelOptions={{}}
+        isModelSelectionReady={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+        onFileSelect={vi.fn()}
+        onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-loading')).not.toBeInTheDocument()
   })
 
   it.each([
@@ -217,6 +254,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -247,6 +285,7 @@ describe('ComposerToolbar', () => {
         onSelectModelOption={vi.fn()}
         onFileSelect={vi.fn()}
         onQuickPhraseSelect={vi.fn()}
+        onInsertPluginReference={vi.fn()}
         onSubmit={vi.fn()}
       />
     )

@@ -230,6 +230,7 @@ export function BoardLayoutEditor({
   statusBusy,
   displayBusy,
   canEditStatuses,
+  embedded = false,
   onStatusesChange,
   onDisplayChange,
   renderActionMenu,
@@ -240,6 +241,7 @@ export function BoardLayoutEditor({
   statusBusy: boolean;
   displayBusy: boolean;
   canEditStatuses: boolean;
+  embedded?: boolean;
   onStatusesChange: (statuses: BoardStatus[]) => void;
   onDisplayChange: (
     key: keyof BoardCardDisplaySettings,
@@ -301,11 +303,15 @@ export function BoardLayoutEditor({
   return (
     <section
       data-testid="cloud-project-board-layout-settings"
-      className="border-t border-border py-6"
+      className={embedded ? "" : "border-t border-border py-6"}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-heading-md font-semibold">
+          <h2
+            className={
+              embedded ? "text-lg font-medium" : "text-heading-md font-semibold"
+            }
+          >
             {translate("todo.board_layout", "看板布局")}
           </h2>
           <p className="mt-1 text-sm text-text-muted">

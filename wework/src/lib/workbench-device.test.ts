@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'vitest'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import {
   getExecutorOfflineDeviceId,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceIds,
+  getWorkbenchDeviceNamesById,
+  getRuntimeWorkDeviceNamesById,
   findWorkbenchDevice,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
   resolveLocalWorkbenchDeviceId,
+  resolveWorkbenchDeviceId,
 } from './workbench-device'
 
 function createDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -108,6 +111,8 @@ describe('workbench-device', () => {
 
     expect(findWorkbenchDevice(devices, 'socket-device')?.device_id).toBe('logical-device')
     expect(findWorkbenchDevice(devices, 'runtime-device')?.device_id).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'runtime-device')).toBe('logical-device')
+    expect(resolveWorkbenchDeviceId(devices, 'unknown-device')).toBe('unknown-device')
     expect(getWorkbenchDeviceIds(device)).toEqual([
       'logical-device',
       'app-device',
@@ -116,6 +121,35 @@ describe('workbench-device', () => {
       'cloud-device',
       'runtime-device',
     ])
+    expect(getWorkbenchDeviceNamesById(devices)).toMatchObject({
+      'logical-device': 'Local Executor',
+      'app-device': 'Local Executor',
+      'socket-device': 'Local Executor',
+      'runtime-instance': 'Local Executor',
+      'cloud-device': 'Local Executor',
+      'runtime-device': 'Local Executor',
+    })
+  })
+
+  test('indexes runtime workspace names by the routed device id', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          deviceWorkspaces: [
+            {
+              deviceId: 'runtime-device',
+              deviceName: 'Local Executor',
+            },
+          ],
+        },
+      ],
+      chats: [{ deviceId: 'chat-device', deviceName: 'Chat Executor' }],
+    } as RuntimeWorkListResponse
+
+    expect(getRuntimeWorkDeviceNamesById(runtimeWork)).toEqual({
+      'runtime-device': 'Local Executor',
+      'chat-device': 'Chat Executor',
+    })
   })
 
   test('uses the device IP for unavailable messages without exposing the device id', () => {

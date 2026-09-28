@@ -1,3 +1,4 @@
+import { trackPluginEvent } from './businessEvents'
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { beginOperation } from './operationBus'
@@ -12,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   flushInternalSinks: vi.fn(),
   publish: vi.fn(),
   telemetryEnabled: true,
+}))
+
+vi.mock('@/features/dsh-runtime/useDshSlotEntries', () => ({
+  useDshSlotEntries: () => [{ path: '/plugins', telemetryFeature: 'plugins' }],
 }))
 
 vi.mock('./config', () => ({
@@ -112,6 +117,32 @@ describe('TelemetryAgent', () => {
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
   })
 
+  test('dispatches plugin observations and operation results to internal sinks', async () => {
+    mocks.distribution = 'internal'
+    window.history.replaceState({}, '', '/plugins')
+    render(<TelemetryAgent />)
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'plugin_center_opened' })
+      )
+    )
+    beginOperation('plugin.share').succeed()
+    trackPluginEvent('plugin_installed', {
+      source: 'local',
+      plugin_distribution: 'personal',
+      plugin_id: 'personal/my-plugin',
+    })
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'plugin_share_succeeded', properties: { domain: 'plugin' } })
+    )
+    expect(mocks.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: 'plugin_installed',
+        context: { user: { id: 7, userName: 'zhongyang', email: 'zhongyang@example.invalid' } },
+      })
+    )
+  })
+
   test('turns operation results into generated events', async () => {
     render(<TelemetryAgent />)
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
@@ -123,6 +154,31 @@ describe('TelemetryAgent', () => {
         expect.objectContaining({
           name: 'smart_app_install_failed',
           properties: { domain: 'smart_app', failure_stage: 'install' },
+        })
+      )
+    )
+  })
+
+  test('forwards plugin identity from operation results', async () => {
+    render(<TelemetryAgent />)
+    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+
+    beginOperation('plugin.authorize', {
+      properties: {
+        plugin_distribution: 'official',
+        plugin_id: 'openai-curated-remote/gmail',
+      },
+    }).succeed()
+
+    await waitFor(() =>
+      expect(mocks.publish).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          name: 'plugin_authorize_succeeded',
+          properties: {
+            domain: 'plugin',
+            plugin_distribution: 'official',
+            plugin_id: 'openai-curated-remote/gmail',
+          },
         })
       )
     )

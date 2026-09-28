@@ -24,6 +24,7 @@ fn starting_follow_up_advances_the_previous_completion_timestamp() {
     assert!(link.running);
     assert_eq!(link.completed_at, None);
     assert!(link.updated_at > completed_at);
+    assert_eq!(link.recency_at, link.updated_at);
     assert!(handler.finish_local_task_execution("task-1", execution_id));
     fs::remove_dir_all(root).unwrap();
 }

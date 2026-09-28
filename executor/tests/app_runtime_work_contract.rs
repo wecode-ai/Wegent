@@ -1080,6 +1080,54 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
     assert_eq!(archived_result["items"][0]["address"]["taskId"], "thread-1");
 }
 
+#[tokio::test]
+async fn app_runtime_fork_loads_paginated_transcript_before_returning() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-fork-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-fork-codex-home");
+    let log_path = temp_path("wegent-app-runtime-fork-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.fork_at_turn",
+            "payload": {
+                "taskId": "source-thread",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "source-thread"},
+                "lastTurnId": "01a0b60e-ba6d-7582-bc98-2025c7e40015"
+            }
+        }))
+        .await
+        .expect("fork should load its canonical transcript");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(response["target"]["taskId"], "thread-1");
+    let messages = response["transcript"]["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|message| message["content"] == "done"));
+    assert!(!response["transcript"]["turns"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let calls: Vec<Value> = fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for method in ["thread/fork", "thread/turns/list", "thread/items/list"] {
+        assert!(
+            calls.iter().any(|call| call["method"] == method),
+            "{method}"
+        );
+    }
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-app-runtime", "sh");
     let _ = fs::remove_file(log_path);
@@ -1112,6 +1160,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/items/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/fork"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","historyMode":"paginated","turns":[]}}}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

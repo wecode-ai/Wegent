@@ -14,12 +14,14 @@ const {
   resizeItemMock,
   useVirtualizerMock,
   virtualizerInstances,
+  virtualizerLayout,
 } = vi.hoisted(() => ({
   measureElementMock: vi.fn(),
   observeElementOffsetMock: vi.fn(),
   resizeItemMock: vi.fn(),
   useVirtualizerMock: vi.fn(),
   virtualizerInstances: [] as Array<Record<string, unknown>>,
+  virtualizerLayout: { height: 10_000, shift: 0 },
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -52,14 +54,17 @@ vi.mock('@tanstack/react-virtual', () => ({
     })
     const virtualizer = {
       getDistanceFromEnd: () => 0,
-      getTotalSize: () => 10_000,
+      getTotalSize: () => virtualizerLayout.height,
       getVirtualItems: () =>
         visibleIndexes.map(index => ({
           index,
           key: options.getItemKey(index),
-          start: index * 120,
-          size: 100,
-          end: index * 120 + 100,
+          start: index * 120 + (index === options.count - 1 ? virtualizerLayout.shift : 0),
+          size:
+            100 +
+            (index === options.count - 2 ? virtualizerLayout.shift : 0) -
+            (index === options.count - 1 ? virtualizerLayout.shift : 0),
+          end: index * 120 + 100 + (index === options.count - 2 ? virtualizerLayout.shift : 0),
         })),
       measureElement: measureElementMock,
       resizeItem: resizeItemMock,
@@ -81,6 +86,8 @@ describe('MessageList desktop virtualization', () => {
     resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
     virtualizerInstances.length = 0
+    virtualizerLayout.height = 10_000
+    virtualizerLayout.shift = 0
     vi.unstubAllGlobals()
   })
 
@@ -207,26 +214,26 @@ describe('MessageList desktop virtualization', () => {
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
-    expect(scrollElement.scrollTop).toBe(-200)
+    expect(listElement).toHaveStyle({ height: '3900px' })
+    expect(scrollElement.scrollTop).toBe(-160)
 
     scrollElement.scrollTop = 0
     expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
       false
     )
-    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(listElement).toHaveStyle({ height: '3900px' })
     expect(scrollElement.scrollTop).toBe(0)
 
     Object.defineProperty(scrollElement, 'scrollHeight', {
@@ -277,6 +284,69 @@ describe('MessageList desktop virtualization', () => {
     )
 
     expect(scrollElement.scrollTop).toBe(-72)
+  })
+
+  test('notifies the scroll owner in the commit that changes the virtual list height', () => {
+    const messages = buildMessages(20, 'layout')
+    const scrollElementRef = { current: createScrollElement(200) }
+    const heights: string[] = []
+    const onVirtualLayoutChange = () => {
+      const list = screen.getByText('layout message 19').closest('[data-index]')?.parentElement
+      heights.push(list?.style.height ?? '')
+    }
+    const { rerender } = render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    expect(heights).toEqual(['10000px'])
+
+    virtualizerLayout.height = 10_040
+    rerender(
+      <MessageList
+        messages={[...messages]}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    // No ResizeObserver callback or animation frame has run between commit and this assertion.
+    expect(heights).toEqual(['10000px', '10040px'])
+  })
+
+  test('notifies the scroll owner when inverse row measurements preserve total height', () => {
+    const messages = buildMessages(20, 'layout')
+    const scrollElementRef = { current: createScrollElement(200) }
+    const positions: string[] = []
+    const onVirtualLayoutChange = () => {
+      const row = screen.getByText('layout message 19').closest<HTMLElement>('[data-index]')!
+      expect(row.parentElement).toHaveStyle({ height: '10000px' })
+      positions.push(row.style.transform)
+    }
+    const { rerender } = render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    expect(positions).toEqual(['translateY(2280px)'])
+
+    // The preceding row grows by 40px and this row shrinks by 40px in the same commit.
+    virtualizerLayout.shift = 40
+    rerender(
+      <MessageList
+        messages={[...messages]}
+        scrollElementRef={scrollElementRef}
+        onVirtualLayoutChange={onVirtualLayoutChange}
+        bottomOrigin
+      />
+    )
+    expect(positions).toEqual(['translateY(2280px)', 'translateY(2320px)'])
   })
 
   test('keeps only the end-anchored overscan range mounted for long conversations', () => {

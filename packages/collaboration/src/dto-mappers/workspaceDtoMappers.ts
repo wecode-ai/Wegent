@@ -5,9 +5,10 @@
 import type {
   WorkspaceDelivery,
   WorkspaceDeliveryAsset,
+  WorkspaceGitBranch,
+  WorkspaceGitRepository,
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
-  WorkspaceWorkflowPlan,
 } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAssignment,
@@ -67,63 +68,22 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    humanAssignmentId: nullableString(
+      row.human_assignment_id ?? row.humanAssignmentId,
+    ),
+    dispatchId: nullableString(row.dispatch_id ?? row.dispatchId),
+    dispatchRoundId: nullableString(
+      row.dispatch_round_id ?? row.dispatchRoundId,
+    ),
+    assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
       (row.modelSelection as Record<string, unknown> | null | undefined) ??
       (row.model_selection as Record<string, unknown> | null | undefined) ??
       null,
-    workflowNodeId: nullableString(row.workflow_node_id ?? row.workflowNodeId),
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }
       : {}),
     linkedAt: String(row.linked_at ?? row.linkedAt ?? ""),
-  };
-}
-
-export function mapWorkspaceWorkflowPlanDto(
-  input: WorkspaceDto,
-): WorkspaceWorkflowPlan {
-  const row = asRecord(input);
-  return {
-    runId: String(row.run_id ?? row.runId ?? ""),
-    issueId: String(row.issue_id ?? row.issueId ?? ""),
-    stageId: String(row.stage_id ?? row.stageId ?? ""),
-    planVersion: Number(row.plan_version ?? row.planVersion),
-    approvalPolicy:
-      (row.approval_policy ?? row.approvalPolicy) === "automatic"
-        ? "automatic"
-        : "required",
-    status: row.status as WorkspaceWorkflowPlan["status"],
-    summary: String(row.summary ?? ""),
-    items: Array.isArray(row.items)
-      ? row.items.map((item) => ({ ...(item as Record<string, unknown>) }))
-      : [],
-    managerRun:
-      ((row.manager_run ?? row.managerRun) as
-        | Record<string, unknown>
-        | null
-        | undefined) ?? null,
-  };
-}
-
-export function mapWorkspaceWorkflowStageContextDto(
-  input: WorkspaceDto,
-): Record<string, unknown> & { compiledTaskInstruction: string } {
-  const row = asRecord(input);
-  const {
-    compiled_task_instruction: compiledTaskInstructionSnake,
-    compiledTaskInstruction: compiledTaskInstructionCamel,
-    ...context
-  } = row;
-  const compiledTaskInstruction =
-    compiledTaskInstructionCamel ?? compiledTaskInstructionSnake;
-  if (typeof compiledTaskInstruction !== "string") {
-    throw new TypeError(
-      "Workspace workflow stage context is missing compiled_task_instruction",
-    );
-  }
-  return {
-    ...context,
-    compiledTaskInstruction,
   };
 }
 
@@ -204,6 +164,24 @@ export function mapCollaborationExecutionDto(
     ),
     agent_id: nullableString(camelOrSnake(row, "agentId", "agent_id")),
     team_id: nullableNumber(camelOrSnake(row, "teamId", "team_id")),
+    backend_task_id: nullableNumber(
+      camelOrSnake(row, "backendTaskId", "backend_task_id"),
+    ),
+    execution_environment: nullableString(
+      camelOrSnake(row, "executionEnvironment", "execution_environment"),
+    ),
+    execution_device_id: nullableString(
+      camelOrSnake(row, "executionDeviceId", "execution_device_id"),
+    ),
+    runtime_instance_id: nullableString(
+      camelOrSnake(row, "runtimeInstanceId", "runtime_instance_id"),
+    ),
+    runtime_device_id: nullableString(
+      camelOrSnake(row, "runtimeDeviceId", "runtime_device_id"),
+    ),
+    runtime_task_id: nullableString(
+      camelOrSnake(row, "runtimeTaskId", "runtime_task_id"),
+    ),
     assigner_user_id: Number(
       camelOrSnake(row, "assignerUserId", "assigner_user_id") ?? 0,
     ),
@@ -297,26 +275,31 @@ export function mapCollaborationWorkspaceDto(
             };
           })
         : [],
-      status: (executionEnvironment.status ?? "uninitialized") as NonNullable<
-        CollaborationWorkspace["execution_environment"]
-      >["status"],
       fingerprint: String(executionEnvironment.fingerprint ?? ""),
-      prepared_device_id: String(
-        executionEnvironment.prepared_device_id ??
-          executionEnvironment.preparedDeviceId ??
-          "",
+      devices: Object.fromEntries(
+        Object.entries(asRecord(executionEnvironment.devices ?? {})).map(
+          ([deviceKey, value]) => {
+            const entry = asRecord(value);
+            return [
+              deviceKey,
+              {
+                status: entry.status as
+                  | "preparing"
+                  | "ready"
+                  | "error"
+                  | undefined,
+                workspace_path: String(
+                  entry.workspace_path ?? entry.workspacePath ?? "",
+                ),
+                prepared_at: nullableString(
+                  entry.prepared_at ?? entry.preparedAt ?? null,
+                ),
+                error: String(entry.error ?? ""),
+              },
+            ];
+          },
+        ),
       ),
-      prepared_workspace_path: String(
-        executionEnvironment.prepared_workspace_path ??
-          executionEnvironment.preparedWorkspacePath ??
-          "",
-      ),
-      prepared_at: nullableString(
-        executionEnvironment.prepared_at ??
-          executionEnvironment.preparedAt ??
-          null,
-      ),
-      error: String(executionEnvironment.error ?? ""),
     },
     project_count: Number(row.project_count ?? row.projectCount ?? 0),
     created_by_user_id: Number(
@@ -389,6 +372,9 @@ export function mapCollaborationOwnedAgentDto(
       ? { agent_id: String(row.agent_id ?? row.agentId) }
       : {}),
     ...(teamId == null ? {} : { team_id: teamId }),
+    ...(Number.isFinite(Number(row.version))
+      ? { version: Number(row.version) }
+      : {}),
     owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
@@ -427,6 +413,30 @@ export function mapCollaborationPlatformResourcesDto(
   };
 }
 
+export function mapWorkspaceGitRepositoryDto(
+  input: WorkspaceDto,
+): WorkspaceGitRepository {
+  const row = asRecord(input);
+  return {
+    id: Number(camelOrSnake(row, "gitRepoId", "git_repo_id") ?? 0),
+    name: String(row.name ?? ""),
+    fullName: String(camelOrSnake(row, "gitRepo", "git_repo") ?? ""),
+    cloneUrl: String(camelOrSnake(row, "gitUrl", "git_url") ?? ""),
+    gitDomain: String(camelOrSnake(row, "gitDomain", "git_domain") ?? ""),
+    provider: String(row.type ?? ""),
+  };
+}
+
+export function mapWorkspaceGitBranchDto(
+  input: WorkspaceDto,
+): WorkspaceGitBranch {
+  const row = asRecord(input);
+  return {
+    name: String(row.name ?? ""),
+    default: row.default === true,
+  };
+}
+
 export function mapCollaborationAssignmentDto(
   input: WorkspaceDto,
 ): CollaborationAssignment {
@@ -439,7 +449,6 @@ export function mapCollaborationAssignmentDto(
     target_type: rawType === "agent" ? "agent" : "human",
     target_id: String(row.target_id ?? row.targetId ?? ""),
     target_name: String(row.target_name ?? row.targetName ?? ""),
-    workflow_step: nullableString(row.workflow_step ?? row.workflowStep),
     body: String(row.body ?? ""),
     comment_id: nullableString(row.comment_id ?? row.commentId),
     created_by_user_id: Number(

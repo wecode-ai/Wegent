@@ -33,6 +33,10 @@ export class SqliteSyncOutbox {
         created_at INTEGER NOT NULL,
         UNIQUE (session_id, local_sequence)
       );
+      CREATE TABLE IF NOT EXISTS discarded_turns (
+        turn_id TEXT PRIMARY KEY,
+        discarded_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS pending_turns_delivery_order
         ON pending_turns (created_at, session_id, local_sequence);
       CREATE INDEX IF NOT EXISTS pending_turns_transcript
@@ -54,6 +58,15 @@ export class SqliteSyncOutbox {
         acknowledged_sequence
       FROM session_routes
       WHERE session_id = ?
+    `)
+    this.selectDiscardedTurn = this.database.prepare(`
+      SELECT 1
+      FROM discarded_turns
+      WHERE turn_id = ?
+    `)
+    this.insertDiscardedTurn = this.database.prepare(`
+      INSERT OR IGNORE INTO discarded_turns (turn_id, discarded_at)
+      VALUES (?, ?)
     `)
     this.insertRoute = this.database.prepare(`
       INSERT INTO session_routes (
@@ -165,12 +178,13 @@ export class SqliteSyncOutbox {
       WHERE turn_id = ?
     `)
     this.remove = this.database.prepare('DELETE FROM pending_turns WHERE turn_id = ?')
-    this.removeSessionPending = this.database.prepare(
-      'DELETE FROM pending_turns WHERE session_id = ?'
-    )
-    this.removeSessionRoute = this.database.prepare(
-      'DELETE FROM session_routes WHERE session_id = ?'
-    )
+    this.rebaseAfterDiscard = this.database.prepare(`
+      UPDATE pending_turns
+      SET
+        base_sequence = base_sequence - 1,
+        cloud_sequence = cloud_sequence - 1
+      WHERE session_id = ? AND local_sequence > ?
+    `)
     this.selectCount = this.database.prepare('SELECT COUNT(*) AS count FROM pending_turns')
     this.selectAll = this.database.prepare(`
       SELECT
@@ -195,6 +209,7 @@ export class SqliteSyncOutbox {
   }
 
   enqueue(turn, knownSequence = 0) {
+    if (this.selectDiscardedTurn.get(turn.turnId)) return false
     let route = rowToRoute(this.selectRoute.get(turn.sessionId))
     if (!route) {
       this.insertRoute.run(turn.sessionId, turn.transcriptId, knownSequence, Date.now())
@@ -219,6 +234,7 @@ export class SqliteSyncOutbox {
       route.forkedAtSequence ?? null,
       Date.now()
     )
+    return true
   }
 
   first() {
@@ -269,11 +285,12 @@ export class SqliteSyncOutbox {
     })
   }
 
-  discardSession(sessionId) {
-    let discarded = 0
+  discardTurn(turn) {
+    let discarded = false
     this.transaction(() => {
-      discarded = Number(this.removeSessionPending.run(sessionId).changes)
-      this.removeSessionRoute.run(sessionId)
+      this.insertDiscardedTurn.run(turn.turnId, Date.now())
+      discarded = Boolean(this.remove.run(turn.turnId).changes)
+      if (discarded) this.rebaseAfterDiscard.run(turn.sessionId, turn.sequence)
     })
     return discarded
   }
@@ -306,6 +323,7 @@ export class MemorySyncOutbox {
   constructor(turns = []) {
     this.turns = turns.map(turn => locator(turn, turn.baseSequence ?? 0))
     this.routes = new Map()
+    this.discardedTurns = new Set()
     for (const turn of this.turns) {
       this.routes.set(turn.sessionId, {
         transcriptId: turn.transcriptId,
@@ -321,6 +339,7 @@ export class MemorySyncOutbox {
   }
 
   enqueue(turn, knownSequence = 0) {
+    if (this.discardedTurns.has(turn.turnId)) return false
     if (this.turns.some(item => item.turnId === turn.turnId)) return
     let route = this.routes.get(turn.sessionId)
     if (!route) {
@@ -346,6 +365,7 @@ export class MemorySyncOutbox {
           }
         : {}),
     })
+    return true
   }
 
   first() {
@@ -397,12 +417,17 @@ export class MemorySyncOutbox {
     if (index >= 0) this.turns.splice(index, 1)
   }
 
-  discardSession(sessionId) {
-    const retained = this.turns.filter(item => item.sessionId !== sessionId)
-    const discarded = this.turns.length - retained.length
-    this.turns = retained
-    this.routes.delete(sessionId)
-    return discarded
+  discardTurn(turn) {
+    this.discardedTurns.add(turn.turnId)
+    const index = this.turns.findIndex(item => item.turnId === turn.turnId)
+    if (index < 0) return false
+    this.turns.splice(index, 1)
+    for (const item of this.turns) {
+      if (item.sessionId !== turn.sessionId || item.sequence <= turn.sequence) continue
+      item.baseSequence -= 1
+      item.cloudSequence -= 1
+    }
+    return true
   }
 
   count() {

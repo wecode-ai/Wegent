@@ -126,6 +126,7 @@ export interface CreateAllRequest {
   namespace?: string
   icon?: string
   skills?: string[] // Skill names to add to Ghost
+  inherit_base_capabilities?: boolean
 }
 
 export interface CreateAllResponse {

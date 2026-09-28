@@ -79,6 +79,15 @@ describe('team selector utils', () => {
     expect(getTeamGenerateMode(makeTeam(4, ['chat']), 'video')).toBeNull()
   })
 
+  it('routes multi-mode agents only to modes they support', () => {
+    expect(getBindModesTargetPage(['code', 'task'], 'all')).toBe('code')
+    expect(getBindModesTargetPage(['code', 'task'], 'chat')).toBe('code')
+    expect(getBindModesTargetPage(['code', 'task'], 'task')).toBe('devices/chat')
+    expect(getBindModesTargetPage(['task', 'code'], 'all')).toBe('devices/chat')
+    expect(getBindModesTargetPage(['video', 'image'], 'all')).toBe('video')
+    expect(getBindModesTargetPage(['code', 'chat'], 'all')).toBe('chat')
+  })
+
   it('only keeps the generation mode selector for dual-mode agents', () => {
     expect(teamSupportsBothGenerationModes(makeTeam(1, ['video', 'image']))).toBe(true)
     expect(teamSupportsBothGenerationModes(makeTeam(2, ['video']))).toBe(false)

@@ -27,6 +27,17 @@ describe('resource library i18n namespace', () => {
     expect(i18n.getResource('zh-CN', 'resource-library', 'actions.use')).toBe('立即使用')
   })
 
+  it.each([
+    ['zh-CN', '智能体创建成功', '已保存'],
+    ['en', 'Agent created', 'Saved'],
+  ])('resolves agent save notifications in %s', async (language, created, updated) => {
+    const i18n = await initI18n()
+    const t = i18n.getFixedT(language, 'resource-library')
+
+    expect(t('agent_saved.created')).toBe(created)
+    expect(t('agent_saved.updated')).toBe(updated)
+  })
+
   it('refreshes an initialized resource bundle', async () => {
     const i18n = await initI18n()
     i18n.addResourceBundle('zh-CN', 'resource-library', { actions: { use: 'stale' } }, true, true)

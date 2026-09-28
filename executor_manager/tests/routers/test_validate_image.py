@@ -15,10 +15,11 @@ def _close_background_coroutine(coro):
 
 
 @pytest.mark.asyncio
-async def test_validate_image_schedules_background_submission(mocker):
+@pytest.mark.parametrize("shell_type", ["Codex", "ClaudeCode", "Agno"])
+async def test_validate_image_schedules_background_submission(mocker, shell_type):
     request = routers.ValidateImageRequest(
         image="ghcr.io/wecode-ai/wegent-executor:test",
-        shell_type="ClaudeCode",
+        shell_type=shell_type,
         user_name="tester",
         shell_name="shell-a",
         validation_id="vid-1",
@@ -39,6 +40,14 @@ async def test_validate_image_schedules_background_submission(mocker):
     assert result["status"] == "submitted"
     assert isinstance(result["validation_task_id"], int)
     mocked_bg.assert_called_once()
+    validation_task = mocked_bg.call_args.args[0]
+    assert validation_task["metadata"]["validation_params"] == {
+        "shell_type": shell_type,
+        "image": request.image,
+        "shell_name": "shell-a",
+        "validation_id": "vid-1",
+    }
+    assert validation_task["metadata"]["bot"][0]["agent_name"] == "ImageValidator"
     mocked_create_task.assert_called_once()
     mocked_process_tasks.assert_not_called()
 

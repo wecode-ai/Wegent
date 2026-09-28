@@ -1,0 +1,19 @@
+[
+  null,
+  null,
+  null,
+  null,
+  null,
+  null,
+  {
+    "supportsImage": false
+  },
+  {
+    "supportsVideo": true
+  },
+  null,
+  {
+    "supportsImage": true,
+    "supportsVideo": false
+  }
+]

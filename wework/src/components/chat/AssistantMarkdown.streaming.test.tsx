@@ -21,6 +21,50 @@ function fencedCode(lines: number, prefix = 'line'): string {
 describe('AssistantMarkdown streaming stability', () => {
   afterEach(() => {
     runtimeMock.electron = false
+    vi.unstubAllGlobals()
+  })
+
+  test('renders complete atomic transcripts when reopening a finished conversation', () => {
+    runtimeMock.electron = true
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const content = Array.from(
+      { length: 24 },
+      (_, index) => `Persisted paragraph ${index + 1}. ${'Scrollable content '.repeat(12)}`
+    ).join('\n\n')
+    const first = render(<AssistantMarkdown content={content} />)
+    expect(first.container.querySelectorAll('p')).toHaveLength(24)
+    first.unmount()
+
+    const reopened = render(<AssistantMarkdown content={content} />)
+
+    expect(reopened.container.querySelectorAll('p')).toHaveLength(24)
+    expect(reopened.container.querySelector('p:last-child')).toHaveTextContent(
+      'Persisted paragraph 24.'
+    )
+    expect(reopened.container.querySelector('[data-markdown-window-placeholder]')).toBeNull()
+  })
+
+  test('mounts a growing atomic chunk while bounded chunks remain windowed', () => {
+    runtimeMock.electron = true
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const { container, rerender } = render(<AssistantMarkdown content="Short paragraph." />)
+    expect(container.querySelector('[data-markdown-window-placeholder]')).not.toBeNull()
+
+    rerender(<AssistantMarkdown content={'Long paragraph. '.repeat(400)} />)
+    expect(container.querySelector('[data-markdown-window-placeholder]')).toBeNull()
+    expect(container.querySelector('p')).toHaveTextContent('Long paragraph.')
   })
 
   test('keeps the code DOM mounted while more lines stream', async () => {

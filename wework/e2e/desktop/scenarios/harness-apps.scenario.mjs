@@ -1077,7 +1077,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: '管理范围',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-app-share-scope-public"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-scope-public"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
         text: '本地后续修改不会自动同步',
         timeoutMs: uiTimeoutMs,
@@ -1111,7 +1113,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-app-share-scope-private"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-scope-private"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -1599,6 +1603,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Removing an imported workbench left its card visible in My'
       )
       await captureScreenshot(control, 'harness-apps-15a-local-removal-semantics.png', 'body')
+      for (const eventName of [
+        'smart_app_start_succeeded',
+        'smart_app_stop_succeeded',
+        'smart_app_export_succeeded',
+        'smart_app_share_succeeded',
+        'smart_app_uninstall_succeeded',
+      ]) {
+        const request = await control.awaitTelemetryEvent(eventName)
+        const event = telemetryEvents(request.payload).find(item => item.event === eventName)
+        assert.equal(event?.properties.domain, 'smart_app')
+        for (const privateKey of [
+          'smart_app_name',
+          'smart_app_id',
+          'file_path',
+          'email',
+          'error_message',
+        ]) {
+          assert.equal(
+            privateKey in event.properties,
+            false,
+            `Private property leaked: ${privateKey}`
+          )
+        }
+      }
 
       await verifySmartAppMarketplaceIdentity({
         control,

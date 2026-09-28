@@ -152,6 +152,8 @@ async function runWith(
     selectedModel: input.selectedModel,
     selectedModelOptions: input.selectedModelOptions,
     replyTo: overrides.replyTo,
+    attachments: input.attachments,
+    trigger: input.trigger,
     threadRootId: overrides.threadRootId,
     onError: vi.fn(),
     onMessages: vi.fn(),
@@ -161,6 +163,46 @@ async function runWith(
 }
 
 describe('startTaskAiRun model resolution', () => {
+  it.each([false, true])(
+    'seeds the user comment before execution (continuation=%s)',
+    async continuation => {
+      const attachment = {
+        id: 7,
+        filename: 'spec.txt',
+        file_size: 12,
+        mime_type: 'text/plain',
+        status: 'ready' as const,
+        file_extension: 'txt',
+        created_at: '2026-09-16T00:00:00Z',
+      }
+      const { runtime } = await runWith(
+        {
+          agent: agent(null),
+          attachments: [attachment],
+          trigger: {
+            ...agentMessage,
+            messageId: 'trigger-1',
+            sender: { type: 'user', id: '1', name: 'User' },
+          },
+        },
+        {
+          replyTo: continuation
+            ? { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' }
+            : null,
+        }
+      )
+      const options = continuation
+        ? runtime.sendRuntimePaneMessage.mock.calls[0][1]
+        : runtime.createProjectRuntimeTask.mock.calls[0][1]
+      expect(options.optimisticUserMessage).toMatchObject({
+        id: continuation ? agentMessage.messageId : 'trigger-1',
+        role: 'user',
+        content: '请开始执行任务',
+        attachments: [expect.objectContaining({ id: 7, filename: 'spec.txt' })],
+      })
+    }
+  )
+
   it('passes the comment-selected model as full execution fields', async () => {
     const { runtime } = await run({
       agent: agent(null),

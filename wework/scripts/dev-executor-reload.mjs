@@ -2,7 +2,16 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync, watch } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  watch,
+} from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,8 +37,13 @@ const executorBinary = join(
   'debug',
   process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
 )
+const runtimeBinaryDir = join(targetDir, 'wework-dev-runtime')
 const executorArgs = process.argv.slice(2)
 const expectedParentPid = process.ppid
+const lifecycleFd = (() => {
+  const value = Number.parseInt(process.env.WEGENT_APP_LIFECYCLE_FD ?? '', 10)
+  return Number.isInteger(value) && value >= 3 ? value : null
+})()
 
 let child = null
 let buildProcess = null
@@ -40,6 +54,7 @@ let rebuilding = false
 let rebuildPending = false
 let shuttingDown = false
 let unexpectedExitCount = 0
+let runtimeBinarySequence = 0
 let lastAttemptedSourceFingerprint = null
 const pendingInput = []
 const watchers = []
@@ -132,10 +147,25 @@ function startChild() {
     throw new Error(`executor binary was not created: ${executorBinary}`)
   }
 
-  const nextChild = spawn(executorBinary, executorArgs, {
+  mkdirSync(runtimeBinaryDir, { recursive: true })
+  runtimeBinarySequence += 1
+  const runtimeBinary = join(
+    runtimeBinaryDir,
+    `wegent-executor-${process.pid}-${runtimeBinarySequence}${
+      process.platform === 'win32' ? '.exe' : ''
+    }`
+  )
+  copyFileSync(executorBinary, runtimeBinary)
+  if (process.platform !== 'win32') chmodSync(runtimeBinary, 0o755)
+  const stdio = ['pipe', 'inherit', 'inherit']
+  if (lifecycleFd !== null) {
+    while (stdio.length <= lifecycleFd) stdio.push('ignore')
+    stdio[lifecycleFd] = lifecycleFd
+  }
+  const nextChild = spawn(runtimeBinary, executorArgs, {
     cwd: executorDir,
     env: process.env,
-    stdio: ['pipe', 'inherit', 'inherit'],
+    stdio,
   })
   child = nextChild
   nextChild.once('spawn', () => {
@@ -150,12 +180,14 @@ function startChild() {
     nextChild.stdin.write(chunk)
   }
   nextChild.once('error', error => {
+    rmSync(runtimeBinary, { force: true })
     if (child !== nextChild) return
     child = null
     log(`failed to start executor: ${error.message}`)
     scheduleUnexpectedExitRestart()
   })
   nextChild.once('exit', (code, signal) => {
+    rmSync(runtimeBinary, { force: true })
     if (child !== nextChild) return
     child = null
     log(`executor exited code=${code ?? 'none'} signal=${signal ?? 'none'}; restarting`)
@@ -212,8 +244,6 @@ async function rebuildAndRestart() {
         break
       }
       lastAttemptedSourceFingerprint = fingerprint
-      await stopChild()
-      if (shuttingDown) break
 
       const built = await runBuild()
       if (!built) {
@@ -221,6 +251,9 @@ async function rebuildAndRestart() {
         if (rebuildPending) continue
         break
       }
+      if (rebuildPending) continue
+      await stopChild()
+      if (shuttingDown) break
       unexpectedExitCount = 0
       if (!shuttingDown) startChild()
     } while (rebuildPending && !shuttingDown)
@@ -292,7 +325,12 @@ setInterval(() => {
 
 try {
   startWatching()
-  await rebuildAndRestart()
+  if (existsSync(executorBinary)) {
+    lastAttemptedSourceFingerprint = sourceFingerprint()
+    startChild()
+  } else {
+    await rebuildAndRestart()
+  }
 } catch (error) {
   log(`wegent-executor dev reload failed: ${error instanceof Error ? error.message : error}`)
   await shutdown(1)

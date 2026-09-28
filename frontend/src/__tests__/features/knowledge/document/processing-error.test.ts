@@ -25,6 +25,8 @@ describe('getProcessingErrorMessage', () => {
     ['multimodal_empty_response', 'multimodalEmptyResponse'],
     ['conversion_timeout', 'conversionTimeout'],
     ['indexing_timeout', 'indexingTimeout'],
+    ['external_source_missing', 'externalSourceMissing'],
+    ['external_source_unavailable', 'externalSourceUnavailable'],
   ])('localizes known code %s', (code, translationKey) => {
     expect(getProcessingErrorMessage(createError(code), translate)).toBe(
       `translated:knowledge:document.document.processingError.codes.${translationKey}`
@@ -35,5 +37,14 @@ describe('getProcessingErrorMessage', () => {
     expect(getProcessingErrorMessage(createError('future_error', 'safe fallback'), translate)).toBe(
       'safe fallback'
     )
+  })
+
+  it('keeps the provider failure reason for an external import', () => {
+    expect(
+      getProcessingErrorMessage(
+        createError('external_import_failed', '无法连接 Wiki 站点'),
+        translate
+      )
+    ).toBe('无法连接 Wiki 站点')
   })
 })

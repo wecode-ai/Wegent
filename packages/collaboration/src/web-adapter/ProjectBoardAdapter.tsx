@@ -1,25 +1,29 @@
+import {
+  projectBoardDnd,
+  projectBoardCollisionDetection,
+  projectBoardDrop,
+  useProjectBoardSensors,
+} from "../project-board/projectBoardDnd";
+import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
+import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
+import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
+import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
+import type { CollaborationTranslate } from "../i18n";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type HTMLAttributes,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 
 import {
-  CollaborationIssueCard,
-  type CollaborationIssueCardLabels,
+  IssueBoardCard,
+  IssueBoardCardContent,
+  createIssueBoardCardLabels,
 } from "../issue-card";
 import {
   createStandardCloudBoardColumns,
   ProjectBoardBody,
+  ProjectBoardGroupPicker,
   useStandardCloudBoardController,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -43,73 +47,6 @@ const statusDotClasses: Record<CollaborationStatus["color"], string> = {
   purple: "bg-violet-500",
   green: "bg-emerald-500",
   red: "bg-red-500",
-};
-
-interface NativeDropContextValue {
-  onDrop(dropId: string, itemId: string): void;
-}
-
-const NativeDropContext = createContext<NativeDropContextValue | null>(null);
-
-function NativeDndContext({
-  children,
-  onNativeDrop,
-}: {
-  children?: ReactNode;
-  onNativeDrop?: (dropId: string, itemId: string) => void;
-}) {
-  const value = useMemo<NativeDropContextValue>(
-    () => ({
-      onDrop: (dropId, itemId) => onNativeDrop?.(dropId, itemId),
-    }),
-    [onNativeDrop],
-  );
-  return (
-    <NativeDropContext.Provider value={value}>
-      {children}
-    </NativeDropContext.Provider>
-  );
-}
-
-function NativeDragOverlay() {
-  return null;
-}
-
-function useNativeDroppable({ id }: { id: string }) {
-  const context = useContext(NativeDropContext);
-  const [node, setNode] = useState<HTMLElement | null>(null);
-  const [isOver, setIsOver] = useState(false);
-
-  useEffect(() => {
-    if (!node) return;
-    const dragOver = (event: globalThis.DragEvent) => {
-      event.preventDefault();
-      setIsOver(true);
-    };
-    const dragLeave = () => setIsOver(false);
-    const drop = (event: globalThis.DragEvent) => {
-      event.preventDefault();
-      setIsOver(false);
-      const itemId = event.dataTransfer?.getData("text/plain");
-      if (itemId) context?.onDrop(id, itemId);
-    };
-    node.addEventListener("dragover", dragOver);
-    node.addEventListener("dragleave", dragLeave);
-    node.addEventListener("drop", drop);
-    return () => {
-      node.removeEventListener("dragover", dragOver);
-      node.removeEventListener("dragleave", dragLeave);
-      node.removeEventListener("drop", drop);
-    };
-  }, [context, id, node]);
-
-  return { isOver, setNodeRef: setNode };
-}
-
-const nativeDnd = {
-  DndContext: NativeDndContext,
-  DragOverlay: NativeDragOverlay,
-  useDroppable: useNativeDroppable,
 };
 
 export interface ProjectBoardAdapterLabels {
@@ -136,11 +73,10 @@ export interface ProjectBoardIssueCardRenderContext {
   };
   focused: boolean;
   issue: CollaborationIssue;
-  nativeContainerProps: Omit<
-    HTMLAttributes<HTMLElement>,
-    "children" | "className" | "style"
-  >;
   onOpen(): void;
+  /** Present only when the host enabled Issue deletion for this board. */
+  onDelete?(): void;
+  previewDisabled: boolean;
   taskBindings: WorkspaceTaskBinding[];
 }
 
@@ -149,6 +85,10 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  runtime?: SharedWorkspaceRuntimeApi;
+  previewDisabled?: boolean;
+  onMarkRead?(issue: CollaborationIssue): void;
+  translate: CollaborationTranslate;
   boardError: string | null;
   agents: CollaborationAgent[];
   issues: CollaborationIssue[];
@@ -161,6 +101,7 @@ interface ProjectBoardAdapterProps {
   onOpenBoardSettings?(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
+  onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
     mutation: StandardCloudBoardMutation<CollaborationIssue>,
@@ -187,12 +128,17 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  runtime,
+  previewDisabled = false,
+  translate,
   agents,
   boardError,
   issues,
   labels,
   members,
   onCreateIssue,
+  onMarkRead,
+  onDeleteIssue,
   onOpenBoardSettings,
   onGroupByChange,
   onMove,
@@ -202,6 +148,10 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const runtimeWork = useBrowserBoardRuntimeWork(
+    renderIssueCard ? undefined : runtime,
+    taskBindings,
+  );
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
       createStandardCloudBoardColumns({
@@ -246,6 +196,7 @@ export function ProjectBoardAdapter({
     [
       agents,
       issues,
+      labels.noPriority,
       labels.noTag,
       labels.unassigned,
       members,
@@ -278,17 +229,11 @@ export function ProjectBoardAdapter({
     show_tags: true,
     show_date: true,
   };
-  const cardLabels: CollaborationIssueCardLabels = {
-    assignee: labels.groupAssignee,
-    priority: {
-      none: labels.noPriority,
-      low: "low",
-      medium: "medium",
-      high: "high",
-      urgent: "urgent",
-    },
-    unassigned: labels.unassigned,
-  };
+  const cardLabels = createIssueBoardCardLabels(translate);
+  const sensors = useProjectBoardSensors();
+  const activeItem = issues.find(
+    (issue) => issue.id === controller.activeDragItemId,
+  );
 
   return (
     <div
@@ -298,21 +243,29 @@ export function ProjectBoardAdapter({
       <ProjectBoardBody<CollaborationIssue>
         state={controller.state}
         activeDragItemId={controller.activeDragItemId}
-        boardError={boardError}
+        boardError={boardError ?? runtimeWork?.error ?? null}
         boardItemsLoading={false}
         breadcrumb={controller.breadcrumb}
         columns={controller.columns}
         currentParent={controller.currentParent}
         currentParentId={controller.currentParentId}
-        dnd={nativeDnd}
+        dnd={projectBoardDnd}
         dndContextProps={{
-          onNativeDrop: (dropId: string, itemId: string) => {
+          sensors,
+          collisionDetection: projectBoardCollisionDetection,
+          onDragStart: (event: { active: { id: string | number } }) =>
+            controller.setActiveDragItemId(String(event.active.id)),
+          onDragCancel: () => controller.setActiveDragItemId(null),
+          onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
-            const column = controller.columns.find(
-              (candidate) =>
-                candidate.key === dropId.replace("todo-column:", ""),
-            );
-            if (column) controller.moveItem(itemId, column, null);
+            if (
+              issues.some(
+                (issue) =>
+                  issue.id === String(event.active.id) &&
+                  canEditCollaborationIssue(issue),
+              )
+            )
+              controller.moveDroppedItem(projectBoardDrop(event));
           },
         }}
         externalGroupLabel=""
@@ -329,8 +282,7 @@ export function ProjectBoardAdapter({
         }
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
-          ...(controller.state.groupBy === "status" &&
-          (column.status === "inbox" || column.status === "pending")
+          ...(controller.state.groupBy === "status" && column.status === "inbox"
             ? {
                 action: {
                   ariaLabel: `在${column.label}中新建 Issue`,
@@ -357,52 +309,44 @@ export function ProjectBoardAdapter({
         }
         onBreadcrumbSelect={controller.setCurrentParentId}
         onSaveGlobalGroupBy={() => undefined}
-        renderAddIcon={() => <span aria-hidden="true">＋</span>}
-        renderChevronDown={(className) => (
-          <span aria-hidden="true" className={className}>
-            ▾
-          </span>
-        )}
-        renderChevronRight={(className) => (
-          <span aria-hidden="true" className={className}>
-            ›
-          </span>
-        )}
-        renderDragOverlay={() => null}
+        renderDragOverlay={() =>
+          activeItem ? (
+            <ProjectBoardDragOverlay>
+              <IssueBoardCardContent
+                item={activeItem}
+                reference={`${project.project_key}-${activeItem.sequence_number}`}
+                display={{
+                  showAssignee: display.show_assignee,
+                  showDate: display.show_date,
+                  showPriority: display.show_priority,
+                  showTags: display.show_tags,
+                }}
+                labels={cardLabels}
+                translate={translate}
+              />
+            </ProjectBoardDragOverlay>
+          ) : null
+        }
         renderExternalGroupPicker={() => null}
-        renderFocusIcon={(focused) => (
-          <span aria-hidden="true">{focused ? "−" : "＋"}</span>
-        )}
         renderGroupPicker={(value, onChange) => (
-          <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
-            <span>
-              {labels.groupBy}：
-              {value === "status"
-                ? labels.groupStatus
-                : value === "priority"
-                  ? labels.groupPriority
-                  : value === "assignee"
-                    ? labels.groupAssignee
-                    : labels.groupTag}
-            </span>
-            <span aria-hidden="true" className="ml-2">
-              ▾
-            </span>
-            <select
-              data-testid="cloud-board-group-by"
-              aria-label={labels.groupBy}
-              value={value}
-              onChange={(event) =>
-                onChange(event.target.value as ProjectBoardGroupBy)
-              }
-              className="absolute inset-0 cursor-pointer opacity-0"
-            >
-              <option value="status">{labels.groupStatus}</option>
-              <option value="priority">{labels.groupPriority}</option>
-              <option value="assignee">{labels.groupAssignee}</option>
-              <option value="tag">{labels.groupTag}</option>
-            </select>
-          </label>
+          <ProjectBoardGroupPicker
+            fields={[
+              { id: "status", name: labels.groupStatus, type: "status" },
+              {
+                id: "priority",
+                name: labels.groupPriority,
+                type: "singleSelect",
+              },
+              { id: "assignee", name: labels.groupAssignee, type: "user" },
+              { id: "tag", name: labels.groupTag, type: "tag" },
+            ]}
+            value={value}
+            onChange={(id) => onChange(id as ProjectBoardGroupBy)}
+            testIdPrefix="cloud-board-group"
+            searchPlaceholder={translate("board.group.search", "搜索分组字段")}
+            chooseLabel={translate("board.group.choose", "选择分组字段")}
+            emptyLabel={translate("board.group.empty", "没有匹配字段")}
+          />
         )}
         renderBoardSettingsAction={
           onOpenBoardSettings
@@ -419,80 +363,74 @@ export function ProjectBoardAdapter({
             : undefined
         }
         renderItem={(issue, column) => {
-          const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
-            {
-              draggable: canEditCollaborationIssue(issue),
-              onDragStart: (event) => {
-                if (!canEditCollaborationIssue(issue)) {
-                  event.preventDefault();
-                  return;
-                }
-                controller.setActiveDragItemId(issue.id);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", issue.id);
-              },
-              onDragEnd: () => controller.setActiveDragItemId(null),
-              onDragOver: (event) => {
-                event.preventDefault();
-              },
-              onDrop: (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const itemId = event.dataTransfer.getData("text/plain");
-                controller.setActiveDragItemId(null);
-                const movingIssue = issues.find((item) => item.id === itemId);
-                if (movingIssue && canEditCollaborationIssue(movingIssue)) {
-                  controller.moveItem(itemId, column, issue.id);
-                }
-              },
-            };
           const issueDisplay = {
             showAssignee: display.show_assignee,
             showDate: display.show_date,
             showPriority: display.show_priority,
             showTags: display.show_tags,
           };
+          const cardProps = {
+            translate,
+            item: issue,
+            reference: `${project.project_key}-${issue.sequence_number}`,
+            labels: cardLabels,
+            display: issueDisplay,
+            onMarkRead: onMarkRead ? () => onMarkRead(issue) : undefined,
+            onArchive:
+              onDeleteIssue && canEditCollaborationIssue(issue)
+                ? () => onDeleteIssue(issue)
+                : undefined,
+            archiveLabel: translate("todo.delete_issue", "删除任务"),
+            articleTestId: collaborationTestIds.issue(issue.id),
+            dragEnabled: canEditCollaborationIssue(issue),
+            onOpen: () => onOpen(issue),
+          };
+          const childrenAction = issues.some(
+            (candidate) => candidate.parent_id === issue.id,
+          ) ? (
+            <button
+              type="button"
+              data-testid={`collaboration-issue-children-${issue.id}`}
+              onClick={() => controller.setCurrentParentId(issue.id)}
+              className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
+            >
+              查看子任务
+            </button>
+          ) : null;
           const defaultCard = (
-            <CollaborationIssueCard
-              item={issue}
-              reference={`${project.project_key}-${issue.sequence_number}`}
-              labels={cardLabels}
-              display={issueDisplay}
-              articleTestId={collaborationTestIds.issue(issue.id)}
-              articleProps={nativeContainerProps}
-              detailButtonProps={{ onClick: () => onOpen(issue) }}
-              childrenAction={
-                issues.some((candidate) => candidate.parent_id === issue.id) ? (
-                  <button
-                    type="button"
-                    data-testid={`collaboration-issue-children-${issue.id}`}
-                    onClick={() => controller.setCurrentParentId(issue.id)}
-                    className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
-                  >
-                    查看子任务
-                  </button>
-                ) : null
-              }
-            />
+            <IssueBoardCard {...cardProps} childrenAction={childrenAction} />
           );
-          return renderIssueCard
-            ? renderIssueCard({
-                column,
-                defaultCard,
-                display: issueDisplay,
-                focused: controller.state.focusExecutionColumns,
-                issue,
-                nativeContainerProps,
-                onOpen: () => onOpen(issue),
-                taskBindings: taskBindings.filter(
-                  (binding) => binding.issueId === issue.id,
-                ),
-              })
-            : defaultCard;
+          return renderIssueCard ? (
+            renderIssueCard({
+              column,
+              defaultCard,
+              display: issueDisplay,
+              focused: controller.state.focusExecutionColumns,
+              issue,
+              onOpen: () => onOpen(issue),
+              onDelete: cardProps.onArchive,
+              previewDisabled,
+              taskBindings: taskBindings.filter(
+                (binding) => binding.issueId === issue.id,
+              ),
+            })
+          ) : runtime ? (
+            <BrowserIssueBoardCard
+              {...cardProps}
+              runtime={runtime}
+              work={runtimeWork?.work ?? null}
+              taskBindings={taskBindings.filter(
+                (binding) => binding.issueId === issue.id,
+              )}
+              focused={controller.state.focusExecutionColumns}
+              previewDisabled={previewDisabled}
+              childrenAction={childrenAction}
+            />
+          ) : (
+            defaultCard
+          );
         }}
-        renderSearchIcon={() => <span aria-hidden="true">⌕</span>}
         renderSkeleton={() => null}
-        renderTooltip={(_label, child) => child}
         rootLabel="Issue"
         rootUnitLabel="个 Issue"
         saveGlobalDisabled

@@ -25,8 +25,10 @@ use crate::{
         configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
         user_git_login, uses_device_local_git_credentials,
     },
+    local::native_git::clear_local_git_env,
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
+    workspace_paths::workspace_root,
 };
 
 const DEFAULT_GIT_CLONE_TIMEOUT_SECONDS: u64 = 600;
@@ -113,7 +115,19 @@ async fn prepare_single_git_workspace(
 
     match classify_project_path(&project_path) {
         ProjectPathState::GitRepository => {
-            validate_existing_git_repository(&project_path).await?;
+            if let Err(validation_error) = validate_existing_git_repository(&project_path).await {
+                // A `.git` directory without a valid HEAD commit is provably an
+                // interrupted clone (real user data never carries a `.git`), so
+                // heal the workspace by recloning instead of failing forever.
+                fields.push(("validation_error", validation_error));
+                log_executor_event("git workspace invalid repository", &fields);
+                cleanup_incomplete_clone(&project_path)?;
+                clone_repo(&request, &git_url, &project_path).await?;
+                setup_git_config(&request, &project_path).await;
+                fields.push(("status", "recloned".to_owned()));
+                log_executor_event("git workspace prepared", &fields);
+                return Ok(request);
+            }
             fields.push(("reason", "existing_git_repository".to_owned()));
             log_executor_event("git workspace clone skipped", &fields);
             setup_git_config(&request, &project_path).await;
@@ -184,11 +198,12 @@ fn execution_repositories(request: &ExecutionRequest) -> Result<Vec<ExecutionRep
                 .unwrap_or(false),
         });
     }
-    if repositories
-        .iter()
-        .filter(|repository| repository.primary)
-        .count()
-        != 1
+    if !repositories.is_empty()
+        && repositories
+            .iter()
+            .filter(|repository| repository.primary)
+            .count()
+            != 1
     {
         return Err("Execution environment must have exactly one primary repository".to_owned());
     }
@@ -290,11 +305,18 @@ fn resolve_workspace_path(path: &str) -> PathBuf {
     }
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+pub(super) fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
-    if let Some(rest) = path.strip_prefix("~/") {
+    let rest = path.strip_prefix("~/").or_else(|| {
+        if cfg!(windows) {
+            path.strip_prefix("~\\")
+        } else {
+            None
+        }
+    });
+    if let Some(rest) = rest {
         if let Some(home) = home_dir() {
             return home.join(rest);
         }
@@ -396,6 +418,7 @@ async fn clone_repo(
     }
 
     let mut command = Command::new("git");
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
     let branch = branch_name(request);
@@ -487,11 +510,16 @@ async fn clone_repo(
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
     let mut command = Command::new("git");
+    clear_local_git_env(command.as_std_mut());
     crate::process::hide_windows_console(&mut command);
     command
         .arg("-C")
         .arg(project_path)
         .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        // Validate the requested workspace, not a repository inherited from a hook.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -722,6 +750,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
         let mut command = Command::new("git");
+        clear_local_git_env(command.as_std_mut());
         crate::process::hide_windows_console(&mut command);
         let _ = command
             .arg("-C")
@@ -824,33 +853,6 @@ fn truncate_summary(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn workspace_root() -> PathBuf {
-    env::var_os("WORKSPACE_ROOT")
-        .or_else(|| env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR"))
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("WEGENT_EXECUTOR_HOME")
-                .map(PathBuf::from)
-                .map(|root| root.join("workspace").join("projects"))
-        })
-        .or_else(|| {
-            env::var_os("WECODE_HOME").map(PathBuf::from).map(|root| {
-                root.join("wegent-executor")
-                    .join("workspace")
-                    .join("projects")
-            })
-        })
-        .or_else(|| {
-            home_dir().map(|home| {
-                home.join(".wecode")
-                    .join("wegent-executor")
-                    .join("workspace")
-                    .join("projects")
-            })
-        })
-        .unwrap_or_else(|| PathBuf::from("/workspace"))
-}
-
 fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
@@ -862,13 +864,28 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn expands_platform_home_relative_paths() {
+        let _lock = crate::test_env::lock();
+        let home = home_dir().expect("test user has a home directory");
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(expand_tilde("~/test/SKILL.md"), home.join("test/SKILL.md"));
+        let windows_path = r"~\test\SKILL.md";
+        let expected = if cfg!(windows) {
+            home.join(r"test\SKILL.md")
+        } else {
+            PathBuf::from(windows_path)
+        };
+        assert_eq!(expand_tilde(windows_path), expected);
+        assert_eq!(
+            expand_tilde("./test/SKILL.md"),
+            PathBuf::from("./test/SKILL.md")
+        );
+    }
+
     fn run_test_git(command: &mut StdCommand) -> Output {
-        command
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .output()
-            .unwrap()
+        clear_local_git_env(command);
+        command.output().unwrap()
     }
 
     fn assert_test_git_success(description: &str, command: &mut StdCommand) {
@@ -1098,6 +1115,64 @@ mod tests {
         assert_eq!(
             fs::read_to_string(environment_root.join("dependencies/shared-sdk/sdk.txt")).unwrap(),
             "shared sdk"
+        );
+    }
+
+    #[tokio::test]
+    async fn reclones_a_workspace_left_behind_by_an_interrupted_clone() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = create_local_repository(
+            &directory.path().join("sources"),
+            "application",
+            "app.txt",
+            "application",
+        );
+        let environment_root = directory.path().join("environment");
+        let target = environment_root.join("application");
+        // Mimic a clone interrupted right after `git init`: `.git` exists but
+        // holds no commits, so HEAD^{commit} can never resolve.
+        fs::create_dir_all(&target).unwrap();
+        assert_test_git_success("git init", StdCommand::new("git").arg("init").arg(&target));
+        let mut request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "environment_root".to_owned(),
+            Value::String(environment_root.display().to_string()),
+        );
+        request.extra.insert(
+            "execution".to_owned(),
+            json!({
+                "workspace": {
+                    "repositories": [
+                        {
+                            "url": source.display().to_string(),
+                            "path": "application",
+                            "primary": true
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let prepared = prepare_git_workspace(request).await.unwrap();
+
+        assert_eq!(
+            prepared.project_workspace_path.as_deref(),
+            Some(target.to_str().unwrap())
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("app.txt")).unwrap(),
+            "application"
+        );
+        assert_test_git_success(
+            "git rev-parse",
+            StdCommand::new("git").arg("-C").arg(&target).args([
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            ]),
         );
     }
 

@@ -2,29 +2,24 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
+  createCollaborationTranslator,
   createSharedIssueDetailPort,
   type SharedEditorIssue,
   type SharedEditorProject,
-  type SharedIssueWorkflow,
   type SharedIssueDetailCreateInput,
   type SharedIssueDetailExtensions,
   type SharedIssueDetailTaskBinding,
+  type SharedIssueDetailTaskExecutionState,
   type SharedIssueDetailWorkspaceApi,
 } from '@wegent/collaboration'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'
-import type {
-  CloudLoopItem,
-  CloudProject,
-  IssueWorkflowInstance,
-  LoopItemTaskBinding,
-} from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
-import { reconcileIssueWorkflowForTaskBindings } from '@/api/issueWorkflow'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { StatusHistoryPopover } from './StatusHistoryPopover'
@@ -72,10 +67,6 @@ type TodoEditorApiProps =
 export type TodoEditorProps = TodoEditorApiProps & {
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
-  projectAutomationApi?: Pick<
-    NonNullable<WorkbenchServices['projectAutomationApi']>,
-    'runWorkflowNode'
-  >
   teamApi?: WorkbenchServices['teamApi']
   projectChatClient?: ProjectChatClient
   selfManagedExecution?: boolean
@@ -83,7 +74,10 @@ export type TodoEditorProps = TodoEditorApiProps & {
   currentAssignment?: CollaborationAssignment | null
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
+  /** Opens the activity list on one comment instead of the newest message. */
+  focusedCommentId?: string | null
   onClose: () => void
+  onEscape?: () => void
   presentation?: 'modal' | 'workspace-panel'
   workspacePanelFill?: boolean
   readFirst?: boolean
@@ -91,43 +85,34 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showFullscreenControl?: boolean
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
+  defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
   taskRefreshKey?: string | number
   initialTaskBindings?: LoopItemTaskBinding[]
+  taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
+  deviceNamesById?: Readonly<Record<string, string>>
   headerActions?: ReactNode
   showAdditionalTaskAction?: boolean
+  onAddAssigneeMember?: () => void
+  onAddAssigneeAgent?: () => void
   selectedTaskId?: string | null
-  onCreateTask?: (workflowNodeId?: string) => void
+  /** Delete this Issue; rendered in the header overflow menu in edit mode. */
+  onDelete?: () => void
+  onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
-  onWorkflowPlanChanged?: () => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 export function TodoEditor(props: TodoEditorProps) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const collaborationTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const workspaceApi = useMemo<SharedIssueDetailWorkspaceApi>(() => {
     if (props.sharedApi) return props.sharedApi
     const deliveryApi = createWeworkDeliverySharedWorkspaceApi(props.api)
-    const actorUserId = props.currentUserId === undefined ? undefined : Number(props.currentUserId)
     return {
       ...deliveryApi,
-      workflowPlans: {
-        ...deliveryApi.workflowPlans,
-        decideNode: (issueId, workflowNodeId, action, reason) =>
-          props.api.decideWorkflowNode(issueId, workflowNodeId, action, reason, actorUserId),
-      },
-      automations: props.projectAutomationApi
-        ? {
-            async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
-              const run = await props.projectAutomationApi!.runWorkflowNode(
-                projectId,
-                issueId,
-                workflowNodeId,
-                automationId
-              )
-              return { ...run }
-            },
-          }
-        : undefined,
       agents: {
         async list(projectId: string) {
           const agents = (await props.projectChatAgentApi?.list(projectId)) ?? []
@@ -135,13 +120,7 @@ export function TodoEditor(props: TodoEditorProps) {
         },
       },
     }
-  }, [
-    props.api,
-    props.currentUserId,
-    props.projectAutomationApi,
-    props.projectChatAgentApi,
-    props.sharedApi,
-  ])
+  }, [props.api, props.projectChatAgentApi, props.sharedApi])
   const port = useMemo(
     () =>
       createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
@@ -157,11 +136,6 @@ export function TodoEditor(props: TodoEditorProps) {
   const extensions: SharedIssueDetailExtensions = {
     normalizeDescription: normalizeTaskDescription,
     isExecutionActive: item => isLoopItemExecutionActive(item as CloudLoopItem),
-    reconcileWorkflow: (workflow, tasks) =>
-      reconcileIssueWorkflowForTaskBindings(
-        workflow as unknown as IssueWorkflowInstance,
-        tasks as LoopItemTaskBinding[]
-      ) as unknown as SharedIssueWorkflow,
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
@@ -183,12 +157,18 @@ export function TodoEditor(props: TodoEditorProps) {
           projectChatAgentApi={props.projectChatAgentApi}
           localProjects={props.localProjects}
           selfManagedExecution={props.selfManagedExecution}
-          workflowManagerRunId={context.workflowManagerRunId}
-          onWorkflowManagerExecutionChange={context.onOpenManagerExecutionChange}
-          onWorkflowManagerFinished={context.onWorkflowManagerFinished}
+          deviceNamesById={props.deviceNamesById}
           taskBindings={context.tasks as LoopItemTaskBinding[]}
+          statusHistory={
+            props.presentation === 'workspace-panel' ? context.item.status_history : undefined
+          }
+          projectMembers={context.members as import('@/api/deliveries').CloudProjectMember[]}
+          issueTimeline={props.presentation === 'workspace-panel'}
           onOpenTask={props.onOpenTaskConversation}
           onRefreshExecutionArtifacts={context.onExecutionArtifactsChange}
+          members={context.members}
+          agents={context.agents}
+          focusedCommentId={props.focusedCommentId}
           linear
         />
       ) : null,
@@ -223,11 +203,15 @@ export function TodoEditor(props: TodoEditorProps) {
   const commonProps = {
     port,
     extensions,
-    translate: (key: string, fallback?: string, options?: Record<string, string | number>) =>
-      fallback === undefined ? t(key, options) : t(key, fallback, options),
+    translate: (key: string, fallback?: string, options?: Record<string, string | number>) => {
+      const shared = collaborationTranslate(key, undefined, options)
+      if (shared !== key) return shared
+      return fallback === undefined ? t(key, options) : t(key, fallback, options)
+    },
     loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,
+    onEscape: props.onEscape,
     presentation: props.presentation,
     workspacePanelFill: props.workspacePanelFill,
     readFirst: props.readFirst,
@@ -235,12 +219,15 @@ export function TodoEditor(props: TodoEditorProps) {
     showFullscreenControl: props.showFullscreenControl,
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
+    defaultAssistant: props.defaultAssistant,
     taskRefreshKey: props.taskRefreshKey,
     initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
-    headerActions:
-      props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
-        <>
-          {props.headerActions}
+    taskExecutionStates: props.taskExecutionStates,
+    deviceNamesById: props.deviceNamesById,
+    headerActions: (
+      <>
+        {props.headerActions}
+        {props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
           <button
             type="button"
             data-testid="cloud-todo-create-task"
@@ -249,18 +236,19 @@ export function TodoEditor(props: TodoEditorProps) {
           >
             {t('todo.add_task', '新增任务')}
           </button>
-        </>
-      ) : (
-        props.headerActions
-      ),
+        ) : null}
+      </>
+    ),
+    canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
     onCreateTask: props.onCreateTask,
+    onAddAssigneeMember: props.onAddAssigneeMember,
+    onAddAssigneeAgent: props.onAddAssigneeAgent,
     onOpenTaskConversation: props.onOpenTaskConversation
       ? (task: SharedIssueDetailTaskBinding) =>
           props.onOpenTaskConversation?.(task as unknown as LoopItemTaskBinding)
       : undefined,
-    onWorkflowPlanChanged: props.onWorkflowPlanChanged,
   }
 
   return props.mode === 'create' ? (
@@ -294,6 +282,7 @@ export function TodoEditor(props: TodoEditorProps) {
       })}
       project={props.project as SharedEditorProject | undefined}
       onUpdated={item => props.onUpdated(item as CloudLoopItem)}
+      onDelete={props.onDelete}
       onAddChild={props.onAddChild}
       onOpenChildTask={
         props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined

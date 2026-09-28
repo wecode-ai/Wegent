@@ -10,6 +10,17 @@ import {
 } from '@/features/knowledge/document/utils/sourcePreview'
 
 describe('source preview rules', () => {
+  const syncedWikiSourceConfig = {
+    external: {
+      provider: 'wiki',
+      title: 'External Wiki document',
+      sync: {
+        enabled: true,
+        connection_id: 'wiki-connection',
+      },
+    },
+  }
+
   it('normalizes extensions', () => {
     expect(normalizeSourcePreviewExtension(' .DOCX ')).toBe('docx')
   })
@@ -40,6 +51,36 @@ describe('source preview rules', () => {
         source_type: 'file',
         attachment_id: null,
         file_extension: 'docx',
+      })
+    ).toBe(false)
+  })
+
+  it.each(['pdf', 'docx', 'xlsx', 'pptx', 'png', 'jpg', 'webp'])(
+    'supports synchronized Wiki %s attachments',
+    extension => {
+      expect(
+        isKnowledgeSourcePreviewSupported({
+          source_type: 'external',
+          source_config: syncedWikiSourceConfig,
+          attachment_id: 10,
+          file_extension: extension,
+        })
+      ).toBe(true)
+    }
+  )
+
+  it('does not enable source preview for unrelated external documents', () => {
+    expect(
+      isKnowledgeSourcePreviewSupported({
+        source_type: 'external',
+        source_config: {
+          external: {
+            provider: 'dingtalk',
+            title: 'DingTalk document',
+          },
+        },
+        attachment_id: 10,
+        file_extension: 'pdf',
       })
     ).toBe(false)
   })

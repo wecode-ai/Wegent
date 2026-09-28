@@ -16,6 +16,7 @@ const STORAGE_KEYS = {
   LAST_REPO_NAME: 'wegent_last_repo_name',
   DEFAULT_EXECUTION_TARGET: 'wegent_default_execution_target',
   SHOW_ADVANCED_DEVICES: 'wegent_show_advanced_devices',
+  SHOW_ADVANCED_KNOWLEDGE: 'wegent_show_advanced_knowledge',
 } as const
 
 /**
@@ -205,6 +206,29 @@ export function getShowAdvancedDevices(): boolean {
     return localStorage.getItem(STORAGE_KEYS.SHOW_ADVANCED_DEVICES) === 'true'
   } catch (error) {
     console.warn('Failed to load advanced device visibility from localStorage:', error)
+    return false
+  }
+}
+
+/**
+ * Persist whether advanced knowledge bases (code wikis) should be visible.
+ */
+export function saveShowAdvancedKnowledge(show: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SHOW_ADVANCED_KNOWLEDGE, String(show))
+  } catch (error) {
+    console.warn('Failed to save advanced knowledge visibility to localStorage:', error)
+  }
+}
+
+/**
+ * Return whether the user opted in to advanced knowledge bases (code wikis).
+ */
+export function getShowAdvancedKnowledge(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.SHOW_ADVANCED_KNOWLEDGE) === 'true'
+  } catch (error) {
+    console.warn('Failed to load advanced knowledge visibility from localStorage:', error)
     return false
   }
 }

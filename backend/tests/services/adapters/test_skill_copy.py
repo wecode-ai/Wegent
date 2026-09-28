@@ -305,6 +305,28 @@ class TestCloneBotWithSkillMapping:
             skill_ids=[skill_a.id],
             skill_names=["my-skill"],
         )
+        bot.json["spec"]["capability_mode"] = "manual"
+        flag_modified(bot, "json")
+        ghost_ref = bot.json["spec"]["ghostRef"]
+        source_ghost = (
+            test_db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == ghost_ref["name"],
+                Kind.namespace == ghost_ref["namespace"],
+            )
+            .one()
+        )
+        source_ghost.json["spec"]["plugins"] = [
+            {
+                "id": "review@personal",
+                "pluginName": "review",
+                "marketplaceId": "personal",
+                "displayName": "Review",
+            }
+        ]
+        flag_modified(source_ghost, "json")
+        test_db.commit()
 
         cloned = bot_kinds_service.clone_bot(
             test_db,
@@ -331,3 +353,5 @@ class TestCloneBotWithSkillMapping:
         )
         refs = cloned_ghost.json.get("spec", {}).get("skill_refs", {})
         assert refs["my-skill"]["skill_id"] == skill_a.id
+        assert cloned_kind.json["spec"]["capability_mode"] == "manual"
+        assert cloned_ghost.json["spec"]["plugins"][0]["id"] == "review@personal"

@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import {
+  buildRuntimeRemoteProjectStateId,
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
   getRuntimeProjectActivation,
   getRuntimeProjectReorderRequest,
   getRuntimeRemoteProjectRegistrations,
+  parseRuntimeRemoteProjectStateId,
 } from './runtime-project-state'
 
 const runtimeWork: RuntimeWorkListResponse = {
@@ -54,6 +56,20 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('runtime project state', () => {
+  test('round-trips a remote project state identity', () => {
+    const stateId = buildRuntimeRemoteProjectStateId(
+      'remote:device',
+      'local:/srv/project with spaces'
+    )
+
+    expect(stateId).toBe('wegent-remote:remote%3Adevice:local%3A%2Fsrv%2Fproject%20with%20spaces')
+    expect(parseRuntimeRemoteProjectStateId(stateId)).toEqual({
+      hostId: 'remote:device',
+      projectKey: 'local:/srv/project with spaces',
+    })
+    expect(parseRuntimeRemoteProjectStateId('wegent-remote:remote-device:%E0%A4%A')).toBeNull()
+  })
+
   test('uses only the local executor as the Codex global state owner', () => {
     expect(
       getLocalRuntimeStateDeviceId([

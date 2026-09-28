@@ -94,6 +94,14 @@ describe('runtime task workspace binding', () => {
         runtimeProjectKey: 'remote:docs',
       })
     ).toBe(runtimeProjectUiId(runtimeWork.projects[1].project))
+    expect(
+      runtimeTaskProjectUiId(runtimeWork, {
+        runtime: 'codex',
+        message: 'prepared environment',
+        deviceId: 'cloud-executor',
+        workspacePath: '/srv/docs/',
+      })
+    ).toBe(runtimeProjectUiId(runtimeWork.projects[1].project))
   })
 
   test('removes an old binding before rebuilding a task request', () => {

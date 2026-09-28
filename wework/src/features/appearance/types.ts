@@ -1,27 +1,14 @@
-export type AppearanceMode = 'light' | 'dark' | 'system'
-export type ResolvedAppearanceMode = 'light' | 'dark'
-
-export interface ThemePalette {
-  bgBase: string
-  bgSurface: string
-  bgMuted: string
-  bgHover: string
-  sidebar: string
-  sidebarActive: string
-  sidebarHover: string
-  sidebarTextPrimary: string
-  sidebarTextSecondary: string
-  sidebarTextMuted: string
-  mobileDrawer: string
-  border: string
-  textPrimary: string
-  textSecondary: string
-  textMuted: string
-  primary: string
-  primaryContrast: string
-  popover: string
-  codeBg: string
-}
+import type {
+  AppearanceMode,
+  ResolvedAppearanceMode,
+  ThemePalette,
+  ThemeAppearance,
+} from '@wegent/collaboration/theme'
+export type {
+  AppearanceMode,
+  ResolvedAppearanceMode,
+  ThemePalette,
+} from '@wegent/collaboration/theme'
 
 export interface WorkbenchBackgroundConfig {
   imagePath: string | null
@@ -32,15 +19,9 @@ export interface WorkbenchBackgroundConfig {
   inTopBar: boolean
 }
 
-export interface AppearanceConfig {
+export interface AppearanceConfig extends ThemeAppearance {
   mode: AppearanceMode
-  accentColor: string
-  uiFont: string
-  codeFont: string
-  uiFontSize: number
-  codeFontSize: number
   sidebarTranslucent: boolean
-  contrast: number
   backgroundImagePath: string | null
   separateBackgroundsByTheme: boolean
   themeBackgroundsInitialized: boolean
@@ -51,8 +32,6 @@ export interface AppearanceConfig {
   backgroundInTopBar: boolean
   lightBackground: WorkbenchBackgroundConfig
   darkBackground: WorkbenchBackgroundConfig
-  light: ThemePalette
-  dark: ThemePalette
 }
 
 export type AppearanceUpdate = Partial<

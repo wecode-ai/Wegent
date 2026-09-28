@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-
 impl RuntimeWorkRpcHandler {
     pub(super) fn begin_active_codex_transcript(
         &self,
@@ -155,9 +154,16 @@ impl RuntimeWorkRpcHandler {
         ) {
             return;
         }
-        let item = notification_item(notification.params);
+        let mut item = notification_item(notification.params);
         if !item.is_object() {
             return;
+        }
+        if is_codex_context_compaction_item_type(&item_type(&item)) {
+            item["status"] = json!(if notification.method == "item/completed" {
+                "done"
+            } else {
+                "pending"
+            });
         }
         let Some(item_id) = string_field(&item, "id") else {
             return;
@@ -189,6 +195,22 @@ impl RuntimeWorkRpcHandler {
             }
         } else {
             transcript.items.push(item);
+        }
+        let progress = (notification.method == "item/completed").then(|| {
+            transcript
+                .items
+                .iter()
+                .filter_map(|item| {
+                    (string_field(item, "type").as_deref() == Some("agentMessage"))
+                        .then(|| string_field(item, "text"))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        });
+        drop(active_items);
+        if let Some(progress) = progress.filter(|text| !text.is_empty()) {
+            self.project_queue_progress(local_task_id, &progress);
         }
     }
 
@@ -468,21 +490,23 @@ impl RuntimeWorkRpcHandler {
             if notification_turn_id == active_turn.turn_id {
                 true
             } else {
-                log_executor_event(
-                    "runtime work routes non-active turn notification",
-                    &[
-                        ("thread_id", thread_id.clone()),
-                        ("active_turn_id", active_turn.turn_id),
-                        ("notification_turn_id", notification_turn_id.to_owned()),
-                    ],
-                );
+                if codex_stream_debug_enabled() {
+                    log_executor_event(
+                        "runtime work routes non-active turn notification",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("active_turn_id", active_turn.turn_id),
+                            ("notification_turn_id", notification_turn_id.to_owned()),
+                        ],
+                    );
+                }
                 false
             }
         } else {
             false
         };
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
-            self.register_codex_thread_workspace_root(&started_thread_id, &route_request);
+            self.register_codex_thread_workspace_root(&started_thread_id, &route_request, false);
         }
         drop(routing);
 
@@ -883,6 +907,13 @@ fn take_pending_codex_notifications(
 fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
     let params = message.get("params").unwrap_or(message);
     let item = params.get("item").unwrap_or(params);
+    if item_type(item) == "subagentactivity" {
+        return string_field(item, "agentThreadId")
+            .or_else(|| string_field(item, "agent_thread_id"))
+            .filter(|thread_id| !thread_id.trim().is_empty())
+            .into_iter()
+            .collect();
+    }
     if item_type(item) != "collabagenttoolcall"
         || string_field(item, "tool").as_deref() != Some("spawnAgent")
     {

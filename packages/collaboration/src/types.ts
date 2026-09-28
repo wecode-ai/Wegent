@@ -3,17 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from "react";
-import type { SharedWorkflowNode } from "./issue-detail/workflowTypes";
 import type { ProjectAgentConfigurationHost } from "./project-agent-config/types";
 import type { ProjectCreateHostAdapter } from "./project-create/types";
 
 export type CollaborationProjectId = string;
 
-export type CollaborationRole =
-  | "Owner"
-  | "Maintainer"
-  | "Developer"
-  | "Reporter";
+export type CollaborationRole = "Owner" | "Maintainer" | "Developer" | "Viewer";
+export type CollaborationWorkspaceRole =
+  | CollaborationRole
+  | "Reporter"
+  | "RestrictedAnalyst";
+
+export type CollaborationProjectVisibility = "private" | "public";
 
 export type CollaborationPriority =
   | "none"
@@ -39,6 +40,10 @@ export interface CollaborationStatus {
 export interface CollaborationProject {
   id: CollaborationProjectId;
   workspace_id?: string | null;
+  workspace_context?: Omit<
+    CollaborationWorkspaceNavigationContext,
+    "location"
+  > | null;
   public_id: string;
   project_key: string;
   name: string;
@@ -63,13 +68,16 @@ export interface CollaborationProject {
   created_by_user_id: number;
   current_user_id?: number;
   current_user_name?: string;
-  access_role?: CollaborationRole | "RestrictedAnalyst";
-  visibility?: "private" | "public";
+  access_role?: CollaborationRole;
+  public_access?: { role: "Developer" | "Viewer" } | null;
+  default_issue_security?: "open" | "related";
+  visibility?: CollaborationProjectVisibility;
   status: string;
   tags: string[];
   version: number;
   created_at: string;
   updated_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 export type LocalCollaborationProject = CollaborationProject & {
@@ -78,7 +86,7 @@ export type LocalCollaborationProject = CollaborationProject & {
 
 export type BackendCollaborationProject = CollaborationProject & {
   project_store: "backend";
-  access_role: CollaborationRole | "RestrictedAnalyst";
+  access_role: CollaborationRole;
 };
 
 export interface CollaborationIssue {
@@ -89,6 +97,8 @@ export interface CollaborationIssue {
   created_by_user_id: number;
   created_by_user_name?: string | null;
   assignee_user_id: number | null;
+  assignee_group_id?: string | null;
+  assignee_group_name?: string | null;
   assignee_name?: string | null;
   assignee_agent_id?: string | null;
   assignee_agent_name?: string | null;
@@ -96,6 +106,9 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
+  execution_note?: string | null;
+  can_approve?: boolean;
+  ai_state?: { status?: string | null; last_error?: string | null } | null;
   title: string;
   description: string;
   status: string;
@@ -104,29 +117,19 @@ export interface CollaborationIssue {
   tags: string[];
   sort_order: number;
   current_delivery_id?: string | null;
+  content_revision?: number;
+  activity_read_sequence?: number;
+  is_unread?: boolean;
   version: number;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
   can_view_detail?: boolean;
   can_edit?: boolean;
+  security_level?: "open" | "related";
   assignment_history?: SharedIssueAssignmentHistoryEntry[];
   status_history?: SharedIssueStatusHistoryEntry[];
   automation?: { trigger?: string; [key: string]: unknown } | null;
-  workflow?: {
-    advancement_policy?: "manual" | "ai";
-    orchestration_status?:
-      | "idle"
-      | "planning"
-      | "awaiting_approval"
-      | "dispatching"
-      | "running"
-      | "awaiting_review"
-      | "paused"
-      | "completed"
-      | "failed";
-    nodes?: SharedWorkflowNode[];
-  } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
   source_cells?: Record<string, unknown>;
@@ -140,7 +143,6 @@ export interface CollaborationAssignment {
   target_type: CollaborationAssignmentTargetType;
   target_id: string;
   target_name: string;
-  workflow_step: string | null;
   body: string;
   comment_id: string | null;
   created_by_user_id: number;
@@ -156,7 +158,7 @@ export interface CollaborationWorkspace {
   name: string;
   description: string;
   namespace: string;
-  access_role: CollaborationRole | "Member";
+  access_role: CollaborationWorkspaceRole | "Member";
   member_count: number;
   agent_count: number;
   execution_environment_count: number;
@@ -168,15 +170,21 @@ export interface CollaborationWorkspace {
   updated_at: string;
 }
 
+export interface CollaborationExecutionEnvironmentDeviceState {
+  status?: "preparing" | "ready" | "error";
+  workspace_path?: string;
+  prepared_at?: string | null;
+  error?: string;
+}
+
 export interface CollaborationExecutionEnvironmentConfig {
   repositories: CollaborationExecutionEnvironmentRepository[];
   setup_steps: CollaborationExecutionEnvironmentSetupStep[];
-  status?: "uninitialized" | "preparing" | "ready" | "error";
   fingerprint?: string;
-  prepared_device_id?: string;
-  prepared_workspace_path?: string;
-  prepared_at?: string | null;
-  error?: string;
+  // Preparation state is per device, keyed by the device's route id
+  // (`device_key` on the environment row), so preparing on one device never
+  // overwrites another device's record.
+  devices?: Record<string, CollaborationExecutionEnvironmentDeviceState>;
 }
 
 export interface CollaborationExecutionEnvironmentRepository {
@@ -203,6 +211,7 @@ export interface CollaborationExecutionEnvironment {
   id: string;
   device_id?: number;
   device_key?: string;
+  is_current_device?: boolean;
   name: string;
   kind: "local_device" | "cloud_host";
   coding_tools: string[];
@@ -215,11 +224,13 @@ export interface CollaborationExecutionEnvironment {
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {
   location?: "local" | "cloud";
+  version?: number;
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
   status: "available" | "unavailable";
   execution_environment_ids: string[];
+  project_binding_input?: Record<string, unknown>;
 }
 
 export interface CollaborationPlatformResources {
@@ -271,7 +282,7 @@ export type BackendCollaborationIssue = CollaborationIssue & {
 
 export interface SharedIssueAssignmentHistoryEntry {
   by_user_id: number;
-  to_type: "user" | "agent" | "team" | null;
+  to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
   action: "assign" | "reassign" | "unassign";
@@ -297,6 +308,13 @@ export interface CollaborationMember {
   capability_description?: string;
 }
 
+export interface CollaborationWorkspaceMember extends Omit<
+  CollaborationMember,
+  "role"
+> {
+  role: CollaborationWorkspaceRole;
+}
+
 export interface CollaborationUser {
   id: number;
   user_name: string;
@@ -304,6 +322,12 @@ export interface CollaborationUser {
 }
 
 export interface CollaborationAgent {
+  createdByUserId?: number | null;
+  createdByUserName?: string | null;
+  deletable?: boolean;
+  runtime?: string;
+  status?: string;
+  systemPrompt?: string;
   id: string;
   name: string;
   agent_id?: string;
@@ -355,6 +379,12 @@ export interface CollaborationExecution {
   executor_type: string;
   agent_id: string | null;
   team_id?: number | null;
+  backend_task_id?: number | null;
+  execution_environment?: string | null;
+  execution_device_id?: string | null;
+  runtime_instance_id?: string | null;
+  runtime_device_id?: string | null;
+  runtime_task_id?: string | null;
   assigner_user_id: number;
   executor_owner_user_id: number | null;
   status: string;
@@ -388,18 +418,31 @@ export interface CollaborationCapabilities {
   projectLocation?: "cloud" | "local";
 }
 
+export interface CollaborationDefaultAssistant {
+  name: string;
+  description: string;
+  capabilitySummary?: string;
+}
+
 export type CollaborationView = "board" | "table" | "files" | "manage";
 export type CollaborationRootView = "home" | "my-work";
+export type ProjectSettingsSectionId =
+  | "project"
+  | "collaboration-participants"
+  | "environments"
+  | "automatic-processing";
 
 export interface CollaborationLocation {
   projectId: string | null;
   issueId: string | null;
   view: CollaborationView;
   rootView?: CollaborationRootView;
+  projectSettingsSection?: ProjectSettingsSectionId | null;
 }
 
 export interface CollaborationHostAdapter {
   capabilities: CollaborationCapabilities;
+  defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;
   navigate(location: CollaborationLocation): void;
   manageResource?(kind: "agents" | "environments", resourceId?: string): void;

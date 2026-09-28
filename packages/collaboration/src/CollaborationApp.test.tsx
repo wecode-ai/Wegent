@@ -36,8 +36,14 @@ vi.mock("./workspace-controller", () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
 }));
 
+vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./project-board/projectBoardDnd")>()),
+  useProjectBoardSensors: () => [],
+}));
+
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
+import { collaborationTestIds } from "./testIds";
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
@@ -48,6 +54,8 @@ import {
 import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
+import { ProjectIssueTable } from "./platform";
+import { ProjectBoardBody } from "./project-board";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -120,9 +128,12 @@ function createApi(): SharedWorkspaceApi {
   } as unknown as SharedWorkspaceApi;
 }
 
-function renderApp(host: CollaborationHostAdapter) {
+function renderApp(
+  host: CollaborationHostAdapter,
+  api: SharedWorkspaceApi = createApi(),
+) {
   return CollaborationApp({
-    api: createApi(),
+    api,
     host,
   });
 }
@@ -168,6 +179,7 @@ function controllerWithProject(project: CollaborationProject) {
     commands: {
       reportError: vi.fn(),
       replaceProject: vi.fn(),
+      markIssueRead: vi.fn().mockResolvedValue(null),
     },
   };
 }
@@ -301,6 +313,108 @@ describe("CollaborationApp API boundary", () => {
     expect(firstSettings?.key).toContain("project-1");
     expect(refreshedSettings?.key).toBe(firstSettings?.key);
     expect(refreshedSettings?.props.project.version).toBe(2);
+  });
+
+  it("blocks Issue creation and opens environment settings before initialization", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        project_store: "local",
+        access_role: "Owner",
+      }),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    expect(createButton).toBeDefined();
+    await createButton?.props.onClick();
+
+    expect(host.notify).toHaveBeenCalledWith(
+      "请先完成项目执行环境初始化，再创建 Issue。",
+      "error",
+    );
+    expect(host.navigate).toHaveBeenCalledWith({
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+      projectSettingsSection: "environments",
+    });
+  });
+
+  it("rechecks a newly initialized environment before blocking Issue creation", async () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    host.notify = vi.fn();
+    const project = {
+      ...createProject(1),
+      access_role: "Owner" as const,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        fingerprint: "",
+        devices: {
+          "device-21": {
+            status: "ready" as const,
+            workspace_path: "/workspace/project-1",
+          },
+        },
+      },
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(project),
+    );
+    const api = createApi();
+    api.projects.listExecutionEnvironments = vi.fn(async () => [
+      {
+        id: "environment-21",
+        device_id: 21,
+        device_key: "device-21",
+        name: "Device",
+        kind: "local_device",
+        coding_tools: ["codex"],
+        owner_type: "user",
+        owner_id: "1",
+        owner_name: "Owner",
+        status: "online",
+        updated_at: "2026-09-26T00:00:00Z",
+      },
+    ]);
+
+    const shell = findByType(
+      renderApp(host, api),
+      CollaborationProjectViewShell,
+    );
+    const createButton = findByTestId(
+      shell?.props.renderRightActions({
+        actionRefs: {},
+        showLabels: true,
+      }),
+      collaborationTestIds.createIssue,
+    );
+    await createButton?.props.onClick();
+
+    expect(api.projects.listExecutionEnvironments).toHaveBeenCalledWith(
+      "project-1",
+    );
+    expect(host.notify).not.toHaveBeenCalled();
+    expect(host.navigate).not.toHaveBeenCalled();
   });
 
   it("uses the shared project settings content as the vertical scroller", () => {
@@ -504,9 +618,37 @@ describe("CollaborationApp API boundary", () => {
     });
     const shell = findByType(app, CollaborationProjectViewShell);
     const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const renderedBoard = ProjectBoardAdapter(board?.props);
+    const boardBody = findByType(renderedBoard, ProjectBoardBody);
 
     expect(board?.props.taskBindings).toEqual([binding]);
-    expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
+    expect(
+      boardBody?.props.getColumnEmptyState({
+        key: "inbox",
+        label: "收集箱",
+        status: "inbox",
+      }).action,
+    ).toBeDefined();
+    expect(
+      boardBody?.props.getColumnEmptyState({
+        key: "pending",
+        label: "待开始",
+        status: "pending",
+      }).action,
+    ).toBeUndefined();
+    board?.props.renderIssueCard({
+      issue,
+      previewDisabled: false,
+      taskBindings: [binding],
+    });
+    expect(renderBoardIssueCard).toHaveBeenCalledWith({
+      issue,
+      previewDisabled: false,
+      taskBindings: [binding],
+      onMarkRead: expect.any(Function),
+    });
+    renderBoardIssueCard.mock.calls[0][0].onMarkRead();
+    expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
     expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
   });
 
@@ -577,6 +719,136 @@ describe("CollaborationApp API boundary", () => {
         issue,
         taskBindings: [selectedBinding],
       }),
+    );
+  });
+
+  it("keeps Issue deletion hidden until the host enables it", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(createProject(1)),
+    );
+
+    const app = CollaborationApp({
+      api: createApi(),
+      host,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const table = findByType(shell?.props.slots.table, ProjectIssueTable);
+
+    expect(board?.props.onDeleteIssue).toBeUndefined();
+    expect(table?.props.onDelete).toBeUndefined();
+  });
+
+  it("wires Issue deletion into board, table, and detail when enabled", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      can_edit: true,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    const controller = controllerWithProject(project);
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+      },
+    });
+    const renderIssueDetail = vi.fn(() => null);
+
+    const app = CollaborationApp({
+      api: createApi(),
+      host,
+      issueDeleteEnabled: true,
+      renderIssueDetail,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    const table = findByType(shell?.props.slots.table, ProjectIssueTable);
+
+    expect(board?.props.onDeleteIssue).toEqual(expect.any(Function));
+    expect(table?.props.onDelete).toEqual(expect.any(Function));
+    expect(renderIssueDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ onDelete: expect.any(Function) }),
+    );
+  });
+
+  it("keeps detail deletion unavailable for a read-only Issue", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      view: "board",
+    };
+    const project = createProject(1);
+    const issue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      can_edit: false,
+      version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+      completed_at: null,
+    } satisfies CollaborationIssue;
+    const controller = controllerWithProject(project);
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        selectedIssue: issue,
+      },
+    });
+    const renderIssueDetail = vi.fn(() => null);
+
+    CollaborationApp({
+      api: createApi(),
+      host,
+      issueDeleteEnabled: true,
+      renderIssueDetail,
+    });
+
+    expect(renderIssueDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ onDelete: undefined }),
     );
   });
 

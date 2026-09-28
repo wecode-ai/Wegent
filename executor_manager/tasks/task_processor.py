@@ -198,7 +198,11 @@ class TaskProcessor:
                 callback=None,
             )
 
-            if result and result.get("executor_name"):
+            if (
+                result
+                and result.get("status") == "success"
+                and result.get("executor_name")
+            ):
                 logger.info(
                     f"Task processed successfully: ID={task_id}, executor_type={executor_type}"
                 )

@@ -59,6 +59,7 @@ pub(crate) fn map_text_chunk(
     match method {
         "item/reasoning/delta"
         | "item/reasoningSummary/delta"
+        | "item/reasoning/textDelta"
         | "item/reasoning/summaryTextDelta" => {
             let delta = raw_string_field(params, "delta")
                 .or_else(|| string_field(params, "delta"))

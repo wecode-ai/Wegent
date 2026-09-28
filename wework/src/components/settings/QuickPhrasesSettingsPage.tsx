@@ -15,14 +15,15 @@ export function QuickPhrasesSettingsPage() {
   }, [])
 
   const save = async (next: QuickPhrase[], action: QuickPhraseChangeAction) => {
-    setPhrases(next)
     try {
       await updateAppPreferences({ quickPhrases: next })
+      setPhrases(next)
       setError('')
       track('feature_action_completed', { domain: 'quick_phrase', action })
-    } catch {
+    } catch (cause) {
       track('operation_failed', { operation: 'quick_phrase_action' })
       setError(t('workbench.quick_phrases_save_error', '无法保存快捷短语，请重试'))
+      throw cause
     }
   }
   return (
@@ -39,7 +40,7 @@ export function QuickPhrasesSettingsPage() {
           {error}
         </div>
       )}
-      <QuickPhrasesEditor phrases={phrases} onChange={(next, action) => void save(next, action)} />
+      <QuickPhrasesEditor phrases={phrases} onChange={save} />
     </SettingsPage>
   )
 }

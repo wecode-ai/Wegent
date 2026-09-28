@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 
+import { teamApis } from '@/apis/team'
 import { userApis } from '@/apis/user'
 import { QuickAccessCards } from '@/features/tasks/components/chat/QuickAccessCards'
 import type { QuickAccessResponse, QuickLaunchResponse, Team } from '@/types/api'
@@ -17,6 +18,8 @@ jest.mock('next/navigation', () => ({
     push: routerPush,
   }),
 }))
+
+jest.mock('@/apis/team', () => ({ teamApis: { getTeam: jest.fn() } }))
 
 jest.mock('@/apis/user', () => ({
   userApis: {
@@ -143,6 +146,7 @@ describe('QuickAccessCards', () => {
     jest.clearAllMocks()
     mockGetQuickAccess.mockReset()
     mockGetQuickLaunch.mockReset()
+    jest.mocked(teamApis.getTeam).mockReset()
     routerPush.mockClear()
     sessionStorage.clear()
     mockGetQuickLaunch.mockResolvedValue({
@@ -506,6 +510,7 @@ describe('QuickAccessCards', () => {
           title: 'Code Review',
           team_id: 7,
           name: 'coding-agent',
+          bind_mode: ['code'],
           enabled: true,
           order: 10,
           input_presets: [],
@@ -516,10 +521,7 @@ describe('QuickAccessCards', () => {
 
     render(
       <QuickAccessCards
-        teams={[
-          makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] }),
-          makeTeam({ id: 7, name: 'coding-agent', bind_mode: ['code'] }),
-        ]}
+        teams={[]}
         selectedTeam={null}
         onTeamSelect={onTeamSelect}
         currentMode="chat"
@@ -545,6 +547,7 @@ describe('QuickAccessCards', () => {
           title: 'Code Review',
           team_id: 7,
           name: 'coding-agent',
+          bind_mode: ['code'],
           enabled: true,
           order: 10,
           input_presets: [makeInputPreset('Review this change')],
@@ -555,10 +558,7 @@ describe('QuickAccessCards', () => {
 
     render(
       <QuickAccessCards
-        teams={[
-          makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] }),
-          makeTeam({ id: 7, name: 'coding-agent', bind_mode: ['code'] }),
-        ]}
+        teams={[]}
         selectedTeam={null}
         onTeamSelect={onTeamSelect}
         onPhraseSelect={onPhraseSelect}
@@ -598,6 +598,7 @@ describe('QuickAccessCards', () => {
           title: 'Code Review',
           team_id: 7,
           name: 'coding-agent',
+          bind_mode: ['code'],
           enabled: true,
           order: 10,
           input_presets: [preset],
@@ -687,6 +688,112 @@ describe('QuickAccessCards', () => {
     expect(screen.queryByText('regular-team')).not.toBeInTheDocument()
   })
 
+  test('renders launchers before the catalog or favorites metadata and fetches details on click', async () => {
+    mockGetQuickAccess.mockReturnValue(new Promise(() => {}))
+    mockGetQuickLaunch.mockResolvedValue({
+      system_functions: [],
+      favorite_agents: [makeQuickLaunchFavoriteAgent(42, 'early-agent', 'Early Agent')],
+    })
+    const team = makeTeam({ id: 42, name: 'early-agent' })
+    const getTeam = jest.mocked(teamApis.getTeam)
+    let resolveTeam!: (value: Team) => void
+    getTeam.mockReturnValue(
+      new Promise(resolve => {
+        resolveTeam = resolve
+      })
+    )
+    const onTeamSelect = jest.fn()
+    render(
+      <QuickAccessCards
+        teams={[]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        currentMode="chat"
+        isTeamsLoading
+      />
+    )
+
+    const card = await screen.findByText('Early Agent')
+    expect(getTeam).not.toHaveBeenCalled()
+    fireEvent.click(card)
+    expect(getTeam).toHaveBeenCalledWith(42)
+    expect(onTeamSelect).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveTeam(team)
+    })
+    expect(onTeamSelect).toHaveBeenCalledWith(team)
+  })
+
+  test('failed detail loading keeps the current selection and allows retry', async () => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockGetQuickLaunch.mockResolvedValue({
+      system_functions: [],
+      favorite_agents: [makeQuickLaunchFavoriteAgent(42, 'agent', 'Retry Agent')],
+    })
+    const getTeam = jest.mocked(teamApis.getTeam)
+    getTeam.mockRejectedValueOnce(new Error('Forbidden'))
+    getTeam.mockResolvedValueOnce(makeTeam({ id: 42 }))
+    const onTeamSelect = jest.fn()
+    try {
+      render(
+        <QuickAccessCards
+          teams={[]}
+          selectedTeam={null}
+          onTeamSelect={onTeamSelect}
+          currentMode="chat"
+          isTeamsLoading
+        />
+      )
+      fireEvent.click(await screen.findByText('Retry Agent'))
+      await waitFor(() => expect(errorLog).toHaveBeenCalled())
+      expect(onTeamSelect).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByText('Retry Agent'))
+      await waitFor(() =>
+        expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }))
+      )
+      expect(getTeam).toHaveBeenCalledTimes(2)
+    } finally {
+      errorLog.mockRestore()
+    }
+  })
+
+  test('a late detail response cannot override a newer selection', async () => {
+    mockGetQuickLaunch.mockResolvedValue({
+      system_functions: [],
+      favorite_agents: [
+        makeQuickLaunchFavoriteAgent(41, 'first', 'First Agent'),
+        makeQuickLaunchFavoriteAgent(42, 'second', 'Second Agent'),
+      ],
+    })
+    let resolveFirst!: (value: Team) => void
+    jest.mocked(teamApis.getTeam).mockImplementation(id =>
+      id === 41
+        ? new Promise(resolve => {
+            resolveFirst = resolve
+          })
+        : Promise.resolve(makeTeam({ id: 42 }))
+    )
+    const onTeamSelect = jest.fn()
+    render(
+      <QuickAccessCards
+        teams={[]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        currentMode="chat"
+        isTeamsLoading
+      />
+    )
+    fireEvent.click(await screen.findByText('First Agent'))
+    fireEvent.click(screen.getByText('Second Agent'))
+    await waitFor(() =>
+      expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }))
+    )
+    await act(async () => {
+      resolveFirst(makeTeam({ id: 41 }))
+    })
+    expect(onTeamSelect).toHaveBeenCalledTimes(1)
+  })
+
   test('shows a loading state instead of the empty state while teams load', async () => {
     renderQuickAccessCards(
       [],
@@ -701,6 +808,8 @@ describe('QuickAccessCards', () => {
         isTeamsLoading: true,
       }
     )
+
+    fireEvent.click(await screen.findByText('More'))
 
     expect(await screen.findByTestId('quick-access-teams-loading')).toBeInTheDocument()
     expect(screen.queryByText('No teams')).not.toBeInTheDocument()
@@ -719,6 +828,8 @@ describe('QuickAccessCards', () => {
       },
       { loadError: new Error('network error'), onRefreshTeams }
     )
+
+    fireEvent.click(await screen.findByText('More'))
 
     expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
     expect(screen.queryByText('No teams')).not.toBeInTheDocument()
@@ -743,6 +854,8 @@ describe('QuickAccessCards', () => {
       { loadError: new Error('network error'), onRefreshTeams }
     )
 
+    fireEvent.click(await screen.findByText('More'))
+
     expect(await screen.findByTestId('quick-access-teams-error')).toBeInTheDocument()
     expect(screen.queryByTestId('quick-access-teams-reload')).not.toBeInTheDocument()
 
@@ -762,6 +875,8 @@ describe('QuickAccessCards', () => {
       show_system_recommended: false,
       teams: [],
     })
+
+    fireEvent.click(await screen.findByText('More'))
 
     expect(await screen.findByText('No teams')).toBeInTheDocument()
     expect(screen.queryByTestId('quick-access-teams-loading')).not.toBeInTheDocument()
@@ -924,8 +1039,14 @@ describe('QuickAccessCards', () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [],
       favorite_agents: [
-        makeQuickLaunchFavoriteAgent(2, 'image-team', 'Favorite Image Team'),
-        makeQuickLaunchFavoriteAgent(3, 'video-team', 'Favorite Video Team'),
+        {
+          ...makeQuickLaunchFavoriteAgent(2, 'image-team', 'Favorite Image Team'),
+          bind_mode: ['image'],
+        },
+        {
+          ...makeQuickLaunchFavoriteAgent(3, 'video-team', 'Favorite Video Team'),
+          bind_mode: ['video'],
+        },
       ],
     } satisfies QuickLaunchResponse)
 

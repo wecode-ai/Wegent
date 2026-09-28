@@ -10,11 +10,8 @@ import {
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
-import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
-import { useTranslation } from '@/hooks/useTranslation'
-import { MessageSquareWarning } from 'lucide-react'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { useState, type ReactNode } from 'react'
+import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
+import type { ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
@@ -134,7 +131,7 @@ export function ChromeTitlebar({
               data-testid="titlebar-feedback"
               className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
             >
-              {showFeedback && <TopnavFeedbackButton />}
+              {showFeedback && <GlobalFeedbackButton />}
             </div>
           )}
         </div>
@@ -155,31 +152,5 @@ export function ChromeTitlebar({
         </div>
       )}
     </div>
-  )
-}
-
-function TopnavFeedbackButton() {
-  const { t } = useTranslation('common')
-  const [open, setOpen] = useState(false)
-
-  return (
-    <>
-      <button
-        type="button"
-        data-testid="topnav-feedback-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.feedback_button')}
-        title={t('workbench.feedback_button')}
-        onClick={() => setOpen(true)}
-      >
-        <MessageSquareWarning className="h-4 w-4" />
-      </button>
-      <TaskFeedbackDialog
-        open={open}
-        hasActiveTask={false}
-        onClose={() => setOpen(false)}
-        getTaskContext={() => Promise.resolve({})}
-      />
-    </>
   )
 }

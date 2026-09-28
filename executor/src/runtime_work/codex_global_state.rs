@@ -185,6 +185,11 @@ impl Default for CodexGlobalStateOplogRecord {
 }
 
 impl CodexGlobalProjectIndex {
+    #[cfg(test)]
+    pub(crate) fn from_test_payload(payload: &Map<String, Value>) -> Self {
+        index_from_payload(payload)
+    }
+
     pub fn load() -> Self {
         flush_or_watch_codex_global_state_oplog();
         cached_codex_global_project_index()
@@ -528,6 +533,7 @@ pub(crate) fn register_codex_global_thread_workspace_root(
     thread_id: &str,
     workspace_path: &str,
     project_key: Option<&str>,
+    is_new_thread: bool,
 ) -> Result<Option<String>, String> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
@@ -538,10 +544,18 @@ pub(crate) fn register_codex_global_thread_workspace_root(
         return Ok(None);
     }
 
+    let project_index = CodexGlobalProjectIndex::load();
+    // Only a newly created thread can replace a stale projectless marker.
+    if !is_new_thread && project_index.is_projectless_thread(thread_id) {
+        return Ok(None);
+    }
     let state_path = codex_global_state_path();
     let mut payload = read_state_payload(&state_path).unwrap_or_default();
-    let project_key = project_key.and_then(clean_text);
-    let project_index = index_from_payload(&payload);
+    // Resuming a session must preserve later sidebar moves, including pending operations.
+    let project_key = project_index
+        .sidebar_project_key_for_thread(thread_id)
+        .and_then(clean_text)
+        .or_else(|| project_key.and_then(clean_text));
     let workspace_root = project_key
         .as_deref()
         .and_then(|key| project_index.project_for_key(key))

@@ -101,6 +101,8 @@ class TaskCreationParams:
     is_api_call: bool = False
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
+    # Responses API only: replace binary MCP tool output with a placeholder
+    omit_mcp_binary_output: bool = False
     # Whether executor runtime should be deleted immediately after completion
     auto_delete_executor: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
@@ -358,6 +360,11 @@ def create_new_task(
                 ),
                 **(
                     {"api_key_name": params.api_key_name} if params.api_key_name else {}
+                ),
+                **(
+                    {"omitMcpBinaryOutput": "true"}
+                    if params.omit_mcp_binary_output
+                    else {}
                 ),
                 **build_task_skill_labels(params.additional_skills),
             },
@@ -753,7 +760,15 @@ async def create_task_and_subtasks(
     # Persist user-selected generation parameters for display and retry.
     video_config = None
     image_config = None
-    if params.generate_params and (
+    if params.task_type == "image" and params.generate_params:
+        image_config = {
+            "model": params.model_id or params.generate_params.get("model"),
+            "size": params.generate_params.get("size"),
+        }
+        logger.info(
+            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
+        )
+    elif params.generate_params and (
         params.task_type == "video" or params.generate_params.get("model")
     ):
         video_config = {
@@ -766,14 +781,6 @@ async def create_task_and_subtasks(
         }
         logger.info(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
-        )
-    elif params.task_type == "image" and params.generate_params:
-        image_config = {
-            "model": params.model_id,
-            "size": params.generate_params.get("size"),
-        }
-        logger.info(
-            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
         )
 
     prepared_task = None

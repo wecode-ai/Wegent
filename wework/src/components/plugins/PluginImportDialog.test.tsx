@@ -41,6 +41,15 @@ function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPlug
 }
 
 describe('PluginImportDialog', () => {
+  test('cancels with Escape without importing a package', async () => {
+    const onCancel = vi.fn()
+    const api = pluginApi()
+    render(<PluginImportDialog pluginApi={api} onCancel={onCancel} onImported={vi.fn()} />)
+    await userEvent.keyboard('{Escape}')
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(api.importPluginPackage).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     desktopHostMock.mockReset()
   })

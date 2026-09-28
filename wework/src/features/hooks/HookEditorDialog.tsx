@@ -1,3 +1,5 @@
+import { DialogForm } from '@/components/common/DialogForm'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { HookDraft, ResolvedHookPlugin } from './hooksTypes'
@@ -24,6 +26,9 @@ export function HookEditorDialog({
   const [asynchronous, setAsynchronous] = useState(first?.config.async ?? false)
   const [statusMessage, setStatusMessage] = useState(first?.config.statusMessage ?? '')
   const [saving, setSaving] = useState(false)
+  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
+    if (!saving) onClose()
+  })
   const valid =
     /^[a-z0-9-]+$/.test(id) && name.trim() && command.trim() && timeout >= 1 && timeout <= 300
   return (
@@ -32,11 +37,12 @@ export function HookEditorDialog({
       role="dialog"
       aria-modal="true"
     >
-      <form
+      <DialogForm
+        ref={dialogRef}
         className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-auto rounded-2xl bg-background p-6 shadow-xl"
         onSubmit={async event => {
           event.preventDefault()
-          if (!valid) return
+          if (!valid || saving) return
           setSaving(true)
           try {
             await onSave({
@@ -127,7 +133,7 @@ export function HookEditorDialog({
             {t('save')}
           </button>
         </div>
-      </form>
+      </DialogForm>
     </div>
   )
 }

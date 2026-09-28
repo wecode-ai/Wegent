@@ -995,6 +995,10 @@ class DockerExecutor(Executor):
             ]
         )
 
+        debug_stdout = os.environ.get("WEGENT_DEBUG_CLAUDE_STDOUT")
+        if debug_stdout is not None:
+            cmd.extend(["-e", f"WEGENT_DEBUG_CLAUDE_STDOUT={debug_stdout}"])
+
         identity_env = build_task_identity_env(
             skill_identity_token=get_metadata_field(task, "skill_identity_token"),
             user_name=user_name,
@@ -1059,8 +1063,9 @@ class DockerExecutor(Executor):
 
     def _add_workspace_mount(self, cmd: List[str]) -> None:
         """Add workspace mount configuration"""
-        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
+        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")
         if executor_workspace:
+            os.makedirs(executor_workspace, exist_ok=True)
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
 
     def _add_git_token_crypto(self, cmd: List[str]) -> None:

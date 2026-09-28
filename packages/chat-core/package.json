@@ -7,6 +7,330 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./runtime-permission": {
+      "types": "./src/runtime-permission.ts",
+      "import": "./src/runtime-permission.ts"
+    },
+    "./models": {
+      "types": "./src/models.ts",
+      "import": "./src/models.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    },
+    "./runtime-user-message": {
+      "types": "./src/runtime-user-message.ts",
+      "import": "./src/runtime-user-message.ts"
+    },
+    "./runtime-user-input": {
+      "types": "./src/runtime-user-input.ts",
+      "import": "./src/runtime-user-input.ts"
+    },
+    "./ime": {
+      "types": "./src/ime.ts",
+      "import": "./src/ime.ts"
+    },
+    "./terminal-text": {
+      "types": "./src/terminal-text.ts",
+      "import": "./src/terminal-text.ts"
+    },
+    "./browser-annotation": {
+      "types": "./src/browser-annotation.ts",
+      "import": "./src/browser-annotation.ts"
+    },
+    "./code-comment": {
+      "types": "./src/code-comment.ts",
+      "import": "./src/code-comment.ts"
+    },
+    "./runtime-conversation": {
+      "types": "./src/runtime-conversation.ts",
+      "import": "./src/runtime-conversation.ts"
+    },
+    "./runtime-thinking": {
+      "types": "./src/runtime-thinking.ts",
+      "import": "./src/runtime-thinking.ts"
+    },
+    "./im-source": {
+      "types": "./src/im-source.ts",
+      "import": "./src/im-source.ts"
+    },
+    "./chat-error": {
+      "types": "./src/chat-error.ts",
+      "import": "./src/chat-error.ts"
+    },
+    "./plugin-workspace-result": {
+      "types": "./src/plugin-workspace-result.ts",
+      "import": "./src/plugin-workspace-result.ts"
+    },
+    "./plugin-reference": {
+      "types": "./src/plugin-reference.ts",
+      "import": "./src/plugin-reference.ts"
+    },
+    "./uri-component": {
+      "types": "./src/uri-component.ts",
+      "import": "./src/uri-component.ts"
+    },
+    "./http-url": {
+      "types": "./src/http-url.ts",
+      "import": "./src/http-url.ts"
+    },
+    "./selected-text-drag": {
+      "types": "./src/selected-text-drag.ts",
+      "import": "./src/selected-text-drag.ts"
+    },
+    "./codex-directives": {
+      "types": "./src/codex-directives.ts",
+      "import": "./src/codex-directives.ts"
+    },
+    "./code-comment-context": {
+      "types": "./src/code-comment-context.ts",
+      "import": "./src/code-comment-context.ts"
+    },
+    "./turn-file-changes": {
+      "types": "./src/turn-file-changes.ts",
+      "import": "./src/turn-file-changes.ts"
+    },
+    "./runtime-transcript-blocks": {
+      "types": "./src/runtime-transcript-blocks.ts",
+      "import": "./src/runtime-transcript-blocks.ts"
+    },
+    "./runtime-transcript": {
+      "types": "./src/runtime-transcript.ts",
+      "import": "./src/runtime-transcript.ts"
+    },
+    "./runtime-conversation-turns": {
+      "types": "./src/runtime-conversation-turns.ts",
+      "import": "./src/runtime-conversation-turns.ts"
+    },
+    "./runtime-stream-types": {
+      "types": "./src/runtime-stream-types.ts",
+      "import": "./src/runtime-stream-types.ts"
+    },
+    "./runtime-stream-handlers": {
+      "types": "./src/runtime-stream-handlers.ts",
+      "import": "./src/runtime-stream-handlers.ts"
+    },
+    "./response-api-stream": {
+      "types": "./src/response-api-stream.ts",
+      "import": "./src/response-api-stream.ts"
+    },
+    "./runtime-transcript-page": {
+      "types": "./src/runtime-transcript-page.ts",
+      "import": "./src/runtime-transcript-page.ts"
+    },
+    "./runtime-execution-snapshot": {
+      "types": "./src/runtime-execution-snapshot.ts",
+      "import": "./src/runtime-execution-snapshot.ts"
+    },
+    "./runtime-conversation-session": {
+      "types": "./src/runtime-conversation-session.ts",
+      "import": "./src/runtime-conversation-session.ts"
+    },
+    "./workspace-files": {
+      "types": "./src/workspace-files.ts",
+      "import": "./src/workspace-files.ts"
+    },
+    "./workspace-file-contract": {
+      "types": "./src/workspace-file-contract.ts",
+      "import": "./src/workspace-file-contract.ts"
+    },
+    "./device-workspace-path": {
+      "types": "./src/device-workspace-path.ts",
+      "import": "./src/device-workspace-path.ts"
+    },
+    "./workspace-file-bytes": {
+      "types": "./src/workspace-file-bytes.ts",
+      "import": "./src/workspace-file-bytes.ts"
+    },
+    "./runtime-task-title": {
+      "types": "./src/runtime-task-title.ts",
+      "import": "./src/runtime-task-title.ts"
+    },
+    "./runtime-task-api-types": {
+      "types": "./src/runtime-task-api-types.ts",
+      "import": "./src/runtime-task-api-types.ts"
+    },
+    "./runtime-conversation-api": {
+      "types": "./src/runtime-conversation-api.ts",
+      "import": "./src/runtime-conversation-api.ts"
+    },
+    "./runtime-task-lookup": {
+      "types": "./src/runtime-task-lookup.ts",
+      "import": "./src/runtime-task-lookup.ts"
+    },
+    "./codex-official-models": {
+      "types": "./src/codex-official-models.ts",
+      "import": "./src/codex-official-models.ts"
+    },
+    "./runtime-model-catalog": {
+      "types": "./src/runtime-model-catalog.ts",
+      "import": "./src/runtime-model-catalog.ts"
+    },
+    "./attachment-response": {
+      "types": "./src/attachment-response.ts",
+      "import": "./src/attachment-response.ts"
+    },
+    "./model-api": {
+      "types": "./src/model-api.ts",
+      "import": "./src/model-api.ts"
+    },
+    "./runtime-task-response-preview": {
+      "types": "./src/runtime-task-response-preview.ts",
+      "import": "./src/runtime-task-response-preview.ts"
+    },
+    "./model-execution": {
+      "types": "./src/model-execution.ts",
+      "import": "./src/model-execution.ts"
+    },
+    "./codex-catalog": {
+      "types": "./src/codex-catalog.ts",
+      "import": "./src/codex-catalog.ts"
+    },
+    "./runtime-attachments": {
+      "types": "./src/runtime-attachments.ts",
+      "import": "./src/runtime-attachments.ts"
+    },
+    "./project-space-context": {
+      "types": "./src/project-space-context.ts",
+      "import": "./src/project-space-context.ts"
+    },
+    "./runtime-task-identity": {
+      "types": "./src/runtime-task-identity.ts",
+      "import": "./src/runtime-task-identity.ts"
+    },
+    "./issue-task-binding-api": {
+      "types": "./src/issue-task-binding-api.ts",
+      "import": "./src/issue-task-binding-api.ts"
+    },
+    "./execution-project": {
+      "types": "./src/execution-project.ts",
+      "import": "./src/execution-project.ts"
+    },
+    "./device-capabilities": {
+      "types": "./src/device-capabilities.ts",
+      "import": "./src/device-capabilities.ts"
+    },
+    "./device-selection": {
+      "types": "./src/device-selection.ts",
+      "import": "./src/device-selection.ts"
+    },
+    "./project-workspace-selection": {
+      "types": "./src/project-workspace-selection.ts",
+      "import": "./src/project-workspace-selection.ts"
+    },
+    "./runtime-project": {
+      "types": "./src/runtime-project.ts",
+      "import": "./src/runtime-project.ts"
+    },
+    "./project-classification": {
+      "types": "./src/project-classification.ts",
+      "import": "./src/project-classification.ts"
+    },
+    "./conversation-queue": {
+      "types": "./src/conversation-queue.ts",
+      "import": "./src/conversation-queue.ts"
+    },
+    "./runtime-file-changes": {
+      "types": "./src/runtime-file-changes.ts",
+      "import": "./src/runtime-file-changes.ts"
+    },
+    "./runtime-model-selection": {
+      "types": "./src/runtime-model-selection.ts",
+      "import": "./src/runtime-model-selection.ts"
+    },
+    "./runtime-workspace-search": {
+      "types": "./src/runtime-workspace-search.ts",
+      "import": "./src/runtime-workspace-search.ts"
+    },
+    "./runtime-composer-catalog": {
+      "types": "./src/runtime-composer-catalog.ts",
+      "import": "./src/runtime-composer-catalog.ts"
+    },
+    "./runtime-composer-api": {
+      "types": "./src/runtime-composer-api.ts",
+      "import": "./src/runtime-composer-api.ts"
+    },
+    "./runtime-context-usage": {
+      "types": "./src/runtime-context-usage.ts",
+      "import": "./src/runtime-context-usage.ts"
+    },
+    "./composer-quick-phrases": {
+      "types": "./src/composer-quick-phrases.ts",
+      "import": "./src/composer-quick-phrases.ts"
+    },
+    "./codex-composer-catalog": {
+      "types": "./src/codex-composer-catalog.ts",
+      "import": "./src/codex-composer-catalog.ts"
+    },
+    "./runtime-composer-snapshot": {
+      "types": "./src/runtime-composer-snapshot.ts",
+      "import": "./src/runtime-composer-snapshot.ts"
+    },
+    "./composer-plugin-metadata": {
+      "types": "./src/composer-plugin-metadata.ts",
+      "import": "./src/composer-plugin-metadata.ts"
+    },
+    "./installed-plugin-types": {
+      "types": "./src/installed-plugin-types.ts",
+      "import": "./src/installed-plugin-types.ts"
+    },
+    "./personal-plugin-identity": {
+      "types": "./src/personal-plugin-identity.ts",
+      "import": "./src/personal-plugin-identity.ts"
+    },
+    "./plugin-marketplace-identity": {
+      "types": "./src/plugin-marketplace-identity.ts",
+      "import": "./src/plugin-marketplace-identity.ts"
+    },
+    "./personal-plugin-preference": {
+      "types": "./src/personal-plugin-preference.ts",
+      "import": "./src/personal-plugin-preference.ts"
+    },
+    "./installed-plugin-merge": {
+      "types": "./src/installed-plugin-merge.ts",
+      "import": "./src/installed-plugin-merge.ts"
+    },
+    "./codex-plugin-types": {
+      "types": "./src/codex-plugin-types.ts",
+      "import": "./src/codex-plugin-types.ts"
+    },
+    "./codex-installed-plugins": {
+      "types": "./src/codex-installed-plugins.ts",
+      "import": "./src/codex-installed-plugins.ts"
+    },
+    "./plugin-assets": {
+      "types": "./src/plugin-assets.ts",
+      "import": "./src/plugin-assets.ts"
+    },
+    "./plugin-trial-templates": {
+      "types": "./src/plugin-trial-templates.ts",
+      "import": "./src/plugin-trial-templates.ts"
+    },
+    "./runtime-composer-plugin-source": {
+      "types": "./src/runtime-composer-plugin-source.ts",
+      "import": "./src/runtime-composer-plugin-source.ts"
+    },
+    "./composer-plugin-scope": {
+      "types": "./src/composer-plugin-scope.ts",
+      "import": "./src/composer-plugin-scope.ts"
+    },
+    "./composer-plugin-presentation": {
+      "types": "./src/composer-plugin-presentation.ts",
+      "import": "./src/composer-plugin-presentation.ts"
+    },
+    "./composer-plugin-inventory": {
+      "types": "./src/composer-plugin-inventory.ts",
+      "import": "./src/composer-plugin-inventory.ts"
+    },
+    "./composer-plugin-trial": {
+      "types": "./src/composer-plugin-trial.ts",
+      "import": "./src/composer-plugin-trial.ts"
+    },
+    "./activity-execution-turn": {
+      "types": "./src/activity-execution-turn.ts",
+      "import": "./src/activity-execution-turn.ts"
     }
   },
   "scripts": {
@@ -17,6 +341,8 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "react": "^19.2.7",
     "typescript": "^5.7.3",
     "vitest": "^4.1.7"
   }

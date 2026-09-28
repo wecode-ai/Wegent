@@ -246,7 +246,7 @@ If you need a custom Shell configuration:
    - **Name**: Unique identifier for the Shell (lowercase letters and hyphens)
    - **Namespace**: Usually use `default`
    - **Runtime Type**: Select `Codex` or `ClaudeCode` for custom local execution Shells
-   - **Supported Model Types**: (Optional) Specify model types this Shell supports
+   - **Supported Model Providers**: (Optional) Specify model providers this Shell supports
 5. Click **Submit** to create
 
 #### Configure via YAML File
@@ -288,12 +288,12 @@ status:
 | Field          | Type   | Required | Description                                                           |
 | -------------- | ------ | -------- | --------------------------------------------------------------------- |
 | `runtime`      | string | Yes      | Runtime type. Common values: `Codex`, `ClaudeCode`, `Dify`, `Chat`    |
-| `supportModel` | array  | No       | List of supported model types, empty array means all models supported |
+| `supportModel` | array  | No       | List of supported model providers, empty array means all models supported |
 
 **supportModel Explanation**:
 
-- Empty array `[]`: Supports all model types
-- Specified list: Only supports model types in the list, e.g., `["anthropic", "openai"]`
+- Omitted or empty array `[]`: Do not filter the model list by provider.
+- Specified list: Match the model’s `spec.modelConfig.env.model`, for example `["claude", "openai"]`; the runtime name does not add restrictions. Blank provider values are invalid.
 
 #### status Section
 
@@ -315,7 +315,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: [] # Supports all model types
+  supportModel: [] # Supports all model providers
 status:
   state: "Available"
 ```
@@ -336,7 +336,7 @@ metadata:
   namespace: default
 spec:
   runtime: Dify
-  supportModel: [] # Supports all model types
+  supportModel: [] # Supports all model providers
 status:
   state: "Available"
 ```
@@ -358,7 +358,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
-  supportModel: ["anthropic"] # Only supports Anthropic models
+  supportModel: ["claude"] # Only supports Anthropic models
 status:
   state: "Available"
 ```
@@ -493,7 +493,7 @@ View Shell status via Web interface:
 
 - Check if Bot's Shell reference name and namespace are correct
 - Confirm Shell status is `Available`
-- Check if supportModel configuration restricts model types
+- Check if supportModel configuration restricts model providers
 
 **Error 3: Cross-namespace reference fails**
 
@@ -506,15 +506,15 @@ View Shell status via Web interface:
 
 **Use empty array `[]` (Recommended)**:
 
-- Supports all model types
+- Supports all model providers
 - Maximum flexibility
 - Suitable for most scenarios
 
-**Specify model type list**:
+**Specify model provider list**:
 
-- Restricts available model types
+- Restricts available model providers
 - Suitable for scenarios with strict model requirements
-- Example: `["anthropic"]` only supports Claude models
+- Example: `["claude"]` only supports Claude models
 
 ### Q6: Can I modify preset Shells?
 

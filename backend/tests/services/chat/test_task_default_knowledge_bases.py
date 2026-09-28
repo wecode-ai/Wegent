@@ -212,7 +212,7 @@ def test_resolve_task_defaults_uses_current_agent_configuration():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource_for_use",
             return_value=team,
         ),
         patch(
@@ -257,7 +257,7 @@ def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource_for_use",
             return_value=team,
         ),
         patch(
@@ -297,7 +297,7 @@ def test_resolve_public_team_defaults_uses_public_acl_context():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource_for_use",
             return_value=team,
         ),
         patch(
@@ -373,7 +373,7 @@ def test_resolve_task_defaults_requires_agent_access():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource_for_use",
             return_value=None,
         ),
         patch(

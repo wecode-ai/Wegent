@@ -8,6 +8,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from './RuntimeTaskLifecycleStore'
 import { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
+import { deriveRuntimePaneStatus } from '../runtimePaneStatus'
 
 const address: RuntimeTaskAddress = {
   deviceId: 'local-device',
@@ -79,6 +80,22 @@ describe('RuntimeTaskLifecycleStore', () => {
     ).toBe(true)
   })
 
+  test('tracks task-local lifecycle revisions across a complete running cycle', () => {
+    const store = new RuntimeTaskLifecycleStore('task-revision-test')
+
+    expect(store.getTaskRevision(address)).toBe(0)
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    const idleRevision = store.getTaskRevision(address)
+
+    store.executorStarted(address)
+    const runningRevision = store.getTaskRevision(address)
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(runningRevision).toBeGreaterThan(idleRevision)
+    expect(store.getTaskRevision(address)).toBeGreaterThan(runningRevision)
+  })
+
   test('consumes a queued lifecycle block only after a stable transition', () => {
     const store = new RuntimeTaskLifecycleStore('queued-block-transition-test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
@@ -109,6 +126,76 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getSnapshot().runningTaskKeys).toEqual(
       new Set([getRuntimeTaskLifecycleKey(address)])
     )
+  })
+
+  test('keeps execution busy while replacing the running spinner with a waiting signal', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-snapshot-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          interactionStatus: 'waitingForUserInput',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.derived.isBusy).toBe(true)
+    expect(snapshot?.derived.canSend).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
+  })
+
+  test('keeps an idle execution busy when its independent interaction state awaits input', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-idle-execution-test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'running',
+          interactionStatus: 'waitingForUserInput',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(false)
+    expect(snapshot?.derived.isBusy).toBe(true)
+    expect(snapshot?.derived.canSend).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarWaiting).toBe(true)
+  })
+
+  test('preserves realtime waiting state until an explicit response or snapshot clears it', () => {
+    const store = new RuntimeTaskLifecycleStore('waiting-input-realtime-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+
+    store.userInputRequested(address)
+    expect(store.getTask(address)?.interactionStatus).toBe('waitingForUserInput')
+
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.executorSettled(address)
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(true)
+
+    store.userInputResponded(address)
+    expect(store.getTask(address)?.interactionStatus).toBeNull()
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.userInputRequested(address)
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: true, status: 'running', interactionStatus: null }))
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
   test('does not publish a new store snapshot for identical executor work', () => {
@@ -184,6 +271,68 @@ describe('RuntimeTaskLifecycleStore', () => {
     })
     expect(store.getTask(address)?.derived.isRunning).toBe(false)
     expect([...store.getSnapshot().tasks.keys()]).toEqual([getRuntimeTaskLifecycleKey(address)])
+  })
+
+  test('uses one lifecycle machine for app devices and their runtime route aliases', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const runtimeAddress = {
+      ...address,
+      deviceId: 'electron-runtime-device',
+    }
+    const appAddress = {
+      ...address,
+      deviceId: 'app-record-65',
+    }
+
+    store.syncDevices([
+      {
+        id: 65,
+        device_id: runtimeAddress.deviceId,
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        socket_device_id: appAddress.deviceId,
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: appAddress.deviceId,
+            runtime_device_id: runtimeAddress.deviceId,
+            status: 'online',
+          },
+        ],
+      },
+    ])
+    store.syncRuntimeWork({
+      projects: [
+        {
+          project: { key: 'project-1', id: 1, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: runtimeAddress.deviceId,
+              available: true,
+              workspacePath: address.workspacePath ?? '',
+              tasks: [task({ running: true, status: 'running' })],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    store.turnStarted(appAddress, 'turn-1')
+    store.turnSettled(appAddress, 'turn-1', 'succeeded')
+
+    expect(store.getTask(appAddress)?.key).toBe(getRuntimeTaskLifecycleKey(runtimeAddress))
+    expect(store.getTask(runtimeAddress)?.turn).toMatchObject({
+      id: null,
+      phase: 'idle',
+      outcome: 'succeeded',
+    })
+    expect([...store.getSnapshot().tasks.keys()]).toEqual([
+      getRuntimeTaskLifecycleKey(runtimeAddress),
+    ])
   })
 
   test('preserves an alias streaming turn when the canonical machine already exists', () => {
@@ -685,6 +834,40 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('submitting')
   })
 
+  test('keeps worktree preparation visible when history arrives before task creation', () => {
+    const store = new RuntimeTaskLifecycleStore('pending-worktree')
+    store.sendRequested(address, { workspaceCreationKind: 'worktree' })
+
+    // An executor without a task link returns history but no execution state.
+    store.syncTranscript(address, transcript())
+    expect(store.getTask(address)?.turn.phase).toBe('submitting')
+    expect(store.getTask(address)?.workspaceCreationKind).toBe('worktree')
+    expect(store.getTask(address)?.derived.isThinking).toBe(true)
+
+    store.sendAccepted(address)
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+
+    // The active cache arrives after worktree creation, before MCP startup and
+    // the model produce any assistant events.
+    store.syncTranscript(address, transcript({ running: true }))
+    expect(
+      deriveRuntimePaneStatus({
+        messages: [],
+        currentRuntimeTask: address,
+        lifecycle: store.getTask(address),
+      }).isWaitingForAssistantIndicator
+    ).toBe(true)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'completed-turn', items: [], status: 'completed', completedAt: 123 }],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+  })
+
   test('does not clear an in-flight send from an early idle transcript', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
@@ -703,6 +886,55 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+  })
+
+  test('preserves a recovered Goal when an older completed transcript arrives after turn start', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(task({ running: false, status: 'queued', goalStatus: 'active' }))
+    )
+    store.turnStarted(address, 'recovered-turn')
+    const before = store.getTask(address)
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'previous-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_400_000,
+          },
+        ],
+      }),
+      { preserveActiveTurn: true }
+    )
+
+    expect(store.getTask(address)).toEqual(before)
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'recovered-turn',
+            items: [],
+            status: 'completed',
+            completedAt: 1_786_676_401_000,
+          },
+        ],
+      })
+    )
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.task?.completedAt).toBe(1_786_676_401_000)
   })
 
   test('ignores a stale running transcript after the current turn settles', () => {

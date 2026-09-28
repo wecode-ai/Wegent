@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
+import { prepareSharedElectronZip } from '../../scripts/lib/electron-zip-cache.mjs'
 import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
@@ -16,7 +17,6 @@ const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
-const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
@@ -76,10 +76,13 @@ await writeFile(
 const releaseToolchainLock = await acquireProcessLock(electronToolchainLockPath)
 let applications
 try {
+  const electronZipDir = await prepareSharedElectronZip({
+    electronPackageRoot: join(electronRoot, 'node_modules', 'electron'),
+  })
   applications = await packager({
     dir: staging,
     name: identity.productName,
-    electronVersion: '43.4.1',
+    electronVersion: sourcePackage.devDependencies.electron,
     electronZipDir,
     appBundleId: identity.identifier,
     protocols: [{ name: 'Wework', schemes: ['wework'] }],

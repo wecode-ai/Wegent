@@ -70,11 +70,12 @@ async def test_reconciliation_does_not_acknowledge_older_executor(reconciliation
 async def test_failed_device_sync_is_not_success(reconciliation):
     _, dispatch, record = reconciliation
     dispatch.return_value = DeviceCapabilitySyncResult(
-        device_id="device", success=False
+        device_id="device", success=False, error="device is offline"
     )
     with pytest.raises(HTTPException) as exc:
         await module.reconcile_device_plugins(7, "device")
     assert exc.value.status_code == 502
+    assert exc.value.detail == "Plugin reconciliation failed: device is offline"
     record.assert_not_called()
 
 
@@ -109,6 +110,8 @@ async def test_partial_plugin_failure_is_not_acknowledged_as_reconciled(reconcil
                 "id": 12,
                 "name": "example",
                 "status": "failed",
+                "stage": "download",
+                "error_code": "PLUGIN_DOWNLOAD_FAILED",
                 "error": "download failed",
             }
         ],
@@ -116,4 +119,27 @@ async def test_partial_plugin_failure_is_not_acknowledged_as_reconciled(reconcil
     with pytest.raises(HTTPException) as exc:
         await module.reconcile_device_plugins(7, "device")
     assert exc.value.status_code == 502
+    assert exc.value.detail == (
+        "Plugin reconciliation failed for example: PLUGIN_DOWNLOAD_FAILED"
+    )
     record.assert_not_called()
+
+
+def test_failure_detail_preserves_executor_error_without_code_or_stage():
+    result = DeviceCapabilitySyncResult(
+        device_id="device",
+        success=False,
+        scope="plugins",
+        plugins=[
+            {
+                "id": 12,
+                "name": "example",
+                "status": "failed",
+                "error": "package checksum mismatch",
+            }
+        ],
+    )
+
+    assert module.reconciliation_failure_detail(result) == (
+        "Plugin reconciliation failed for example: package checksum mismatch"
+    )

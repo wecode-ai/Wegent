@@ -144,32 +144,31 @@ export function isWorkspaceImageFile(file: File): boolean {
   return file.type.toLocaleLowerCase().startsWith('image/') || isWorkspaceImagePath(file.name)
 }
 
-export function partitionLocalWorkspaceTransfer(
+async function resolveNativeWorkspaceTransfer(
   entries: NativeWorkspacePath[],
   files: File[]
-): {
-  attachmentFiles: File[]
-  referenceEntries: NativeWorkspacePath[]
-} {
+): Promise<ResolvedWorkspacePathTransfer> {
+  const remainingEntries = [...entries]
+  const attachmentFiles = files.filter(file => {
+    let nativePath = ''
+    try {
+      nativePath = window.weworkElectronFiles?.getPathForFile(file) ?? ''
+    } catch {
+      // Browser-created files have no native path; match clipboard URI entries by name.
+    }
+    const index = remainingEntries.findIndex(entry =>
+      nativePath
+        ? entry.path.replaceAll('\\', '/') === nativePath.replaceAll('\\', '/')
+        : entry.path.split(/[\\/]/).at(-1) === file.name
+    )
+    if (index < 0) return true
+    return !remainingEntries.splice(index, 1)[0].isDirectory
+  })
+  const unreadPaths = remainingEntries.filter(entry => !entry.isDirectory).map(entry => entry.path)
+  if (unreadPaths.length) attachmentFiles.push(...(await readDroppedFiles(unreadPaths)))
   return {
-    attachmentFiles: files.filter(isWorkspaceImageFile),
-    referenceEntries: entries.filter(
-      entry => entry.isDirectory || !isWorkspaceImagePath(entry.path)
-    ),
-  }
-}
-
-export function partitionNativeWorkspacePaths(entries: NativeWorkspacePath[]): {
-  imagePaths: string[]
-  referenceEntries: NativeWorkspacePath[]
-} {
-  return {
-    imagePaths: entries
-      .filter(entry => !entry.isDirectory && isWorkspaceImagePath(entry.path))
-      .map(entry => entry.path),
-    referenceEntries: entries.filter(
-      entry => entry.isDirectory || !isWorkspaceImagePath(entry.path)
-    ),
+    attachmentFiles,
+    referenceEntries: entries.filter(entry => entry.isDirectory),
   }
 }
 
@@ -195,15 +194,12 @@ export async function resolveDataTransferWorkspacePaths(
     return { attachmentFiles: files, referenceEntries: [] }
   }
 
+  let entries: NativeWorkspacePath[]
   try {
-    const entries =
+    entries =
       source === 'clipboard'
         ? await readNativeClipboardWorkspacePaths(dataTransfer)
         : await readNativeDroppedWorkspacePaths(dataTransfer)
-    if (entries.length === 0) {
-      return { attachmentFiles: files, referenceEntries: [] }
-    }
-    return partitionLocalWorkspaceTransfer(entries, files)
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)
     return {
@@ -211,28 +207,18 @@ export async function resolveDataTransferWorkspacePaths(
       referenceEntries: [],
     }
   }
+  return resolveNativeWorkspaceTransfer(entries, files)
 }
 
 export async function resolveStoredWorkspacePaths(
   paths: string[],
   remote: boolean
 ): Promise<ResolvedWorkspacePathTransfer> {
-  try {
-    if (remote) {
-      return {
-        attachmentFiles: await readDroppedFiles(paths),
-        referenceEntries: [],
-      }
-    }
-
-    const entries = await inspectNativeWorkspacePaths(paths)
-    const { imagePaths, referenceEntries } = partitionNativeWorkspacePaths(entries)
+  if (remote) {
     return {
-      attachmentFiles: imagePaths.length > 0 ? await readDroppedFiles(imagePaths) : [],
-      referenceEntries,
+      attachmentFiles: await readDroppedFiles(paths),
+      referenceEntries: [],
     }
-  } catch (error) {
-    console.warn('[Wework workspace transfer] stored path inspection failed', error)
-    return { attachmentFiles: [], referenceEntries: [] }
   }
+  return resolveNativeWorkspaceTransfer(await inspectNativeWorkspacePaths(paths), [])
 }

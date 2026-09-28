@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from app.schemas.dingtalk_card import DingTalkChatCardConfig
-from app.services.channels.dingtalk import card_adapter
+from app.services.channels.dingtalk import card_transport
 from app.services.channels.dingtalk.card_binding import CardBinding
 from app.services.channels.dingtalk.card_follow_up import DingTalkCardCallbackHandler
 from app.services.channels.dingtalk.card_inbox import CardActionRecord
@@ -32,9 +32,11 @@ async def test_stream_reuses_http_client_and_closes_after_flush(
         clients.append(client)
         return client
 
-    monkeypatch.setattr(card_adapter.httpx, "AsyncClient", create_client)
+    monkeypatch.setattr(card_transport.httpx, "AsyncClient", create_client)
     emitter = StreamingResponseEmitter(
-        Mock(get_access_token=Mock(return_value="test-token")),
+        SimpleNamespace(
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+        ),
         None,
         existing_card_instance_id="card-a",
         chat_card=DingTalkChatCardConfig(template_id="test.schema"),
@@ -71,7 +73,7 @@ async def test_status_only_adapter_closes_http_client(
 ):
     """Short-lived follow-up status requests release their client on failure too."""
     client = httpx.AsyncClient()
-    monkeypatch.setattr(card_adapter.httpx, "AsyncClient", lambda **kwargs: client)
+    monkeypatch.setattr(card_transport.httpx, "AsyncClient", lambda **kwargs: client)
     config = DingTalkChatCardConfig(
         template_id="test.schema", follow_up_status_key="sendState"
     )
@@ -92,7 +94,9 @@ async def test_status_only_adapter_closes_http_client(
     )
     handler = SimpleNamespace(
         channel_id=77,
-        _dingtalk_client=Mock(get_access_token=Mock(return_value="test-token")),
+        _dingtalk_client=SimpleNamespace(
+            _access_token={"accessToken": "test-token", "expireTime": float("inf")}
+        ),
     )
     receiver = DingTalkCardCallbackHandler(handler)
     httpx_mock.add_response(

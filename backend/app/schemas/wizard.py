@@ -158,6 +158,7 @@ class CreateAllRequest(BaseModel):
     namespace: str = "default"
     icon: Optional[str] = None
     skills: Optional[List[str]] = None  # Skill names to add to Ghost
+    inherit_base_capabilities: bool = False
 
 
 class CreateAllResponse(BaseModel):

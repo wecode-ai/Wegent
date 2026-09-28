@@ -45,6 +45,50 @@ Send `{"chat_card": null}` to remove this configuration through the API. Omittin
 
 `flowStatus` is reserved by DingTalk's AI-card protocol and cannot be the content field. DingTalk templates own styling and layout; field mapping does not turn an ordinary card into a streaming AI card.
 
+## Notification cards (optional)
+
+The same DingTalk channel can push its in-app notifications as cards. Turn on "Send task notifications as cards" and mentions, assignments, run starts and run completion/failure/cancellation go out as cards; with the option off, or when the card cannot be delivered, the markdown notification is sent instead. In-app notifications and stored records are unaffected.
+
+By default, DingTalk's built-in Markdown message card needs no custom template. Its variable contract is `title`, `markdown`, `tips`, and `msgButtons` inside `sys_full_json_obj`. The custom template below uses a different contract. Notifications use ordinary message cards, not AI cards with streaming state and feedback controls.
+
+For a layout that separates the notification type, item, detail, and actions, import the [Wegent notification card example](../../../../examples/dingtalk-wework-notification-card.json):
+
+1. In the [DingTalk card platform](https://open-dev.dingtalk.com/fe/card), create an ordinary message card for the robot application that sends notifications. Import the JSON in the editor, review the preview, then save and publish it.
+2. Copy the ID of the **new template in your organization**. Turn on "Send task notifications as cards" for the DingTalk channel and enter that ID. The test organization's template ID cannot be reused across organizations.
+3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action opens a Wegent handoff page; the recipient then clicks its desktop action. If the page cannot launch Wework inside DingTalk, open it in a system browser and try again.
+
+The custom template defines these 13 ordinary variables, which the backend fills when delivering a card:
+
+| Variable | Content |
+| --- | --- |
+| `kindLabel` | Mention, assignment, or run status label |
+| `tone` | Status color: `blue`, `orange`, `green`, `red`, or `gray` |
+| `headline` | Action headline, such as "Your task is complete" |
+| `itemTitle` | Task title |
+| `itemKey` | Task key |
+| `metaLine` | Board, task status, and assignee summary |
+| `detailLabel` | Detail heading, such as "Comment" or "Failure reason" |
+| `detail` | Comment, result, or reason; at most 240 characters on the card |
+| `showDetail` | Whether to show the detail; defined as a Boolean template variable |
+| `primaryLabel` | Web action label, "查看任务" (View task) |
+| `primaryUrl` | Task web URL |
+| `secondaryLabel` | Desktop action label, "在 Wework 中打开" (Open in Wework) |
+| `secondaryUrl` | Wegent web handoff page, which constructs a Wework deep link only from valid board, task, and comment identifiers |
+
+`tone` follows the notification type and state: mentions, assignments, and run starts are `blue`; waits for approval or a device are `orange`; completed is `green`; failed is `red`; cancelled is `gray`. The headline names the action, while the item title, key, context, and optional detail have separate areas. The handoff page also offers a web View task action. Stored in-app notification URLs, built-in cards, and Markdown notifications keep their original `wework://` links. Quotable local run notifications remain text messages so they can be quoted to continue the task.
+
+The configuration lives in the channel's `config.notification_card`. For a custom template:
+
+```json
+{
+  "notification_card": {
+    "template_id": "your-published-template.schema"
+  }
+}
+```
+
+Turning on the option without a custom template ID uses the built-in template. Send `{"notification_card": null}` to turn it off through the API. Omitting the field leaves it unchanged.
+
 ## Follow-ups and history
 
 Group quoted replies can use the same follow-up flow. Delivery records map `carrierId` to `outTrackId`; a quoted reply mentioning the bot resolves its `originalProcessQueryKey` through that mapping. Only mapped cards from this bot, in their original group and company, qualify. Ordinary messages, unmatched quotes and slash commands keep their existing routing. The index expires after 7 days and is not automatically available for cards delivered before this change.

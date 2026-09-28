@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -109,10 +109,22 @@ class RuntimeInteractiveSessionFeatures(BaseModel):
     terminal: bool = True
 
 
+_runtime_feature_normalizers: dict[str, Callable[[Any], Any | None]] = {}
+
+
+def register_runtime_feature_normalizer(
+    name: str, normalizer: Callable[[Any], Any | None]
+) -> None:
+    """Allow a distribution to validate one optional Runtime feature."""
+    if not name or name in _runtime_feature_normalizers:
+        raise ValueError(f"Runtime feature '{name}' is already registered")
+    _runtime_feature_normalizers[name] = normalizer
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     schema_version: int = Field(..., ge=1, alias="schemaVersion")
     runtime_task_create: Optional[RuntimeTaskCreateFeatures] = Field(
@@ -124,6 +136,26 @@ class RuntimeFeatures(BaseModel):
         alias="interactiveSessions",
     )
     worktrees: Optional[RuntimeWorktreeFeatures] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_extensions(cls, value: Any) -> Any:
+        """Keep only registered extension features after validation."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        known = set(cls.model_fields)
+        known.update(field.alias for field in cls.model_fields.values() if field.alias)
+        for name in tuple(normalized):
+            if name in known:
+                continue
+            normalizer = _runtime_feature_normalizers.get(name)
+            result = normalizer(normalized[name]) if normalizer else None
+            if result is None:
+                normalized.pop(name)
+            else:
+                normalized[name] = result
+        return normalized
 
 
 def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
@@ -178,6 +210,12 @@ class DeviceInfo(BaseModel):
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
     runtime_transfer_host: Optional[str] = Field(
         None, description="Host peers should use for runtime direct transfers"
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None, description="Stable runtime installation ID shared by all routes"
@@ -315,6 +353,7 @@ class DeviceCapabilitySyncResult(BaseModel):
 
     device_id: str
     success: bool
+    acknowledged: bool = Field(default=False, exclude=True)
     error: Optional[str] = None
     skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
@@ -375,6 +414,12 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None,
@@ -445,6 +490,12 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_transfer_port: Optional[int] = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Executor session gateway port for direct transfers",
     )
     runtime_instance_id: Optional[str] = Field(
         None,

@@ -42,7 +42,9 @@ async function openCreateTeamDialog(page: Page) {
 
   const dialog = page.locator('[role="dialog"]')
   await expect(dialog).toBeVisible({ timeout: 10000 })
-  await expect(dialog.locator('input#teamName')).toBeVisible({ timeout: 10000 })
+  await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible({
+    timeout: 10000,
+  })
   return dialog
 }
 
@@ -72,18 +74,17 @@ test.describe('Settings - Team Management', () => {
 
     await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible()
     await expect(dialog.locator('[data-testid="simple-model-select"]')).toBeVisible()
-    await expect(dialog.locator('[data-testid="simple-section-basic-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-basic-content"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-capability-content"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-advanced-trigger"]')).toBeVisible()
   })
 
   test('should accept new team form input', async ({ page, testPrefix }) => {
     const dialog = await openCreateTeamDialog(page)
-    const teamName = TestData.uniqueName(`${testPrefix}-team`)
-    const displayName = `${teamName} Display`
+    const displayName = `${TestData.uniqueName(`${testPrefix}-team`)} Display`
 
-    await dialog.locator('input#teamName').fill(teamName)
     await dialog.locator('[data-testid="team-display-name-input"]').fill(displayName)
 
-    await expect(dialog.locator('input#teamName')).toHaveValue(teamName)
     await expect(dialog.locator('[data-testid="team-display-name-input"]')).toHaveValue(displayName)
   })
 

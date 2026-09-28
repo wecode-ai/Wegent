@@ -38,6 +38,8 @@ For tasks using a GitHub or GitLab workspace, the environment panel looks up the
 
 The task list in the left sidebar, project-space board, and right-side environment panel reuse the same PR/MR monitoring snapshot, status priority, and icon for a task. Failed checks, merge conflicts, Merge Queue states, drafts, closed requests, and merged requests update consistently in all three places. The environment panel also stops showing an old PR/MR after the shared monitor confirms that the current branch has none.
 
+The shared monitor is the only owner of PR/MR status queries. The environment panel loads branch and diff information separately and does not start a second status lookup. Tasks from the same repository are grouped into one batch query, and rebuilding the runtime task list with equivalent task objects does not immediately repeat that query. Status still updates on the monitor interval, manual refreshes, and explicit refreshes after commits or pushes. Structured states such as a missing CLI, missing authentication, or lookup failure flow through the same snapshot to every surface.
+
 The lookup runs in the task's actual workspace on its execution device: GitHub uses `gh`, and GitLab uses `glab`. In a single-machine Wework setup, the local executor runs the command directly, so a separate cloud Git service connection is not required. Install and authenticate the corresponding CLI on that machine:
 
 ```bash
@@ -54,6 +56,52 @@ If the current branch has no PR or MR, the environment panel continues to show t
 ## Link a project space
 
 After enabling **Settings → General → Experimental features**, open **Edit project** for a local project and configure **Automatically join project space**. A local project is the code and execution workspace, while a project space is the task-tracking and collaboration board. Linking them does not move or copy project files, and neither resource replaces the other.
+
+### Create a local or cloud project space
+
+The Collaboration page always shows the current device's **Local space** in
+the sidebar. When it is empty, the guide offers **Add folder**. After you choose
+a directory and confirm the project name, Wework registers it as a Task project
+and adds it to the local space. Cloud projects are still created inside a cloud
+space, and the creation UI identifies the actual storage location:
+
+- A **local project** is stored on the current device and is available only on that device.
+- A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
+
+The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
+
+### Configure local project collaborators
+
+Wework automatically maintains a **Current device agent** in the local space, so users do not need to create an agent first. A new local project includes **Me** and the **Current device agent** by default. You can remove the agent before creation or add it again through **Add collaborator**. Creating a project does not automatically create a collaboration group.
+
+When two or more agents are selected, the creation flow recommends organizing them into a collaboration group. After confirming, choose a generation model and optionally add collaboration instructions in the task composer. Wework progressively generates the leader, member responsibilities, assignment principles, and suggested workflow. You can edit the result before saving and update it later in project settings.
+
+### Set cloud board access
+
+Cloud projects have two access modes: **Private** and **Public**. A public project grants every signed-in user the Viewer (read-only) or Developer (create and edit issues) role. A private project is available only through existing grants. Project roles are Owner, Maintainer, Developer, and Viewer. Owners manage the project and members; Maintainers can also manage issue security and assignments.
+
+Issue visibility is set separately during project creation, in project settings, and on each issue. Choose whether new issues default to **Visible to project members** or **Related people only** when creating the project; Maintainers can change the default or individual issues later. Owners and Maintainers see every issue. Other users see open issues and issues related to them: issues they created, are assigned to, collaborate on, have an active execution task for, or that are assigned to a robot they created. Unrelated issues are omitted from boards, tables, execution lists, and project conversations. Opening one directly returns not found.
+
+DingTalk controls access to AI Table records. Wework project roles control entry and editing in its table view.
+
+### Import more projects into the local space
+
+Wework automatically adds local Task projects to the local space during initial
+setup. To add more projects later, open the local space's **…** menu or the
+project page's **Add project** menu:
+
+- **Import existing project** lists projects that already exist on the Tasks
+  page but are not yet in the local space. Wework deduplicates them by runtime
+  project identity and normalized workspace roots, so projects already shown in
+  the local space are excluded.
+- **Add folder** selects a new local directory, registers its Task project, and
+  adds it to the local space immediately.
+
+Background synchronization does not automatically restore an archived local
+collaboration project, preventing a project the user removed from reappearing.
+Explicitly choosing its Task project from **Import existing project** restores
+the corresponding local collaboration project. The sidebar refreshes after the
+import, and restarting Wework does not create a duplicate.
 
 New conversations started in that local project inherit the selected project space. Before the first message is sent, the composer shows **Add to board · Project space name**. Sending creates a task in the selected local or cloud project space and links the conversation. Repeated synchronization of the same conversation does not create duplicate board tasks.
 
@@ -83,7 +131,9 @@ Opening an issue from a project-space board shows its attachments directly in th
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
-The Executor is the single writer of the linked issue's execution status and derives it from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload.
+For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
+
+An issue that is no longer needed can be deleted from the board card menu, the table row actions, or the detail panel's "…" menu. Deletion is a soft delete: the issue and its sub-issues disappear from the board while their data is kept, and any run still executing is cancelled first so no orphaned process is left behind.
 
 ## Project-space files
 
@@ -119,6 +169,8 @@ Automatic repair reuses the PR/MR monitoring state shown on the board and in the
 ### Automation rules and AI management
 
 Automation rules can run on a schedule or be triggered by project events such as task creation and by webhooks. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
+
+When a collaboration group handles an issue, its manager agent always reads the issue and eligible members before creating a workflow plan. The manager writes a specific execution prompt for each child task; members receive that assignment prompt rather than the static role description in group settings. After members report their outcomes, the manager decides whether to continue work, request review, or complete the issue. This flow does not depend on preset stages or a collaboration-mode option.
 
 Each rule selects one assignment strategy:
 

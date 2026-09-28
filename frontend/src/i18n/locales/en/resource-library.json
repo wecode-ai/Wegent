@@ -113,6 +113,10 @@
     "group_section": "Team",
     "select": "Select"
   },
+  "agent_saved": {
+    "created": "Agent created",
+    "updated": "Saved"
+  },
   "actions": {
     "install": "Install",
     "use": "Use now",

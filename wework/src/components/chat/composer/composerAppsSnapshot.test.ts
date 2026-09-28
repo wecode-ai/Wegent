@@ -33,18 +33,16 @@ describe('composerAppsSnapshot', () => {
     resetComposerAppsMemory()
   })
 
-  test('round-trips composer apps for instant toolbar paint', () => {
+  test('does not persist a second installed-plugin snapshot', () => {
     writeComposerAppsSnapshot(sampleApps)
-    expect(window.localStorage.getItem(COMPOSER_APPS_SNAPSHOT_KEY)).toBeTruthy()
-    expect(readComposerAppsSnapshot()).toEqual(sampleApps)
+    expect(window.localStorage.getItem(COMPOSER_APPS_SNAPSHOT_KEY)).toBeNull()
+    expect(readComposerAppsSnapshot()).toEqual([])
   })
 
-  test('ignores corrupt snapshot payloads', () => {
+  test('drops legacy snapshot payloads without migration', () => {
     window.localStorage.setItem(COMPOSER_APPS_SNAPSHOT_KEY, '{not-json')
     expect(readComposerAppsSnapshot()).toEqual([])
-
-    window.localStorage.setItem(COMPOSER_APPS_SNAPSHOT_KEY, JSON.stringify([{ name: 'x' }]))
-    expect(readComposerAppsSnapshot()).toEqual([])
+    expect(window.localStorage.getItem(COMPOSER_APPS_SNAPSHOT_KEY)).toBeNull()
   })
 
   test('clearComposerAppsSnapshot removes stored apps', () => {
@@ -59,7 +57,7 @@ describe('composerAppsSnapshot', () => {
 
     publishComposerApps(sampleApps)
     expect(getComposerApps()).toEqual(sampleApps)
-    expect(readComposerAppsSnapshot()).toEqual(sampleApps)
+    expect(readComposerAppsSnapshot()).toEqual([])
     expect(listener).toHaveBeenCalledTimes(1)
 
     clearComposerAppsSnapshot()

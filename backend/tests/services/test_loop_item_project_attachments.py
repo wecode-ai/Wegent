@@ -15,12 +15,15 @@ from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, LoopItemAttachment
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
 from app.services.attachment.storage_backend import generate_storage_key
 from app.services.delivery.storage import DeliveryStorageUnavailableError
-from app.services.loop_items import loop_item_service
+from app.services.loop_items.service import loop_item_service
 
 
 class FakeDeliveryStorage:
@@ -226,6 +229,74 @@ def test_list_project_attachments_excludes_other_projects_and_deleted_items(
     )
 
 
+def test_project_attachment_list_hides_unrelated_issue_metadata(
+    test_db: Session,
+    test_user: User,
+    attachment_storage: FakeDeliveryStorage,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTVIS")
+    hidden = _make_item(test_db, project, test_user, "Restricted issue")
+    hidden.metadata_json = {**(hidden.metadata_json or {}), "security_level": "related"}
+    open_item = _make_item(test_db, project, test_user, "Open issue")
+    _make_attachment(test_db, hidden, test_user, "restricted.txt")
+    _make_attachment(test_db, open_item, test_user, "open.txt")
+    viewer = User(
+        user_name="attachment-viewer",
+        password_hash="unused",
+        email="attachment-viewer@example.com",
+        is_active=True,
+    )
+    maintainer = User(
+        user_name="attachment-maintainer",
+        password_hash="unused",
+        email="attachment-maintainer@example.com",
+        is_active=True,
+    )
+    test_db.add_all([viewer, maintainer])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=project.id,
+                entity_type="user",
+                entity_id=str(viewer.id),
+                role=BaseRole.Viewer.value,
+                status=MemberStatus.APPROVED.value,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=project.id,
+                entity_type="user",
+                entity_id=str(maintainer.id),
+                role=BaseRole.Maintainer.value,
+                status=MemberStatus.APPROVED.value,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    visible = loop_item_service.list_project_attachments(test_db, project.id, viewer.id)
+
+    assert [(attachment.display_name, item.title) for attachment, item in visible] == [
+        ("open.txt", "Open issue")
+    ]
+    assert (
+        len(
+            loop_item_service.list_project_attachments(
+                test_db, project.id, test_user.id
+            )
+        )
+        == 2
+    )
+    assert {
+        attachment.display_name
+        for attachment, _ in loop_item_service.list_project_attachments(
+            test_db, project.id, maintainer.id
+        )
+    } == {"restricted.txt", "open.txt"}
+
+
 def test_import_context_attachments_copies_once(
     test_db: Session,
     test_user: User,
@@ -253,7 +324,7 @@ def test_import_context_attachments_copies_once(
     )
 
     assert [entry.display_name for entry in imported] == ["conversation.png"]
-    assert imported_again == []
+    assert [entry.id for entry in imported_again] == [imported[0].id]
     assert imported[0].metadata_json == {"source_context_id": context.id}
     assert attachment_storage.get_bytes(imported[0].object_key) == b"context"
     assert commit_calls == 1

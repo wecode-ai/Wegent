@@ -4,6 +4,9 @@ import {
   type MicrophoneDiagnosticCommand,
 } from './macos-microphone-diagnostics.js'
 
+// Native commands and permission reads are injected by each test.
+vi.mock('electron', () => ({}))
+
 const executable = '/Applications/WeWork Test.app/Contents/MacOS/WeWork Test'
 const helper = '/Applications/WeWork Test.app/Contents/Frameworks/WeWork Test Helper.app'
 const success = (stdout = '', stderr = '') => ({ stdout, stderr, succeeded: true })

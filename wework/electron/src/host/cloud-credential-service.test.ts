@@ -1,16 +1,44 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialError, CloudCredentialService } from './cloud-credential-service.js'
 
 const roots: string[] = []
+
+const electronMocks = vi.hoisted(() => ({ netFetch: vi.fn<typeof fetch>() }))
+
+vi.mock('electron', () => ({ net: { fetch: electronMocks.netFetch } }))
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('CloudCredentialService', () => {
+  beforeEach(() => {
+    electronMocks.netFetch.mockReset()
+  })
+
+  test('polls the authorization session through the Chromium network stack', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    electronMocks.netFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 'pending' }), { status: 200 })
+    )
+
+    const claimed = await new CloudCredentialService(root).claimAuthorization({
+      apiBaseUrl: 'https://cloud.example.com/api/',
+      sessionId: 'session-1',
+      pollToken: 'poll-1',
+    })
+
+    expect(claimed.status).toBe('pending')
+    expect(electronMocks.netFetch).toHaveBeenCalledWith(
+      'https://cloud.example.com/api/auth/wework/sessions/session-1/poll?poll_token=poll-1',
+      { method: 'GET' }
+    )
+  })
+
   test('stores credentials in a private file and refreshes with a device proof', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)

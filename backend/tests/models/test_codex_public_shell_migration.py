@@ -8,10 +8,11 @@ from pathlib import Path
 from types import ModuleType
 
 import sqlalchemy as sa
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
 from pytest import MonkeyPatch
 from sqlalchemy.engine import Connection, Engine
+
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 
 
 def _load_migration() -> ModuleType:

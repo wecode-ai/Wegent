@@ -12,6 +12,7 @@ const retiredSkill = 'retired-check'
 const addedSkill = 'added-check'
 const oldContent = 'Old release upgrade marker'
 const newContent = 'New release upgrade marker'
+const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
   const deviceId = (
@@ -93,7 +94,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   let reconciliationRevision = 0
   const refreshAndVerify = async () => {
-    await control.command('click', '[data-testid="plugins-refresh-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="plugins-refresh-button"]')
     reconciliationRevision += 1
     await control.command(
       'waitFor',
@@ -123,8 +124,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     version: newVersion,
     skills: { [sharedSkill]: newContent, [addedSkill]: 'Added skill marker' },
   })
-  // The product revalidates the marketplace every sixty seconds.
-  console.log('[plugin-upgrade] Waiting for the normal sixty-second catalog refresh')
+  console.log('[plugin-upgrade] Waiting for the E2E catalog refresh')
   await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', {
     text: '更新',
     timeoutMs: 75000,
@@ -146,7 +146,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   })
   await capture('03-after-update-click')
   console.log('[plugin-upgrade] Observing update and its next catalog refresh')
-  await new Promise(resolve => setTimeout(resolve, 65000))
+  await new Promise(resolve => setTimeout(resolve, E2E_CATALOG_REFRESH_OBSERVATION_MS))
   const refreshed = await capture('04-after-refresh')
   const currentManifestPath = join(newRoot, '.codex-plugin/plugin.json')
   const currentManifest = JSON.parse(await readFile(currentManifestPath, 'utf8'))

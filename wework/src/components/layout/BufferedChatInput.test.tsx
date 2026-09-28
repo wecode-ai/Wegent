@@ -7,6 +7,7 @@ import {
   requestWorkbenchComposerFocus,
 } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
+import { TextInputDialog } from '@/components/common/TextInputDialog'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -146,6 +147,98 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('restores a queued draft that was published before submission', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queued, setQueued] = useState('')
+      const [replaceDraftKey, setReplaceDraftKey] = useState(0)
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setValue(queued)
+              setReplaceDraftKey(current => current + 1)
+            }}
+          >
+            Edit queued message
+          </button>
+          <span data-testid="published-draft">{value}</span>
+          <BufferedChatInput
+            value={value}
+            replaceDraftKey={replaceDraftKey}
+            onChange={setValue}
+            onSubmit={message => {
+              setQueued(message)
+              return true
+            }}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'queued follow-up')
+    await waitFor(() =>
+      expect(screen.getByTestId('published-draft')).toHaveTextContent('queued follow-up')
+    )
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(screen.getByTestId('published-draft')).toBeEmptyDOMElement())
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('queued follow-up')
+    )
+  }, 30_000)
+
+  test('ignores acknowledgements from before a queued draft is restored', async () => {
+    const acknowledgements: Array<() => void> = []
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queued, setQueued] = useState('')
+      const [replaceDraftKey, setReplaceDraftKey] = useState(0)
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setValue(queued)
+              setReplaceDraftKey(current => current + 1)
+            }}
+          >
+            Edit queued message
+          </button>
+          <BufferedChatInput
+            value={value}
+            replaceDraftKey={replaceDraftKey}
+            onChange={nextValue => {
+              acknowledgements.push(() => setValue(nextValue))
+            }}
+            onSubmit={message => {
+              setQueued(message)
+              return true
+            }}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'queued follow-up')
+    await waitFor(() => expect(acknowledgements).toHaveLength(1))
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(acknowledgements).toHaveLength(2))
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
+    expect(input).toHaveValue('queued follow-up')
+
+    act(() => acknowledgements[0]?.())
+    act(() => acknowledgements[1]?.())
+    expect(input).toHaveValue('queued follow-up')
+  }, 30_000)
+
   test('keeps the submitted draft when an async send is rejected', async () => {
     let resolveSubmission: (accepted: boolean) => void = () => undefined
     const onDraftEdit = vi.fn()
@@ -179,7 +272,7 @@ describe('BufferedChatInput', () => {
     expect(onDraftEdit).not.toHaveBeenCalled()
 
     await userEvent.type(screen.getByTestId('chat-message-input'), ' updated')
-    expect(onDraftEdit).toHaveBeenCalled()
+    expect(onDraftEdit).toHaveBeenLastCalledWith(' updatedretry this message')
   })
 
   test('restores the submitted draft when an async send promise rejects', async () => {
@@ -547,6 +640,67 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test.each(['context', 'navigation', 'enabled'] as const)(
+    'keeps rename focus when delayed composer %s completes',
+    async reason => {
+      const user = userEvent.setup()
+      const onRename = vi.fn()
+      const projectChat = createProjectChat('runtime:device-1:rename-focus')
+      function Harness({ ready }: { ready: boolean }) {
+        const [renaming, setRenaming] = useState(false)
+        return (
+          <>
+            <button type="button" onDoubleClick={() => setRenaming(true)}>
+              Rename task
+            </button>
+            <TextInputDialog
+              open={renaming}
+              title="Rename"
+              label="Name"
+              initialValue="Original"
+              confirmLabel="Save"
+              cancelLabel="Cancel"
+              inputTestId="rename-focus-input"
+              confirmTestId="rename-focus-save"
+              onClose={() => setRenaming(false)}
+              onSubmit={onRename}
+            />
+            <div data-active-workbench-pane="true">
+              <BufferedChatInput
+                autoFocus
+                variant="desktop"
+                value=""
+                onChange={vi.fn()}
+                onSubmit={vi.fn()}
+                disabled={reason === 'enabled' && !ready}
+                projectChat={projectChat}
+                contextHeader={ready ? <span>Linked task</span> : null}
+              />
+            </div>
+          </>
+        )
+      }
+      const { rerender } = render(<Harness ready={false} />)
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        rerender(<Harness ready={false} />)
+        await user.dblClick(screen.getByRole('button', { name: 'Rename task' }))
+        const input = screen.getByTestId('rename-focus-input')
+        expect(input).toHaveFocus()
+        await user.type(input, `Draft ${attempt}`)
+        if (reason === 'navigation') requestWorkbenchComposerFocus(projectChat.scopeKey)
+        rerender(<Harness ready />)
+        await act(() => new Promise(resolve => window.requestAnimationFrame(resolve)))
+        expect(screen.getByTestId('composer-context-rail')).toHaveTextContent('Linked task')
+        expect(input).toHaveFocus()
+        await user.keyboard('{Escape}')
+        expect(screen.queryByTestId('rename-focus-input')).not.toBeInTheDocument()
+      }
+      expect(onRename).not.toHaveBeenCalled()
+      requestWorkbenchComposerFocus(projectChat.scopeKey)
+      await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+    }
+  )
+
   test('focuses the matching composer when a conversation is selected', async () => {
     render(
       <>
@@ -642,8 +796,6 @@ describe('BufferedChatInput', () => {
         </div>
       </>
     )
-    dispatchPendingWorkbenchComposerFocusRequest()
-
     await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
   })
 

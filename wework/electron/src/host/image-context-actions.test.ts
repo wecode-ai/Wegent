@@ -9,6 +9,9 @@ import {
   scheduleTemporaryImageCleanup,
 } from './image-context-actions.js'
 
+// These helpers use injected WebContents and real files, without native Electron APIs.
+vi.mock('electron', () => ({}))
+
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {

@@ -1,10 +1,10 @@
-"""Exercise actual SDK card transitions with mocked HTTP responses."""
+"""Exercise actual card transitions with mocked asynchronous HTTP responses."""
 
+import json
 from types import SimpleNamespace
-from unittest.mock import Mock
 
+import httpx
 import pytest
-import requests
 from dingtalk_stream import ChatbotMessage
 from dingtalk_stream.card_replier import AICardStatus
 
@@ -13,60 +13,69 @@ from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from tests.services.channels.dingtalk.test_chat_card import binding, cache, config
 
 
+def cached_client(token="test-token"):
+    return SimpleNamespace(
+        _access_token={"accessToken": token, "expireTime": float("inf")},
+        credential=SimpleNamespace(client_id="robot-a", client_secret="test-secret"),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["http_429", "http_500", "timeout", "token"])
-async def test_sdk_delivery_failure_reaches_the_caller(monkeypatch, failure):
-    def put(*args, **kwargs):
-        if failure == "timeout":
-            raise requests.ReadTimeout("card update timed out")
-        response = requests.Response()
-        response.status_code = 429 if failure == "http_429" else 500
-        response._content = b"{}"
-        response._content_consumed = True
-        return response
-
-    monkeypatch.setattr(requests, "put", put)
-    client = SimpleNamespace(
-        get_access_token=Mock(return_value=None if failure == "token" else "test-token")
-    )
+async def test_delivery_failure_reaches_the_caller(httpx_mock, failure):
+    client = cached_client()
+    if failure == "token":
+        client._access_token = None
+        httpx_mock.add_response(status_code=403, json={})
+    elif failure == "timeout":
+        httpx_mock.add_exception(httpx.ReadTimeout("timed out"), is_reusable=True)
+    else:
+        httpx_mock.add_response(
+            status_code=429 if failure == "http_429" else 500,
+            json={},
+            is_reusable=True,
+        )
     emitter = StreamingResponseEmitter(
         client, SimpleNamespace(hosting_context=None), "card-1"
     )
-
-    with pytest.raises((requests.RequestException, RuntimeError)):
-        await emitter.emit_done(1, 2, {"value": "final"})
-    assert not emitter._finished
-    await emitter.close()
+    try:
+        with pytest.raises(RuntimeError):
+            await emitter.emit_done(1, 2, {"value": "final"})
+        assert not emitter._finished
+    finally:
+        await emitter.close()
 
 
 @pytest.mark.asyncio
-async def test_sdk_updates_have_timeout_and_keep_full_final_payload(monkeypatch):
-    calls = []
-
-    def put(url, **kwargs):
-        calls.append((url, kwargs))
-        response = requests.Response()
-        response.status_code = 200
-        response._content = b"{}"
-        response._content_consumed = True
-        return response
-
-    monkeypatch.setattr(requests, "put", put)
+async def test_updates_have_timeout_and_keep_full_final_payload(httpx_mock):
+    httpx_mock.add_response(json={}, is_reusable=True)
     emitter = StreamingResponseEmitter(
-        SimpleNamespace(get_access_token=lambda: "test-token"),
-        SimpleNamespace(hosting_context=None),
-        "card-1",
+        cached_client(), SimpleNamespace(hosting_context=None), "card-1"
     )
-    await emitter.emit_done(1, 2, {"value": "final"})
-
-    assert emitter._finished
-    assert all(call[1].get("timeout") == (5, 10) for call in calls)
-    stream = next(kwargs["json"] for url, kwargs in calls if url.endswith("/streaming"))
-    assert stream["isFull"] is True
-    assert stream["content"] == "final"
-    final = calls[-1][1]["json"]["cardData"]["cardParamMap"]
-    assert final["msgContent"] == "final"
-    assert final["flowStatus"] == AICardStatus.FINISHED
+    try:
+        await emitter.emit_done(1, 2, {"value": "final"})
+        assert emitter._finished
+        calls = httpx_mock.get_requests()
+        assert all(
+            call.extensions["timeout"]
+            == {
+                "connect": 5,
+                "read": 10,
+                "write": 10,
+                "pool": 10,
+            }
+            for call in calls
+        )
+        stream = next(
+            json.loads(r.content) for r in calls if r.url.path.endswith("/streaming")
+        )
+        assert stream["isFull"] is True
+        assert stream["content"] == "final"
+        final = json.loads(calls[-1].content)["cardData"]["cardParamMap"]
+        assert final["msgContent"] == "final"
+        assert final["flowStatus"] == AICardStatus.FINISHED
+    finally:
+        await emitter.close()
 
 
 @pytest.mark.asyncio
@@ -75,7 +84,7 @@ async def test_api_error_logs_identifiers_without_response_content(
     config, httpx_mock, caplog, is_json
 ):
     adapter = TemplateChatCardAdapter(
-        Mock(get_access_token=Mock(return_value="secret-token")),
+        cached_client("secret-token"),
         None,
         config,
         77,
@@ -109,10 +118,7 @@ async def test_api_error_logs_identifiers_without_response_content(
 async def test_delivery_logs_only_correlation_fields(
     config, binding, cache, httpx_mock, caplog
 ):
-    client = SimpleNamespace(
-        get_access_token=lambda: "secret-token",
-        credential=SimpleNamespace(client_id="robot-a"),
-    )
+    client = cached_client("secret-token")
     adapter = TemplateChatCardAdapter(
         client, ChatbotMessage.from_dict(binding.incoming_data), config, 77
     )

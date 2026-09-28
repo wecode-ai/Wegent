@@ -21,6 +21,46 @@ interface LaneItem {
   status: string;
 }
 
+interface TreeItem {
+  id: string;
+  parent_id: string | null;
+}
+
+/**
+ * Collect an Issue and every descendant below it. Deleting an Issue soft
+ * deletes its whole subtree on the server, so board state has to drop the
+ * same closure instead of only the requested Issue.
+ */
+export function collectIssueSubtreeIds<T extends TreeItem>(
+  items: T[],
+  rootId: string,
+): Set<string> {
+  const subtreeIds = new Set([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const item of items) {
+      if (
+        item.parent_id &&
+        subtreeIds.has(item.parent_id) &&
+        !subtreeIds.has(item.id)
+      ) {
+        subtreeIds.add(item.id);
+        grew = true;
+      }
+    }
+  }
+  return subtreeIds;
+}
+
+export function removeIssueSubtree<T extends TreeItem>(
+  items: T[],
+  rootId: string,
+): T[] {
+  const subtreeIds = collectIssueSubtreeIds(items, rootId);
+  return items.filter((item) => !subtreeIds.has(item.id));
+}
+
 export function reorderLaneItems<T extends LaneItem>(
   items: T[],
   itemId: string,
@@ -65,6 +105,7 @@ export function reorderLaneItems<T extends LaneItem>(
 
 function assigneeLabel(issue: CollaborationIssue, unassigned: string): string {
   return (
+    issue.assignee_group_name ??
     issue.assignee_name ??
     issue.assignee_agent_name ??
     issue.assignee_team_name ??

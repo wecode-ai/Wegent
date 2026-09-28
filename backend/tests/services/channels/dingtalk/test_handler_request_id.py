@@ -118,6 +118,9 @@ async def test_generated_id_reaches_execution_request(monkeypatch):
     builder = MagicMock()
     builder.build.return_value = ExecutionRequest(task_id=1, subtask_id=2)
     monkeypatch.setattr(unified, "SessionLocal", MagicMock())
+    monkeypatch.setattr(
+        "app.services.chat.trigger.request_preparation.SessionLocal", MagicMock()
+    )
     monkeypatch.setattr("app.services.execution.TaskRequestBuilder", lambda db: builder)
     observed = {}
 

@@ -5,6 +5,7 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
+    i18n: { language: 'zh-CN' },
     t: (key: string, options?: string | { count?: number }) => {
       if (typeof options === 'string') return options
       if (key === 'workbench.code_comment_count') {

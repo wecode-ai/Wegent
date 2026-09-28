@@ -258,6 +258,7 @@ export default function TeamCreationWizard({
         namespace: scope === 'group' && groupName ? groupName : 'default',
         icon: state.icon || undefined,
         skills: state.selectedSkills.length > 0 ? state.selectedSkills : undefined,
+        inherit_base_capabilities: true,
       })
 
       onSuccess(response.team_id, response.team_name)

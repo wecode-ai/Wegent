@@ -5,7 +5,7 @@
 use std::{
     collections::HashSet,
     env, fs,
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     process::Command,
     time::Duration,
@@ -39,8 +39,8 @@ const ENCRYPTED_MAGIC: &[u8; 4] = b"WTRN";
 const ENCRYPTED_VERSION: u8 = 1;
 const ENCRYPTED_HEADER_BYTES: usize = ENCRYPTED_MAGIC.len() + 1 + 12;
 const AES_GCM_TAG_BYTES: u64 = 16;
-const MAX_ROLLOUT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PLAINTEXT_SEGMENT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ROLLOUT_BYTES: u64 = MAX_PLAINTEXT_SEGMENT_BYTES;
 const MAX_ENCRYPTED_SEGMENT_BYTES: u64 =
     MAX_PLAINTEXT_SEGMENT_BYTES + ENCRYPTED_HEADER_BYTES as u64 + AES_GCM_TAG_BYTES;
 const MAX_WORKSPACE_FILE_BYTES: u64 = 128 * 1024 * 1024;
@@ -156,16 +156,12 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .ok_or_else(|| "Codex thread state has no rollout_path".to_owned())?;
-    let rollout = read_limited(&rollout_path, MAX_ROLLOUT_BYTES, "native Codex rollout")?;
     let rollout_start = if request.snapshot {
         0
     } else {
-        usize::try_from(request.rollout_start)
-            .map_err(|_| "rollout offset is too large".to_owned())?
+        request.rollout_start
     };
-    if rollout_start > rollout.len() {
-        return Err("native Codex rollout moved behind its synchronized offset".to_owned());
-    }
+    let (rollout, rollout_end) = read_rollout_segment(&rollout_path, rollout_start)?;
     let format = if request.snapshot {
         "codex-snapshot.v1.tgz.aes256gcm"
     } else {
@@ -182,8 +178,8 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         format: format.clone(),
         source_thread_id: request.thread_id,
         source_workspace_path: request.workspace_path.to_string_lossy().into_owned(),
-        rollout_start: rollout_start as u64,
-        rollout_end: rollout.len() as u64,
+        rollout_start,
+        rollout_end,
         thread,
         thread_dynamic_tools,
     };
@@ -206,7 +202,7 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
             &serde_json::to_vec(&manifest)
                 .map_err(|error| format!("failed to serialize transcript manifest: {error}"))?,
         )?;
-        append_bytes(&mut archive, ROLLOUT_PATH, &rollout[rollout_start..])?;
+        append_bytes(&mut archive, ROLLOUT_PATH, &rollout)?;
         append_workspace(
             &mut archive,
             &request.workspace_path,
@@ -255,7 +251,7 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         sha256: format!("{:x}", Sha256::digest(&encrypted)),
         size_bytes: encrypted.len() as u64,
         format,
-        rollout_end: rollout.len() as u64,
+        rollout_end,
     })
 }
 
@@ -532,6 +528,35 @@ fn read_limited(path: &Path, max_bytes: u64, label: &str) -> Result<Vec<u8>, Str
         return Err(format!("{label} exceeds the {max_bytes}-byte limit"));
     }
     fs::read(path).map_err(|error| format!("failed to read {label}: {error}"))
+}
+
+fn read_rollout_segment(path: &Path, rollout_start: u64) -> Result<(Vec<u8>, u64), String> {
+    let rollout_end = fs::metadata(path)
+        .map_err(|error| format!("failed to inspect native Codex rollout: {error}"))?
+        .len();
+    if rollout_start > rollout_end {
+        return Err("native Codex rollout moved behind its synchronized offset".to_owned());
+    }
+    let segment_bytes = rollout_end - rollout_start;
+    if segment_bytes > MAX_ROLLOUT_BYTES {
+        return Err(format!(
+            "native Codex rollout segment exceeds the {MAX_ROLLOUT_BYTES}-byte limit"
+        ));
+    }
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("failed to read native Codex rollout: {error}"))?;
+    file.seek(SeekFrom::Start(rollout_start))
+        .map_err(|error| format!("failed to seek native Codex rollout: {error}"))?;
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(segment_bytes)
+            .map_err(|_| "native Codex rollout segment is too large".to_owned())?,
+    );
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read native Codex rollout: {error}"))?;
+    if bytes.len() as u64 != segment_bytes {
+        return Err("native Codex rollout changed while it was being exported".to_owned());
+    }
+    Ok((bytes, rollout_end))
 }
 
 fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
@@ -1247,10 +1272,27 @@ impl Drop for CleanupGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{Seek, SeekFrom, Write};
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
+
+    #[test]
+    fn delta_reads_only_the_unsynchronized_rollout_suffix() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rollout.jsonl");
+        let rollout_start = 128 * 1024 * 1024 + 1;
+        let mut file = fs::File::create(&path).unwrap();
+        file.set_len(rollout_start).unwrap();
+        file.seek(SeekFrom::Start(rollout_start)).unwrap();
+        file.write_all(b"delta").unwrap();
+        drop(file);
+
+        let (bytes, rollout_end) = read_rollout_segment(&path, rollout_start).unwrap();
+
+        assert_eq!(bytes, b"delta");
+        assert_eq!(rollout_end, rollout_start + 5);
+    }
 
     fn git(path: &Path, args: &[&str]) -> std::process::Output {
         let mut command = Command::new("git");

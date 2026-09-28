@@ -39,6 +39,7 @@ interface ExecutorModeSelectorProps {
   codingRuntime: CodingExecutorRuntime
   onCodingRuntimeChange: (value: CodingExecutorRuntime) => void
   disabledModes?: SimpleExecutorMode[]
+  visibleModes?: SimpleExecutorMode[]
   helperText?: string | null
   hideLabel?: boolean
 }
@@ -58,6 +59,7 @@ export default function ExecutorModeSelector({
   codingRuntime,
   onCodingRuntimeChange,
   disabledModes = [],
+  visibleModes,
   helperText,
   hideLabel = false,
 }: ExecutorModeSelectorProps) {
@@ -65,6 +67,9 @@ export default function ExecutorModeSelector({
   const customShells = getCustomShells(shells)
   const hasCustomShells = customShells.length > 0
   const selectedCustomShellName = hasCustomShells ? customShellName : ''
+  const visibleOptions = getSimpleExecutorOptions().filter(
+    option => !visibleModes || visibleModes.includes(option.value)
+  )
 
   return (
     <section className="space-y-2">
@@ -73,64 +78,79 @@ export default function ExecutorModeSelector({
           {t('settings:team.simple.executor.title')}
         </Label>
       )}
-      <RadioGroup value={value} onValueChange={next => onChange(next as SimpleExecutorMode)}>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {getSimpleExecutorOptions().map(option => {
-            const checked = value === option.value
-            const disabled = disabledModes.includes(option.value)
-            const Icon = iconMap[option.value]
-
-            return (
-              <label
-                key={option.value}
-                className={cn(
-                  simpleChoiceCardBaseClass,
-                  checked ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass,
-                  disabled && 'cursor-not-allowed opacity-50'
-                )}
-                data-testid={`simple-executor-${option.value}-card`}
-              >
-                <RadioGroupItem
-                  value={option.value}
-                  disabled={disabled}
-                  aria-label={t(option.titleKey)}
-                  data-testid={`simple-executor-${option.value}-radio`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-sm font-medium">
-                    <Icon className="h-4 w-4 text-primary" />
-                    <span>{t(option.titleKey)}</span>
-                  </div>
-                  <p className="mt-0.5 text-xs leading-5 text-text-secondary">
-                    {t(option.descriptionKey)}
-                  </p>
-                </div>
-              </label>
-            )
-          })}
-        </div>
-      </RadioGroup>
-
-      {helperText && <p className="text-xs text-text-secondary">{helperText}</p>}
-
-      {value === 'complex' && (
-        <div className="space-y-1.5">
-          <Label className="text-xs text-text-secondary">
-            {t('settings:team.simple.executor.coding_runtime_label')}
-          </Label>
-          <RadioGroup
-            value={codingRuntime}
-            onValueChange={next => onCodingRuntimeChange(next as CodingExecutorRuntime)}
+      <div>
+        <RadioGroup value={value} onValueChange={next => onChange(next as SimpleExecutorMode)}>
+          <div
+            className={cn(
+              'grid gap-2',
+              visibleOptions.length === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'
+            )}
           >
-            <div className="grid gap-2 sm:grid-cols-2">
+            {visibleOptions.map(option => {
+              const checked = value === option.value
+              const disabled = disabledModes.includes(option.value)
+              const Icon = iconMap[option.value]
+
+              return (
+                <div key={option.value} className="min-w-0">
+                  <label
+                    className={cn(
+                      simpleChoiceCardBaseClass,
+                      'min-h-[68px] w-full',
+                      checked ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass,
+                      disabled && 'cursor-not-allowed opacity-50'
+                    )}
+                    data-testid={`simple-executor-${option.value}-card`}
+                  >
+                    <RadioGroupItem
+                      value={option.value}
+                      disabled={disabled}
+                      aria-label={t(option.titleKey)}
+                      data-testid={`simple-executor-${option.value}-radio`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Icon className="h-4 w-4 text-primary" />
+                        <span>{t(option.titleKey)}</span>
+                      </div>
+                      <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+                        {t(option.descriptionKey)}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )
+            })}
+          </div>
+        </RadioGroup>
+
+        {value === 'complex' && (
+          <div className="relative mt-2.5 flex flex-col gap-2.5 rounded-lg border border-primary/30 bg-primary/[0.025] p-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-l border-t border-primary/30 bg-primary/[0.025] sm:left-3/4"
+              aria-hidden="true"
+            />
+            <div className="relative z-10 min-w-0">
+              <Label className="text-sm font-medium text-text-primary">
+                {t('settings:team.simple.executor.coding_runtime_label')}
+              </Label>
+              <p className="mt-0.5 text-xs leading-[18px] text-text-muted">
+                {t('settings:team.simple.executor.coding_runtime_description')}
+              </p>
+            </div>
+            <RadioGroup
+              value={codingRuntime}
+              onValueChange={next => onCodingRuntimeChange(next as CodingExecutorRuntime)}
+              className="relative z-10 grid shrink-0 grid-cols-2 gap-2"
+            >
               {(['codex', 'claude_code'] as const).map(runtime => (
                 <label
                   key={runtime}
                   className={cn(
-                    simpleChoiceCardBaseClass,
+                    'flex min-h-10 min-w-[136px] cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors',
                     codingRuntime === runtime
-                      ? simpleChoiceCardSelectedClass
-                      : simpleChoiceCardUnselectedClass
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border bg-base hover:border-primary/40'
                   )}
                   data-testid={`simple-coding-runtime-${runtime}-card`}
                 >
@@ -139,20 +159,27 @@ export default function ExecutorModeSelector({
                     aria-label={t(`settings:team.simple.executor.${runtime}.title`)}
                     data-testid={`simple-coding-runtime-${runtime}-radio`}
                   />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">
+                  <div className="min-w-0">
+                    <div
+                      className={cn(
+                        'whitespace-nowrap text-sm font-medium',
+                        codingRuntime === runtime ? 'text-primary' : 'text-text-primary'
+                      )}
+                    >
                       {t(`settings:team.simple.executor.${runtime}.title`)}
                     </div>
-                    <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+                    <p className="whitespace-nowrap text-xs text-text-muted">
                       {t(`settings:team.simple.executor.${runtime}.description`)}
                     </p>
                   </div>
                 </label>
               ))}
-            </div>
-          </RadioGroup>
-        </div>
-      )}
+            </RadioGroup>
+          </div>
+        )}
+      </div>
+
+      {helperText && <p className="text-xs text-text-secondary">{helperText}</p>}
 
       {value === 'custom' && (
         <div className="space-y-1.5">

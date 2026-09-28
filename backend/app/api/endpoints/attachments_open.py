@@ -14,12 +14,19 @@ attachments as subtask contexts.
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import AuthContext, get_auth_context
-from app.models.subtask_context import SubtaskContext
+from app.api.endpoints.adapter.attachments import (
+    _ensure_attachment_access,
+    _require_attachment_download_allowed,
+    _stream_external_attachment,
+    _stream_remote_media,
+    _stream_stored_attachment,
+)
+from app.core.security import AuthContext, get_api_key_from_header, get_auth_context
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.schemas.subtask_context import AttachmentResponse, TruncationInfo
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
@@ -51,6 +58,56 @@ def _build_attachment_response(
         )
 
     return AttachmentResponse.from_context(context, response_truncation_info)
+
+
+def get_api_key_auth_context(
+    api_key: Annotated[str, Depends(get_api_key_from_header)],
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+) -> AuthContext:
+    """Require API-key authentication for external attachment downloads."""
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is required",
+        )
+    return auth_context
+
+
+def _get_attachment_context_for_api_key(
+    db: Session,
+    attachment_id: int,
+    auth_context: AuthContext,
+) -> SubtaskContext:
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+    if context is None or context.context_type != ContextType.ATTACHMENT.value:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found",
+        )
+
+    try:
+        _ensure_attachment_access(db, context, auth_context.user)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            ) from exc
+        raise
+
+    return context
+
+
+def _generated_video_url(context: SubtaskContext) -> Optional[str]:
+    type_data = context.type_data if isinstance(context.type_data, dict) else {}
+    video_metadata = type_data.get("video_metadata")
+    if not isinstance(video_metadata, dict):
+        return None
+    video_url = video_metadata.get("video_url")
+    return video_url if isinstance(video_url, str) and video_url else None
 
 
 @router.post(
@@ -199,3 +256,45 @@ async def upload_attachment_open(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload attachment",
         ) from e
+
+
+@router.get("/{attachment_id}/download")
+@trace_async("download_attachment_open", "attachments.api")
+async def download_attachment_open(
+    attachment_id: int,
+    auth_context: Annotated[AuthContext, Depends(get_api_key_auth_context)],
+    db: Annotated[Session, Depends(get_db)],
+    range_header: Optional[str] = Header(None, alias="Range"),
+):
+    """
+    Download an attachment through the external API.
+
+    This endpoint only accepts API-key authentication. It supports personal API
+    keys and service API keys with wegent-username, then applies the same
+    attachment access checks as the logged-in product download path.
+    """
+    context = _get_attachment_context_for_api_key(db, attachment_id, auth_context)
+    _require_attachment_download_allowed(db, context, "download")
+
+    external_response = await _stream_external_attachment(
+        context,
+        range_header=range_header,
+    )
+    if external_response is not None:
+        return external_response
+
+    video_url = _generated_video_url(context)
+    if video_url:
+        logger.info(
+            "[attachments_open.py] Streaming remote video attachment: "
+            "attachment_id=%s",
+            attachment_id,
+        )
+        return await _stream_remote_media(
+            video_url,
+            context.original_filename,
+            default_media_type=context.mime_type or "video/mp4",
+            range_header=range_header,
+        )
+
+    return await _stream_stored_attachment(context)

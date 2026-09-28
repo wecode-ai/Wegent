@@ -316,6 +316,36 @@ def test_create_new_task_uses_auto_delete_executor_label(
     assert task.json["metadata"]["labels"]["autoDeleteExecutor"] == "true"
 
 
+def test_create_new_task_labels_omit_mcp_binary_output(
+    test_db: Session,
+    test_user: User,
+):
+    """Responses API binary-output choice should be persisted on the task."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
+    ):
+        default_task = create_new_task(
+            test_db, test_user, team, TaskCreationParams(message="run tests")
+        )
+        flagged_task = create_new_task(
+            test_db,
+            test_user,
+            team,
+            TaskCreationParams(message="run tests", omit_mcp_binary_output=True),
+        )
+
+    assert "omitMcpBinaryOutput" not in default_task.json["metadata"]["labels"]
+    assert flagged_task.json["metadata"]["labels"]["omitMcpBinaryOutput"] == "true"
+
+
 def test_create_new_task_writes_execution_workspace(
     test_db: Session,
     test_user: User,

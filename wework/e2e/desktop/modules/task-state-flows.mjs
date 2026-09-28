@@ -97,7 +97,8 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, 'priority-filter-01-background-task.png')
 
-    await control.command('click', '[data-testid="runtime-priority-filter-button"]')
+    await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
+    await control.command('click', '[data-testid="runtime-task-view-priority"]')
     await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -247,6 +248,26 @@ async function waitForRuntimeTaskOrder(control, listSelector, expectedTaskRowTes
   throw new Error(`The runtime chat task order did not become ${expectedOrder}`)
 }
 
+async function assertRuntimeTaskOrderRemainsStable(
+  control,
+  listSelector,
+  expectedTaskRowTestIds,
+  stableMs = COMPOSER_READY_STABILITY_MS
+) {
+  const expectedOrder = expectedTaskRowTestIds.join(',')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < stableMs) {
+    const testIdOrder = JSON.parse(await control.command('getTestIdOrder', listSelector))
+    const actualOrder = testIdOrder.filter(testId => expectedTaskRowTestIds.includes(testId))
+    assert.equal(
+      actualOrder.join(','),
+      expectedOrder,
+      'Selecting an idle conversation changed the sidebar recency order'
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+}
+
 function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces
@@ -302,6 +323,13 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
   const sourceTaskDebug = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).workbench
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE',
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertRuntimeTaskOrderRemainsStable(control, sortableListSelector, initialOrder)
   await control.command('click', `[data-testid="${targetTaskRowTestId}"]`)
   const targetTaskDebug = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -634,17 +662,14 @@ async function verifyBackgroundCompletionRestore({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-  const myWorkButton = '[data-testid="task-my-work-button"]'
-  await control.command('waitFor', myWorkButton, {
+  const taskViewMenuButton = '[data-testid="runtime-task-view-menu-button"]'
+  await control.command('waitFor', taskViewMenuButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', myWorkButton)
-  const reviewColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
-  await control.command('waitFor', reviewColumnSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('scrollIntoView', reviewColumnSelector)
-  await control.command('waitFor', reviewColumnSelector, {
+  await control.command('click', taskViewMenuButton)
+  await control.command('click', '[data-testid="runtime-task-view-board"]')
+  const completedColumnSelector = '[data-testid="cloud-todo-column-in_review"]'
+  await control.command('waitFor', completedColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -656,7 +681,7 @@ async function verifyBackgroundCompletionRestore({
   assert.equal(
     runningColumnText.includes('WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE'),
     false,
-    'My Work revived a completed task from the stale running transcript'
+    'The local task board revived a completed task from the stale running transcript'
   )
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {

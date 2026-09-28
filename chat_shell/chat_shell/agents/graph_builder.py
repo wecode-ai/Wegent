@@ -805,6 +805,9 @@ class LangGraphAgentBuilder:
         self._provider: str = getattr(llm, "_wegent_provider", "unknown")
         self._model_id: str = getattr(llm, "_wegent_model_id", "")
         self._api_format: str = getattr(llm, "_wegent_api_format", "")
+        self._supports_developer_role: bool = (
+            getattr(llm, "_wegent_supports_developer_role", None) is True
+        )
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
@@ -1033,7 +1036,7 @@ class LangGraphAgentBuilder:
 
         def supports_developer_message() -> bool:
             """Return whether the current LangChain adapter accepts developer role."""
-            return self._provider == "openai"
+            return self._supports_developer_role
 
         def create_dynamic_instruction_message(content: str) -> BaseMessage:
             """Create a provider-safe message for dynamic skill instructions."""

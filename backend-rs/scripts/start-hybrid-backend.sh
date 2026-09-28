@@ -15,6 +15,7 @@ REPOSITORY_ROOT=${WEGENT_REPOSITORY_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}
 BACKEND_DIR="$REPOSITORY_ROOT/backend"
 BACKEND_RS_DIR=${WEGENT_RS_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
 RS_BINARY_NAME=${WEGENT_RS_BINARY_NAME:-wegent-backend-rs}
+RS_BINARY_PATH=${WEGENT_RS_BINARY_PATH:-}
 
 PUBLIC_HOST=${WEGENT_RS_LISTEN_HOST:-0.0.0.0}
 PUBLIC_PORT=${WEGENT_RS_LISTEN_PORT:-8000}
@@ -23,10 +24,23 @@ RS_TARGET_DIR=${WEGENT_RS_TARGET_DIR:-$BACKEND_RS_DIR/target}
 ROUTES_FILE=${WEGENT_RS_ROUTES_FILE:-$BACKEND_RS_DIR/config/routes.toml}
 PYTHON_UVICORN=${WEGENT_PYTHON_UVICORN:-$BACKEND_DIR/.venv/bin/uvicorn}
 STATE_FILE=${WEGENT_HYBRID_STATE_FILE:-}
-# start.sh already exports LOG_DIR for the Backend. Reuse it for Rust so both
-# processes are discoverable in the same service log directory. These may be
-# overridden directly without adding any new .env contract.
-BREEZE_LOG_DIR=${BREEZE_LOG_DIR:-${LOG_DIR:-$REPOSITORY_ROOT/logs/backend}}
+# Dotenv file the Rust gateway reads. An explicit value is respected as given;
+# otherwise prefer the Backend's real configuration, falling back to the
+# checked-in example. The path must be absolute because the gateway resolves a
+# relative path against its own working directory.
+RS_ENV_FILE=${WEGENT_BACKEND_RS_ENV_FILE:-}
+if [ -z "$RS_ENV_FILE" ]; then
+    if [ -f "$BACKEND_DIR/.env" ]; then
+        RS_ENV_FILE="$BACKEND_DIR/.env"
+    else
+        RS_ENV_FILE="$BACKEND_DIR/.env.example"
+    fi
+fi
+# start.sh already exports LOG_DIR for the Backend. Nest the Rust logs under a
+# `rust` subdirectory of it, so both processes stay under the same service log
+# directory without mixing their log files. These may be overridden directly
+# without adding any new .env contract.
+BREEZE_LOG_DIR=${BREEZE_LOG_DIR:-${LOG_DIR:-$REPOSITORY_ROOT/logs/backend}/rust}
 BREEZE_PROFILE_LOG_PATH=${BREEZE_PROFILE_LOG_PATH:-$BREEZE_LOG_DIR/profile.log}
 
 show_help() {
@@ -44,7 +58,10 @@ Environment:
   WEGENT_RS_ROUTES_FILE        TOML route selection file
   WEGENT_RS_PROJECT_DIR        Rust Backend project directory
   WEGENT_RS_BINARY_NAME        Rust Backend binary name
+  WEGENT_RS_BINARY_PATH        Prebuilt Rust Backend binary; skips Cargo build
   WEGENT_RS_TARGET_DIR         Cargo target directory
+  WEGENT_BACKEND_RS_ENV_FILE   Dotenv file for the Rust gateway
+                               (default: the Backend's .env, else .env.example)
 EOF
 }
 
@@ -94,8 +111,12 @@ if [ "$PUBLIC_PORT" = "$PYTHON_UPSTREAM_PORT" ]; then
     exit 2
 fi
 
-if ! command -v cargo >/dev/null 2>&1; then
+if [ -z "$RS_BINARY_PATH" ] && ! command -v cargo >/dev/null 2>&1; then
     echo "Error: cargo is required for hybrid Backend mode" >&2
+    exit 1
+fi
+if [ -n "$RS_BINARY_PATH" ] && [ ! -x "$RS_BINARY_PATH" ]; then
+    echo "Error: prebuilt Rust Backend binary is not executable: $RS_BINARY_PATH" >&2
     exit 1
 fi
 if [ ! -x "$PYTHON_UVICORN" ]; then
@@ -174,31 +195,39 @@ trap cleanup EXIT
 
 write_state
 
-RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
-echo "Building Wegent Rust gateway (release)..."
-# Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
-env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
-    CARGO_PROFILE_RELEASE_STRIP=false \
-    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
-    CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
-    --release \
-    --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
-    --bin "$RS_BINARY_NAME" &
-BUILD_PID=$!
-write_state
-if wait "$BUILD_PID"; then
-    BUILD_PID=""
-    write_state
+if [ -n "$RS_BINARY_PATH" ]; then
+    RS_BINARY="$RS_BINARY_PATH"
+    echo "Using prebuilt Wegent Rust gateway: $RS_BINARY"
 else
-    BUILD_STATUS=$?
-    BUILD_PID=""
+    RS_BINARY="$RS_TARGET_DIR/release/$RS_BINARY_NAME"
+    echo "Building Wegent Rust gateway (release)..."
+    # Keep inherited compiler flags and stripping from breaking macOS proc-macro loading.
+    env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+        CARGO_PROFILE_RELEASE_STRIP=false \
+        CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false \
+        CARGO_TARGET_DIR="$RS_TARGET_DIR" cargo build \
+        --release \
+        --manifest-path "$BACKEND_RS_DIR/Cargo.toml" \
+        --bin "$RS_BINARY_NAME" &
+    BUILD_PID=$!
     write_state
-    exit "$BUILD_STATUS"
+    if wait "$BUILD_PID"; then
+        BUILD_PID=""
+        write_state
+    else
+        BUILD_STATUS=$?
+        BUILD_PID=""
+        write_state
+        exit "$BUILD_STATUS"
+    fi
 fi
 
 echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 (
     cd "$BACKEND_DIR"
+    # brz-http-gateway 0.1.4 does not install hyper-util's pool timer. Keep
+    # upstream sockets alive beyond the longest CI job so its pooled client
+    # cannot reuse a socket that Uvicorn expired during the run.
     exec "$PYTHON_UVICORN" app.main:app \
         --reload \
         --reload-dir . \
@@ -209,6 +238,7 @@ echo "Starting Python Backend upstream on http://127.0.0.1:$PYTHON_UPSTREAM_PORT
         --reload-exclude '.git/*' \
         --host 127.0.0.1 \
         --port "$PYTHON_UPSTREAM_PORT" \
+        --timeout-keep-alive 2400 \
         --log-level debug
 ) &
 PYTHON_PID=$!
@@ -237,15 +267,17 @@ wait_for_python
 echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
+echo "Dotenv file: $RS_ENV_FILE"
 (
     # Rust resolves its default config/example.env relative to the current
-    # working directory. Run it from the Rust project root so
-    # backend-rs/config/example.env is loaded consistently.
+    # working directory. Run it from the Rust project root so the default and
+    # any relative `--env-file` stay consistent.
     cd "$BACKEND_RS_DIR"
     export WEGENT_RS_LISTEN_HOST="$PUBLIC_HOST"
     export WEGENT_RS_LISTEN_PORT="$PUBLIC_PORT"
     export WEGENT_PYTHON_UPSTREAM_URL="http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
     export WEGENT_RS_ROUTES_FILE="$ROUTES_FILE"
+    export WEGENT_BACKEND_RS_ENV_FILE="$RS_ENV_FILE"
     export BREEZE_LOG_DIR="$BREEZE_LOG_DIR"
     export BREEZE_PROFILE_LOG_PATH="$BREEZE_PROFILE_LOG_PATH"
     exec "$RS_BINARY"

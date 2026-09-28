@@ -30,6 +30,10 @@ export async function closeMainWindowToTray(): Promise<void> {
   await invokeDesktopHost<void>('window.closeToTray')
 }
 
+export async function quitApplication(): Promise<void> {
+  await invokeDesktopHost<void>('app.quit')
+}
+
 export async function cancelMainWindowClose(): Promise<void> {
   await invokeDesktopHost<void>('window.cancelCloseToTray')
 }

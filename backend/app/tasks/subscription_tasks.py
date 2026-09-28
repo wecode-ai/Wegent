@@ -30,6 +30,7 @@ from app.core.config import settings
 from app.services.subscription.helpers import validate_subscription_for_read
 from app.stores.tasks import task_store
 from shared.telemetry.context import get_request_id, set_request_context
+from shared.telemetry.decorators import capture_trace_context, trace_background
 
 logger = logging.getLogger(__name__)
 
@@ -742,6 +743,60 @@ def _handle_execution_failure(
 SUBSCRIPTION_BATCH_SIZE = 100
 
 
+@trace_background("code_wiki_scheduled_update", "knowledge.scheduler")
+def _run_code_wiki_scheduled_update(
+    subscription_id: int,
+    execution_id: int,
+    trace_context: Optional[Dict[str, str]] = None,
+) -> None:
+    """Launch one Code Wiki update using a session owned by this worker."""
+    from app.db.session import SessionLocal
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        execute_scheduled_update,
+    )
+
+    db = SessionLocal()
+    try:
+        execute_scheduled_update(
+            db, subscription_id=subscription_id, execution_id=execution_id
+        )
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.subscription_tasks.execute_code_wiki_scheduled_update")
+def execute_code_wiki_scheduled_update(subscription_id: int, execution_id: int) -> None:
+    _run_code_wiki_scheduled_update(subscription_id, execution_id)
+
+
+def _dispatch_scheduled_execution(
+    subscription: Any, execution: Any, subscription_service: Any, *, use_sync: bool
+) -> None:
+    """Send a Code Wiki execution through its runner, otherwise use the generic path."""
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        is_code_wiki_scheduled_update,
+    )
+
+    if not is_code_wiki_scheduled_update(subscription):
+        subscription_service.dispatch_background_execution(
+            subscription, execution, use_sync=use_sync
+        )
+        return
+
+    if use_sync:
+        import threading
+
+        threading.Thread(
+            target=_run_code_wiki_scheduled_update,
+            args=(subscription.id, execution.id),
+            kwargs={"trace_context": capture_trace_context()},
+            daemon=True,
+        ).start()
+        return
+
+    execute_code_wiki_scheduled_update.delay(subscription.id, execution.id)
+
+
 def _iter_active_subscription_id_batches(
     db: Session,
     batch_size: int = SUBSCRIPTION_BATCH_SIZE,
@@ -829,6 +884,22 @@ def _disable_expired_subscription_if_needed(
         return True
 
 
+def _advance_due_subscription(
+    db: Session, subscription: Any, subscription_crd: Any, trigger_type: str
+) -> None:
+    """Advance one schedule, committing through its owning implementation."""
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        advance_scheduled_update,
+        is_code_wiki_scheduled_update,
+    )
+
+    if is_code_wiki_scheduled_update(subscription):
+        advance_scheduled_update(subscription)
+        db.commit()
+    else:
+        _update_next_execution_time(db, subscription, subscription_crd, trigger_type)
+
+
 def _dispatch_due_subscription(
     *,
     db: Session,
@@ -853,9 +924,7 @@ def _dispatch_due_subscription(
         )
 
         try:
-            _update_next_execution_time(
-                db, subscription, subscription_crd, trigger_type
-            )
+            _advance_due_subscription(db, subscription, subscription_crd, trigger_type)
         except Exception as exc:
             logger.error(
                 f"[subscription_tasks] Failed to update next execution time for subscription {subscription.id}: {exc}",
@@ -882,8 +951,8 @@ def _dispatch_due_subscription(
             return False
 
         try:
-            subscription_service.dispatch_background_execution(
-                subscription, execution, use_sync=use_sync
+            _dispatch_scheduled_execution(
+                subscription, execution, subscription_service, use_sync=use_sync
             )
         except Exception as exc:
             logger.error(
@@ -1242,8 +1311,8 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     updated_at=execution.updated_at,
                 )
 
-                subscription_service.dispatch_background_execution(
-                    subscription, exec_in_db, use_sync=False
+                _dispatch_scheduled_execution(
+                    subscription, exec_in_db, subscription_service, use_sync=False
                 )
                 recovered += 1
 
@@ -1271,6 +1340,29 @@ def _recover_stale_pending_executions(db: Session) -> int:
         return 0
 
 
+def _cancel_timed_out_code_wiki_tasks(
+    db: Session, tasks_to_cancel: List[Tuple[int, int]]
+) -> None:
+    """Cancel downstream tasks only after execution failures have been committed."""
+    if not tasks_to_cancel:
+        return
+    from app.services.subscription.execution import background_execution_manager
+
+    for task_id, user_id in tasks_to_cancel:
+        try:
+            asyncio.run(
+                background_execution_manager.cancel_task_by_id(
+                    db, task_id=task_id, user_id=user_id
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "[subscription_tasks] Failed to cancel timed-out Code Wiki task %s: %s",
+                task_id,
+                exc,
+            )
+
+
 def _cleanup_stale_running_executions(db: Session) -> int:
     """
     Cleanup stale RUNNING executions that have been stuck for too long.
@@ -1280,7 +1372,9 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     2. The executor/chat_shell never completed or failed to callback
     3. The execution is now stuck in RUNNING forever
 
-    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours).
+    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours). Code Wiki scheduled
+    updates use their subscription timeout so the launcher and downstream Task share
+    one logical execution deadline.
 
     Args:
         db: Database session
@@ -1290,6 +1384,9 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     """
     from app.models.subscription import BackgroundExecution
     from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services.knowledge.code_wiki.subscription_integration import (
+        execution_timeout_policy,
+    )
 
     try:
         stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
@@ -1315,6 +1412,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
         )
 
         cleaned = 0
+        code_wiki_tasks_to_cancel: List[Tuple[int, int]] = []
         for execution in stale_executions:
             try:
                 running_duration = (
@@ -1322,11 +1420,22 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     - execution.started_at
                 )
                 running_hours = running_duration.total_seconds() / 3600
+                policy = execution_timeout_policy(
+                    db,
+                    execution,
+                    default_hours=settings.FLOW_STALE_RUNNING_HOURS,
+                    running_hours=running_hours,
+                )
+                threshold_hours = policy.threshold_hours
+                if running_hours <= threshold_hours:
+                    continue
+                if policy.task_to_cancel:
+                    code_wiki_tasks_to_cancel.append(policy.task_to_cancel)
 
                 execution.status = BackgroundExecutionStatus.FAILED.value
                 execution.error_message = (
                     f"Execution timed out after {running_hours:.1f} hour(s) "
-                    f"(stuck in RUNNING state, threshold: {settings.FLOW_STALE_RUNNING_HOURS}h)"
+                    f"(stuck in RUNNING state, threshold: {threshold_hours}h)"
                 )
                 execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1336,7 +1445,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     f"[subscription_tasks] Cleaned stale RUNNING execution {execution.id}: "
                     f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
                     f"started_at={execution.started_at}, running_hours={running_hours:.1f}h, "
-                    f"reason=exceeded {settings.FLOW_STALE_RUNNING_HOURS}h threshold"
+                    f"reason=exceeded {threshold_hours}h threshold"
                 )
 
             except Exception as e:
@@ -1347,6 +1456,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                 continue
 
         db.commit()
+        _cancel_timed_out_code_wiki_tasks(db, code_wiki_tasks_to_cancel)
         return cleaned
 
     except Exception as e:

@@ -8,8 +8,6 @@ import JSZip from 'jszip'
 
 import { apply } from './index.js'
 
-const PNG_BYTES = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4])
-
 test('loads after packaging without workspace dependencies', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-isolated-'))
   const plugin = join(root, 'plugin')
@@ -63,11 +61,9 @@ test('writes and overwrites an export through a polled backend task', async () =
   await rm(root, { recursive: true, force: true })
 })
 
-test('packages the document and local assets into a zip export', async () => {
+test('packages the document and conversation assets into a zip export', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-zip-'))
   const destination = join(root, 'conversation.zip')
-  const image = join(root, 'image.png')
-  await writeFile(image, Buffer.from([1, 2, 3, 4]))
   let registration
   apply({
     effect() {},
@@ -88,11 +84,10 @@ test('packages the document and local assets into a zip export', async () => {
     exportTaskId,
     content: '# Conversation\n\n![Image](<images/image.png>)\n',
   })
-  await registration.methods.addAsset({
+  await registration.methods.appendAsset({
     exportTaskId,
     archivePath: 'images/image.png',
-    path: image,
-    workspacePath: root,
+    contentBase64: Buffer.from([1, 2, 3, 4]).toString('base64'),
   })
   await registration.methods.finish({ exportTaskId })
   const result = await waitForTerminalStatus(registration.methods, exportTaskId)
@@ -186,115 +181,6 @@ test('rejects destinations outside the supported export formats', async () => {
     registration.methods.start({ path: '/tmp/conversation.txt' }),
     /must end with .md, .html, or .zip/
   )
-})
-
-test('reads local images in bounded base64 chunks', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-image-'))
-  const source = join(root, 'image.png')
-  await writeFile(source, PNG_BYTES)
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
-      },
-    },
-  })
-
-  const chunk = await registration.methods.readImageChunk({
-    path: source,
-    offset: 0,
-    workspacePath: root,
-    mimeType: 'image/png',
-  })
-
-  assert.deepEqual(chunk, {
-    chunkBase64: PNG_BYTES.toString('base64'),
-    bytesRead: PNG_BYTES.byteLength,
-    eof: true,
-    size: PNG_BYTES.byteLength,
-  })
-  await rm(root, { recursive: true, force: true })
-})
-
-test('resolves Markdown image paths relative to the conversation workspace', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-relative-image-'))
-  const source = join(root, 'image.png')
-  await writeFile(source, PNG_BYTES)
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
-      },
-    },
-  })
-
-  const chunk = await registration.methods.readImageChunk({
-    path: 'image.png',
-    offset: 0,
-    workspacePath: root,
-    mimeType: 'image/png',
-  })
-
-  assert.equal(chunk.chunkBase64, PNG_BYTES.toString('base64'))
-  await rm(root, { recursive: true, force: true })
-})
-
-test('rejects local image paths outside the conversation workspace', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-image-boundary-'))
-  const workspace = join(root, 'workspace')
-  const source = join(root, 'secret.png')
-  await mkdir(workspace)
-  await writeFile(source, PNG_BYTES)
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
-      },
-    },
-  })
-
-  await assert.rejects(
-    registration.methods.readImageChunk({
-      path: source,
-      offset: 0,
-      workspacePath: workspace,
-      mimeType: 'image/png',
-    }),
-    /must stay inside the conversation workspace or attachment storage/
-  )
-  await rm(root, { recursive: true, force: true })
-})
-
-test('rejects files whose contents do not match the declared image type', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-image-content-'))
-  const source = join(root, 'image.png')
-  await writeFile(source, Buffer.from('not an image'))
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
-      },
-    },
-  })
-
-  await assert.rejects(
-    registration.methods.readImageChunk({
-      path: source,
-      offset: 0,
-      workspacePath: root,
-      mimeType: 'image/png',
-    }),
-    /content does not match its declared type/
-  )
-  await rm(root, { recursive: true, force: true })
 })
 
 async function waitForTerminalStatus(methods, exportTaskId) {

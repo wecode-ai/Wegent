@@ -17,6 +17,7 @@ from knowledge_engine.ingestion.pipeline import (
     prepare_ingestion,
 )
 from knowledge_engine.splitter.config import FlatChunkConfig, MarkdownEnhancementConfig
+from knowledge_engine.storage.base import resolve_retrieval_text
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
 
@@ -834,7 +835,9 @@ def test_document_indexer_hierarchical_routes_through_ingestion_result_contract(
     assert save_parent_kwargs["knowledge_id"] == "1"
 
     indexed_kwargs = storage_backend.index_with_metadata.call_args.kwargs
-    assert indexed_kwargs["nodes"] is index_nodes
+    assert [node.node_id for node in indexed_kwargs["nodes"]] == [
+        node.node_id for node in index_nodes
+    ]
     assert indexed_kwargs["chunk_metadata"].knowledge_id == "1"
 
     assert result["chunk_count"] == 2
@@ -904,3 +907,67 @@ def test_document_indexer_hierarchical_chunk_metadata_counts_indexed_nodes_only(
     assert result["chunks_data"]["total_count"] == 3
     assert len(result["chunks_data"]["items"]) == 3
     assert result["chunks_data"]["splitter_subtype"] == "markdown_sentence"
+
+
+def test_document_indexer_counts_and_chunk_detail_share_the_written_nodes() -> None:
+    """The write, the count and the chunk detail must describe the same nodes."""
+    storage_backend = MagicMock()
+    storage_backend.save_parent_nodes.return_value = None
+    storage_backend.index_with_metadata.return_value = {
+        "status": "success",
+        "indexed_count": 2,
+        "index_name": "wegent_kb_1",
+    }
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config={
+            "chunk_strategy": "hierarchical",
+            "format_enhancement": "file_aware",
+            "markdown_enhancement": {"enabled": False},
+            "hierarchical_config": {
+                "parent_chunk_size": 2048,
+                "child_chunk_size": 512,
+                "child_chunk_overlap": 64,
+                "parent_separator": "\n\n",
+                "child_separator": "\n",
+            },
+        },
+        file_extension=".md",
+    )
+    ingestion_result = SimpleNamespace(
+        parent_nodes=None,
+        index_nodes=[
+            TextNode(text="child-1"),
+            TextNode(text="", metadata={"retrieval_text": "child-2"}),
+            TextNode(text=""),
+        ],
+        parser_subtype="markdown_sentence",
+    )
+
+    with patch(
+        "knowledge_engine.index.indexer.build_ingestion_result",
+        return_value=ingestion_result,
+    ):
+        result = indexer._index_documents(
+            documents=[
+                Document(text="Short hierarchical content."),
+            ],
+            file_extension=".md",
+            chunk_metadata=ChunkMetadata(
+                knowledge_id="1",
+                doc_ref="doc_3",
+                source_file="notes.md",
+                created_at="2026-04-12T00:00:00+00:00",
+            ),
+        )
+
+    written_nodes = storage_backend.index_with_metadata.call_args.kwargs["nodes"]
+    # A node whose content lives in metadata still gets written; an empty one does not.
+    assert [
+        resolve_retrieval_text(node.metadata, fallback=node.text or "")
+        for node in written_nodes
+    ] == ["child-1", "child-2"]
+    assert result["chunk_count"] == 2
+    assert result["chunks_data"]["total_count"] == 2
+    assert len(result["chunks_data"]["items"]) == 2

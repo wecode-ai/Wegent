@@ -29,10 +29,18 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
     normalize_provider_config,
 )
-from app.services.cloud_project_visibility import accessible_cloud_projects
+from app.services.cloud_project_visibility import (
+    AUTHENTICATED_ENTITY_ID,
+    AUTHENTICATED_ENTITY_TYPE,
+    accessible_cloud_projects,
+    explicit_project_member_ids,
+    workspace_project_ids,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.runtime_route import runtime_device_route_id
 from app.services.execution_environment_initialization import (
     initialize_execution_environment,
+    merge_execution_environment_device_state,
     preparing_execution_environment,
 )
 from app.services.loop_item_status_history import write_status_change
@@ -43,7 +51,6 @@ from app.services.workspaces.environment_status import execution_environment_sta
 from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
-    project_ids_for_workspace,
     resource_grant,
     workspace_id_for_project,
 )
@@ -144,7 +151,7 @@ class CloudProjectService:
                 "project_store": "backend",
                 "task_provider": values.task_provider,
                 "provider_config": provider_config,
-                "visibility": values.visibility,
+                "default_issue_security": values.default_issue_security,
                 "tags": [],
                 "board_config": CloudProjectBoardConfig().model_dump(),
             },
@@ -167,6 +174,21 @@ class CloudProjectService:
                     status=MemberStatus.APPROVED.value,
                 )
             )
+            if values.visibility == "public":
+                db.add(
+                    ResourceMember.create(
+                        resource_type=ResourceType.CLOUD_PROJECT.value,
+                        resource_id=int(project.id),
+                        entity_type=AUTHENTICATED_ENTITY_TYPE,
+                        entity_id=AUTHENTICATED_ENTITY_ID,
+                        role=(
+                            values.public_access.role
+                            if values.public_access
+                            else "Viewer"
+                        ),
+                        status=MemberStatus.APPROVED.value,
+                    )
+                )
             ensure_resource_grant(
                 db,
                 workspace_id=workspace.id,
@@ -192,24 +214,20 @@ class CloudProjectService:
         *,
         workspace_id: int | None = None,
     ) -> list[CloudProject]:
-        if workspace_id is not None:
-            require_workspace_role(db, workspace_id, user_id)
         query = accessible_cloud_projects(db, user_id)
         if workspace_id is not None:
             query = query.filter(
-                CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
+                CloudProject.id.in_(workspace_project_ids(workspace_id))
             )
         return query.order_by(CloudProject.updated_at.desc()).all()
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
+            db, project_id, user_id, BaseRole.Viewer
         ).project
 
     def access(self, db: Session, project_id: int, user_id: int):
-        return require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        )
+        return require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
 
     def update(
         self,
@@ -232,6 +250,8 @@ class CloudProjectService:
             or "workflow_definition" in values.model_fields_set
             or "execution_environment" in values.model_fields_set
             or "visibility" in values.model_fields_set
+            or "public_access" in values.model_fields_set
+            or "default_issue_security" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
             if "tags" in values.model_fields_set and values.tags is not None:
@@ -316,7 +336,8 @@ class CloudProjectService:
                 and values.execution_environment is not None
             ):
                 metadata["execution_environment"] = preparing_execution_environment(
-                    values.execution_environment.model_dump()
+                    values.execution_environment.model_dump(),
+                    metadata.get("execution_environment"),
                 )
                 updates.pop("execution_environment", None)
             if (
@@ -346,12 +367,67 @@ class CloudProjectService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
                     ) from exc
                 updates.pop("provider_config", None)
+            if values.default_issue_security is not None:
+                if (
+                    project.task_provider == "dingtalk_aitable"
+                    and values.default_issue_security != "open"
+                ):
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "DingTalk table records use DingTalk permissions",
+                    )
+                metadata["default_issue_security"] = values.default_issue_security
+            updates.pop("default_issue_security", None)
             if (
                 "visibility" in values.model_fields_set
-                and values.visibility is not None
+                or "public_access" in values.model_fields_set
             ):
-                metadata["visibility"] = values.visibility
+                grant = (
+                    db.query(ResourceMember)
+                    .filter(
+                        ResourceMember.resource_type
+                        == ResourceType.CLOUD_PROJECT.value,
+                        ResourceMember.resource_id == project.id,
+                        ResourceMember.entity_type == AUTHENTICATED_ENTITY_TYPE,
+                        ResourceMember.entity_id == AUTHENTICATED_ENTITY_ID,
+                    )
+                    .one_or_none()
+                )
+                visible = (
+                    values.visibility != "private"
+                    if values.visibility is not None
+                    else grant is not None
+                    and grant.status == MemberStatus.APPROVED.value
+                )
+                if not visible and values.public_access is not None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Private projects cannot grant public access",
+                    )
+                if visible:
+                    role = (
+                        values.public_access.role
+                        if values.public_access
+                        else (grant.role if grant else "Viewer")
+                    )
+                    if grant is None:
+                        db.add(
+                            ResourceMember.create(
+                                resource_type=ResourceType.CLOUD_PROJECT.value,
+                                resource_id=int(project.id),
+                                entity_type=AUTHENTICATED_ENTITY_TYPE,
+                                entity_id=AUTHENTICATED_ENTITY_ID,
+                                role=role,
+                                status=MemberStatus.APPROVED.value,
+                            )
+                        )
+                    else:
+                        grant.role = role
+                        grant.status = MemberStatus.APPROVED.value
+                elif grant is not None:
+                    db.delete(grant)
                 updates.pop("visibility", None)
+                updates.pop("public_access", None)
             updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)
@@ -397,18 +473,31 @@ class CloudProjectService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Execution device is not available in this Project",
             )
-        metadata = dict(project.metadata_json or {})
-        definition = metadata.get("execution_environment")
+        definition = (project.metadata_json or {}).get("execution_environment")
         definition = definition if isinstance(definition, dict) else {}
+        # Preparation runs on the device for minutes, so the project row must not
+        # stay locked while it runs; otherwise every concurrent project write
+        # blocks for the whole preparation and then fails the version check.
+        db.commit()
         state = await initialize_execution_environment(
             db=db,
             device=device,
             environment_id=f"project-{cloud_project_id}",
             definition=definition,
         )
-        metadata["execution_environment"] = state
+        project = self._lock_project(db, cloud_project_id)
+        if project.version != version:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Project changed")
+        metadata = dict(project.metadata_json or {})
+        environment = metadata.get("execution_environment")
+        metadata["execution_environment"] = merge_execution_environment_device_state(
+            environment if isinstance(environment, dict) else {},
+            device_key=runtime_device_route_id(device),
+            device_state=state,
+        )
         project.metadata_json = metadata
-        project.version += 1
+        # Recording a preparation result is not a configuration change, so the
+        # client keeps a usable version token and can retry after a failure.
         db.commit()
         db.refresh(project)
         return project
@@ -477,6 +566,7 @@ class CloudProjectService:
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[dict[str, object]]:
         project = require_cloud_project_role(db, cloud_project_id, user_id).project
+        can_view_emails = user_id in explicit_project_member_ids(db, project)
         rows = (
             db.query(ResourceMember, User)
             .join(User, User.id == ResourceMember.user_id)
@@ -495,7 +585,7 @@ class CloudProjectService:
                 "id": member.id,
                 "user_id": member_user.id,
                 "user_name": member_user.user_name,
-                "email": member_user.email,
+                "email": member_user.email if can_view_emails else None,
                 "role": member.role,
                 "capability_description": capabilities.get(str(member_user.id), ""),
             }
@@ -512,7 +602,7 @@ class CloudProjectService:
                         "id": 0,
                         "user_id": creator.id,
                         "user_name": creator.user_name,
-                        "email": creator.email,
+                        "email": creator.email if can_view_emails else None,
                         "role": BaseRole.Owner.value,
                         "capability_description": capabilities.get(str(creator.id), ""),
                     },

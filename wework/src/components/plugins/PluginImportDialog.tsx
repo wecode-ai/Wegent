@@ -1,5 +1,6 @@
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type {
   LocalCodexPluginApi,
   LocalPluginImportCompletion,
@@ -155,7 +156,6 @@ export function PluginImportDialog({
   onImported: (result: LocalPluginImportCompletion) => void
 }) {
   const { t } = useTranslation('common')
-  const closeRef = useRef<HTMLButtonElement>(null)
   const [preview, setPreview] = useState<LocalPluginImportPreview | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -164,10 +164,13 @@ export function PluginImportDialog({
   const [riskConfirmed, setRiskConfirmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busy = analyzing || importing || savingExample
-
-  useEffect(() => {
-    closeRef.current?.focus()
-  }, [])
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    () => {
+      if (!busy) onCancel()
+    },
+    true,
+    '[data-testid="plugin-import-close"]'
+  )
 
   async function choosePackage() {
     const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
@@ -237,6 +240,7 @@ export function PluginImportDialog({
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-4">
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="plugin-import-title"
@@ -256,7 +260,6 @@ export function PluginImportDialog({
             </p>
           </div>
           <button
-            ref={closeRef}
             type="button"
             data-testid="plugin-import-close"
             aria-label={t('common.close', '关闭')}

@@ -7,13 +7,14 @@
 /**
  * Subscription configuration list component.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import {
   AlertCircle,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   Copy,
@@ -59,6 +60,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import { subscriptionApis } from '@/apis/subscription'
+import { localizeExecutionResult } from '@/features/knowledge/code-wiki/localizeExecutionResult'
 import type {
   Subscription,
   SubscriptionTriggerType,
@@ -157,36 +159,59 @@ export function SubscriptionList({
     {}
   )
   const [executionHistoryLoading, setExecutionHistoryLoading] = useState<number | null>(null)
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  const historyTranslation = useRef(t)
+  historyTranslation.current = t
 
   // Dialog state for viewing conversation
   const [dialogTaskId, setDialogTaskId] = useState<number | null>(null)
 
-  // Load execution history for a subscription
-  const loadExecutionHistory = useCallback(
-    async (subscriptionId: number) => {
-      if (executionHistory[subscriptionId]) {
-        // Already loaded, just toggle
-        setExpandedSubscriptionId(prev => (prev === subscriptionId ? null : subscriptionId))
-        return
-      }
+  const toggleExecutionHistory = useCallback((subscriptionId: number) => {
+    setExpandedSubscriptionId(prev => (prev === subscriptionId ? null : subscriptionId))
+  }, [])
+  const expandedSubscription = subscriptions.find(item => item.id === expandedSubscriptionId)
+  const historyVersion = JSON.stringify([
+    expandedSubscription?.execution_count,
+    expandedSubscription?.last_execution_time,
+    expandedSubscription?.last_execution_status,
+  ])
+  const includeSilent = Boolean(expandedSubscription?.code_wiki_id)
 
-      setExecutionHistoryLoading(subscriptionId)
-      try {
-        const response = await subscriptionApis.getExecutions({ page: 1, limit: 5 }, subscriptionId)
+  // Re-fetch on reopen or execution changes; discard superseded responses.
+  useEffect(() => {
+    if (expandedSubscriptionId === null) return
+    const subscriptionId = expandedSubscriptionId
+    let cancelled = false
+    setExecutionHistoryLoading(subscriptionId)
+    subscriptionApis
+      .getExecutions(
+        { page: 1, limit: 5 },
+        subscriptionId,
+        undefined,
+        undefined,
+        undefined,
+        includeSilent
+      )
+      .then(response => {
+        if (cancelled) return
         setExecutionHistory(prev => ({
           ...prev,
           [subscriptionId]: response.items,
         }))
-        setExpandedSubscriptionId(subscriptionId)
-      } catch (error) {
+      })
+      .catch(error => {
+        if (cancelled) return
         console.error('Failed to load execution history:', error)
-        toast.error(t('load_history_failed'))
-      } finally {
+        toast.error(historyTranslation.current('load_history_failed'))
+      })
+      .finally(() => {
+        if (cancelled) return
         setExecutionHistoryLoading(null)
-      }
-    },
-    [executionHistory, t]
-  )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [expandedSubscriptionId, historyVersion, includeSilent, historyRefresh])
 
   // Format relative time for execution history
   const formatRelativeTime = (dateStr: string) => {
@@ -232,8 +257,7 @@ export function SubscriptionList({
         })
         // If this subscription is expanded, reload its history
         if (expandedSubscriptionId === subscription.id) {
-          setExpandedSubscriptionId(null)
-          setTimeout(() => loadExecutionHistory(subscription.id), 500)
+          setHistoryRefresh(prev => prev + 1)
         }
       } catch (error) {
         console.error('Failed to trigger subscription:', error)
@@ -242,7 +266,7 @@ export function SubscriptionList({
         setActionLoading(null)
       }
     },
-    [t, refreshExecutions, expandedSubscriptionId, loadExecutionHistory]
+    [t, refreshExecutions, expandedSubscriptionId]
   )
 
   const handleToggle = useCallback(
@@ -343,6 +367,74 @@ export function SubscriptionList({
     }
   }
 
+  const renderExecutionHistory = (
+    history: BackgroundExecution[],
+    localizeCodeWikiMessages = false
+  ) => (
+    <div className="bg-surface/30 border-t border-border px-4 py-3">
+      <div className="flex items-center gap-2 mb-3">
+        <History className="h-4 w-4 text-text-muted" />
+        <span className="text-sm font-medium text-text-secondary">{t('recent_executions')}</span>
+      </div>
+
+      {history.length === 0 ? (
+        <div className="text-sm text-text-muted py-2">{t('no_executions')}</div>
+      ) : (
+        <div className="space-y-2">
+          {history.map(exec => {
+            const status = statusConfig[exec.status]
+            return (
+              <div
+                key={exec.id}
+                className="flex items-center gap-3 p-2 rounded-lg bg-base hover:bg-surface/50 transition-colors"
+              >
+                <div className={`flex-shrink-0 ${status.color}`}>{status.icon}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className={status.color}>{t(status.text)}</span>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted text-xs">
+                      {formatRelativeTime(exec.created_at)}
+                    </span>
+                    {exec.trigger_reason && (
+                      <>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-text-muted text-xs truncate">
+                          {exec.trigger_reason}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {exec.result_summary && (
+                    <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                      {localizeCodeWikiMessages
+                        ? localizeExecutionResult(exec.result_summary, t)
+                        : exec.result_summary}
+                    </div>
+                  )}
+                  {exec.error_message && (
+                    <div className="text-xs text-red-500 mt-1 line-clamp-2">
+                      {exec.error_message}
+                    </div>
+                  )}
+                </div>
+                {exec.task_id && (
+                  <button
+                    onClick={() => handleViewConversation(exec.task_id!)}
+                    className="flex-shrink-0 flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {t('feed.view_conversation')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="flex h-full flex-col">
       {/* Invalid Schedule Warning Banner */}
@@ -380,6 +472,109 @@ export function SubscriptionList({
               const isExpanded = expandedSubscriptionId === subscription.id
               const history = executionHistory[subscription.id] || []
               const isLoadingHistory = executionHistoryLoading === subscription.id
+
+              if (subscription.code_wiki_id) {
+                const lastStatus = subscription.last_execution_status as
+                  | BackgroundExecutionStatus
+                  | undefined
+                const lastStatusDisplay = lastStatus ? statusConfig[lastStatus] : undefined
+                return (
+                  <div key={subscription.id} className="border-b border-border last:border-b-0">
+                    <div
+                      className="flex min-h-16 items-center gap-4 px-4 py-3 hover:bg-surface/50 sm:pr-2"
+                      data-testid="code-wiki-subscription-row"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                        <CalendarClock className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-medium">{subscription.display_name}</span>
+                          <Badge variant="secondary" className="shrink-0 text-xs">
+                            {t('code_wiki_scheduled_update')}
+                          </Badge>
+                        </div>
+                        <div
+                          className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-text-muted"
+                          data-testid="code-wiki-subscription-meta"
+                        >
+                          <span>{getTriggerLabel(subscription)}</span>
+                          <span>·</span>
+                          {subscription.enabled ? (
+                            <span>
+                              {t('next_execution')}:{' '}
+                              {formatNextExecution(subscription.next_execution_time)}
+                            </span>
+                          ) : (
+                            <span>{t('execution_disabled')}</span>
+                          )}
+                          <span>·</span>
+                          {lastStatusDisplay ? (
+                            <span
+                              className={`inline-flex items-center gap-1 ${lastStatusDisplay.color}`}
+                            >
+                              {lastStatusDisplay.icon}
+                              {t(lastStatusDisplay.text)}
+                              {subscription.last_execution_time && (
+                                <> · {formatRelativeTime(subscription.last_execution_time)}</>
+                              )}
+                            </span>
+                          ) : (
+                            <span>{t('code_wiki_not_checked')}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div
+                        className="flex shrink-0 items-center gap-3"
+                        data-testid="code-wiki-subscription-controls"
+                      >
+                        <button
+                          onClick={() => toggleExecutionHistory(subscription.id)}
+                          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-text-muted transition-colors hover:bg-surface hover:text-text-primary md:min-h-0"
+                          disabled={isLoadingHistory}
+                          aria-expanded={isExpanded}
+                          data-testid="code-wiki-subscription-execution-count"
+                        >
+                          {isLoadingHistory ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <History className="h-3.5 w-3.5" />
+                          )}
+                          <span className="text-sm font-medium">
+                            {subscription.execution_count}
+                          </span>
+                          <span className="text-xs">{t('executions')}</span>
+                          {isExpanded ? (
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <Badge
+                          variant={subscription.enabled ? 'default' : 'secondary'}
+                          className="hidden shrink-0 sm:inline-flex"
+                          data-testid="code-wiki-subscription-enabled-indicator"
+                          aria-label={subscription.enabled ? t('enabled') : t('disabled')}
+                        >
+                          {subscription.enabled ? t('enabled') : t('disabled')}
+                        </Badge>
+                        <a
+                          href={`/knowledge?type=document&kb=${subscription.code_wiki_id}`}
+                          className="inline-flex h-11 w-11 shrink-0 items-center justify-center gap-1 rounded-md text-xs text-text-muted transition-colors hover:bg-surface hover:text-text-primary sm:w-32 sm:px-2 md:h-8"
+                          aria-label={t('code_wiki_scheduled_update_hint')}
+                          data-testid="code-wiki-subscription-management"
+                        >
+                          <span className="hidden sm:inline">
+                            {t('code_wiki_scheduled_update_hint')}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    </div>
+                    {isExpanded && renderExecutionHistory(history, true)}
+                  </div>
+                )
+              }
 
               return (
                 <div key={subscription.id} className="border-b border-border last:border-b-0">
@@ -463,7 +658,7 @@ export function SubscriptionList({
                     {/* Stats with expand button */}
                     <div className="hidden sm:flex items-center gap-2">
                       <button
-                        onClick={() => loadExecutionHistory(subscription.id)}
+                        onClick={() => toggleExecutionHistory(subscription.id)}
                         className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-surface transition-colors text-text-muted hover:text-text-primary"
                         disabled={isLoadingHistory}
                       >
@@ -505,7 +700,7 @@ export function SubscriptionList({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onClick={() => loadExecutionHistory(subscription.id)}
+                            onClick={() => toggleExecutionHistory(subscription.id)}
                             disabled={isLoadingHistory}
                           >
                             <History className="mr-2 h-4 w-4" />
@@ -689,75 +884,7 @@ export function SubscriptionList({
                   </div>
 
                   {/* Expanded execution history section */}
-                  {isExpanded && (
-                    <div className="bg-surface/30 border-t border-border px-4 py-3">
-                      <div className="flex items-center gap-2 mb-3">
-                        <History className="h-4 w-4 text-text-muted" />
-                        <span className="text-sm font-medium text-text-secondary">
-                          {t('recent_executions')}
-                        </span>
-                      </div>
-
-                      {history.length === 0 ? (
-                        <div className="text-sm text-text-muted py-2">{t('no_executions')}</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {history.map(exec => {
-                            const status = statusConfig[exec.status]
-                            return (
-                              <div
-                                key={exec.id}
-                                className="flex items-center gap-3 p-2 rounded-lg bg-base hover:bg-surface/50 transition-colors"
-                              >
-                                {/* Status icon */}
-                                <div className={`flex-shrink-0 ${status.color}`}>{status.icon}</div>
-
-                                {/* Execution info */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 text-sm">
-                                    <span className={status.color}>{t(status.text)}</span>
-                                    <span className="text-text-muted">·</span>
-                                    <span className="text-text-muted text-xs">
-                                      {formatRelativeTime(exec.created_at)}
-                                    </span>
-                                    {exec.trigger_reason && (
-                                      <>
-                                        <span className="text-text-muted">·</span>
-                                        <span className="text-text-muted text-xs truncate">
-                                          {exec.trigger_reason}
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                  {exec.result_summary && (
-                                    <div className="text-xs text-text-muted mt-1 line-clamp-2">
-                                      {exec.result_summary}
-                                    </div>
-                                  )}
-                                  {exec.error_message && (
-                                    <div className="text-xs text-red-500 mt-1 line-clamp-2">
-                                      {exec.error_message}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* View conversation button */}
-                                {exec.task_id && (
-                                  <button
-                                    onClick={() => handleViewConversation(exec.task_id!)}
-                                    className="flex-shrink-0 flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                                  >
-                                    <MessageSquare className="h-3.5 w-3.5" />
-                                    {t('feed.view_conversation')}
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {isExpanded && renderExecutionHistory(history)}
                 </div>
               )
             })}

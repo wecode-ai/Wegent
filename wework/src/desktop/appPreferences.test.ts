@@ -24,12 +24,13 @@ const mergedDefaultPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 85,
   experimentalFeaturesEnabled: false,
+  localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   supervisorPrinciples: '',
   supervisorModelSelection: null,
+  projectAiModelSelection: null,
   supervisorIntervalSeconds: 30,
-  taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
@@ -154,6 +155,20 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
+  test('normalizes the local Codex subscription toggle and defaults to on', async () => {
+    invokeMock.mockResolvedValue({ localCodexSubscriptionEnabled: false })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      localCodexSubscriptionEnabled: false,
+    })
+
+    invokeMock.mockResolvedValue({ localCodexSubscriptionEnabled: 'yes' })
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
   test('migrates the legacy default workspace tab preference', async () => {
     invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'board' })
 
@@ -228,6 +243,32 @@ describe('appPreferences', () => {
         modelType: 'public',
         options: {
           weworkCloudModelNamespace: 'default',
+        },
+      },
+    })
+  })
+
+  test('normalizes the last selected project AI model', async () => {
+    invokeMock.mockResolvedValue({
+      projectAiModelSelection: {
+        modelName: '  project-manager-model  ',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
+          invalid: 1,
+        },
+      },
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      projectAiModelSelection: {
+        modelName: 'project-manager-model',
+        modelType: 'public',
+        options: {
+          reasoning: 'high',
         },
       },
     })

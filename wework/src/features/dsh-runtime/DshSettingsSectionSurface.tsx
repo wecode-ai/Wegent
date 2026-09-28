@@ -1,16 +1,22 @@
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+
 import { DshContributionSlotSurface } from './DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from './dshUiSlots'
 import { useDshSlotEntries } from './useDshSlotEntries'
 
 interface WeworkDshSettingsSection extends WeworkDshSlotEntry {
+  experimental?: boolean
   page: string
 }
 
 export function DshSettingsSectionSurface({ page }: { page: string }) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sections = useDshSlotEntries<WeworkDshSettingsSection>(WEWORK_DSH_SLOTS.settingsSection)
 
   return sections
-    .filter(section => section.page === page)
+    .filter(
+      section => section.page === page && (!section.experimental || experimentalFeaturesEnabled)
+    )
     .map(section => (
       <DshContributionSlotSurface
         key={section.id}

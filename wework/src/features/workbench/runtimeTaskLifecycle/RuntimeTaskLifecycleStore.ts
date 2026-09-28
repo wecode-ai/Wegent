@@ -1,4 +1,5 @@
 import type {
+  DeviceInfo,
   RuntimeDeviceWorkspace,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
@@ -6,6 +7,8 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
@@ -37,6 +40,7 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSnapshot',
   'getCurrentTask',
   'getTask',
+  'getTaskRevision',
   'selectTask',
 ])
 
@@ -80,6 +84,12 @@ export class RuntimeTaskLifecycleStore {
     return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getSnapshot() ?? null
   }
 
+  getTaskRevision(address: RuntimeTaskAddress | null | undefined): number {
+    if (!address) return 0
+    const canonicalAddress = this.canonicalizeAddress(address)
+    return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getRevision() ?? 0
+  }
+
   selectTask(
     snapshot: RuntimeTaskLifecycleStoreSnapshot,
     address: RuntimeTaskAddress | null | undefined
@@ -102,6 +112,19 @@ export class RuntimeTaskLifecycleStore {
           address,
           task: normalizedTask,
         }) || changed
+    }
+    if (changed) this.publish()
+  }
+
+  syncDevices(devices: DeviceInfo[]): void {
+    let changed = false
+    for (const device of devices) {
+      const canonicalDeviceId = device.device_id.trim()
+      if (!canonicalDeviceId) continue
+      for (const alias of getWorkbenchDeviceIds(device)) {
+        if (alias === canonicalDeviceId) continue
+        changed = this.registerDeviceAlias(alias, canonicalDeviceId) || changed
+      }
     }
     if (changed) this.publish()
   }
@@ -255,23 +278,36 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'turn_settled', turnId, outcome })
   }
 
+  userInputRequested(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'user_input_requested' })
+  }
+
+  userInputResponded(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'user_input_responded' })
+  }
+
   syncTranscript(
     address: RuntimeTaskAddress,
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
-    this.syncRuntimeTranscriptSnapshot(address, transcript)
+    logRuntimeTaskCreateStage('lifecycle-transcript-received', {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      running: transcript.running ?? null,
+      preserveActiveTurn: options.preserveActiveTurn === true,
+    })
+    const ignoreStaleIdleTranscript =
+      transcript.running === false &&
+      options.preserveActiveTurn === true &&
+      (this.getTask(address)?.derived.isRunning ?? false)
+    if (!ignoreStaleIdleTranscript) this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
-    const ignoreStaleIdleTranscript =
-      transcript.running === false &&
-      options.preserveActiveTurn === true &&
-      (current?.derived.isRunning ?? false)
-
     if (hasStreamingTurn) {
       if (ignoreStaleRunningTranscript) return
       this.executorStarted(address)
@@ -341,6 +377,21 @@ export class RuntimeTaskLifecycleStore {
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged
     const next = machine.getSnapshot()
+    if (
+      previous.execution.phase !== next.execution.phase ||
+      previous.turn.phase !== next.turn.phase ||
+      canonicalEvent.type === 'send_accepted'
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-transition', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        event: canonicalEvent.type,
+        previousExecution: previous.execution.phase,
+        execution: next.execution.phase,
+        previousTurn: previous.turn.phase,
+        turn: next.turn.phase,
+      })
+    }
     if (
       canonicalEvent.type === 'turn_settled' &&
       previous.task?.running === true &&
@@ -568,6 +619,14 @@ export function createRuntimeTaskLifecycleOwnershipView(
         ? value.bind(target)
         : (...args: unknown[]) => {
             if (!canWrite()) {
+              if (property === 'syncTranscript') {
+                const address = args[0] as RuntimeTaskAddress
+                logRuntimeTaskCreateStage('pane-transcript-write-skipped', {
+                  taskId: address.taskId,
+                  deviceId: address.deviceId,
+                  reason: 'inactive-owner',
+                })
+              }
               return property === 'syncRuntimeTask' ? false : undefined
             }
             return value.apply(target, args)

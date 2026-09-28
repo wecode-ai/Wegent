@@ -140,6 +140,266 @@
           "values": ["smart_app"]
         }
       ]
+    },
+    {
+      "key": "smart_app.create",
+      "action": "create",
+      "name": {
+        "zh-CN": "创建智能工作台",
+        "en": "Create Smart App"
+      },
+      "description": {
+        "zh-CN": "创建智能工作台的确认结果",
+        "en": "Confirmed result of: Create Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.copy",
+      "action": "copy",
+      "name": {
+        "zh-CN": "复制智能工作台",
+        "en": "Copy Smart App"
+      },
+      "description": {
+        "zh-CN": "复制智能工作台的确认结果",
+        "en": "Confirmed result of: Copy Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.link",
+      "action": "link",
+      "name": {
+        "zh-CN": "关联智能工作台目录",
+        "en": "Link Smart App directory"
+      },
+      "description": {
+        "zh-CN": "关联智能工作台目录的确认结果",
+        "en": "Confirmed result of: Link Smart App directory"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.export",
+      "action": "export",
+      "name": {
+        "zh-CN": "导出智能工作台",
+        "en": "Export Smart App"
+      },
+      "description": {
+        "zh-CN": "导出智能工作台的确认结果",
+        "en": "Confirmed result of: Export Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.publish",
+      "action": "publish",
+      "name": {
+        "zh-CN": "发布智能工作台",
+        "en": "Publish Smart App"
+      },
+      "description": {
+        "zh-CN": "发布智能工作台的确认结果",
+        "en": "Confirmed result of: Publish Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.share",
+      "action": "share",
+      "name": {
+        "zh-CN": "保存智能工作台分享",
+        "en": "Save Smart App sharing"
+      },
+      "description": {
+        "zh-CN": "保存智能工作台分享的确认结果",
+        "en": "Confirmed result of: Save Smart App sharing"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.uninstall",
+      "action": "uninstall",
+      "name": {
+        "zh-CN": "卸载智能工作台",
+        "en": "Uninstall Smart App"
+      },
+      "description": {
+        "zh-CN": "卸载智能工作台的确认结果",
+        "en": "Confirmed result of: Uninstall Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.start",
+      "action": "start",
+      "name": {
+        "zh-CN": "启动智能工作台运行时",
+        "en": "Start Smart App runtime"
+      },
+      "description": {
+        "zh-CN": "启动智能工作台运行时的确认结果",
+        "en": "Confirmed result of: Start Smart App runtime"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.stop",
+      "action": "stop",
+      "name": {
+        "zh-CN": "停止智能工作台运行时",
+        "en": "Stop Smart App runtime"
+      },
+      "description": {
+        "zh-CN": "停止智能工作台运行时的确认结果",
+        "en": "Confirmed result of: Stop Smart App runtime"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.configure",
+      "action": "configure",
+      "name": {
+        "zh-CN": "配置智能工作台",
+        "en": "Configure Smart App"
+      },
+      "description": {
+        "zh-CN": "配置智能工作台的确认结果",
+        "en": "Confirmed result of: Configure Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.verify",
+      "action": "verify",
+      "name": {
+        "zh-CN": "验证智能工作台",
+        "en": "Verify Smart App"
+      },
+      "description": {
+        "zh-CN": "验证智能工作台的确认结果",
+        "en": "Confirmed result of: Verify Smart App"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.add_plugin",
+      "action": "add_plugin",
+      "name": {
+        "zh-CN": "添加工作台插件",
+        "en": "Add Smart App plugin"
+      },
+      "description": {
+        "zh-CN": "添加工作台插件的确认结果",
+        "en": "Confirmed result of: Add Smart App plugin"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.publish_request",
+      "action": "publish_request",
+      "name": {
+        "zh-CN": "提交智能工作台发布包",
+        "en": "Submit Smart App publication package"
+      },
+      "description": {
+        "zh-CN": "发布包上传并被接收，不代表审核通过",
+        "en": "Publication package uploaded and accepted, not approval"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
     }
   ]
 }

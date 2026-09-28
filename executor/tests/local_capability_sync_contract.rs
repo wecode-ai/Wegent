@@ -2441,6 +2441,58 @@ async fn plugin_reconciliation_preserves_skills_mcps_and_personal_packages() {
 }
 
 #[tokio::test]
+async fn personal_cloud_sync_does_not_overwrite_a_bundled_or_local_plugin() {
+    let temp = TempRoot::new("personal-plugin-ownership-conflict");
+    let manifest_path = temp.path().join("capabilities.json");
+    let store_dir = temp.path().join("store");
+    let personal_plugin = temp
+        .path()
+        .join("bundled-marketplaces/wework-personal/plugins/smart-app-builder");
+    fs::create_dir_all(personal_plugin.join(".codex-plugin")).unwrap();
+    fs::write(
+        personal_plugin.join(".codex-plugin/plugin.json"),
+        r#"{"name":"smart-app-builder","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    fs::write(personal_plugin.join("marker"), "bundled content").unwrap();
+
+    let package = zip_bytes(&[(
+        ".codex-plugin/plugin.json",
+        r#"{"name":"smart-app-builder","version":"2.0.0"}"#,
+    )]);
+    let checksum = sha256_hex(&package);
+    let provider = StaticPackageProvider::default().with_plugin("/package", package);
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join("skills"))
+        .with_plugins_dir(temp.path().join("claude/plugins"))
+        .with_codex_plugins_dir(temp.path().join("codex/plugins"))
+        .with_store_dir(store_dir);
+    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+
+    let result = handler
+        .apply_sync(json!({"scope":"plugins","mode":"merge","plugins":[{
+            "installed_plugin_id":10,
+            "name":"smart-app-builder",
+            "marketplace":"wework-personal",
+            "version":"2.0.0",
+            "download_path":"/package",
+            "checksum":checksum
+        }]}))
+        .await
+        .unwrap();
+
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["plugins"][0]["status"], "failed");
+    assert_eq!(
+        fs::read_to_string(personal_plugin.join("marker")).unwrap(),
+        "bundled content"
+    );
+    let manifest = read_json(&manifest_path);
+    assert!(manifest["plugins"]
+        .get("smart-app-builder@wework-personal")
+        .is_none());
+}
+
+#[tokio::test]
 async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
     let temp = TempRoot::new("plugin-reconciliation-removal");
     let manifest_path = temp.path().join("capabilities.json");
@@ -2472,6 +2524,7 @@ async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
             },
             {
                 "installed_plugin_id":10,"name":"shared-example","marketplace":"wework-personal","version":"1.0.0",
+                "source":{"type":"marketplace","catalogItemId":"32","marketplace":"wework-personal"},
                 "download_path":"/shared-package","checksum":shared_checksum
             }
         ]}))
@@ -2489,10 +2542,14 @@ async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
             .as_str()
             .unwrap(),
     );
+    assert_eq!(
+        manifest["plugins"]["shared-example@wework-personal"]["cloud_plugin_id"],
+        32
+    );
+    let personal_marketplace_root = temp.path().join("bundled-marketplaces/wework-personal");
     let personal_marketplace_path =
-        codex_plugins_dir.join("marketplaces/wework-personal/.agents/plugins/marketplace.json");
-    let author_plugin_path =
-        codex_plugins_dir.join("marketplaces/wework-personal/plugins/author-plugin");
+        personal_marketplace_root.join(".agents/plugins/marketplace.json");
+    let author_plugin_path = personal_marketplace_root.join("plugins/author-plugin");
     fs::create_dir_all(&author_plugin_path).unwrap();
     fs::write(author_plugin_path.join("marker"), "author content").unwrap();
     let mut personal_marketplace = read_json(&personal_marketplace_path);
@@ -2532,6 +2589,15 @@ async fn plugin_reconciliation_removes_only_identified_cloud_installations() {
             .as_str(),
         Some("local")
     );
+    assert_eq!(
+        read_toml(codex_plugins_dir.parent().unwrap().join("config.toml"))["marketplaces"]
+            ["wework-personal"]["source"]
+            .as_str(),
+        Some(personal_marketplace_root.to_string_lossy().as_ref())
+    );
+    assert!(!codex_plugins_dir
+        .join("marketplaces/wework-personal")
+        .exists());
     let personal_marketplace = read_json(personal_marketplace_path);
     assert!(personal_marketplace["plugins"]
         .as_array()

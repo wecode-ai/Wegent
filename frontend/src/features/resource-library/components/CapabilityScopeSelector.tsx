@@ -21,6 +21,7 @@ interface CapabilityScopeSelectorProps {
   onChange: (value: CapabilityPublishTarget, groupName?: string, groupNames?: string[]) => void
   existingResource?: boolean
   multipleGroups?: boolean
+  compact?: boolean
 }
 
 export function CapabilityScopeSelector({
@@ -31,6 +32,7 @@ export function CapabilityScopeSelector({
   onChange,
   existingResource = false,
   multipleGroups = false,
+  compact = false,
 }: CapabilityScopeSelectorProps) {
   const { t } = useTranslation('resource-library')
   const selectedGroupNames = groupNames || (groupName ? [groupName] : [])
@@ -43,23 +45,20 @@ export function CapabilityScopeSelector({
   }
 
   return (
-    <section className="space-y-4">
+    <section className={compact ? 'space-y-3' : 'space-y-4'}>
       <div className="flex w-full items-center gap-3">
         <h3 className="shrink-0 text-sm font-semibold text-text-primary">
           {t('new_capability.scope_title')}
         </h3>
-        <div className="h-px flex-1 bg-border" aria-hidden />
+        {!compact && <div className="h-px flex-1 bg-border" aria-hidden />}
       </div>
       <div className="space-y-3">
-        <p className="mt-1 text-xs text-text-secondary">
-          {t(
-            existingResource
-              ? 'new_capability.existing_scope_description'
-              : 'new_capability.scope_description'
-          )}
-        </p>
         <div
-          className="grid gap-2 sm:grid-cols-3"
+          className={
+            compact
+              ? 'grid gap-1 rounded-lg bg-surface p-1 sm:grid-cols-3'
+              : 'grid gap-2 sm:grid-cols-3'
+          }
           role="group"
           aria-label={t('new_capability.scope_title')}
         >
@@ -73,8 +72,14 @@ export function CapabilityScopeSelector({
             <Button
               key={target}
               type="button"
-              variant={value === target ? 'primary' : 'outline'}
-              className="h-11 min-w-[44px]"
+              variant={compact ? 'ghost' : value === target ? 'primary' : 'outline'}
+              className={
+                compact
+                  ? value === target
+                    ? 'h-9 min-w-[44px] border border-border bg-base text-text-primary shadow-sm hover:bg-base'
+                    : 'h-9 min-w-[44px] border border-transparent text-text-secondary hover:bg-base/70 hover:text-text-primary'
+                  : 'h-11 min-w-[44px]'
+              }
               onClick={() => {
                 if (target !== 'team') {
                   onChange(target)
@@ -98,6 +103,13 @@ export function CapabilityScopeSelector({
             </Button>
           ))}
         </div>
+        <p className="text-xs leading-[18px] text-text-muted">
+          {t(
+            existingResource
+              ? 'new_capability.existing_scope_description'
+              : 'new_capability.scope_description'
+          )}
+        </p>
       </div>
       {value === 'team' && multipleGroups && (
         <div className="space-y-2">

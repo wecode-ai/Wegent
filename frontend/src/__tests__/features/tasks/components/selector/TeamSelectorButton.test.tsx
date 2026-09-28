@@ -212,6 +212,30 @@ describe('TeamSelectorButton', () => {
     expect(setSelectedTeam).not.toHaveBeenCalled()
   })
 
+  it.each(['Claude', 'Codex'])(
+    'switches from chat to the supported code mode for %s',
+    async name => {
+      const chatTeam = makeTeam({ id: 1, name: 'chat-agent', bind_mode: ['chat'] })
+      const codingTeam = makeTeam({ id: 2, name, bind_mode: ['code', 'task'] })
+      const setSelectedTeam = jest.fn()
+
+      render(
+        <TeamSelectorButton
+          selectedTeam={chatTeam}
+          setSelectedTeam={setSelectedTeam}
+          teams={[chatTeam, codingTeam]}
+          disabled={false}
+          currentMode="chat"
+        />
+      )
+
+      fireEvent.click(await screen.findByTestId(`team-option-${name}`))
+
+      expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&agent=code')
+      expect(setSelectedTeam).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves project context when switching to an agent on another page', async () => {
     mockSearchParams = new URLSearchParams({
       projectId: '2180',
