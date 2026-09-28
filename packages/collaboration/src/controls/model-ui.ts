@@ -1,3 +1,8 @@
+import {
+  builtinCodexCatalogModel,
+  codexCatalogModelIdForUpstream,
+} from "@wegent/chat-core/codex-catalog";
+import { getCloudModelUpstreamApiFormat } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 export interface ModelControlOption {
@@ -117,56 +122,58 @@ const MODEL_INTERFACE_REASONING_OPTIONS: Record<
   },
 };
 
+const REASONING_CONTROL: ModelControlConfig = {
+  id: "reasoning",
+  label: "Reasoning",
+  labelKey: "workbench.reasoning_level",
+  defaultValue: "high",
+  placement: "aboveModels",
+  scope: "family",
+  includeInLabel: "never",
+  options: [
+    {
+      value: "low",
+      label: "Low",
+      labelKey: "workbench.intelligence_low",
+      order: 10,
+    },
+    {
+      value: "medium",
+      label: "Medium",
+      labelKey: "workbench.intelligence_medium",
+      order: 20,
+    },
+    {
+      value: "high",
+      label: "High",
+      labelKey: "workbench.intelligence_high",
+      order: 30,
+    },
+    {
+      value: "xhigh",
+      label: "Extra High",
+      labelKey: "workbench.intelligence_ultra",
+      order: 40,
+    },
+    {
+      value: "max",
+      label: "Maximum",
+      labelKey: "workbench.intelligence_max",
+      order: 50,
+    },
+    {
+      value: "ultra",
+      label: "Extra High",
+      labelKey: "workbench.intelligence_ultra",
+      description: "Faster, uses more quota",
+      descriptionKey: "workbench.reasoning_ultra_description",
+      order: 60,
+    },
+  ],
+};
+
 const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
-  {
-    id: "reasoning",
-    label: "Reasoning",
-    labelKey: "workbench.reasoning_level",
-    defaultValue: "high",
-    placement: "aboveModels",
-    scope: "family",
-    includeInLabel: "never",
-    options: [
-      {
-        value: "low",
-        label: "Low",
-        labelKey: "workbench.intelligence_low",
-        order: 10,
-      },
-      {
-        value: "medium",
-        label: "Medium",
-        labelKey: "workbench.intelligence_medium",
-        order: 20,
-      },
-      {
-        value: "high",
-        label: "High",
-        labelKey: "workbench.intelligence_high",
-        order: 30,
-      },
-      {
-        value: "xhigh",
-        label: "Extra High",
-        labelKey: "workbench.intelligence_ultra",
-        order: 40,
-      },
-      {
-        value: "max",
-        label: "Maximum",
-        labelKey: "workbench.intelligence_max",
-        order: 50,
-      },
-      {
-        value: "ultra",
-        label: "Extra High",
-        labelKey: "workbench.intelligence_ultra",
-        description: "Faster, uses more quota",
-        descriptionKey: "workbench.reasoning_ultra_description",
-        order: 60,
-      },
-    ],
-  },
+  REASONING_CONTROL,
   {
     id: "collaborationMode",
     label: "Mode",
@@ -484,6 +491,103 @@ function modelInterfaceReasoningOptions(
   });
 }
 
+export interface CatalogReasoningLevels {
+  efforts: string[];
+  defaultEffort?: string;
+}
+
+function rawConfigString(
+  config: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const value = config?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Resolve the built-in Codex catalog id for a model.
+ *
+ * Cloud models usually only identify their upstream through `modelId`, and the
+ * runtime already resolves that identity into a catalog id before sending the
+ * task to the executor. UI capabilities must use the same resolution so the
+ * picker and the executor agree on the model's reasoning levels.
+ */
+export function resolveCodexCatalogModelId(model: UnifiedModel): string | null {
+  const explicit =
+    rawConfigString(model.config, "codex_catalog_model_id") ||
+    rawConfigString(model.config, "codexCatalogModelId");
+  if (explicit) return explicit;
+
+  const upstreamCandidates = [
+    model.modelId,
+    rawConfigString(model.config, "model_id"),
+    rawConfigString(model.config, "modelId"),
+    rawConfigString(model.config, "model"),
+  ];
+  const candidates = upstreamCandidates.some((candidate) => candidate?.trim())
+    ? upstreamCandidates
+    : [model.name];
+  return codexCatalogModelIdForUpstream(
+    candidates,
+    getCloudModelUpstreamApiFormat(model) ?? "",
+  );
+}
+
+function catalogReasoningLevels(
+  catalog: Record<string, unknown> | null,
+): CatalogReasoningLevels | null {
+  if (!catalog) return null;
+  const rawLevels = catalog.supported_reasoning_levels;
+  if (!Array.isArray(rawLevels)) return null;
+  const efforts = Array.from(
+    new Set(
+      rawLevels
+        .flatMap((level) => {
+          if (typeof level === "string") return [level];
+          if (!level || typeof level !== "object" || Array.isArray(level)) {
+            return [];
+          }
+          const effort = (level as Record<string, unknown>).effort;
+          return typeof effort === "string" ? [effort] : [];
+        })
+        .map(
+          (effort) => normalizeModelOptionValue("reasoning", effort) ?? effort,
+        )
+        .filter(Boolean),
+    ),
+  );
+  if (efforts.length === 0) return null;
+  const defaultLevel = catalog.default_reasoning_level;
+  return {
+    efforts,
+    defaultEffort:
+      typeof defaultLevel === "string"
+        ? normalizeModelOptionValue("reasoning", defaultLevel)
+        : undefined,
+  };
+}
+
+/**
+ * Reasoning levels declared by the built-in Codex catalog of a cloud model.
+ *
+ * Cloud models carry no `ui.reasoningEfforts`; their reasoning capability is
+ * whatever the catalog the runtime sends to the executor declares. Local
+ * models derive reasoning from their own `model-interface` metadata, so this
+ * intentionally ignores them.
+ */
+export function resolveModelCatalogReasoning(
+  model: UnifiedModel,
+): CatalogReasoningLevels | null {
+  if (model.provider === "local") return null;
+  const catalogId = resolveCodexCatalogModelId(model);
+  if (!catalogId) return null;
+  return catalogReasoningLevels(builtinCodexCatalogModel(catalogId));
+}
+
+export function hasCatalogReasoningEfforts(model: UnifiedModel): boolean {
+  return resolveModelCatalogReasoning(model) !== null;
+}
+
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   const ui = getConfigUi(model);
   const reasoningEfforts = ui.reasoningEfforts ?? ui.supportedReasoningEfforts;
@@ -570,7 +674,39 @@ export function getControlsForModel(
       ];
     });
 
-  return controls;
+  if (controls.some((control) => control.id === "reasoning")) {
+    return controls;
+  }
+
+  // Cloud models do not declare reasoning through `ui`; the runtime resolves
+  // their capability from the built-in Codex catalog instead, so the picker
+  // must expose the same declared levels.
+  const catalogReasoning = resolveModelCatalogReasoning(model);
+  if (!catalogReasoning) return controls;
+  const catalogOptions = modelInterfaceReasoningOptions(
+    catalogReasoning.efforts,
+  );
+  if (catalogOptions.length === 0) return controls;
+  const catalogDefault =
+    catalogReasoning.defaultEffort &&
+    catalogOptions.some(
+      (option) => option.value === catalogReasoning.defaultEffort,
+    )
+      ? catalogReasoning.defaultEffort
+      : catalogOptions.some(
+            (option) => option.value === REASONING_CONTROL.defaultValue,
+          )
+        ? REASONING_CONTROL.defaultValue
+        : catalogOptions[0].value;
+
+  return [
+    ...controls,
+    {
+      ...REASONING_CONTROL,
+      defaultValue: catalogDefault,
+      options: catalogOptions,
+    },
+  ];
 }
 
 export function getModelDisplayLabel(

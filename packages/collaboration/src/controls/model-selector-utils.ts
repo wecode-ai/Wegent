@@ -1,6 +1,7 @@
 import {
   type ModelControlConfig,
   getControlsForModel,
+  hasCatalogReasoningEfforts,
   isCodexOfficialModel,
   isModelInterfaceModel,
   isSameModelSelection,
@@ -140,7 +141,13 @@ export function desktopModelControl(
   control: ModelControlConfig | undefined,
   model: UnifiedModel | null,
 ): ModelControlConfig | undefined {
-  if (!control || control.id !== "reasoning" || isModelInterfaceModel(model)) {
+  if (!control || control.id !== "reasoning") {
+    return control;
+  }
+  if (
+    isModelInterfaceModel(model) ||
+    (model && hasCatalogReasoningEfforts(model))
+  ) {
     return control;
   }
 
