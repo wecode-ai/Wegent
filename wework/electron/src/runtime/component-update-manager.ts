@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, type Hash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import {
   cp,
@@ -94,6 +94,16 @@ interface ResolvedComponent {
   id: ManagedComponentId
   path: string
   contentSha256: string
+}
+
+// Identity of the bytes a component held when content verification last
+// approved it. Written only after a full content verification succeeded.
+interface ComponentVerificationRecord {
+  schemaVersion: 1
+  archiveSha256: string
+  entryPath: string
+  contentSha256: string
+  signature: string
 }
 
 export interface ComponentUpdateManagerOptions {
@@ -404,8 +414,7 @@ export class ComponentUpdateManager {
     source: string
   ): Promise<void> {
     const target = this.componentRoot(id, component.archiveSha256)
-    const componentPath = component.entryPath === '.' ? target : join(target, component.entryPath)
-    if (await componentMatches(componentPath, component.contentSha256)) return
+    if (await this.verifyManagedComponent(id, component)) return
 
     const temporary = `${target}.${process.pid}.tmp`
     await rm(temporary, { recursive: true, force: true })
@@ -427,6 +436,7 @@ export class ComponentUpdateManager {
       }
       await rm(target, { recursive: true, force: true })
       await rename(temporary, target)
+      await this.writeVerificationRecord(id, component, this.componentEntryPath(id, component))
     } finally {
       await rm(temporary, { recursive: true, force: true })
     }
@@ -528,10 +538,8 @@ export class ComponentUpdateManager {
           path = join(this.resourcesRoot, packagedComponent.path)
           await stat(path)
         } else {
-          const root = this.componentRoot(id, active.archiveSha256)
-          const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
-          if (await componentMatches(managedPath, active.contentSha256)) {
-            path = managedPath
+          if (await this.verifyManagedComponent(id, active)) {
+            path = this.componentEntryPath(id, active)
           } else if (active.contentSha256 === packagedComponent.sha256) {
             path = join(this.resourcesRoot, packagedComponent.path)
             await stat(path)
@@ -699,8 +707,7 @@ export class ComponentUpdateManager {
     onBytes: (bytes: number) => void
   ): Promise<void> {
     const target = this.componentRoot(id, component.archiveSha256)
-    const componentPath = component.entryPath === '.' ? target : join(target, component.entryPath)
-    if (await componentMatches(componentPath, component.contentSha256)) return
+    if (await this.verifyManagedComponent(id, component)) return
 
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     const archive = `${target}.${process.pid}.tar.gz`
@@ -742,6 +749,7 @@ export class ComponentUpdateManager {
       }
       await rm(target, { recursive: true, force: true })
       await rename(temporary, target)
+      await this.writeVerificationRecord(id, component, this.componentEntryPath(id, component))
     } finally {
       await rm(archive, { force: true })
       await rm(temporary, { recursive: true, force: true })
@@ -750,6 +758,79 @@ export class ComponentUpdateManager {
 
   private componentRoot(id: ManagedComponentId, archiveSha256: string): string {
     return join(this.root, 'blobs', id, archiveSha256)
+  }
+
+  private componentEntryPath(id: ManagedComponentId, component: RemoteComponent): string {
+    const root = this.componentRoot(id, component.archiveSha256)
+    return component.entryPath === '.' ? root : join(root, component.entryPath)
+  }
+
+  private verificationRecordPath(id: ManagedComponentId): string {
+    return join(this.root, 'verification', `${id}.json`)
+  }
+
+  private async readVerificationRecord(
+    id: ManagedComponentId
+  ): Promise<ComponentVerificationRecord | null> {
+    try {
+      const parsed = JSON.parse(await readFile(this.verificationRecordPath(id), 'utf8')) as unknown
+      return validateComponentVerificationRecord(parsed)
+    } catch {
+      return null
+    }
+  }
+
+  private async writeVerificationRecord(
+    id: ManagedComponentId,
+    component: RemoteComponent,
+    entryPath: string
+  ): Promise<void> {
+    const record: ComponentVerificationRecord = {
+      schemaVersion: 1,
+      archiveSha256: component.archiveSha256,
+      entryPath: component.entryPath,
+      contentSha256: component.contentSha256,
+      signature: await hashComponentIdentity(entryPath),
+    }
+    const path = this.verificationRecordPath(id)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    // A staging pass and a startup pass can both resolve the same component, so
+    // the temporary name must not collide between concurrent writers.
+    const temporary = `${path}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+    await rename(temporary, path)
+  }
+
+  /**
+   * Confirms that an activated managed component still holds the content a
+   * previous full verification approved.
+   *
+   * Content is always verified from bytes when a component is downloaded,
+   * extracted, or repaired. Repeating that pass on every launch costs seconds
+   * on Windows, where reading ~600 MB of component files runs through
+   * anti-virus file scanning, so a component whose files are still the ones
+   * that were verified answers from file identity instead. Identity is not a
+   * byte-level proof: content changed in place while keeping its path, size,
+   * and modification time is reported as unchanged.
+   */
+  private async verifyManagedComponent(
+    id: ManagedComponentId,
+    component: RemoteComponent
+  ): Promise<boolean> {
+    const entryPath = this.componentEntryPath(id, component)
+    const record = await this.readVerificationRecord(id)
+    if (
+      record !== null &&
+      record.archiveSha256 === component.archiveSha256 &&
+      record.entryPath === component.entryPath &&
+      record.contentSha256 === component.contentSha256 &&
+      (await matchesComponentIdentity(entryPath, record.signature))
+    ) {
+      return true
+    }
+    if (!(await componentMatches(entryPath, component.contentSha256))) return false
+    await this.writeVerificationRecord(id, component, entryPath)
+    return true
   }
 
   private async readState(): Promise<ComponentState> {
@@ -951,6 +1032,66 @@ async function sha256(path: string): Promise<string> {
   const hash = createHash('sha256')
   await pipeline(createReadStream(path), hash)
   return hash.digest('hex')
+}
+
+/**
+ * Cheap identity of a component entry: the paths it contains with each file's
+ * size and modification time. Reading metadata is orders of magnitude cheaper
+ * than reading content, which is what lets startup confirm that an activated
+ * component is still the one that was verified.
+ */
+export async function hashComponentIdentity(path: string): Promise<string> {
+  const metadata = await lstat(path)
+  const hash = createHash('sha256')
+  if (metadata.isFile()) {
+    hash.update(componentFileIdentity('', metadata.size, metadata.mtimeMs))
+  } else if (metadata.isDirectory()) {
+    await hashIdentityTree(path, '', hash)
+  } else {
+    throw new Error(`Unsupported component entry: ${path}`)
+  }
+  return hash.digest('hex')
+}
+
+async function hashIdentityTree(root: string, relative: string, hash: Hash): Promise<void> {
+  const entries = await readdir(join(root, relative), { withFileTypes: true })
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const child = join(relative, entry.name)
+    if (entry.isDirectory()) {
+      hash.update(`directory:${child}\0`)
+      await hashIdentityTree(root, child, hash)
+    } else if (entry.isFile()) {
+      const metadata = await stat(join(root, child))
+      hash.update(componentFileIdentity(child, metadata.size, metadata.mtimeMs))
+    } else {
+      throw new Error(`Unsupported component tree entry: ${child}`)
+    }
+  }
+}
+
+function componentFileIdentity(path: string, size: number, mtimeMs: number): string {
+  return `file:${path}\0${size}\0${Math.round(mtimeMs)}\0`
+}
+
+async function matchesComponentIdentity(path: string, signature: string): Promise<boolean> {
+  try {
+    return (await hashComponentIdentity(path)) === signature
+  } catch {
+    return false
+  }
+}
+
+function validateComponentVerificationRecord(input: unknown): ComponentVerificationRecord | null {
+  if (!isRecord(input) || input.schemaVersion !== 1) return null
+  if (
+    !isSha256(input.archiveSha256) ||
+    !isSha256(input.contentSha256) ||
+    !isSha256(input.signature) ||
+    !isSafeEntryPath(input.entryPath)
+  ) {
+    return null
+  }
+  return input as unknown as ComponentVerificationRecord
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
