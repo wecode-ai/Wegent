@@ -221,7 +221,13 @@ function createWebContents(input: {
   return { capturePage, contents, debuggerSession }
 }
 
-function createIsolatedClipboardRouter(focused = true) {
+function createIsolatedClipboardRouter(
+  focused = true,
+  popoutHost?: {
+    openPopoutTaskInMain: (taskAddressId: string) => void
+    setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
+  }
+) {
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -257,10 +263,32 @@ function createIsolatedClipboardRouter(focused = true) {
         get: vi.fn(),
         set: vi.fn(),
       },
-    } as never
+    } as never,
+    popoutHost as never
   )
   return { router, targetWindow }
 }
+
+describe('Popout Window sizing capabilities', () => {
+  test('forwards validated conversation and menu states to the native window', async () => {
+    const popoutHost = {
+      openPopoutTaskInMain: vi.fn(),
+      setPopoutMode: vi.fn(),
+    }
+    const { router } = createIsolatedClipboardRouter(true, popoutHost)
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.setPopoutMode', { mode: 'menu' })
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'window.openPopoutTaskInMain', {
+      taskAddressId: 'local-device:task-1',
+    })
+
+    expect(popoutHost.openPopoutTaskInMain).toHaveBeenCalledWith('local-device:task-1')
+    expect(popoutHost.setPopoutMode).toHaveBeenCalledWith('menu')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'window.setPopoutMode', { mode: 'invalid' })
+    ).rejects.toMatchObject({ code: 'invalid_params' })
+  })
+})
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {

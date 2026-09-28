@@ -933,14 +933,94 @@ async function verifyBackgroundTaskWindowLifecycle({
 }
 
 async function verifyPopoutWindowLifecycle(control, composerSelector) {
+  await control.command('closeMainWindowToTray', 'body')
+  try {
+    await waitForWindowVisibility(control, { mainVisible: false })
+    await verifyPopoutWithMainHidden(control)
+  } finally {
+    control.activateWindow('main')
+    await control.command('restoreMainWindow', 'body')
+  }
+  await control.command('waitFor', composerSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
+async function waitForWindowVisibility(control, expected) {
+  const startedAt = Date.now()
+  while (true) {
+    const snapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+    if (Object.entries(expected).every(([key, value]) => snapshot[key] === value)) return snapshot
+    assert.ok(
+      Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS,
+      `Window visibility did not settle: ${JSON.stringify({ expected, snapshot })}`
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+}
+
+async function dismissPopoutWithEscape(control) {
+  await control.commandForWindow('popout-window', 'pressWindowKey', 'body', { key: 'Escape' })
+  await waitForWindowVisibility(control, { mainVisible: false, popoutVisible: false })
+}
+
+async function verifyPopoutWithMainHidden(control) {
+  const readyCountBeforePopout = control.readyCount
+  const popoutAlreadyRegistered = control.controlClientsByWindow.has('popout-window')
   await control.command('showPopoutWindow', 'body', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  if (!popoutAlreadyRegistered) {
+    const ready = await withTimeout(
+      control.awaitReadyAfter(readyCountBeforePopout),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The Popout Window did not register its WebView'
+    )
+    assert.equal(ready.windowLabel, 'popout-window')
+  }
+  control.activateWindow('main')
   const initialPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   assert.equal(initialPopout.popoutVisible, true, 'Popout Window did not become visible')
+  assert.equal(
+    initialPopout.mainVisible,
+    false,
+    'Opening the Popout Window revealed the main window'
+  )
+  assert.equal(
+    initialPopout.mainFocused,
+    false,
+    'Opening the Popout Window focused the main window'
+  )
   assert.ok(initialPopout.popoutWindowId, 'Popout Window identity was unavailable')
   assert.ok(initialPopout.popoutWebContentsId, 'Popout Window WebContents identity was unavailable')
+  assert.equal(initialPopout.popoutBounds.width, 470)
+  assert.equal(initialPopout.popoutBounds.height, 112)
   try {
+    const overlayPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'menu' })
+    )
+    assert.equal(overlayPopout.popoutBounds.width, initialPopout.popoutBounds.width)
+    assert.ok(overlayPopout.popoutBounds.height > initialPopout.popoutBounds.height)
+    const collapsedPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'composer' })
+    )
+    assert.equal(collapsedPopout.popoutBounds.height, initialPopout.popoutBounds.height)
+
+    const expandedPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'conversation' })
+    )
+    assert.ok(expandedPopout.popoutBounds.width > initialPopout.popoutBounds.width)
+    assert.ok(expandedPopout.popoutBounds.height > initialPopout.popoutBounds.height)
+    assert.equal(expandedPopout.popoutWindowId, initialPopout.popoutWindowId)
+    const restoredPopout = JSON.parse(
+      await control.command('setPopoutWindowMode', 'body', { value: 'composer' })
+    )
+    assert.deepEqual(
+      [restoredPopout.popoutBounds.width, restoredPopout.popoutBounds.height],
+      [initialPopout.popoutBounds.width, initialPopout.popoutBounds.height]
+    )
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
       const dataUrl = await control.command('capturePopoutWindow', 'body', {
@@ -952,6 +1032,7 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
       assert.ok(png.length > 10_000, 'Popout Window capture did not contain rendered controls')
       await writeFile(join(resultDir, 'window-lifecycle-00-popout-window.png'), png)
     }
+    await dismissPopoutWithEscape(control)
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
@@ -973,6 +1054,11 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
   const reopenedPopout = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
   try {
     assert.equal(reopenedPopout.popoutVisible, true, 'Reopened Popout Window was not visible')
+    assert.equal(
+      reopenedPopout.mainVisible,
+      false,
+      'Reopening the Popout Window revealed the main window'
+    )
     assert.equal(
       reopenedPopout.popoutWindowId,
       initialPopout.popoutWindowId,
@@ -996,14 +1082,87 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
       assert.ok(png.length > 10_000, 'Reopened Popout Window was not immediately rendered')
       await writeFile(join(resultDir, 'window-lifecycle-01-popout-window-reopened.png'), png)
     }
+    await verifyPopoutConversation(control)
   } finally {
     await control.command('dismissPopoutWindow', 'body')
   }
-  await control.command('waitFor', composerSelector, {
+}
+
+async function verifyPopoutConversation(control) {
+  const popoutControl = {
+    command: (...args) => control.commandForWindow('popout-window', ...args),
+  }
+  const composer = '[data-testid="chat-message-input"]'
+  await popoutControl.command('waitFor', composer, {
     visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  assert.equal(
+    Number(
+      await popoutControl.command('getElementCount', '[data-testid="workbench-split-layout"]')
+    ),
+    0,
+    'The Popout Window must not restore a separate split-layout session'
+  )
+  control.setScenario('fresh_chat')
+  await selectE2EModel(popoutControl)
+  await sendPrompt(popoutControl, composer, FRESH_CHAT_PROMPT)
+  await popoutControl.command('waitFor', '[data-testid="message-user"]', {
+    text: FRESH_CHAT_PROMPT,
+    visible: true,
+  })
+  await popoutControl.command(
+    'waitFor',
+    '[data-testid="popout-workbench-page"][data-popout-mode="conversation"]',
+    { visible: true }
+  )
+  const resizeStartedAt = Date.now()
+  while (true) {
+    const windowSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
+    if (windowSnapshot.popoutBounds.height === 640) break
+    assert.ok(
+      Date.now() - resizeStartedAt < DEFAULT_STEP_TIMEOUT_MS,
+      'The Popout Window did not expand after sending a message'
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const message = await getSingleElementMetrics(
+    popoutControl,
+    '[data-testid="message-user"]',
+    'The sent Popout Window message'
+  )
+  const viewport = await getSingleElementMetrics(
+    popoutControl,
+    '[data-testid="desktop-workbench-content"]',
+    'The Popout Window conversation viewport'
+  )
+  assert.ok(
+    message.bottom > viewport.top && message.top < viewport.bottom && viewport.height > 112,
+    'The sent message was clipped inside the compact composer window'
+  )
+  await popoutControl.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    visible: true,
+    timeoutMs: MODEL_RESPONSE_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(popoutControl, 'window-lifecycle-02-popout-conversation.png')
+  await dismissPopoutWithEscape(control)
+  await control.command('showPopoutWindow', 'body')
+  await popoutControl.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    visible: true,
+  })
+  await popoutControl.command('click', '[data-testid="popout-window-new-chat-button"]')
+  await popoutControl.command(
+    'waitFor',
+    '[data-testid="popout-workbench-page"][data-popout-mode="composer"]',
+    { visible: true }
+  )
+  assert.equal(
+    Number(await popoutControl.command('getElementCount', '[data-testid="message-assistant"]')),
+    0,
+    'Starting a new Popout Window chat retained the previous conversation'
+  )
 }
 
 async function attachAndSendOnlyFile(control, composerSelector) {

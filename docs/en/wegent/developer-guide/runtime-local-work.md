@@ -358,6 +358,10 @@ Hidden workbenches kept mounted must not subscribe to global project creation, w
 
 Electron startup readiness must be idempotent: after startup completes, notifications from navigation or remounting must not show and focus the main window again, stealing focus from a popout. Concurrent notifications share one completion operation; a failed operation can be attempted again.
 
+The popout chat window uses one current conversation to drive messages, its title, and native window dimensions, without restoring the main workbench's split layout. Its modes are composer, menu, and conversation. Opening a menu preserves the composer's bottom position; sending switches to conversation dimensions. The toolbar remains available in compact composer mode.
+
+The popout handles unmodified `Esc` at the native keyboard event layer, hiding the window while retaining its conversation; IME composition is excluded. Invoking the popout shortcut must not restore the main window. Explicit Dock, tray, or “Open in main window” actions may open it; ordinary application focus activation does not restore it.
+
 When a page does not recover after reload, inspect Electron's `[renderer-load]` events. Correlate loading, DOM readiness, completion, failure, and prevented unload events by `webContentsId`. These events omit page URLs to avoid exposing query parameters.
 
 When restoring a local task's project-space context, use the project ID in its binding to read the item without scanning the project list again. The `project-space-context-resolved/failed` diagnostics record lookup duration and whether the current view applied the result, distinguishing lookup timeouts from stale responses.

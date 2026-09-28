@@ -208,7 +208,9 @@ export interface ElectronE2EHost {
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
+  openPopoutTaskInMain: (taskAddressId: string) => void
   popoutWindowSnapshot: () => {
+    bounds: { width: number; height: number } | null
     exists: boolean
     focused: boolean
     visible: boolean
@@ -216,6 +218,7 @@ export interface ElectronE2EHost {
     webContentsId: number | null
   }
   setSystemDragContext: (context: { conversationTitle: string | null }) => void
+  setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
@@ -269,7 +272,9 @@ export function createElectronCapabilityRouter(
     traySnapshot: () => null,
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
+    openPopoutTaskInMain: () => undefined,
     popoutWindowSnapshot: () => ({
+      bounds: null,
       exists: false,
       focused: false,
       visible: false,
@@ -277,6 +282,7 @@ export function createElectronCapabilityRouter(
       webContentsId: null,
     }),
     setSystemDragContext: () => undefined,
+    setPopoutMode: () => undefined,
     setSystemSleepEnabled: () => undefined,
     setSystemSleepTaskActive: () => undefined,
     showPopout: () => Promise.reject(new Error('Popout Window is unavailable')),
@@ -659,9 +665,11 @@ export function createElectronCapabilityRouter(
     const popout = e2eHost.popoutWindowSnapshot()
     return {
       mainFocused: target.isFocused(),
+      mainVisible: target.isVisible(),
       popoutExists: popout.exists,
       popoutFocused: popout.focused,
       popoutVisible: popout.visible,
+      popoutBounds: popout.bounds,
       popoutWindowId: popout.windowId,
       popoutWebContentsId: popout.webContentsId,
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
@@ -708,6 +716,16 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('window.dismissPopout', () => e2eHost.dismissPopout())
+  router.register('window.openPopoutTaskInMain', params =>
+    e2eHost.openPopoutTaskInMain(stringParam(params, 'taskAddressId'))
+  )
+  router.register('window.setPopoutMode', params => {
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'composer' && mode !== 'menu' && mode !== 'conversation') {
+      invalidParam('mode')
+    }
+    e2eHost.setPopoutMode(mode)
+  })
   router.register('window.showPopout', () => e2eHost.showPopout())
   router.register('window.minimize', () => requiredWindow(window).minimize())
   router.register('window.toggleMaximize', () => {

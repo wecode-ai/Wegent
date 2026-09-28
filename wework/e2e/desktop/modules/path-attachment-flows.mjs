@@ -298,6 +298,11 @@ async function verifySystemDragPanelLayout(control) {
   )
   try {
     assert.equal(
+      control.activeControlClientId,
+      control.controlClientsByWindow.get('main'),
+      'Registering the system-drag Popout Window changed the default control target'
+    )
+    assert.equal(
       focusSnapshot.mainFocused,
       false,
       'Completing a system drag incorrectly focused the main window'

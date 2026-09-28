@@ -1,6 +1,6 @@
 import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useEffect, useMemo } from 'react'
+import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -71,6 +71,12 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
+import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
+import { workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
+import {
+  createWorkbenchSplitGroupsState,
+  serializeWorkbenchSplitGroups,
+} from './workbenchSplitGroups'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 
@@ -1238,6 +1244,7 @@ describe('DesktopWorkbenchLayout', () => {
     projectChat?: Partial<ProjectChatControls>
     projectWork?: Record<string, unknown>
     onSelectProject?: (projectId: number | null) => void
+    onNewChat?: () => void
     onStartStandaloneChat?: () => void
     onStartNewProjectChat?: (projectId: number) => void
     onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
@@ -1285,6 +1292,7 @@ describe('DesktopWorkbenchLayout', () => {
     props: LegacyDesktopWorkbenchLayoutProps & {
       routeActive?: boolean
       surfaceKind?: 'task' | 'board'
+      popout?: boolean
     }
   ) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
@@ -1311,10 +1319,14 @@ describe('DesktopWorkbenchLayout', () => {
           <AuthContext.Provider value={authValue}>
             <WorkbenchContext.Provider value={workbenchValue}>
               <WorkbenchPaneContext.Provider value={paneValue}>
-                <ActualDesktopWorkbenchLayout
-                  routeActive={props.routeActive}
-                  surfaceKind={props.surfaceKind}
-                />
+                {props.popout ? (
+                  <PopoutWorkbenchPage />
+                ) : (
+                  <ActualDesktopWorkbenchLayout
+                    routeActive={props.routeActive}
+                    surfaceKind={props.surfaceKind}
+                  />
+                )}
               </WorkbenchPaneContext.Provider>
             </WorkbenchContext.Provider>
           </AuthContext.Provider>
@@ -1513,6 +1525,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspaceTabId: props.workspaceTabId,
       state,
       isStartupReady: true,
+      setWorkbenchError: vi.fn(),
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
       cloudWorkStatus: {
         availability: 'available',
@@ -1531,7 +1544,7 @@ describe('DesktopWorkbenchLayout', () => {
       selectStandaloneDevice: projectWork.onSelectStandaloneDevice ?? vi.fn(),
       openStandaloneWorkspace:
         props.onOpenStandaloneWorkspace ?? baseProps.onOpenStandaloneWorkspace,
-      startNewChat: baseProps.onNewChat,
+      startNewChat: props.onNewChat ?? baseProps.onNewChat,
       startStandaloneChat: props.onStartStandaloneChat ?? vi.fn(),
       startNewProjectChat: props.onStartNewProjectChat ?? baseProps.onStartNewProjectChat,
       openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
@@ -2646,6 +2659,115 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已打开的计划')
     expect(screen.getByTestId('workspace-plan-panel')).not.toHaveTextContent('新生成的计划')
+  })
+
+  test('popout ignores restored split sessions and shows sent messages before the reply completes', async () => {
+    const stalePaneKey = 'runtime:device-1:previous-popout-task'
+    localStorage.setItem(
+      workbenchSplitStorageKeys('popout:default').storageKey,
+      serializeWorkbenchSplitGroups(createWorkbenchSplitGroupsState(stalePaneKey))
+    )
+    const runtimeWork = structuredClone(
+      createRuntimeWorkForProject(activeProjectState.currentProject)!
+    )
+    runtimeWork.projects[0].deviceWorkspaces[0].tasks = [
+      {
+        taskId: 'previous-popout-task',
+        title: 'Previous popout task',
+        workspacePath: '/workspace/github_wegent',
+        runtime: 'codex',
+        running: true,
+        status: 'running',
+      },
+    ]
+    const reply = createDeferred<void>()
+    const userMessage: WorkbenchMessage = {
+      id: 'popout-user',
+      role: 'user',
+      content: 'Show the message I just sent',
+      status: 'completed',
+      createdAt: '2026-09-28T00:00:00.000Z',
+    }
+    function PopoutSendHarness() {
+      const [task, setTask] = useState<RuntimeTaskAddress | null>(null)
+      const [messages, setMessages] = useState<WorkbenchMessage[]>([])
+      return (
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          popout
+          state={{
+            ...baseProps.state,
+            standaloneChatKey: 1,
+            standaloneDeviceId: 'device-1',
+            devices: [
+              {
+                device_id: 'device-1',
+                device_type: 'app',
+                status: 'online',
+                executor_version: '1.8.5',
+              },
+            ],
+            runtimeWork,
+            currentRuntimeTask: task,
+            input: task ? '' : userMessage.content,
+          }}
+          messages={messages}
+          projectChat={{ models: [harnessTestModel], selectedModel: harnessTestModel }}
+          onNewChat={() => {
+            setTask(null)
+            setMessages([])
+          }}
+          onSend={async () => {
+            setTask(activeProjectRuntimeTask)
+            setMessages([userMessage])
+            await reply.promise
+            setMessages([
+              userMessage,
+              {
+                id: 'popout-assistant',
+                role: 'assistant',
+                content: 'The reply is visible too',
+                status: 'completed',
+                createdAt: '2026-09-28T00:00:01.000Z',
+              },
+            ])
+          }}
+        />
+      )
+    }
+    render(<PopoutSendHarness />)
+
+    expect(screen.queryByTestId('workbench-split-layout')).not.toBeInTheDocument()
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'composer'
+    )
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-composer-form')).not.toHaveAttribute(
+      'data-short-collapse'
+    )
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(await screen.findByText(userMessage.content)).toBeInTheDocument()
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'conversation'
+    )
+    expect(screen.getByTestId('popout-workbench-page')).not.toHaveClass('popout-window-compact')
+    await waitFor(() =>
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('window.setPopoutMode', {
+        mode: 'conversation',
+      })
+    )
+    await act(async () => reply.resolve())
+    expect(await screen.findByText('The reply is visible too')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('popout-window-new-chat-button'))
+    expect(screen.getByTestId('popout-workbench-page')).toHaveAttribute(
+      'data-popout-mode',
+      'composer'
+    )
+    expect(screen.queryByText('The reply is visible too')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-split-layout')).not.toBeInTheDocument()
   })
 
   test('renders a project-specific empty prompt that opens the project chooser', async () => {

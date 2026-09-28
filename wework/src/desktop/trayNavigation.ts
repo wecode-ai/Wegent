@@ -7,7 +7,6 @@ import { parseTrayTaskMenuId } from './trayTaskMenuId'
 
 export const WEWORK_TRAY_OPEN_SETTINGS_EVENT = 'wework-tray-open-settings'
 export const WEWORK_TRAY_OPEN_TASK_EVENT = 'wework-tray-open-task'
-export const WEWORK_POPOUT_OPEN_TASK_EVENT = 'wework-popout-open-task'
 export const SET_TRAY_MENU_STATE_COMMAND = 'set_tray_menu_state'
 
 let trayLanguageSyncInstalled = false

@@ -107,6 +107,7 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   inputLeadingContext?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
@@ -189,6 +190,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onPause,
       showWorkspaceMenu,
       collapseWhenIdle = false,
+      alwaysShowComposerToolbar = false,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
@@ -282,6 +284,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           planModeActive={planModeActive}
           goalDraftActive={goalDraftActive}
           collapseWhenIdle={collapseWhenIdle}
+          alwaysShowComposerToolbar={alwaysShowComposerToolbar}
           isStreaming={isStreaming}
           sendKey={sendKey}
           followUpBehavior={followUpBehavior}
