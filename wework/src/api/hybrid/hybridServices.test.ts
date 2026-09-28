@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { ApiError } from '@/api/http'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
@@ -875,7 +877,7 @@ describe('createHybridWorkbenchServices', () => {
     warning.mockRestore()
   })
 
-  it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
+  it('waits for an explicit refresh after a cloud model request fails', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void
     mocks.cloudListModels.mockImplementationOnce(
@@ -889,6 +891,13 @@ describe('createHybridWorkbenchServices', () => {
     await services.modelApi.listModels()
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
     rejectInitial(new Error('Cloud temporarily unavailable'))
+    await vi.waitFor(() =>
+      expect(warning).toHaveBeenCalledWith(
+        '[Wework] Failed to refresh cloud models',
+        expect.any(Error)
+      )
+    )
+    services.modelApi.refresh?.()
     await vi.waitFor(() => expect(mocks.cloudListModels).toHaveBeenCalledTimes(2))
     warning.mockRestore()
   })
@@ -982,6 +991,39 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(response.data.map(model => model.name)).toEqual(['gpt-5.5'])
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes the composer cloud catalog on demand without changing its selected model', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.cloudListModels
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const view = renderHook(() => useWorkbenchModels({ api: services.modelApi, locked: false }))
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(view.result.current.models.map(model => model.name)).toEqual(['gpt-5.5'])
+      act(() => view.result.current.setSelectedModel(view.result.current.models[0]))
+      const selectedName = view.result.current.selectedModel?.name
+
+      await act(() => vi.advanceTimersByTimeAsync(600_000))
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      act(() => view.result.current.refreshModels())
+      await act(() => vi.advanceTimersByTimeAsync(0))
+
+      expect(view.result.current.models.map(model => model.name)).toEqual([
+        'gpt-5.5',
+        'responses-model',
+      ])
+      expect(view.result.current.selectedModel?.name).toBe(selectedName)
+      expect(view.result.current.error).toBeNull()
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('lists persisted Wegent teams only for explicit Wegent execution', async () => {

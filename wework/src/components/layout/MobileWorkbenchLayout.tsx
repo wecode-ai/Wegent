@@ -219,6 +219,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         }
       : undefined,
     onModelSelectorOpenChange: (open, closeReason) => {
+      effectiveProjectChat.onModelSelectorOpenChange?.(open, closeReason)
       if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
     },
     onRefineTrialPrompt: refinePluginTrialPrompt,

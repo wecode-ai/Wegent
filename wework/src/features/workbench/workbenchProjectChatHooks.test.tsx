@@ -4,7 +4,6 @@ import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
-import { notifyWorkbenchModelsChanged } from './workbenchCloudDataEvents'
 import type { Attachment, ModelSelectionConfig, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -456,18 +455,25 @@ describe('workbench project chat hooks', () => {
   test('reloads models after a background cloud model refresh', async () => {
     const localModel: UnifiedModel = { name: 'local-model', type: 'runtime' }
     const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn<(onChange: () => void) => () => void>().mockReturnValue(unsubscribe)
     const api = {
+      subscribe,
       listModels: vi
         .fn()
         .mockResolvedValueOnce({ data: [localModel] })
         .mockResolvedValueOnce({ data: [localModel, cloudModel] }),
     }
-    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+    const { result, unmount } = renderHook(() => useWorkbenchModels({ api, locked: false }))
 
     await waitFor(() => expect(result.current.models).toEqual([localModel]))
-    act(() => notifyWorkbenchModelsChanged())
+    await act(async () => {
+      await subscribe.mock.calls[0][0]()
+    })
 
     await waitFor(() => expect(result.current.models).toEqual([localModel, cloudModel]))
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 
   test('keeps an explicit background task model when that task becomes active', async () => {

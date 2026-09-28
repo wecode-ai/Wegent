@@ -892,6 +892,13 @@ export function WorkbenchProvider({
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
   })
+  const { refreshModels } = modelSelection
+  const handleModelSelectorOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) refreshModels()
+    },
+    [refreshModels]
+  )
   const activeModel = useMemo(() => {
     if (!state.currentRuntimeTask) return null
     const configuredModel = findModelForSelection(modelSelection.models, modelSelectionConfig)
@@ -2651,6 +2658,7 @@ export function WorkbenchProvider({
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
+      onModelSelectorOpenChange: handleModelSelectorOpenChange,
       input: draftInput,
       composerError,
       composerErrorByScope,
@@ -2729,6 +2737,7 @@ export function WorkbenchProvider({
       listLocalSkills,
       listLocalApps,
       modelSelection.isSelectionReady,
+      handleModelSelectorOpenChange,
       conversationModels,
       activeModel,
       modelSelection.selectedModel,

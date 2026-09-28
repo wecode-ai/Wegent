@@ -177,8 +177,16 @@ describe('REST adapters', () => {
     await createModelApi(client).listModels()
 
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework',
+      undefined
     )
+  })
+
+  test('forwards model request cancellation to the HTTP transport', async () => {
+    const client = mockClient()
+    const controller = new AbortController()
+    await createModelApi(client).listModels({ signal: controller.signal })
+    expect(client.get).toHaveBeenCalledWith(expect.any(String), { signal: controller.signal })
   })
 
   test('loads unified skills and team skills from existing backend endpoints', async () => {
