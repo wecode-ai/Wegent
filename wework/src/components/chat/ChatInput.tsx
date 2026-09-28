@@ -168,6 +168,7 @@ export interface ChatInputProps {
   submitLabel?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
@@ -296,6 +297,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     submitLabel,
     variant = 'compact',
     collapseWhenIdle = false,
+    alwaysShowComposerToolbar = false,
     projectPhrases,
     projectChat,
     projectWork,
@@ -746,6 +748,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
+            alwaysShowComposerToolbar={alwaysShowComposerToolbar}
             inputLeadingContext={inputLeadingContext}
             onDismissInputLeadingContext={onDismissInputLeadingContext}
             toolbarLeadingContext={toolbarLeadingContext}

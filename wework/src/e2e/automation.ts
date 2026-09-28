@@ -2057,6 +2057,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
       return ''
+    case 'pressWindowKey':
+      await invokeDesktopHost('e2e.pressKey', {
+        windowLabel: getDesktopWindowLabel(),
+        key: command.key,
+        phase: 'press',
+      })
+      return ''
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
@@ -2099,6 +2106,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'showPopoutWindow':
       await invokeDesktopHost('window.showPopout')
       return ''
+    case 'setPopoutWindowMode':
+      await invokeDesktopHost('window.setPopoutMode', { mode: command.value })
+      return getWindowFocusSnapshot()
     case 'drag':
       return dragDesktopControlElement(command)
     case 'dragBy':
@@ -2976,6 +2986,7 @@ function installDesktopControlClient() {
   if (
     !url ||
     (windowLabel !== 'main' &&
+      windowLabel !== 'popout-window' &&
       !windowLabel.startsWith('workspace-') &&
       !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')

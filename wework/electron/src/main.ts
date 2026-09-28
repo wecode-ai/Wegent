@@ -64,7 +64,17 @@ import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failu
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
-import { createSingleFlight, presentWindow } from './host/window-presentation.js'
+import {
+  POPOUT_WINDOW_SIZES,
+  popoutWindowBounds,
+  type PopoutWindowMode,
+} from './host/popout-window-layout.js'
+import {
+  createSingleFlight,
+  presentWindow,
+  registerApplicationActivation,
+} from './host/window-presentation.js'
+import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
@@ -213,6 +223,7 @@ let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
+let popoutWindowMode: PopoutWindowMode = 'composer'
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
@@ -723,6 +734,7 @@ function disposeCoreDshViews(): void {
   popoutWindow = null
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
+  popoutWindowMode = 'composer'
   primaryDshLoaded = false
 }
 
@@ -853,8 +865,8 @@ async function createAuxiliaryWindow(
     isSystemDrag ? 'system-drag' : 'popout'
   )
   const auxiliaryWindow = new BrowserWindow({
-    width: isSystemDrag ? 440 : 470,
-    height: isSystemDrag ? 60 : 112,
+    width: isSystemDrag ? 440 : POPOUT_WINDOW_SIZES.composer.width,
+    height: isSystemDrag ? 60 : POPOUT_WINDOW_SIZES.composer.height,
     parent: isSystemDrag
       ? (BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined)
       : undefined,
@@ -878,6 +890,11 @@ async function createAuxiliaryWindow(
   if (isSystemDrag) pendingSystemDragWindow = auxiliaryWindow
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
+  if (!isSystemDrag) {
+    auxiliaryWindow.webContents.on('before-input-event', (event, input) => {
+      handlePopoutWindowInput(event, input, () => auxiliaryWindow.hide())
+    })
+  }
   auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
     console.error('[auxiliary-window] renderer failed to load', {
       kind,
@@ -894,7 +911,10 @@ async function createAuxiliaryWindow(
       if (systemDragWindow === auxiliaryWindow) systemDragWindow = null
       if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
     } else {
-      if (popoutWindow === auxiliaryWindow) popoutWindow = null
+      if (popoutWindow === auxiliaryWindow) {
+        popoutWindow = null
+        popoutWindowMode = 'composer'
+      }
       if (popoutWindowReadyPromise === readinessPromise) {
         popoutWindowReadyPromise = null
       }
@@ -918,6 +938,7 @@ async function createAuxiliaryWindow(
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
+      resizePopoutWindow('composer', popoutWindowMode)
       readinessPromise = waitForRendererSelector(
         auxiliaryWindow.webContents,
         '[data-testid="popout-workbench-page"]'
@@ -933,6 +954,19 @@ async function createAuxiliaryWindow(
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
+}
+
+function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMode): void {
+  const target = popoutWindow
+  if (!target || target.isDestroyed()) return
+
+  const current = target.getBounds()
+  const center = {
+    x: current.x + current.width / 2,
+    y: current.y + current.height / 2,
+  }
+  const workArea = screen.getDisplayNearestPoint(center).workArea
+  target.setBounds(popoutWindowBounds(current, workArea, previousMode, mode))
 }
 
 async function showSystemDragPanel(): Promise<void> {
@@ -958,10 +992,15 @@ async function showSystemDragPanel(): Promise<void> {
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
   await popoutWindowReadyPromise
+  if (keepE2EWindowInBackground) {
+    e2eForegroundActivationAllowed = true
+    app.setActivationPolicy('accessory')
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const bounds = target.getBounds()
   target.setPosition(
-    Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
-    Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
+    Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
+    Math.round(display.workArea.y + (display.workArea.height - bounds.height) / 2)
   )
   presentWindow(target)
 }
@@ -1344,6 +1383,7 @@ async function shutdown(): Promise<void> {
   popoutWindow = null
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
+  popoutWindowMode = 'composer'
   popoutShortcut?.dispose()
   popoutShortcut = null
   embeddedBrowser?.stop()
@@ -1594,7 +1634,11 @@ async function configureDesktopRuntime(): Promise<void> {
           focusMainWindow: reactivateMainWindow,
           focusWindow: windowLabel => {
             const target =
-              windowLabel === 'main' ? mainWindow : (workspaceWindows.get(windowLabel) ?? null)
+              windowLabel === 'main'
+                ? mainWindow
+                : windowLabel === 'popout-window'
+                  ? popoutWindow
+                  : (workspaceWindows.get(windowLabel) ?? null)
             if (target) presentWindow(target)
           },
           hideMainWindow: hideMainWindowToBackground,
@@ -1630,7 +1674,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
           },
           openWorkspace: openWorkspaceWindow,
+          openPopoutTaskInMain: taskAddressId => {
+            popoutWindow?.hide()
+            dispatchTrayAction({ type: 'open-task', source: 'popout', taskId: taskAddressId })
+          },
           popoutWindowSnapshot: () => ({
+            bounds: popoutWindow && !popoutWindow.isDestroyed() ? popoutWindow.getBounds() : null,
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
             focused: Boolean(
               popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isFocused()
@@ -1664,6 +1713,11 @@ async function configureDesktopRuntime(): Promise<void> {
           scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context
+          },
+          setPopoutMode: mode => {
+            const previousMode = popoutWindowMode
+            popoutWindowMode = mode
+            resizePopoutWindow(previousMode, mode)
           },
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
@@ -2111,22 +2165,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('activate', () => {
-  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) return
-  void reactivateMainWindow().catch(error => {
+registerApplicationActivation(app, {
+  keepInBackground: () => keepE2EWindowInBackground && !e2eForegroundActivationAllowed,
+  openMainWindow: reactivateMainWindow,
+  reportError: error => {
     console.error('[window] failed to reactivate main window', error)
-  })
-})
-
-app.on('did-become-active', () => {
-  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) {
-    app.hide()
-    return
-  }
-  if (mainWindow?.isVisible()) return
-  void reactivateMainWindow().catch(error => {
-    console.error('[window] failed to restore inactive main window', error)
-  })
+  },
 })
 
 app.on('before-quit', event => {

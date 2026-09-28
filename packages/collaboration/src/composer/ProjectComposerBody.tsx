@@ -61,6 +61,7 @@ export interface ProjectComposerBodyProps {
   planModeActive?: boolean
   goalDraftActive?: boolean
   collapseWhenIdle?: boolean
+  alwaysShowComposerToolbar?: boolean
   isStreaming?: boolean
   sendKey?: 'enter' | 'cmd_enter'
   followUpBehavior?: ComposerFollowUpBehavior
@@ -110,6 +111,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       planModeActive,
       goalDraftActive,
       collapseWhenIdle,
+      alwaysShowComposerToolbar = false,
       isStreaming = false,
       sendKey = 'enter',
       followUpBehavior = 'queue',
@@ -206,8 +208,8 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
           presentation={presentation}
           embeddedInForm={embeddedInForm}
           workBar={workBar}
-          canCollapseInShortPane={canCollapse}
-          collapseWhenIdle={collapseWhenIdle}
+          canCollapseInShortPane={canCollapse && !alwaysShowComposerToolbar}
+          collapseWhenIdle={collapseWhenIdle && !alwaysShowComposerToolbar}
           isDraggingFiles={isDraggingFiles}
           formProps={{
             onDragEnter: handleDragOver,

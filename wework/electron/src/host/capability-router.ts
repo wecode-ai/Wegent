@@ -182,6 +182,8 @@ export const HOST_CAPABILITIES = [
   'window.getState',
   'window.minimize',
   'window.openWorkspace',
+  'window.openPopoutTaskInMain',
+  'window.setPopoutMode',
   'window.showPopout',
   'window.toggleMaximize',
   'weworkSync.request',

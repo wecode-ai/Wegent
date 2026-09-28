@@ -222,6 +222,7 @@ import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
+  SingleWorkbenchPane,
   useWorkbenchPaneActive,
   useWorkbenchPaneId,
   useWorkbenchPaneHeaderActionsPortalId,
@@ -639,13 +640,13 @@ function createInitialBrowserWorkspaceState({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
-  splitGroups: WorkbenchSplitGroupsController
+  splitGroups?: WorkbenchSplitGroupsController
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
-  showComposerProjectMenuAction?: boolean
+  presentation?: 'workbench' | 'popout'
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onLocalHarnessSessionStarted?: (
     session: LocalHarnessWorkbenchSession,
@@ -710,7 +711,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isDesktop = isDesktopRuntime()
-  const splitMode = props.splitGroups.splitMode
+  const splitGroups = props.splitGroups
+  const splitMode = splitGroups?.splitMode ?? false
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
@@ -883,11 +885,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       const resolvedPane = resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
       if (resolvedPane) return resolvedPane
 
-      const activeLayout = props.splitGroups.activeLayout
+      const activeLayout = props.splitGroups?.activeLayout
       const canShowBlankStartupPane =
         state.runtimeWork !== null &&
         props.activePane.currentRuntimeTask === null &&
-        activeLayout.root.type === 'pane' &&
+        activeLayout?.root.type === 'pane' &&
         activeLayout.root.paneKey === paneKey &&
         paneKey.startsWith('runtime:') &&
         !runtimePaneKeySet.has(paneKey)
@@ -896,7 +898,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [
       activePaneKey,
       props.activePane,
-      props.splitGroups.activeLayout,
+      props.splitGroups?.activeLayout,
       runtimePaneKeySet,
       state.runtimeWork,
     ]
@@ -971,7 +973,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         workbenchVisible={props.visible ?? true}
         sidebarCollapsed={props.sidebarCollapsed}
         sidebarResizing={props.sidebarResizing ?? false}
-        showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
+        presentation={props.presentation ?? 'workbench'}
         workspaceSessionApi={services?.workspaceSessionApi}
         environmentInfoVisibilityByPane={environmentInfoVisibilityByPane}
         sharedWorkbenchContentWidth={splitMode ? 0 : sharedWorkbenchContentWidth}
@@ -999,7 +1001,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       environmentInfoVisibilityByPane,
       localHarnessSessions,
       props.onSidebarCollapsedChange,
-      props.showComposerProjectMenuAction,
+      props.presentation,
       props.sidebarCollapsed,
       props.sidebarResizing,
       props.visible,
@@ -1016,25 +1018,10 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       updateEnvironmentInfoVisibility,
     ]
   )
-  const {
-    focusPane: focusSplitGroupPane,
-    closePane: closeSplitGroupPane,
-    splitPane: splitSplitGroupPane,
-    placeTask: placeSplitGroupTask,
-    updateSizes: updateSplitGroupSizes,
-  } = props.splitGroups
-  const focusSplitPane = useCallback(
-    (paneId: string) => getActiveWorkbenchLayout(focusSplitGroupPane(paneId)),
-    [focusSplitGroupPane]
-  )
-  const closeSplitPane = useCallback(
-    (paneId: string) => getActiveWorkbenchLayout(closeSplitGroupPane(paneId)),
-    [closeSplitGroupPane]
-  )
-  const paneStack = (
+  const paneStack = splitGroups ? (
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      layout={props.splitGroups.activeLayout}
+      layout={splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
       activeTestId={props.visible === false ? null : 'desktop-workbench-main'}
@@ -1042,11 +1029,17 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
       onPaneFocus={focusPane}
-      onLayoutFocus={focusSplitPane}
-      onLayoutClose={closeSplitPane}
-      onLayoutSplit={splitSplitGroupPane}
-      onLayoutPlace={placeSplitGroupTask}
-      onLayoutSizesChange={updateSplitGroupSizes}
+      onLayoutFocus={splitGroups.focusPane}
+      onLayoutClose={paneId => getActiveWorkbenchLayout(splitGroups.closePane(paneId))}
+      onLayoutSplit={splitGroups.splitPane}
+      onLayoutPlace={splitGroups.placeTask}
+      onLayoutSizesChange={splitGroups.updateSizes}
+      renderPane={renderWorkbenchPane}
+    />
+  ) : (
+    <SingleWorkbenchPane
+      pane={props.activePane}
+      visible={props.visible ?? true}
       renderPane={renderWorkbenchPane}
     />
   )
@@ -1065,7 +1058,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-      {!splitMode ? (
+      {!splitMode && props.presentation !== 'popout' ? (
         <header
           id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
           data-testid="workbench-main-header"
@@ -1085,7 +1078,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
-  showComposerProjectMenuAction,
+  presentation,
   workspaceSessionApi,
   environmentInfoVisibilityByPane,
   sharedWorkbenchContentWidth,
@@ -1107,7 +1100,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
-  showComposerProjectMenuAction: boolean
+  presentation: 'workbench' | 'popout'
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoVisibilityByPane: Record<string, EnvironmentInfoVisibilityState>
   sharedWorkbenchContentWidth: number
@@ -1132,6 +1125,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
+  const showComposerProjectMenuAction = presentation === 'popout'
+  const alwaysShowComposerToolbar = presentation === 'popout'
   const paneVisible = useWorkbenchPaneVisible()
   const paneId = useWorkbenchPaneId()
   const paneHeaderActionsPortalId = useWorkbenchPaneHeaderActionsPortalId()
@@ -4711,7 +4706,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   ) : undefined
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
-  const showPageTopBar = !isDesktop && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
+  const showPageTopBar =
+    presentation !== 'popout' &&
+    !isDesktop &&
+    (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const canForkCurrentRuntimeTask = Boolean(
     experimentalFeaturesEnabled &&
     currentRuntimeTask &&
@@ -4970,6 +4968,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         sidebarResizing && 'transition-none',
         'top-0',
         !isDesktop &&
+          presentation !== 'popout' &&
           'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
@@ -4990,7 +4989,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
-        {!isDesktop && (
+        {!isDesktop && presentation !== 'popout' && (
           <div
             data-testid="workspace-panel-floating-actions"
             className="pointer-events-auto absolute right-8 top-1.5 z-popover flex shrink-0 items-center gap-1"
@@ -5262,6 +5261,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         />
                                       )}
                                       <BufferedChatInput
+                                        alwaysShowComposerToolbar={alwaysShowComposerToolbar}
                                         autoFocus
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
@@ -5455,6 +5455,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  compact={presentation === 'popout'}
                   projectName={currentProject?.name}
                   onOpenProjectSelector={anchorElement => {
                     setProjectMenuAnchorElement(anchorElement)
@@ -5475,6 +5476,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           className="mb-3"
                         />
                         <BufferedChatInput
+                          alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+                          showProjectWorkBar={presentation !== 'popout'}
                           autoFocus
                           value={paneSession.input}
                           onChange={paneSession.setInput}
