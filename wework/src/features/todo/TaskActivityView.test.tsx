@@ -10,7 +10,6 @@ import {
   getRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuedMessagesByKey,
 } from '@/features/workbench/runtimeConversationCache'
-import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { TaskActivityView } from './TaskActivityView'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
@@ -26,6 +25,7 @@ const approveLoopItemRun = vi.fn()
 const rejectLoopItemRun = vi.fn()
 const cancelCloudAutomationRun = vi.fn()
 const listModels = vi.fn()
+const modelListeners = new Set<() => void>()
 const attachmentSelectionMock = {
   attachments: [] as Attachment[],
   uploadingFiles: new Map(),
@@ -83,7 +83,13 @@ const workbenchServices = {
       localProjectAutomationApi: {},
     },
   },
-  modelApi: { listModels },
+  modelApi: {
+    listModels,
+    subscribe(listener: () => void) {
+      modelListeners.add(listener)
+      return () => modelListeners.delete(listener)
+    },
+  },
 }
 
 vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
@@ -249,6 +255,7 @@ describe('TaskActivityView', () => {
     rejectLoopItemRun.mockReset()
     cancelCloudAutomationRun.mockReset()
     listModels.mockReset()
+    modelListeners.clear()
     attachmentSelectionMock.attachments = []
     attachmentSelectionMock.isAttachmentReadyToSend = true
     attachmentSelectionMock.resetAttachments.mockReset()
@@ -1019,9 +1026,7 @@ describe('TaskActivityView', () => {
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.2 Codex')
 
     const loadsBeforeRefresh = listModels.mock.calls.length
-    act(() => {
-      window.dispatchEvent(new Event(WORKBENCH_MODELS_CHANGED_EVENT))
-    })
+    act(() => modelListeners.forEach(listener => listener()))
     await waitFor(() => {
       expect(listModels.mock.calls.length).toBeGreaterThan(loadsBeforeRefresh)
     })

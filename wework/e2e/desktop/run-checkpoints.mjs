@@ -35,6 +35,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['collaboration-issue-comment-notification', ['collaboration-runtime']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -104,6 +105,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'cloud-model-recovery',
   'plugin-account-auth',
   'codex-account-login',
   'cloud-space-mention',

@@ -97,6 +97,7 @@ cloud_worktree_segments=(
   cloud-worktree-archive-restore
 )
 cloud_segments=(
+  cloud-model-recovery
   cloud-project-creation
   cloud-device-lifecycle
   core-task-flow
@@ -136,7 +137,7 @@ cloud_shards=(
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
-  model-routing
+  model-routing,cloud-model-recovery
   plugin-account-auth,cloud-device-lifecycle
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
@@ -475,6 +476,13 @@ classify_wework_path() {
       wework/src/components/chat/composer/composerMentionCandidates*)
       select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
+      return
+      ;;
+
+    wework/src/api/hybrid/cloudModelCatalog* | \
+      wework/e2e/desktop/modules/cloud-model-recovery.mjs | \
+      wework/e2e/desktop/scenarios/cloud-model-recovery.scenario.mjs)
+      select_target "cloud:cloud-model-recovery"
       return
       ;;
 
