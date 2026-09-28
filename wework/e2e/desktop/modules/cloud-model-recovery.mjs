@@ -20,7 +20,7 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
   )
   const model = catalog.data.find(candidate => candidate.name === CLOUD_PUBLIC_MODEL_NAME)
   assert.ok(model, 'The real Backend did not expose the cloud model fixture')
-  await selectE2EModel(control, model.name, model.displayName || model.name)
+  await selectE2EModel(control, model.name, model.displayName || model.modelId || model.name)
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
   const selectedLabel = await control.command('getText', selector)
   const readyCount = control.readyCount
