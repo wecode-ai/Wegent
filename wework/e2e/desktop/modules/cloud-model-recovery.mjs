@@ -5,14 +5,16 @@ import {
   CLOUD_PUBLIC_MODEL_NAME,
   ensureModelOptionVisible,
   selectE2EModel,
-  stopProcessGroup,
 } from './shared.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 /** Exercise recovery against the real Backend without reloading the renderer or model settings. */
 export async function verifyCloudModelRecovery(control, cloud, request) {
-  assert.ok(cloud?.backend, 'Cloud model recovery requires the real Backend process')
+  assert.ok(
+    cloud?.rustBackend && cloud.pythonBackend,
+    'Cloud model recovery requires the real Backend processes'
+  )
   const catalog = await request(
     '/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
   )
@@ -28,8 +30,8 @@ export async function verifyCloudModelRecovery(control, cloud, request) {
   let backendStopped = false
   let createdModelId = null
   try {
-    await stopProcessGroup(cloud.backend)
     backendStopped = true
+    await cloud.stopBackend()
     await assert.rejects(fetch(`${cloud.backendUrl}/api/health`))
 
     // Opening the menu requests a refresh; existing models remain visible while offline.
