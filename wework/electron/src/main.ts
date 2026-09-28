@@ -1379,6 +1379,11 @@ async function shutdown(): Promise<void> {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
+  // The startup splash refuses native close requests until the workbench is
+  // ready. When the app quits within that window, an open splash cancels
+  // app.quit() and strands the app on the splash, so close it through the
+  // controlled-close path as part of every shutdown.
+  await startupSplash?.close()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
