@@ -6,8 +6,8 @@ import {
   ensureModelOptionVisible,
   selectE2EModel,
   stopProcessGroup,
-  waitForSnapshot,
 } from './shared.mjs'
+import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 /** Exercise recovery against the real Backend without reloading the renderer or model settings. */
