@@ -112,6 +112,30 @@ class TestKnowledgeOrchestrator:
         user.user_name = "testuser"
         return user
 
+    @pytest.fixture(autouse=True)
+    def authorize_resolved_resources(self, orchestrator):
+        """Stand in for the DB-backed resolver: a reference resolves to itself."""
+
+        def _retriever(db, *, user_id, name, namespace="default"):
+            return RetrievalResource(name=name, kind="Retriever", namespace=namespace)
+
+        def _embedding(db, *, user_id, name, namespace="default"):
+            return RetrievalResource(
+                name=name, kind="Model", category="embedding", namespace=namespace
+            )
+
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.resolve_retriever_resource",
+                side_effect=_retriever,
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.resolve_embedding_model_resource",
+                side_effect=_embedding,
+            ),
+        ):
+            yield
+
     def test_get_default_retriever_returns_first(self, orchestrator, mock_db):
         """Test get_default_retriever returns first available retriever."""
         with patch(
@@ -613,6 +637,68 @@ class TestKnowledgeOrchestrator:
                     "top_k": 20,
                 },
             )
+
+    def test_resolve_retrieval_config_rejects_an_unauthorized_reference(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """A reference the caller cannot use is rejected, not stored."""
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_retriever_resource",
+            return_value=None,
+        ):
+            with pytest.raises(KnowledgeConfigError, match="not-mine"):
+                orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "not-mine",
+                        "embedding_config": {"model_name": "embedding-1"},
+                    },
+                )
+
+    def test_resolve_retrieval_config_rejects_a_non_embedding_model_reference(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_embedding_model_resource",
+            return_value=RetrievalResource(name="chat-1", kind="Model", category="llm"),
+        ):
+            with pytest.raises(KnowledgeConfigError, match="chat-1"):
+                orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "retriever-1",
+                        "embedding_config": {"model_name": "chat-1"},
+                    },
+                )
+
+    def test_resolve_retrieval_config_accepts_a_public_retriever_fallback(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """A group reference resolved to the public retriever stays usable."""
+        with patch(
+            "app.services.knowledge.orchestrator.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="public-retriever", kind="Retriever", namespace="default"
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="team-a",
+                retrieval_config={
+                    "retriever_name": "public-retriever",
+                    "retriever_namespace": "team-a",
+                    "embedding_config": {"model_name": "embedding-1"},
+                },
+            )
+
+        assert result is not None
+        assert result["retriever_name"] == "public-retriever"
+        assert result["retriever_namespace"] == "team-a"
 
     def test_update_knowledge_base_rejects_unsupported_retrieval_mode(
         self, orchestrator, mock_db, mock_user

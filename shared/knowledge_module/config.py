@@ -13,7 +13,7 @@ workers.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, Optional, TypedDict
+from typing import Any, Callable, Literal, Mapping, Optional, TypedDict
 
 from .adapter import (
     EMBEDDING_RESOURCE_CATEGORY,
@@ -58,8 +58,9 @@ def evaluate_profile(record: RetrievalProfileRecord) -> ProfileHealth:
 
     The adapter reports the profile's resources only when it has authorized
     them. A record is `valid` only when it names both references and both
-    resolved resources match their slot: a Retriever for the retriever slot and a
-    Model whose category is ``embedding`` for the embedding slot.
+    resolved resources correspond to those references and match their slot: a
+    Retriever for the retriever slot, and a Model whose category is ``embedding``
+    for the embedding slot.
     """
     configured = record.configured
     if not configured:
@@ -75,12 +76,12 @@ def evaluate_profile(record: RetrievalProfileRecord) -> ProfileHealth:
     if not retriever_name or not embedding_name:
         return {"status": "invalid", "fallback_reason": "profile_incomplete"}
 
-    retriever = record.retriever
-    if not _matches_retriever_slot(retriever):
+    if not _is_slot_match(record.retriever, retriever_name, _matches_retriever_slot):
         return {"status": "invalid", "fallback_reason": "retriever_unavailable"}
 
-    embedding_model = record.embedding_model
-    if not _matches_embedding_slot(embedding_model):
+    if not _is_slot_match(
+        record.embedding_model, embedding_name, _matches_embedding_slot
+    ):
         return {"status": "invalid", "fallback_reason": "embedding_model_unavailable"}
 
     return {"status": "valid", "fallback_reason": None}
@@ -104,6 +105,12 @@ def prepare_knowledge_config(
     fallback is ``top_k=5`` and ``score_threshold=0.5``. Returns ``None`` when RAG
     is disabled, or when no retriever or embedding model can be resolved at all,
     so the existing callers keep their "no retrieval config" behaviour.
+
+    The selected references are then checked through the adapter, which reports
+    where each one resolves; a reference it cannot authorize, or one that
+    resolves to a different resource or the wrong category, is rejected instead
+    of being stored as a configuration nothing can execute. That rejection
+    raises :class:`KnowledgeConfigError`.
     """
     if rag_config_mode == "disabled":
         return None
@@ -135,7 +142,7 @@ def prepare_knowledge_config(
     if retriever is None or embedding is None:
         return None
 
-    return validate_knowledge_config(
+    config = validate_knowledge_config(
         {
             **resolved,
             "retriever_name": retriever[0],
@@ -146,6 +153,8 @@ def prepare_knowledge_config(
             },
         }
     )
+    _authorize_selected_references(adapter, config)
+    return config
 
 
 def validate_knowledge_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -348,3 +357,63 @@ def _matches_embedding_slot(resource: RetrievalResource | None) -> bool:
         and resource.kind == MODEL_RESOURCE_KIND
         and resource.category == EMBEDDING_RESOURCE_CATEGORY
     )
+
+
+def _is_slot_match(
+    resolved: RetrievalResource | None,
+    reference_name: str,
+    matches: Callable[[RetrievalResource | None], bool],
+) -> bool:
+    """Whether a resolved record is the record the reference names, for its slot.
+
+    The namespace is deliberately not compared: a group reference can legitimately
+    resolve to the public resource of the same name, which is what the product
+    resolves at execution time too.
+    """
+    return matches(resolved) and resolved.name == reference_name
+
+
+def _authorize_selected_references(
+    adapter: KnowledgeConfigAdapter, config: Mapping[str, Any]
+) -> None:
+    """Check the two finally selected references against authorized records."""
+    _require_authorized_reference(
+        adapter.resolve_retriever(
+            config["retriever_name"], config["retriever_namespace"]
+        ),
+        config["retriever_name"],
+        label="retriever",
+        matches=_matches_retriever_slot,
+    )
+    embedding_config = config["embedding_config"]
+    _require_authorized_reference(
+        adapter.resolve_embedding_model(
+            embedding_config["model_name"], embedding_config["model_namespace"]
+        ),
+        embedding_config["model_name"],
+        label="embedding model",
+        matches=_matches_embedding_slot,
+    )
+
+
+def _require_authorized_reference(
+    resolved: RetrievalResource | None,
+    reference_name: str,
+    *,
+    label: str,
+    matches: Callable[[RetrievalResource | None], bool],
+) -> None:
+    """Reject a selected reference the adapter cannot authorize for its slot.
+
+    The adapter reports where the reference resolved, which may be a public
+    resource outside the requested namespace; only the name and the slot have to
+    agree, so a legitimate public fallback is accepted.
+    """
+    if resolved is None:
+        raise KnowledgeConfigError(
+            f"{label} {reference_name!r} is not authorized or does not exist"
+        )
+    if not _is_slot_match(resolved, reference_name, matches):
+        raise KnowledgeConfigError(
+            f"{label} {reference_name!r} did not resolve to a usable {label} resource"
+        )

@@ -32,6 +32,8 @@ from shared.knowledge_module import (
     validate_retrieval_config_update,
 )
 
+_MISSING = object()
+
 
 class _FakeAdapter:
     """Minimal caller adapter: only authorized candidates and stored records."""
@@ -42,12 +44,16 @@ class _FakeAdapter:
         profile: RetrievalProfileRecord | None = None,
         retriever: RetrievalResource | None = None,
         embedding_model: RetrievalResource | None = None,
+        resolvers: dict[tuple[str, str], RetrievalResource | None] | None = None,
     ) -> None:
         self.profile = profile or RetrievalProfileRecord()
         self.retriever = retriever
         self.embedding_model = embedding_model
+        self.resolvers = resolvers or {}
         self.default_retriever_calls: list[str] = []
         self.default_embedding_calls: list[str] = []
+        self.resolved_retriever_calls: list[tuple[str, str]] = []
+        self.resolved_embedding_calls: list[tuple[str, str]] = []
 
     def retrieval_profile(self) -> RetrievalProfileRecord:
         return self.profile
@@ -59,6 +65,25 @@ class _FakeAdapter:
     def default_embedding_model(self, namespace: str) -> RetrievalResource | None:
         self.default_embedding_calls.append(namespace)
         return self.embedding_model
+
+    def resolve_retriever(self, name: str, namespace: str) -> RetrievalResource | None:
+        """Authorize a reference unless a test overrides it."""
+        self.resolved_retriever_calls.append((name, namespace))
+        override = self.resolvers.get((name, namespace), _MISSING)
+        if override is not _MISSING:
+            return override
+        return RetrievalResource(name=name, kind="Retriever", namespace=namespace)
+
+    def resolve_embedding_model(
+        self, name: str, namespace: str
+    ) -> RetrievalResource | None:
+        self.resolved_embedding_calls.append((name, namespace))
+        override = self.resolvers.get((name, namespace), _MISSING)
+        if override is not _MISSING:
+            return override
+        return RetrievalResource(
+            name=name, kind="Model", category="embedding", namespace=namespace
+        )
 
 
 def _valid_profile() -> RetrievalProfileRecord:
@@ -230,6 +255,128 @@ def test_rejects_profile_whose_resolved_embedding_is_not_a_model_embedding() -> 
     assert prepare_knowledge_config(_FakeAdapter(profile=profile)) is None
 
 
+def test_profile_resolution_must_match_the_configured_references() -> None:
+    """A resolved record for another reference does not vouch for this profile."""
+    profile = RetrievalProfileRecord(
+        configured={
+            "retriever_name": "shared-retriever",
+            "embedding_config": {"model_name": "shared-embedding"},
+        },
+        retriever=RetrievalResource(name="some-other-retriever", kind="Retriever"),
+        embedding_model=RetrievalResource(
+            name="shared-embedding", kind="Model", category="embedding"
+        ),
+    )
+
+    assert evaluate_profile(profile) == {
+        "status": "invalid",
+        "fallback_reason": "retriever_unavailable",
+    }
+    assert prepare_knowledge_config(_FakeAdapter(profile=profile)) is None
+
+
+def test_authorizes_the_references_selected_by_priority() -> None:
+    """The final retriever and embedding references are checked for authorization."""
+    adapter = _FakeAdapter(
+        retriever=RetrievalResource(name="candidate-retriever", kind="Retriever"),
+        embedding_model=RetrievalResource(
+            name="candidate-embedding", kind="Model", category="embedding"
+        ),
+    )
+
+    config = prepare_knowledge_config(
+        adapter,
+        namespace="team-a",
+        retrieval_config={"retriever_name": "chosen-retriever"},
+    )
+
+    assert config is not None
+    assert config["retriever_name"] == "chosen-retriever"
+    assert config["embedding_config"]["model_name"] == "candidate-embedding"
+    assert adapter.resolved_retriever_calls == [("chosen-retriever", "default")]
+    assert adapter.resolved_embedding_calls == [("candidate-embedding", "default")]
+
+
+def test_accepts_a_public_fallback_resolved_outside_the_requested_namespace() -> None:
+    """A group reference may legitimately resolve to the public resource."""
+    adapter = _FakeAdapter(
+        embedding_model=RetrievalResource(
+            name="public-embedding", kind="Model", category="embedding"
+        ),
+        resolvers={
+            ("public-retriever", "team-a"): RetrievalResource(
+                name="public-retriever", kind="Retriever", namespace="default"
+            )
+        },
+    )
+
+    config = prepare_knowledge_config(
+        adapter,
+        namespace="team-a",
+        retrieval_config={
+            "retriever_name": "public-retriever",
+            "retriever_namespace": "team-a",
+        },
+    )
+
+    assert config is not None
+    assert config["retriever_name"] == "public-retriever"
+    assert config["retriever_namespace"] == "team-a"
+    assert config["embedding_config"] == {
+        "model_name": "public-embedding",
+        "model_namespace": "default",
+    }
+
+
+def test_rejects_an_unauthorized_or_missing_reference() -> None:
+    adapter = _FakeAdapter(
+        embedding_model=RetrievalResource(
+            name="candidate-embedding", kind="Model", category="embedding"
+        ),
+        resolvers={("not-mine", "default"): None},
+    )
+
+    with pytest.raises(KnowledgeConfigError, match="not-mine"):
+        prepare_knowledge_config(
+            adapter, retrieval_config={"retriever_name": "not-mine"}
+        )
+
+
+def test_rejects_a_resolved_reference_of_the_wrong_category() -> None:
+    adapter = _FakeAdapter(
+        retriever=RetrievalResource(name="candidate-retriever", kind="Retriever"),
+        resolvers={
+            ("chat-model", "default"): RetrievalResource(
+                name="chat-model", kind="Model", category="llm"
+            )
+        },
+    )
+
+    with pytest.raises(KnowledgeConfigError, match="chat-model"):
+        prepare_knowledge_config(
+            adapter,
+            retrieval_config={"embedding_config": {"model_name": "chat-model"}},
+        )
+
+
+def test_rejects_a_resolution_that_names_another_resource() -> None:
+    adapter = _FakeAdapter(
+        embedding_model=RetrievalResource(
+            name="candidate-embedding", kind="Model", category="embedding"
+        ),
+        resolvers={
+            ("chosen-retriever", "default"): RetrievalResource(
+                name="different-retriever", kind="Retriever"
+            )
+        },
+    )
+
+    with pytest.raises(KnowledgeConfigError, match="chosen-retriever"):
+        prepare_knowledge_config(
+            adapter, retrieval_config={"retriever_name": "chosen-retriever"}
+        )
+
+
 @pytest.mark.parametrize(
     "override, message",
     [
@@ -332,6 +479,16 @@ def test_minimal_caller_produces_a_saveable_config() -> None:
         def default_embedding_model(self, namespace: str) -> RetrievalResource | None:
             return None
 
+        def resolve_retriever(
+            self, name: str, namespace: str
+        ) -> RetrievalResource | None:
+            return authorized.get(("Retriever", name))
+
+        def resolve_embedding_model(
+            self, name: str, namespace: str
+        ) -> RetrievalResource | None:
+            return authorized.get(("Model", name))
+
     config = prepare_knowledge_config(_ServiceAdapter(), retrieval_config={"top_k": 6})
 
     assert config is not None
@@ -361,6 +518,14 @@ _BOUNDARY_SCRIPT = textwrap.dedent("""
         def default_embedding_model(self, namespace):
             return RetrievalResource(
                 name="opensource-embedding", kind="Model", category="embedding"
+            )
+
+        def resolve_retriever(self, name, namespace):
+            return RetrievalResource(name=name, kind="Retriever", namespace=namespace)
+
+        def resolve_embedding_model(self, name, namespace):
+            return RetrievalResource(
+                name=name, kind="Model", category="embedding", namespace=namespace
             )
 
     config = prepare_knowledge_config(Adapter(), namespace="default")

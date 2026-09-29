@@ -71,6 +71,10 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
     load_profile,
 )
+from app.services.knowledge.retrieval_resource_resolver import (
+    resolve_embedding_model_resource,
+    resolve_retriever_resource,
+)
 from app.stores.tasks import task_store
 from shared.knowledge_module import (
     EMBEDDING_RESOURCE_CATEGORY,
@@ -199,6 +203,20 @@ class _WegentRetrievalConfigAdapter:
             namespace=record.get("model_namespace") or "default",
             kind=MODEL_RESOURCE_KIND,
             category=EMBEDDING_RESOURCE_CATEGORY,
+        )
+
+    def resolve_retriever(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_retriever_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
+        )
+
+    def resolve_embedding_model(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_embedding_model_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
         )
 
 

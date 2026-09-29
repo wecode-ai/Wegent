@@ -67,3 +67,17 @@ class KnowledgeConfigAdapter(Protocol):
 
     def default_embedding_model(self, namespace: str) -> RetrievalResource | None:
         """Return the authorized default embedding Model for a namespace."""
+
+    def resolve_retriever(self, name: str, namespace: str) -> RetrievalResource | None:
+        """Resolve a caller-visible retriever reference to its authorized record.
+
+        Returns ``None`` when the local service cannot authorize the reference --
+        it does not exist, the caller may not use it, or its group is out of
+        reach. The module turns that into a rejected configuration; adapters
+        decide authorization, the module does not look up any product table.
+        """
+
+    def resolve_embedding_model(
+        self, name: str, namespace: str
+    ) -> RetrievalResource | None:
+        """Resolve a caller-visible embedding model reference to its record."""
