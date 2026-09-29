@@ -14,7 +14,11 @@ from knowledge_engine.retrieval.hierarchical import (
 )
 from knowledge_engine.retrieval.query_planning import build_qa_search_hint_plan
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
-from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
+from shared.knowledge_contracts import (
+    RetrievalScope,
+    RuntimeRetrievalConfig,
+    SearchHints,
+)
 
 logger = logging.getLogger(__name__)
 

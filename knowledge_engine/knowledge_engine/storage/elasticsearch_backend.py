@@ -39,7 +39,7 @@ from knowledge_engine.retrieval.search_hints import (
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)

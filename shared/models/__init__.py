@@ -28,6 +28,38 @@ Block types for mixed content rendering:
 - create_text_block: Convenience function to create text block dict
 """
 
+from shared.knowledge_contracts.runtime_config import (
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
+from shared.knowledge_contracts.search_hints import (
+    MAX_SEARCH_HINT_KEYWORDS,
+    MAX_SEARCH_HINT_PHRASES,
+    MAX_SEARCH_HINT_TERM_LENGTH,
+    MAX_SEARCH_QUERY_LENGTH,
+    SearchHints,
+    coerce_search_hints,
+    normalize_search_terms,
+    normalize_search_text,
+)
+from shared.knowledge_contracts.splitter_config import (
+    FlatChunkConfig,
+    HierarchicalChunkConfig,
+    LegacySplitterConfig,
+    MarkdownEnhancementConfig,
+    NormalizedSplitterConfig,
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SmartSplitterConfig,
+    SplitterConfig,
+    SplitterConfigModel,
+    build_runtime_default_splitter_config,
+    normalize_runtime_splitter_config,
+    normalize_splitter_config,
+    serialize_splitter_config,
+)
+
 from . import db
 from .attachment_sync import (
     AttachmentSyncItem,
@@ -107,37 +139,6 @@ from .responses_api_factory import (
     ThrottledTransport,
     TransportFactory,
     TransportType,
-)
-from .runtime_config import (
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
-)
-from .search_hints import (
-    MAX_SEARCH_HINT_KEYWORDS,
-    MAX_SEARCH_HINT_PHRASES,
-    MAX_SEARCH_HINT_TERM_LENGTH,
-    MAX_SEARCH_QUERY_LENGTH,
-    SearchHints,
-    coerce_search_hints,
-    normalize_search_terms,
-    normalize_search_text,
-)
-from .splitter_config import (
-    FlatChunkConfig,
-    HierarchicalChunkConfig,
-    LegacySplitterConfig,
-    MarkdownEnhancementConfig,
-    NormalizedSplitterConfig,
-    SemanticSplitterConfig,
-    SentenceSplitterConfig,
-    SmartSplitterConfig,
-    SplitterConfig,
-    SplitterConfigModel,
-    build_runtime_default_splitter_config,
-    normalize_runtime_splitter_config,
-    normalize_splitter_config,
-    serialize_splitter_config,
 )
 
 __all__ = [

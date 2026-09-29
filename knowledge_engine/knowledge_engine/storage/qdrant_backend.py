@@ -37,7 +37,7 @@ from knowledge_engine.retrieval.filters import (
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
 

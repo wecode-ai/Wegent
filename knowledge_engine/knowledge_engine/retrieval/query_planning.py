@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from shared.models import (
+from shared.knowledge_contracts import (
     SearchHints,
     coerce_search_hints,
     normalize_search_terms,

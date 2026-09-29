@@ -11,12 +11,16 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shared.models.runtime_config import (
+from shared.knowledge_contracts.retrieval_scope import RetrievalScope
+from shared.knowledge_contracts.runtime_config import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
-from shared.models.search_hints import MAX_SEARCH_QUERY_LENGTH, SearchHints
+from shared.knowledge_contracts.search_hints import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SearchHints,
+)
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -88,29 +92,6 @@ class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     retrieval_config: RuntimeRetrievalConfig
-
-
-class RetrievalScope(KnowledgeRuntimeProtocolModel):
-    """Domain-level retrieval scope.
-
-    This is intentionally minimal for now. Document IDs are business document
-    IDs and must be compiled by storage backends into their native doc_ref
-    filters instead of being represented as generic metadata conditions.
-    """
-
-    document_ids: list[int] | None = None
-
-    @field_validator("document_ids")
-    @classmethod
-    def validate_document_ids(cls, value: list[int] | None) -> list[int] | None:
-        """Validate and deduplicate document scope IDs."""
-        if value is None:
-            return None
-        if not value:
-            raise ValueError("document_ids must not be empty")
-        if any(document_id < 1 for document_id in value):
-            raise ValueError("document_ids must contain positive integers")
-        return list(dict.fromkeys(value))
 
 
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):

@@ -49,7 +49,7 @@ from knowledge_engine.storage.milvus_dimension import (
     raise_on_dimension_mismatch,
     read_collection_snapshot,
 )
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
