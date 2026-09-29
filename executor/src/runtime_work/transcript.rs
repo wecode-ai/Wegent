@@ -15,6 +15,7 @@ use crate::{
     services::turn_file_changes::persist_named_artifact,
 };
 
+use super::codex_user_input::async_question_render_payload;
 use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
@@ -221,7 +222,9 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.assistant.blocks.push(block);
             }
             "agentmessage" | "agentmessageevent" if !self.project_subagent_message(item) => {
-                self.project_assistant_message(item, has_later_process);
+                if !self.project_async_request_user_input(item) {
+                    self.project_assistant_message(item, has_later_process);
+                }
             }
             "agentmessage" | "agentmessageevent" => {}
             "message" => self.project_role_message(item, has_later_process),
@@ -288,6 +291,31 @@ impl<'a> TurnTranscriptProjector<'a> {
         if let Some(file_changes) = file_changes(item) {
             self.merge_file_changes(file_changes);
         }
+    }
+
+    /// Codex records a non-blocking clarifying question as an `AgentMessage` that
+    /// carries `questions`, so history must restore the interactive card instead of
+    /// folding the question into the assistant's final text.
+    fn project_async_request_user_input(&mut self, item: &Value) -> bool {
+        let Some(questions) = item.get("questions").and_then(Value::as_array) else {
+            return false;
+        };
+        let item_id = item_id(item, "request-user-input");
+        let Some(render_payload) = async_question_render_payload(item_id.as_str(), questions)
+        else {
+            return false;
+        };
+        self.assistant.blocks.push(json!({
+            "id": format!("request-user-input-{item_id}"),
+            "subtaskId": self.subtask_id,
+            "type": "tool",
+            "tool_use_id": item_id,
+            "tool_name": "request_user_input",
+            "status": "pending",
+            "timestamp": item_timestamp(item).unwrap_or(self.created_at),
+            "render_payload": render_payload,
+        }));
+        true
     }
 
     fn project_file_change(&mut self, item: &Value, summary: Option<Value>) {

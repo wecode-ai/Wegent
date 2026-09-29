@@ -8,6 +8,7 @@ mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
 mod codex_transcript_page;
+mod codex_user_input;
 mod collaboration_projects;
 mod connectors;
 mod events;
