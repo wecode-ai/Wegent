@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
@@ -128,6 +128,7 @@ class ConfigResolver:
         knowledge_base_id: int,
         user_id: int,
         authorized: RemoteQueryAuthorizedResources | None = None,
+        retrieval_override: Mapping[str, Any] | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base.
 
@@ -155,7 +156,9 @@ class ConfigResolver:
             embedding_model_config=self._authorized_embedding_config(
                 db, authorized, index_owner_user_id, user_name
             ),
-            retrieval_config=self._authorized_retrieval_settings(kb, authorized),
+            retrieval_config=self._authorized_retrieval_settings(
+                kb, authorized, retrieval_override
+            ),
             user_name=user_name,
         )
 
@@ -215,8 +218,13 @@ class ConfigResolver:
         self,
         kb: Kind,
         authorized: RemoteQueryAuthorizedResources,
+        retrieval_override: Mapping[str, Any] | None = None,
     ) -> RuntimeRetrievalConfig:
-        """Resolve stored retrieval parameters inside the authorized set."""
+        """Resolve stored retrieval parameters inside the authorized set.
+
+        The per-request override is applied by the module, so the effective
+        parameters always pass the same composition and validation rules.
+        """
         try:
             resolved = resolve_execution_config(
                 self._read_kb_retrieval_config(kb),
@@ -233,6 +241,7 @@ class ConfigResolver:
                         namespace=authorized.embedding_model.namespace,
                     ),
                 ),
+                retrieval_override=retrieval_override,
             )
         except KnowledgeConfigError as exc:
             raise ConfigResolutionError("config_invalid", str(exc)) from exc

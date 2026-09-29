@@ -527,6 +527,7 @@ async def _execute_scoped_retrieve(
     all_records: list[dict] = []
     modes: set[str] = set()
     total_estimated_tokens = 0
+    read_user_id, task_id = _resolve_read_identity(db, request)
     for kb_ids, group_document_ids in retrieve_groups:
         retrieval_scope = (
             RetrievalScope(document_ids=group_document_ids)
@@ -541,8 +542,9 @@ async def _execute_scoped_retrieve(
             max_results=request.max_results,
             scope=retrieval_scope,
             route_mode=request.route_mode,
-            user_id=persistence_context.user_id if persistence_context else None,
+            user_id=read_user_id,
             user_name=request.user_name,
+            task_id=task_id,
             context_window=runtime_context.context_window if runtime_context else None,
             used_context_tokens=(
                 runtime_context.used_context_tokens if runtime_context else 0
@@ -559,7 +561,12 @@ async def _execute_scoped_retrieve(
             restricted_mode=restricted_mode,
         )
         runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
-        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        result = await _execute_query_with_remote_fallback(
+            runtime_spec,
+            db,
+            read_user_id=read_user_id,
+            task_id=task_id,
+        )
         modes.add(result.get("mode", "rag_retrieval"))
         total_estimated_tokens += result.get("total_estimated_tokens", 0)
         all_records.extend(result.get("records", []))
@@ -580,6 +587,28 @@ def _resolve_query_gateway(runtime_spec):
     if route_mode == "rag_retrieval":
         return get_query_gateway()
     return LocalRagGateway()
+
+
+def _resolve_read_identity(
+    db: Session,
+    request: InternalRetrieveRequest,
+) -> tuple[int | None, int | None]:
+    """Return the caller identity and the task scope it reads within.
+
+    The task is derived from the user subtask the caller already reports, so
+    task-bound knowledge bases keep their delegated read semantics.
+    """
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    persistence_context = request.persistence_context
+    read_user_id = request.user_id
+    if persistence_context is not None and read_user_id is None:
+        read_user_id = persistence_context.user_id
+    task_id = KnowledgeService.resolve_task_id_for_user_subtask(
+        db,
+        persistence_context.user_subtask_id if persistence_context else None,
+    )
+    return read_user_id, task_id
 
 
 def _finalize_query_runtime_spec(
@@ -617,7 +646,13 @@ def _finalize_query_runtime_spec(
     return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
 
 
-async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+async def _execute_query_with_remote_fallback(
+    runtime_spec,
+    db: Session,
+    *,
+    read_user_id: int | None = None,
+    task_id: int | None = None,
+):
     rag_gateway = _resolve_query_gateway(runtime_spec)
     if (
         isinstance(rag_gateway, RemoteRagGateway)
@@ -630,7 +665,8 @@ async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
                     runtime_resolver.build_query_authorized_resources(
                         db=db,
                         knowledge_base_ids=runtime_spec.knowledge_base_ids,
-                        current_user_id=runtime_spec.user_id,
+                        read_user_id=read_user_id,
+                        task_id=task_id,
                     )
                 )
             }
@@ -729,6 +765,7 @@ async def internal_retrieve(
                 persistence_context=persistence_context,
             )
         else:
+            read_user_id, task_id = _resolve_read_identity(db, request)
             runtime_spec = runtime_resolver.build_query_runtime_spec(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
@@ -741,8 +778,9 @@ async def internal_retrieve(
                     else None
                 ),
                 route_mode=request.route_mode,
-                user_id=persistence_context.user_id if persistence_context else None,
+                user_id=read_user_id,
                 user_name=request.user_name,
+                task_id=task_id,
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),
@@ -765,7 +803,12 @@ async def internal_retrieve(
                 db,
                 runtime_context,
             )
-            result = await _execute_query_with_remote_fallback(runtime_spec, db)
+            result = await _execute_query_with_remote_fallback(
+                runtime_spec,
+                db,
+                read_user_id=read_user_id,
+                task_id=task_id,
+            )
 
         records = result.get("records", [])
         response_records = list(records)

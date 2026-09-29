@@ -18,18 +18,52 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from app.core.config import settings
+from app.models.kind import Kind
+from app.models.resource_member import ResourceMember
+from app.models.user import User
 from app.services.knowledge import search_execution
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
+from shared.knowledge_module import RetrievalResource
 from shared.models import RetrievalScope
+from tests.utils.namespace_members import add_group_member, group_namespace
+from tests.utils.retrieval_resources import embedding_model_kind
+from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
+
+# Group-owned resources are created by a user other than the knowledge base owner.
+_GROUP_OWNER_OFFSET = 1000
+
+_KB_SPEC = {
+    "spec": {
+        "name": "remote-query-kb",
+        "retrievalConfig": {
+            "retriever_name": "retriever-a",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embed-a",
+                "model_namespace": "default",
+            },
+        },
+    }
+}
 
 _RETRIEVAL_CONFIG = {
     "retriever_name": "retriever-a",
     "retriever_namespace": "default",
     "embedding_config": {"model_name": "embed-a", "model_namespace": "default"},
 }
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+
+
+def _internal_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}"}
 
 
 def _kb() -> Any:
@@ -214,13 +248,33 @@ async def test_authorized_references_reach_the_runtime_request(
     resolver = RagRuntimeResolver()
     monkeypatch.setattr(resolver, "_get_knowledge_base_record", lambda **kwargs: _kb())
     monkeypatch.setattr(
-        "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
-        lambda **kwargs: MagicMock(),
+        "app.services.knowledge.knowledge_service.KnowledgeService"
+        ".resolve_read_user_for_knowledge_base",
+        lambda *args, **kwargs: SimpleNamespace(id=3),
     )
-    monkeypatch.setattr(resolver, "_get_model_kind", lambda **kwargs: MagicMock())
+    monkeypatch.setattr(
+        "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+        lambda *args, **kwargs: (_kb(), True),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.runtime_resolver.resolve_retriever_resource",
+        lambda *args, **kwargs: RetrievalResource(
+            name="retriever-a", kind="Retriever", namespace="default"
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.runtime_resolver.resolve_embedding_model_resource",
+        lambda *args, **kwargs: RetrievalResource(
+            name="embed-a",
+            kind="Model",
+            category="embedding",
+            namespace="default",
+        ),
+    )
     authorized = resolver.build_query_authorized_resources(
         db=MagicMock(),
         knowledge_base_ids=[7],
+        read_user_id=3,
     )
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[7],
@@ -260,3 +314,138 @@ async def test_authorized_references_reach_the_runtime_request(
             },
         }
     ]
+
+
+def _create_knowledge_base(db: Any, *, owner_user_id: int) -> int:
+    kb = Kind(
+        user_id=owner_user_id,
+        kind="KnowledgeBase",
+        name="remote-query-kb",
+        namespace="default",
+        json=_KB_SPEC,
+        is_active=True,
+    )
+    db.add(kb)
+    db.commit()
+    db.refresh(kb)
+    return kb.id
+
+
+def _fail_all_gateways(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace every gateway with a failure and record any attempted query."""
+    calls: list[str] = []
+
+    async def record(name: str, *args: Any, **kwargs: Any) -> dict:
+        calls.append(name)
+        raise AssertionError(f"{name} must not run for an unauthorized query")
+
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag.LocalRagGateway.query",
+        lambda self, *args, **kwargs: record("local", *args, **kwargs),
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag.RemoteRagGateway.query",
+        lambda self, *args, **kwargs: record("remote", *args, **kwargs),
+    )
+    return calls
+
+
+def test_internal_query_rejects_unreadable_knowledge_base(
+    test_client, test_db, test_user, monkeypatch
+) -> None:
+    """A caller who cannot read the knowledge base is rejected before querying."""
+    owner = User(
+        user_name="kb-owner",
+        password_hash="unused",
+        email="owner@example.com",
+        is_active=True,
+    )
+    test_db.add(owner)
+    test_db.commit()
+    test_db.refresh(owner)
+    # The owner's resources are valid, so only the caller check can reject.
+    test_db.add(build_retriever_kind(owner.id, "retriever-a"))
+    test_db.add(embedding_model_kind(owner.id, "embed-a"))
+    test_db.commit()
+    knowledge_base_id = _create_knowledge_base(test_db, owner_user_id=owner.id)
+    calls = _fail_all_gateways(monkeypatch)
+
+    response = test_client.post(
+        "/api/internal/rag/retrieve",
+        json={
+            "query": "policy",
+            "user_id": test_user.id,
+            "knowledge_base_ids": [knowledge_base_id],
+            "route_mode": "rag_retrieval",
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_query_rejects_owner_who_lost_group_membership(
+    test_client, test_db, test_user, monkeypatch
+) -> None:
+    """Revoking the owner's group membership fails the next remote query."""
+    group = group_namespace(
+        test_db, "revoked-group", owner_user_id=test_user.id + _GROUP_OWNER_OFFSET
+    )
+    add_group_member(test_db, group, test_user)
+    # The public retriever still resolves, so the group embedding is the only
+    # resource that can reject the query after the owner leaves the group.
+    test_db.add(build_retriever_kind(0, "retriever-a"))
+    test_db.add(
+        embedding_model_kind(
+            test_user.id + _GROUP_OWNER_OFFSET, "group-embedding", namespace=group.name
+        )
+    )
+    test_db.commit()
+
+    kb = Kind(
+        user_id=test_user.id,
+        kind="KnowledgeBase",
+        name="group-kb",
+        namespace="default",
+        json={
+            "spec": {
+                "name": "group-kb",
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "group-embedding",
+                        "model_namespace": group.name,
+                    },
+                },
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(kb)
+    test_db.commit()
+    test_db.refresh(kb)
+
+    # The owner leaves the group after the knowledge base was configured.
+    test_db.query(ResourceMember).filter(
+        ResourceMember.resource_type == "Namespace",
+        ResourceMember.resource_id == group.id,
+        ResourceMember.entity_id == str(test_user.id),
+    ).delete()
+    test_db.commit()
+    calls = _fail_all_gateways(monkeypatch)
+
+    response = test_client.post(
+        "/api/internal/rag/retrieve",
+        json={
+            "query": "policy",
+            "user_id": test_user.id,
+            "knowledge_base_ids": [kb.id],
+            "route_mode": "rag_retrieval",
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 403
+    assert calls == []

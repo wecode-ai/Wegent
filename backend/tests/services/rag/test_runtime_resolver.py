@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from shared.knowledge_module import RetrievalResource
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteQueryAuthorizedResources,
@@ -37,20 +38,41 @@ _QUERY_KB = SimpleNamespace(
 def test_build_query_authorized_resources_authorizes_owner_resources() -> None:
     resolver = RagRuntimeResolver()
     db = MagicMock()
+    reader = SimpleNamespace(id=9)
 
     with (
         patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever"
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".resolve_read_user_for_knowledge_base",
+            return_value=reader,
+        ),
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".get_knowledge_base",
+            return_value=(_QUERY_KB, True),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="retriever-a", kind="Retriever", namespace="default"
+            ),
         ) as get_retriever,
-        patch.object(
-            resolver, "_get_model_kind", return_value=MagicMock()
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource",
+            return_value=RetrievalResource(
+                name="embed-a",
+                kind="Model",
+                category="embedding",
+                namespace="default",
+            ),
         ) as get_model,
     ):
         authorized = resolver.build_query_authorized_resources(
             db=db,
             knowledge_base_ids=[7],
-            current_user_id=9,
+            read_user_id=9,
+            task_id=11,
         )
 
     assert len(authorized) == 1
@@ -62,61 +84,132 @@ def test_build_query_authorized_resources_authorizes_owner_resources() -> None:
     assert entry.embedding_model.kind == "Model"
     assert entry.embedding_model.name == "embed-a"
     get_retriever.assert_called_once_with(
-        db=db,
-        user_id=42,
-        name="retriever-a",
-        namespace="default",
+        db, user_id=42, name="retriever-a", namespace="default"
     )
     get_model.assert_called_once_with(
-        db=db,
-        user_id=42,
-        model_name="embed-a",
-        model_namespace="default",
+        db, user_id=42, name="embed-a", namespace="default"
     )
 
 
-def test_build_query_authorized_resources_rejects_group_denied_retriever() -> None:
+def test_build_query_authorized_resources_rejects_owner_without_resource() -> None:
     resolver = RagRuntimeResolver()
     db = MagicMock()
+    reader = SimpleNamespace(id=9)
 
     with (
         patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
-            side_effect=HTTPException(
-                status_code=403, detail="Access denied to this group"
-            ),
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".resolve_read_user_for_knowledge_base",
+            return_value=reader,
         ),
-        patch.object(resolver, "_get_model_kind") as get_model,
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".get_knowledge_base",
+            return_value=(_QUERY_KB, True),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=None,
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource"
+        ) as resolve_embedding,
     ):
         with pytest.raises(HTTPException) as exc_info:
             resolver.build_query_authorized_resources(
                 db=db,
                 knowledge_base_ids=[7],
-                current_user_id=9,
+                read_user_id=9,
             )
 
     assert exc_info.value.status_code == 403
-    get_model.assert_not_called()
+    resolve_embedding.assert_not_called()
 
 
 def test_build_query_authorized_resources_rejects_missing_embedding_model() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    reader = SimpleNamespace(id=9)
+
+    with (
+        patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".resolve_read_user_for_knowledge_base",
+            return_value=reader,
+        ),
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".get_knowledge_base",
+            return_value=(_QUERY_KB, True),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="retriever-a", kind="Retriever", namespace="default"
+            ),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource",
+            return_value=None,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            resolver.build_query_authorized_resources(
+                db=db,
+                knowledge_base_ids=[7],
+                read_user_id=9,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert "embed-a" in str(exc_info.value.detail)
+
+
+def test_build_query_authorized_resources_rejects_caller_without_read_access() -> None:
     resolver = RagRuntimeResolver()
     db = MagicMock()
 
     with (
         patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever"
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".resolve_read_user_for_knowledge_base",
+            return_value=SimpleNamespace(id=9),
         ),
-        patch.object(resolver, "_get_model_kind", return_value=None),
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService"
+            ".get_knowledge_base",
+            return_value=(_QUERY_KB, False),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource"
+        ) as resolve_retriever,
     ):
-        with pytest.raises(ValueError, match="Embedding model 'embed-a'"):
+        with pytest.raises(HTTPException) as exc_info:
             resolver.build_query_authorized_resources(
                 db=db,
                 knowledge_base_ids=[7],
-                current_user_id=9,
+                read_user_id=9,
             )
+
+    assert exc_info.value.status_code == 403
+    assert "Access denied" in str(exc_info.value.detail)
+    resolve_retriever.assert_not_called()
+
+
+def test_build_query_authorized_resources_rejects_missing_reader() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB):
+        with pytest.raises(HTTPException) as exc_info:
+            resolver.build_query_authorized_resources(
+                db=db,
+                knowledge_base_ids=[7],
+            )
+
+    assert exc_info.value.status_code == 403
 
 
 def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
@@ -282,12 +375,15 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
             query="release checklist",
             max_results=3,
             route_mode="rag_retrieval",
+            user_id=9,
+            task_id=11,
         )
 
     build_authorized.assert_called_once_with(
         db=ANY,
         knowledge_base_ids=[1],
-        current_user_id=None,
+        read_user_id=9,
+        task_id=11,
     )
     assert spec.authorized_resources == authorized
     assert spec.knowledge_base_configs == []
@@ -665,10 +761,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
 
     with (
         patch.object(resolver, "_get_knowledge_base_record", return_value=kb),
-        patch(
-            "app.services.knowledge.index_runtime.build_kb_index_info",
-            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
-        ) as build_kb_index_info,
+        patch.object(resolver, "_require_knowledge_read_access") as require_read,
         patch.object(
             resolver,
             "_authorize_query_resources",
@@ -682,12 +775,11 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
             route_mode="rag_retrieval",
             user_id=9,
             user_name="alice",
+            task_id=11,
         )
 
-    build_kb_index_info.assert_called_once_with(
-        db=db,
-        knowledge_base=kb,
-        current_user_id=9,
+    require_read.assert_called_once_with(
+        db=db, knowledge_base=kb, read_user_id=9, task_id=11
     )
     authorize_resources.assert_called_once_with(
         db=db,

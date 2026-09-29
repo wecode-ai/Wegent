@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, Mapping, TypeVar
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -60,6 +60,7 @@ class RuntimeConfigLoader:
         knowledge_base_id: int,
         user_id: int,
         authorized: RemoteQueryAuthorizedResources | None = None,
+        retrieval_override: Mapping[str, Any] | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         return self._resolve_with_session(
@@ -68,6 +69,7 @@ class RuntimeConfigLoader:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user_id,
                 authorized=authorized,
+                retrieval_override=retrieval_override,
             )
         )
 
@@ -77,6 +79,7 @@ class RuntimeConfigLoader:
         knowledge_base_ids: list[int],
         user_id: int,
         authorized: dict[int, RemoteQueryAuthorizedResources] | None = None,
+        retrieval_overrides: Mapping[int, Mapping[str, Any]] | None = None,
     ) -> dict[int, QueryConfig]:
         """Resolve query configs for multiple knowledge bases in one session.
 
@@ -84,6 +87,7 @@ class RuntimeConfigLoader:
         only loads the retrieval resources Backend authorized for this call.
         """
         authorized = authorized or {}
+        retrieval_overrides = retrieval_overrides or {}
         return self._resolve_with_session(
             lambda db: {
                 knowledge_base_id: self._resolver.resolve_query_config(
@@ -91,6 +95,7 @@ class RuntimeConfigLoader:
                     knowledge_base_id=knowledge_base_id,
                     user_id=user_id,
                     authorized=authorized.get(knowledge_base_id),
+                    retrieval_override=retrieval_overrides.get(knowledge_base_id),
                 )
                 for knowledge_base_id in knowledge_base_ids
             }

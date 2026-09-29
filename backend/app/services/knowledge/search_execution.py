@@ -178,6 +178,7 @@ class KnowledgeSearchRunner:
                 route_mode=route_mode,
                 user_id=user.id,
                 user_name=user.user_name,
+                task_id=task_id,
                 context_window=context_window,
                 used_context_tokens=used_context_tokens,
                 reserved_output_tokens=reserved_output_tokens,
@@ -212,7 +213,8 @@ class KnowledgeSearchRunner:
                             resolver.build_query_authorized_resources(
                                 db=db,
                                 knowledge_base_ids=[knowledge_base_id],
-                                current_user_id=user.id,
+                                read_user_id=user.id,
+                                task_id=task_id,
                             )
                         )
                     }

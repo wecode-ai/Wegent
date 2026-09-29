@@ -70,6 +70,12 @@ class QueryExecutor:
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
             authorized=authorized_by_kb_id,
+            retrieval_overrides={
+                knowledge_base_id: override.retrieval_config.model_dump(
+                    exclude_unset=True
+                )
+                for knowledge_base_id, override in retrieval_override_by_kb_id.items()
+            },
         )
         search_hints = self._search_hints_dict(request.search_hints)
         self._log_query_plan(plan, search_hints)
@@ -81,7 +87,6 @@ class QueryExecutor:
                 knowledge_base_id=knowledge_base_id,
                 config=configs_by_kb_id[knowledge_base_id],
                 plan=plan,
-                retrieval_override=retrieval_override_by_kb_id.get(knowledge_base_id),
             )
             all_records.extend(records)
 
@@ -149,7 +154,6 @@ class QueryExecutor:
         knowledge_base_id: int,
         config: QueryConfig,
         plan: QueryPlan,
-        retrieval_override: RemoteKnowledgeBaseRetrievalOverride | None = None,
     ) -> list[RemoteQueryRecord]:
         """Query a single knowledge base.
 
@@ -160,16 +164,6 @@ class QueryExecutor:
         Returns:
             List of records from this knowledge base.
         """
-        if retrieval_override is not None:
-            config = config.__class__(
-                knowledge_base_id=config.knowledge_base_id,
-                index_owner_user_id=config.index_owner_user_id,
-                retriever_config=config.retriever_config,
-                embedding_model_config=config.embedding_model_config,
-                retrieval_config=retrieval_override.retrieval_config,
-                user_name=config.user_name,
-            )
-
         # Create storage backend and embedding model
         storage_backend = create_storage_backend_from_runtime_config(
             config.retriever_config
@@ -184,7 +178,7 @@ class QueryExecutor:
             "storage_type=%s, retrieval_mode=%s, top_k=%s, "
             "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
             knowledge_base_id,
-            "request_override" if retrieval_override is not None else "database",
+            "module_resolved",
             storage_type,
             config.retrieval_config.retrieval_mode,
             config.retrieval_config.top_k,

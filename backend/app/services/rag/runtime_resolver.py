@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -11,6 +12,10 @@ from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
     get_kb_index_info_by_record,
+)
+from app.services.knowledge.retrieval_resource_resolver import (
+    resolve_embedding_model_resource,
+    resolve_retriever_resource,
 )
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
@@ -32,6 +37,7 @@ from knowledge_engine.embedding.capabilities import (
 )
 from shared.db.capability_reference import resolve_model_kind
 from shared.knowledge_module import (
+    EMBEDDING_RESOURCE_CATEGORY,
     MODEL_RESOURCE_KIND,
     RETRIEVER_RESOURCE_KIND,
 )
@@ -144,6 +150,7 @@ class RagRuntimeResolver:
         restricted_mode: bool = False,
         user_id: int | None = None,
         user_name: str | None = None,
+        task_id: int | None = None,
         enabled_index_families: list[str] | None = None,
         retrieval_policy: str = "chunk_only",
         context_window: int | None = None,
@@ -179,7 +186,8 @@ class RagRuntimeResolver:
             resolved_authorized_resources = self.build_query_authorized_resources(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
-                current_user_id=user_id,
+                read_user_id=user_id,
+                task_id=task_id,
             )
 
         return QueryRuntimeSpec(
@@ -294,14 +302,17 @@ class RagRuntimeResolver:
         *,
         db: Session,
         knowledge_base_ids: list[int],
-        current_user_id: int | None = None,
+        read_user_id: int | None = None,
+        task_id: int | None = None,
     ) -> list[RemoteQueryAuthorizedResources]:
         """Authorize the retrieval resources each knowledge base would execute.
 
-        The knowledge base owner -- not the caller -- owns the retriever and
-        embedding model, so resolution runs as the owner and fails when the owner
-        may not use a configured resource. Backend sends only these references;
-        the runtime loads just them instead of widening the lookup.
+        Two separate subjects are checked before anything leaves Backend: the
+        caller must be able to read each knowledge base, using the existing
+        task-scoped read rule, and the knowledge base owner must be able to use
+        the configured retriever and embedding model. Backend then sends only
+        these references; the runtime loads just them instead of widening the
+        lookup.
         """
         knowledge_base_records = []
         for knowledge_base_id in knowledge_base_ids:
@@ -315,7 +326,8 @@ class RagRuntimeResolver:
         return self.build_query_authorized_resources_from_records(
             db=db,
             knowledge_base_records=knowledge_base_records,
-            current_user_id=current_user_id,
+            read_user_id=read_user_id,
+            task_id=task_id,
         )
 
     def build_query_authorized_resources_from_records(
@@ -323,31 +335,66 @@ class RagRuntimeResolver:
         *,
         db: Session,
         knowledge_base_records: list[Kind],
-        current_user_id: int | None = None,
+        read_user_id: int | None = None,
+        task_id: int | None = None,
     ) -> list[RemoteQueryAuthorizedResources]:
         authorized: list[RemoteQueryAuthorizedResources] = []
         for kb in knowledge_base_records:
+            self._require_knowledge_read_access(
+                db=db,
+                knowledge_base=kb,
+                read_user_id=read_user_id,
+                task_id=task_id,
+            )
             references = self._read_query_resource_references(
                 knowledge_base_id=kb.id,
                 retrieval_config=self._read_retrieval_config(kb),
             )
-
-            owner_user_id = kb.user_id
-            if current_user_id is not None:
-                kb_info = get_kb_index_info_by_record(
-                    db=db,
-                    knowledge_base=kb,
-                    current_user_id=current_user_id,
-                )
-                owner_user_id = kb_info.index_owner_user_id
-
             entry = references.authorized_entry(
                 knowledge_base_id=kb.id,
-                index_owner_user_id=owner_user_id,
+                index_owner_user_id=kb.user_id,
             )
             self._authorize_query_resources(db=db, entry=entry)
             authorized.append(entry)
         return authorized
+
+    @staticmethod
+    def _require_knowledge_read_access(
+        *,
+        db: Session,
+        knowledge_base: Kind,
+        read_user_id: int | None,
+        task_id: int | None,
+    ) -> None:
+        """Reject the query unless the caller may read this knowledge base.
+
+        The caller identity is resolved with the same task-scoped rule used by
+        the other product entries, so a task-bound knowledge base keeps its
+        delegated read semantics instead of requiring the task user to own it.
+        """
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        denied = f"Access denied to knowledge base {knowledge_base.id}"
+        if read_user_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Knowledge query requires an authenticated reader",
+            )
+        reader = KnowledgeService.resolve_read_user_for_knowledge_base(
+            db,
+            user_id=read_user_id,
+            task_id=task_id,
+            knowledge_base_id=knowledge_base.id,
+        )
+        if reader is None:
+            raise HTTPException(status_code=403, detail=denied)
+        _, has_access = KnowledgeService.get_knowledge_base(
+            db,
+            knowledge_base.id,
+            reader.id,
+        )
+        if not has_access:
+            raise HTTPException(status_code=403, detail=denied)
 
     @staticmethod
     def _read_retrieval_config(kb: Kind) -> dict[str, Any]:
@@ -386,23 +433,42 @@ class RagRuntimeResolver:
         db: Session,
         entry: RemoteQueryAuthorizedResources,
     ) -> None:
-        """Reject the query when the owner may not use a configured resource."""
-        retriever_kinds_service.get_retriever(
-            db=db,
-            user_id=entry.index_owner_user_id,
+        """Reject the query when the owner may not use a configured resource.
+
+        The knowledge base owner -- not the caller -- owns the retriever and
+        embedding model, so resolution runs as the owner through the same
+        adapter the create path uses. That reuses one authorization rule for
+        group membership, referenced records and the embedding category, so a
+        knowledge base whose owner lost access fails before any remote request.
+        """
+        owner_user_id = entry.index_owner_user_id
+        retriever = resolve_retriever_resource(
+            db,
+            user_id=owner_user_id,
             name=entry.retriever.name,
             namespace=entry.retriever.namespace,
         )
-        embedding_model = self._get_model_kind(
-            db=db,
-            user_id=entry.index_owner_user_id,
-            model_name=entry.embedding_model.name,
-            model_namespace=entry.embedding_model.namespace,
+        if retriever is None or retriever.kind != RETRIEVER_RESOURCE_KIND:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Retriever {entry.retriever.name!r} is not available to the "
+                    "knowledge base owner"
+                ),
+            )
+        embedding = resolve_embedding_model_resource(
+            db,
+            user_id=owner_user_id,
+            name=entry.embedding_model.name,
+            namespace=entry.embedding_model.namespace,
         )
-        if embedding_model is None:
-            raise ValueError(
-                f"Embedding model '{entry.embedding_model.name}' not found in "
-                f"namespace '{entry.embedding_model.namespace}'"
+        if embedding is None or embedding.category != EMBEDDING_RESOURCE_CATEGORY:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Embedding model {entry.embedding_model.name!r} is not "
+                    "available to the knowledge base owner"
+                ),
             )
 
     def build_public_list_chunks_runtime_spec(

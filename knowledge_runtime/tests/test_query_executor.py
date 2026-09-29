@@ -363,6 +363,19 @@ class TestQueryExecutor:
 
             await executor.execute(query_request)
 
+        # The override is handed to config resolution, which applies it through
+        # the module; the executor executes whatever the resolver returned.
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "retrieval_overrides"
+        ] == {
+            1: {
+                "top_k": 9,
+                "score_threshold": 0.2,
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.8,
+                "keyword_weight": 0.2,
+            }
+        }
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
@@ -373,13 +386,7 @@ class TestQueryExecutor:
                 "phrases": [],
                 "hint_source": "fallback",
             },
-            retrieval_config=RuntimeRetrievalConfig(
-                top_k=9,
-                score_threshold=0.2,
-                retrieval_mode="hybrid",
-                vector_weight=0.8,
-                keyword_weight=0.2,
-            ),
+            retrieval_config=config.retrieval_config,
             scope=None,
             metadata_condition=None,
             user_id=7,
@@ -602,6 +609,7 @@ class TestQueryExecutor:
             knowledge_base_ids=[1, 2],
             user_id=42,
             authorized={1: _authorized(1), 2: _authorized(2)},
+            retrieval_overrides={},
         )
 
     @pytest.mark.asyncio

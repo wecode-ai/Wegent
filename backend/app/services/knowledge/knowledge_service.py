@@ -499,6 +499,19 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def resolve_task_id_for_user_subtask(
+        db: Session,
+        user_subtask_id: int | None,
+    ) -> int | None:
+        """Resolve the task a user subtask belongs to, for task-scoped reads."""
+        if user_subtask_id is None:
+            return None
+        from shared.models.db import Subtask
+
+        row = db.query(Subtask.task_id).filter(Subtask.id == user_subtask_id).first()
+        return int(row[0]) if row is not None else None
+
+    @staticmethod
     def resolve_read_user_for_knowledge_base(
         db: Session,
         *,

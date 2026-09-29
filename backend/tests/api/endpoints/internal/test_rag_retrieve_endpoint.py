@@ -365,7 +365,7 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
         )
 
     assert response.status_code == 200
-    mock_query.assert_awaited_once_with(ANY, ANY)
+    mock_query.assert_awaited_once_with(ANY, ANY, read_user_id=ANY, task_id=ANY)
     mock_persist.assert_called_once()
 
 

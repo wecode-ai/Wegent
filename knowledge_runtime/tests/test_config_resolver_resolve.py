@@ -383,3 +383,61 @@ class TestResolveQueryConfig:
                     authorized=_authorized_entry(),
                 )
         assert exc_info.value.code == "config_not_found"
+
+    def test_retrieval_override_is_applied_through_the_module(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """A request override replaces the stored parameters via the module."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_user_name", return_value="testuser"),
+            patch.object(
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
+            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
+        ):
+            result = resolver.resolve_query_config(
+                mock_db,
+                knowledge_base_id=1,
+                user_id=42,
+                authorized=_authorized_entry(),
+                retrieval_override={
+                    "top_k": 3,
+                    "score_threshold": 0.25,
+                },
+            )
+
+        assert result.retrieval_config.top_k == 3
+        assert result.retrieval_config.score_threshold == 0.25
+
+    def test_retrieval_override_with_invalid_weights_is_rejected(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """An override that violates a module rule never reaches execution."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_user_name", return_value="testuser"),
+            patch.object(
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
+            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
+            pytest.raises(ConfigResolutionError) as exc_info,
+        ):
+            resolver.resolve_query_config(
+                mock_db,
+                knowledge_base_id=1,
+                user_id=42,
+                authorized=_authorized_entry(),
+                retrieval_override={
+                    "retrieval_mode": "hybrid",
+                    "vector_weight": 0.9,
+                    "keyword_weight": 0.9,
+                },
+            )
+
+        assert exc_info.value.code == "config_invalid"
+        assert "hybrid_weights" in str(exc_info.value)

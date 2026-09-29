@@ -90,6 +90,19 @@ def test_retrieval_override_replaces_parameters_only() -> None:
     assert resolved.retriever == _RETRIEVER
 
 
+def test_rejects_override_with_inconsistent_hybrid_weights() -> None:
+    with pytest.raises(KnowledgeConfigError, match="hybrid_weights"):
+        resolve_execution_config(
+            _STORED_CONFIG,
+            _authorized(),
+            retrieval_override={
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.9,
+                "keyword_weight": 0.9,
+            },
+        )
+
+
 def test_rejects_resource_outside_authorized_set() -> None:
     stored = {**_STORED_CONFIG, "retriever_name": "other-retriever"}
 
