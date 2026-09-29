@@ -53,7 +53,16 @@ runs:
         mkdir -p .ci-artifacts
         executor_pid=""
         backend_pid=""
-        if [[ "$RUNTIME_BINARIES_READY" != "true" ]]; then
+        if [[ "$RUNTIME_BINARIES_READY" == "true" ]]; then
+          for runtime in executor backend-rs; do
+            if [[ ! -s ".ci-artifacts/wegent-$runtime" ]]; then
+              echo "Provided runtime binary is missing: .ci-artifacts/wegent-$runtime" >&2
+              exit 1
+            fi
+            # Artifact upload does not preserve the executable bit.
+            chmod 0755 ".ci-artifacts/wegent-$runtime"
+          done
+        else
           .github/scripts/restore-oci-runtime-binary.sh \
             "$EXECUTOR_IMAGE" \
             /app/executor \
