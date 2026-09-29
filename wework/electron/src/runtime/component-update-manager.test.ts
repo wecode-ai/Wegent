@@ -815,6 +815,14 @@ function verificationRecordPath(fixture: Fixture, id: ManagedComponentId): strin
   return join(fixture.data, 'managed-components', 'verification', `${id}.json`)
 }
 
+// The record directory normally holds one small JSON file per component. A
+// regular file at that path makes both creating the directory and writing the
+// record fail without touching anything that verification itself depends on.
+async function blockVerificationRecordDirectory(fixture: Fixture): Promise<void> {
+  await mkdir(join(fixture.data, 'managed-components'), { recursive: true })
+  await writeFile(join(fixture.data, 'managed-components', 'verification'), 'blocked')
+}
+
 test('trusts an activated component from its verification record without reading content again', async () => {
   const { fixture, archiveSha256, managedEntry, contentSha256 } =
     await createActivatedExecutorFixture()
@@ -870,4 +878,51 @@ test('refreshes the verification record when identity changed but content still 
   const refreshed = JSON.parse(await readFile(recordPath, 'utf8')) as { signature: string }
   expect(refreshed.signature).not.toBe(record.signature)
   expect(refreshed.signature).toBe(await hashComponentIdentity(managedEntry))
+})
+
+test('keeps the activated component set when the verification record cannot be written', async () => {
+  const { fixture, managedEntry } = await createActivatedExecutorFixture()
+  await blockVerificationRecordDirectory(fixture)
+
+  const activated = await createPlatformManager(fixture).prepareStartup()
+
+  // Persisting the record is an optimization, so failing it must not drop the
+  // active component set or resolve the packaged copy instead.
+  expect(activated.executor).toBe(managedEntry)
+  const state = JSON.parse(
+    await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+  ) as { current?: unknown }
+  expect(state.current).toBeDefined()
+})
+
+test('keeps a downloaded component staged when the verification record cannot be written', async () => {
+  const fixture = await createFixture()
+  const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+  await blockVerificationRecordDirectory(fixture)
+  const manager = createManager(
+    fixture,
+    componentFetch(update.manifest, update.assetName, update.archive)
+  )
+
+  expect(await manager.stageAvailableUpdate()).toBe(true)
+
+  const state = JSON.parse(
+    await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+  ) as { pending?: { components: Record<string, { contentSha256: string }> } }
+  expect(state.pending?.components.executor?.contentSha256).toBe(
+    update.manifest.components.executor.contentSha256
+  )
+  await expect(
+    readFile(
+      join(
+        fixture.data,
+        'managed-components',
+        'blobs',
+        'executor',
+        update.manifest.components.executor.archiveSha256,
+        'wegent-executor'
+      ),
+      'utf8'
+    )
+  ).resolves.toBe('executor-v2')
 })

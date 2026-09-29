@@ -785,20 +785,28 @@ export class ComponentUpdateManager {
     component: RemoteComponent,
     entryPath: string
   ): Promise<void> {
-    const record: ComponentVerificationRecord = {
-      schemaVersion: 1,
-      archiveSha256: component.archiveSha256,
-      entryPath: component.entryPath,
-      contentSha256: component.contentSha256,
-      signature: await hashComponentIdentity(entryPath),
-    }
     const path = this.verificationRecordPath(id)
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     // A staging pass and a startup pass can both resolve the same component, so
     // the temporary name must not collide between concurrent writers.
     const temporary = `${path}.${randomUUID()}.tmp`
-    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
-    await rename(temporary, path)
+    try {
+      const record: ComponentVerificationRecord = {
+        schemaVersion: 1,
+        archiveSha256: component.archiveSha256,
+        entryPath: component.entryPath,
+        contentSha256: component.contentSha256,
+        signature: await hashComponentIdentity(entryPath),
+      }
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+      await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+      await rename(temporary, path)
+    } catch (error) {
+      // The record only saves a later launch from repeating a verification that
+      // already passed, so failing to persist it must not fail activation or an
+      // otherwise complete staging pass.
+      await rm(temporary, { force: true }).catch(() => {})
+      this.log({ event: 'component-verification-record-failed', id, ...errorLogFields(error) })
+    }
   }
 
   /**
