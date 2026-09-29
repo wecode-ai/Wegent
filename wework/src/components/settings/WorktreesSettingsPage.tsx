@@ -10,7 +10,7 @@ import type {
   RuntimeWorktreeConversation,
   RuntimeWorktreeSettings,
 } from '@/types/api'
-import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
+import { probeDeviceManagedWorktreeSupport } from '@/lib/worktree-availability'
 import {
   SettingsGroup,
   SettingsPage,
@@ -21,11 +21,16 @@ import {
 
 type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
 
+type WorktreesDevice = Pick<
+  DeviceInfo,
+  'device_id' | 'name' | 'status' | 'device_type' | 'runtime_routes'
+>
+
+const NO_DEVICES: WorktreesDevice[] = []
+
 interface WorktreesSettingsPageProps {
   api?: RuntimeWorkApi
-  devices?: Array<
-    Pick<DeviceInfo, 'device_id' | 'name' | 'status' | 'device_type' | 'runtime_features'>
-  >
+  devices?: WorktreesDevice[]
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   onRefreshWorkLists?: RefreshWorkLists
   onLeaveSettings?: () => void
@@ -122,21 +127,46 @@ function WorktreeRow({
 
 export function WorktreesSettingsPage({
   api,
-  devices = [],
+  devices = NO_DEVICES,
   onOpenRuntimeTask,
   onRefreshWorkLists,
   onLeaveSettings,
 }: WorktreesSettingsPageProps) {
   const { t } = useTranslation('common')
-  const availableDevices = useMemo(
-    () =>
-      devices.filter(
-        device =>
-          (device.status === 'online' || device.status === 'busy') &&
-          deviceSupportsManagedWorktrees(device)
-      ),
+  const candidateDevices = useMemo(
+    () => devices.filter(device => device.status === 'online' || device.status === 'busy'),
     [devices]
   )
+  const candidateKey = candidateDevices
+    .map(device => `${device.device_id}:${device.status}:${device.device_type ?? ''}`)
+    .join('\u0000')
+  const [probedDevices, setProbedDevices] = useState<{
+    key: string
+    devices: WorktreesDevice[]
+  } | null>(null)
+  const resolvingDevices =
+    Boolean(api) && candidateDevices.length > 0 && probedDevices?.key !== candidateKey
+  const availableDevices = probedDevices?.key === candidateKey ? probedDevices.devices : []
+
+  useEffect(() => {
+    if (!api || candidateDevices.length === 0) return
+    let cancelled = false
+    void Promise.all(
+      candidateDevices.map(async device =>
+        (await probeDeviceManagedWorktreeSupport(api, device)) ? device : null
+      )
+    ).then(resolved => {
+      if (cancelled) return
+      const supported = resolved.filter((device): device is WorktreesDevice => device !== null)
+      setProbedDevices(current =>
+        current?.key === candidateKey ? current : { key: candidateKey, devices: supported }
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [api, candidateDevices, candidateKey])
+
   const [deviceId, setDeviceId] = useState(availableDevices[0]?.device_id ?? '')
   const selectedDeviceId = availableDevices.some(device => device.device_id === deviceId)
     ? deviceId
@@ -268,7 +298,8 @@ export function WorktreesSettingsPage({
     () => groupWorktrees(items.filter(item => item.state === 'active')),
     [items]
   )
-  const unavailable = !api || availableDevices.length === 0
+  const unavailable = !api || (!resolvingDevices && availableDevices.length === 0)
+  const loadingList = loading || resolvingDevices
 
   const openConversation = useCallback(
     async (conversation: RuntimeWorktreeConversation) => {
@@ -396,7 +427,7 @@ export function WorktreesSettingsPage({
       )}
 
       <section className="mt-10">
-        {loading ? (
+        {loadingList ? (
           <div className="py-10 text-center text-sm text-text-secondary">{t('common.loading')}</div>
         ) : groups.length === 0 ? (
           <div>
