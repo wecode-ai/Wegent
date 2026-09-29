@@ -176,10 +176,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         Get a specific retriever by name with public retriever fallback.
 
-        Resolution is shared with knowledge_runtime: a retriever owned by the
-        requested scope (personal or group) wins, then an approved capability
-        reference into that scope, then the public retriever. Group retrievers
-        may be created by other users in the same group.
+        Resolution is shared with knowledge_runtime and keeps the previous
+        precedence: in ``default`` the caller's own Retriever precedes the
+        public Retriever, which precedes an approved capability reference; in a
+        group namespace the group's Retriever precedes an approved reference
+        and the public fallback. Group retrievers may be created by other users
+        in the same group.
 
         Args:
             db: Database session

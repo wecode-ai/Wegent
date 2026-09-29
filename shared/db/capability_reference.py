@@ -131,11 +131,14 @@ def resolve_retriever_kind(
     namespace: str,
     user_id: int,
 ) -> Kind | None:
-    """Resolve a direct Retriever, then its approved reference, then public.
+    """Resolve the Retriever Backend authorizes and the runtime loads.
 
-    Backend authorization and knowledge_runtime execution both use this rule, so
-    a shared reference Backend approved is the Kind the runtime loads. Group
-    permission stays in Backend; this function only resolves visible records.
+    In ``default`` the caller's own Retriever precedes a same-name public
+    Retriever, which precedes an approved shared reference. Other namespaces
+    resolve their own Retriever first, then an approved reference, then the
+    public fallback. Backend authorization and knowledge_runtime execution both
+    use this rule; group permission stays in Backend, and this function only
+    resolves visible records.
     """
     direct = _resolve_direct_retriever(
         db, name=name, namespace=namespace, user_id=user_id
@@ -187,9 +190,11 @@ def _resolve_direct_retriever(
         Kind.is_active.is_(True),
     )
     if namespace == "default":
-        # The caller's own Retriever precedes approved references, which in turn
-        # precede the public fallback resolved by resolve_retriever_kind.
-        query = query.filter(Kind.user_id == user_id).order_by(Kind.id.asc())
+        # The caller's own Retriever precedes the public Retriever, which
+        # precedes an approved reference resolved by resolve_retriever_kind.
+        query = query.filter((Kind.user_id == user_id) | (Kind.user_id == 0)).order_by(
+            Kind.user_id.desc(), Kind.id.asc()
+        )
     else:
         # Group resources are owned by their namespace rather than the caller.
         query = query.order_by(Kind.id.asc())

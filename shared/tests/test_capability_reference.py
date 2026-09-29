@@ -451,10 +451,10 @@ def test_group_retriever_still_falls_back_to_public(
     assert resolved.id == public.id
 
 
-def test_referenced_retriever_precedes_public_fallback(
+def test_public_retriever_precedes_referenced_fallback(
     retriever_reference: RetrieverReferenceScenario,
 ) -> None:
-    """An approved personal reference beats a same-name public Retriever."""
+    """A same-name public Retriever keeps winning over an approved reference."""
     public = _retriever_kind(
         kind_id=205,
         user_id=0,
@@ -473,7 +473,7 @@ def test_referenced_retriever_precedes_public_fallback(
     )
 
     assert resolved is not None
-    assert resolved.id == retriever_reference.source.id
+    assert resolved.id == public.id
 
 
 def test_unapproved_retriever_reference_is_ignored(
