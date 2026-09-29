@@ -24,6 +24,30 @@ from app.services.knowledge.orchestrator import (
     _build_filename,
     _normalize_file_extension,
 )
+from shared.knowledge_module import (
+    KnowledgeConfigError,
+    RetrievalProfileRecord,
+    RetrievalResource,
+)
+
+
+def _authorized_profile_record(profile: dict) -> RetrievalProfileRecord:
+    """Build the profile record Wegent resolves for an authorized profile."""
+    embedding_config = profile.get("embedding_config") or {}
+    return RetrievalProfileRecord(
+        configured=profile,
+        retriever=RetrievalResource(
+            name=profile["retriever_name"],
+            kind="Retriever",
+            namespace=profile.get("retriever_namespace") or "default",
+        ),
+        embedding_model=RetrievalResource(
+            name=embedding_config["model_name"],
+            kind="Model",
+            namespace=embedding_config.get("model_namespace") or "default",
+            category="embedding",
+        ),
+    )
 
 
 class TestFileExtensionHelpers:
@@ -345,8 +369,8 @@ class TestKnowledgeOrchestrator:
 
         with (
             patch(
-                "app.services.knowledge.orchestrator.get_profile",
-                return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+                "app.services.knowledge.orchestrator.load_profile",
+                return_value=(profile, 1, _authorized_profile_record(profile)),
             ),
             patch.object(orchestrator, "get_default_retriever") as mock_get_retriever,
             patch.object(
@@ -380,8 +404,8 @@ class TestKnowledgeOrchestrator:
         }
 
         with patch(
-            "app.services.knowledge.orchestrator.get_profile",
-            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+            "app.services.knowledge.orchestrator.load_profile",
+            return_value=(profile, 1, _authorized_profile_record(profile)),
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
@@ -420,8 +444,8 @@ class TestKnowledgeOrchestrator:
         }
 
         with patch(
-            "app.services.knowledge.orchestrator.get_profile",
-            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+            "app.services.knowledge.orchestrator.load_profile",
+            return_value=(profile, 1, _authorized_profile_record(profile)),
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
@@ -444,11 +468,11 @@ class TestKnowledgeOrchestrator:
     ) -> None:
         with (
             patch(
-                "app.services.knowledge.orchestrator.get_profile",
+                "app.services.knowledge.orchestrator.load_profile",
                 return_value=(
                     {"retriever_name": "inactive"},
                     1,
-                    {"status": "invalid", "fallback_reason": "retriever_unavailable"},
+                    RetrievalProfileRecord(configured={"retriever_name": "inactive"}),
                 ),
             ),
             patch.object(
@@ -558,6 +582,75 @@ class TestKnowledgeOrchestrator:
         }
         mock_get_retriever.assert_not_called()
         mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_rejects_unsupported_mode(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """The module's validation applies to configs written at creation."""
+        with pytest.raises(KnowledgeConfigError, match="retrieval_mode"):
+            orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "embedding_config": {"model_name": "embedding-1"},
+                    "retrieval_mode": "unsupported",
+                },
+            )
+
+    def test_resolve_retrieval_config_rejects_top_k_outside_creation_limit(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        with pytest.raises(KnowledgeConfigError, match="top_k"):
+            orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "embedding_config": {"model_name": "embedding-1"},
+                    "top_k": 20,
+                },
+            )
+
+    def test_update_knowledge_base_rejects_unsupported_retrieval_mode(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """Editing a knowledge base validates the fields it writes."""
+        with pytest.raises(KnowledgeConfigError, match="retrieval_mode"):
+            orchestrator.update_knowledge_base(
+                db=mock_db,
+                user=mock_user,
+                knowledge_base_id=1,
+                retrieval_config={"retrieval_mode": "unsupported"},
+            )
+
+    def test_update_knowledge_base_does_not_revalidate_untouched_fields(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """An edit only validates the fields the caller sent."""
+        response = MagicMock()
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as service,
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeBaseResponse"
+            ) as response_cls,
+        ):
+            service.update_knowledge_base.return_value = MagicMock()
+            response_cls.from_kind.return_value = response
+
+            result = orchestrator.update_knowledge_base(
+                db=mock_db,
+                user=mock_user,
+                knowledge_base_id=1,
+                retrieval_config={"retrieval_mode": "keyword"},
+            )
+
+        assert result is response
+        data = service.update_knowledge_base.call_args.kwargs["data"]
+        assert data.retrieval_config.retrieval_mode == "keyword"
+        assert data.retrieval_config.top_k is None
 
     def test_get_task_model_returns_none_when_task_not_found(
         self, orchestrator, mock_db
