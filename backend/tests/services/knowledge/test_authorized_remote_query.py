@@ -28,7 +28,12 @@ from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayEr
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 from shared.knowledge_module import RetrievalResource
-from shared.models import RetrievalScope
+from shared.models import (
+    RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
+    RemoteRetrievalResourceRef,
+    RetrievalScope,
+)
 from tests.utils.namespace_members import add_group_member, group_namespace
 from tests.utils.retrieval_resources import embedding_model_kind
 from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
@@ -310,6 +315,71 @@ async def test_authorized_references_reach_the_runtime_request(
             "embedding_model": {
                 "kind": "Model",
                 "name": "embed-a",
+                "namespace": "default",
+            },
+        }
+    ]
+
+
+async def test_explicit_resources_reach_the_runtime_request(mocker) -> None:
+    """The caller-selected resources travel to knowledge_runtime explicitly."""
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="policy",
+        route_mode="rag_retrieval",
+        user_id=3,
+        user_name="alice",
+        authorized_resources=[
+            RemoteQueryAuthorizedResources(
+                knowledge_base_id=7,
+                index_owner_user_id=42,
+                retriever=RemoteRetrievalResourceRef(
+                    kind="Retriever", name="retriever-b", namespace="default"
+                ),
+                embedding_model=RemoteRetrievalResourceRef(
+                    kind="Model", name="embed-b", namespace="default"
+                ),
+            )
+        ],
+        explicit_resources=[
+            RemoteQueryExplicitResources(
+                knowledge_base_id=7,
+                retriever=RemoteRetrievalResourceRef(
+                    kind="Retriever", name="retriever-b", namespace="default"
+                ),
+                embedding_model=RemoteRetrievalResourceRef(
+                    kind="Model", name="embed-b", namespace="default"
+                ),
+            )
+        ],
+    )
+    post = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=httpx.Response(
+            200,
+            json={"records": [], "total": 0, "total_estimated_tokens": 0},
+            request=httpx.Request(
+                "POST", "http://knowledge-runtime/internal/rag/query"
+            ),
+        ),
+    )
+
+    await RemoteRagGateway(base_url="http://knowledge-runtime").query(spec)
+
+    assert post.await_args.args[0] == "http://knowledge-runtime/internal/rag/query"
+    body = post.await_args.kwargs["json"]
+    assert body["authorized_resources"][0]["retriever"]["name"] == "retriever-b"
+    assert body["explicit_resources"] == [
+        {
+            "knowledge_base_id": 7,
+            "retriever": {
+                "kind": "Retriever",
+                "name": "retriever-b",
+                "namespace": "default",
+            },
+            "embedding_model": {
+                "kind": "Model",
+                "name": "embed-b",
                 "namespace": "default",
             },
         }

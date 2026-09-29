@@ -43,6 +43,7 @@ from shared.knowledge_module import (
 )
 from shared.models import (
     RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     SearchHints,
@@ -67,15 +68,38 @@ class _QueryResourceReferences:
         index_owner_user_id: int,
     ) -> RemoteQueryAuthorizedResources:
         """Bundle the references into the authorized-resources protocol entry."""
+        retriever, embedding_model = self._resource_refs()
         return RemoteQueryAuthorizedResources(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
-            retriever=RemoteRetrievalResourceRef(
+            retriever=retriever,
+            embedding_model=embedding_model,
+        )
+
+    def explicit_entry(
+        self,
+        *,
+        knowledge_base_id: int,
+    ) -> RemoteQueryExplicitResources:
+        """Bundle the references into the explicit-selection protocol entry."""
+        retriever, embedding_model = self._resource_refs()
+        return RemoteQueryExplicitResources(
+            knowledge_base_id=knowledge_base_id,
+            retriever=retriever,
+            embedding_model=embedding_model,
+        )
+
+    def _resource_refs(
+        self,
+    ) -> tuple[RemoteRetrievalResourceRef, RemoteRetrievalResourceRef]:
+        """Return the retriever and embedding references this spec executes."""
+        return (
+            RemoteRetrievalResourceRef(
                 kind=RETRIEVER_RESOURCE_KIND,
                 name=self.retriever_name,
                 namespace=self.retriever_namespace,
             ),
-            embedding_model=RemoteRetrievalResourceRef(
+            RemoteRetrievalResourceRef(
                 kind=MODEL_RESOURCE_KIND,
                 name=self.embedding_model_name,
                 namespace=self.embedding_model_namespace,
@@ -247,12 +271,13 @@ class RagRuntimeResolver:
             current_user_id=user_id,
         )
 
-        authorized_entry = _QueryResourceReferences(
+        references = _QueryResourceReferences(
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             embedding_model_name=embedding_model_name,
             embedding_model_namespace=embedding_model_namespace,
-        ).authorized_entry(
+        )
+        authorized_entry = references.authorized_entry(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
         )
@@ -280,6 +305,9 @@ class RagRuntimeResolver:
                 }
             ],
             authorized_resources=[authorized_entry],
+            explicit_resources=[
+                references.explicit_entry(knowledge_base_id=knowledge_base_id)
+            ],
         )
 
     def build_query_knowledge_base_configs(

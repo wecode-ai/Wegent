@@ -23,10 +23,12 @@ from shared.knowledge_module import (
     AuthorizedRetrievalResources,
     KnowledgeConfigError,
     RetrievalResource,
+    RetrievalResourceSelection,
     resolve_execution_config,
 )
 from shared.models import (
     RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -129,6 +131,7 @@ class ConfigResolver:
         user_id: int,
         authorized: RemoteQueryAuthorizedResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
+        explicit_resources: RemoteQueryExplicitResources | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base.
 
@@ -136,6 +139,8 @@ class ConfigResolver:
         operation (``authorized``). The stored configuration must still name
         those same resources, so a knowledge base edited to a resource outside
         the authorized set fails instead of silently executing the new one.
+        ``explicit_resources`` lets a public query execute the resources the
+        caller selected; the module still rejects anything outside ``authorized``.
         """
         if authorized is None:
             raise ConfigResolutionError(
@@ -157,7 +162,7 @@ class ConfigResolver:
                 db, authorized, index_owner_user_id, user_name
             ),
             retrieval_config=self._authorized_retrieval_settings(
-                kb, authorized, retrieval_override
+                kb, authorized, retrieval_override, explicit_resources
             ),
             user_name=user_name,
         )
@@ -219,12 +224,25 @@ class ConfigResolver:
         kb: Kind,
         authorized: RemoteQueryAuthorizedResources,
         retrieval_override: Mapping[str, Any] | None = None,
+        explicit_resources: RemoteQueryExplicitResources | None = None,
     ) -> RuntimeRetrievalConfig:
         """Resolve stored retrieval parameters inside the authorized set.
 
         The per-request override is applied by the module, so the effective
-        parameters always pass the same composition and validation rules.
+        parameters always pass the same composition and validation rules. An
+        explicit resource selection supersedes the stored references only when
+        the module confirms it is inside the authorized set.
         """
+        resource_selection = (
+            None
+            if explicit_resources is None
+            else RetrievalResourceSelection(
+                retriever_name=explicit_resources.retriever.name,
+                retriever_namespace=explicit_resources.retriever.namespace,
+                embedding_model_name=explicit_resources.embedding_model.name,
+                embedding_model_namespace=explicit_resources.embedding_model.namespace,
+            )
+        )
         try:
             resolved = resolve_execution_config(
                 self._read_kb_retrieval_config(kb),
@@ -242,6 +260,7 @@ class ConfigResolver:
                     ),
                 ),
                 retrieval_override=retrieval_override,
+                resource_selection=resource_selection,
             )
         except KnowledgeConfigError as exc:
             raise ConfigResolutionError("config_invalid", str(exc)) from exc

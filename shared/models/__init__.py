@@ -102,6 +102,7 @@ from .knowledge_runtime_protocol import (
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
     RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,

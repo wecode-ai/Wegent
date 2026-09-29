@@ -9,6 +9,7 @@ from shared.knowledge_module import RetrievalResource
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -735,6 +736,102 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
             retrieval_mode="vector",
         )
     )
+
+
+def test_build_public_query_runtime_spec_selects_caller_resources():
+    """Public callers execute the resources they named, not stored values."""
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    kb = SimpleNamespace(id=7, user_id=42, namespace="default")
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch(
+            "app.services.knowledge.index_runtime.build_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
+        ),
+        patch.object(resolver, "_authorize_query_resources") as authorize_resources,
+    ):
+        spec = resolver.build_public_query_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            query="release checklist",
+            max_results=5,
+            retriever_name="retriever-b",
+            retriever_namespace="default",
+            embedding_model_name="embed-b",
+            embedding_model_namespace="default",
+            user_id=9,
+            user_name="alice",
+            score_threshold=0.7,
+            retrieval_mode="vector",
+        )
+
+    authorize_resources.assert_called_once()
+    assert spec.authorized_resources[0] == RemoteQueryAuthorizedResources(
+        knowledge_base_id=7,
+        index_owner_user_id=42,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="retriever-b", namespace="default"
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model", name="embed-b", namespace="default"
+        ),
+    )
+    assert spec.explicit_resources == [
+        RemoteQueryExplicitResources(
+            knowledge_base_id=7,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-b", namespace="default"
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embed-b", namespace="default"
+            ),
+        )
+    ]
+
+
+def test_build_public_query_runtime_spec_rejects_unavailable_resource():
+    """An explicit reference the owner cannot use is refused, not substituted."""
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    kb = SimpleNamespace(id=7, user_id=42, namespace="default")
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch(
+            "app.services.knowledge.index_runtime.build_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=None,
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        resolver.build_public_query_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            query="release checklist",
+            max_results=5,
+            retriever_name="missing-retriever",
+            retriever_namespace="default",
+            embedding_model_name="embed-a",
+            embedding_model_namespace="default",
+            user_id=9,
+            user_name="alice",
+            score_threshold=0.7,
+            retrieval_mode="vector",
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "missing-retriever" in exc_info.value.detail
 
 
 def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> None:

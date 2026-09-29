@@ -121,6 +121,20 @@ class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
     embedding_model: RemoteRetrievalResourceRef
 
 
+class RemoteQueryExplicitResources(KnowledgeRuntimeProtocolModel):
+    """Retrieval resources a caller explicitly selected for one query.
+
+    The caller names the retriever and embedding model the query must execute.
+    Backend authorizes those references for this operation; the runtime loads
+    only its authorized entries and lets the module reject a selection the
+    authorized set does not cover.
+    """
+
+    knowledge_base_id: int
+    retriever: RemoteRetrievalResourceRef
+    embedding_model: RemoteRetrievalResourceRef
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     """Index request - reference mode. KR resolves configs from DB."""
 
@@ -179,6 +193,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
     authorized_resources: list[RemoteQueryAuthorizedResources] | None = None
+    explicit_resources: list[RemoteQueryExplicitResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None

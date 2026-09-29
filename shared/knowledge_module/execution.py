@@ -56,6 +56,22 @@ class AuthorizedRetrievalResources:
 
 
 @dataclass(frozen=True)
+class RetrievalResourceSelection:
+    """The retrieval resources a caller explicitly selected for one execution.
+
+    The selection names the records the execution must use. Every reference has
+    to resolve to a record inside :class:`AuthorizedRetrievalResources`; the
+    module rejects anything outside that set instead of falling back to the
+    stored configuration.
+    """
+
+    retriever_name: str
+    embedding_model_name: str
+    retriever_namespace: str = "default"
+    embedding_model_namespace: str = "default"
+
+
+@dataclass(frozen=True)
 class ResolvedExecutionConfig:
     """One knowledge base's resolved execution configuration."""
 
@@ -69,12 +85,16 @@ def resolve_execution_config(
     authorized: AuthorizedRetrievalResources,
     *,
     retrieval_override: Mapping[str, Any] | None = None,
+    resource_selection: RetrievalResourceSelection | None = None,
 ) -> ResolvedExecutionConfig:
     """Resolve the configuration used to execute one knowledge base.
 
-    The stored configuration names the retriever and embedding model; both must
-    be inside the authorized set for this operation. Missing optional retrieval
-    fields fall back to ``top_k=20`` and ``score_threshold=0.7`` for historical
+    Without a ``resource_selection`` the stored configuration names the
+    retriever and embedding model; both must be inside the authorized set for
+    this operation. An explicit selection supersedes the stored references,
+    which keeps a public caller's authorized resources effective even when the
+    knowledge base stores different ones. Missing optional retrieval fields fall
+    back to ``top_k=20`` and ``score_threshold=0.7`` for historical
     configurations, and ``retrieval_mode`` defaults to ``vector``.
 
     Raises :class:`KnowledgeConfigError` when the stored configuration is
@@ -82,14 +102,9 @@ def resolve_execution_config(
     effective retrieval parameters are invalid.
     """
     stored = dict(stored_config or {})
-    retriever_reference = _read_reference(
-        stored, "retriever_name", "retriever_namespace"
+    retriever_reference, embedding_reference = _resolve_resource_references(
+        stored, resource_selection
     )
-    if retriever_reference is None:
-        raise KnowledgeConfigError("stored config requires a retriever_name")
-    embedding_reference = _read_embedding_reference(stored)
-    if embedding_reference is None:
-        raise KnowledgeConfigError("stored config requires an embedding model_name")
 
     retriever = _authorized_slot(
         retriever_reference[0],
@@ -109,6 +124,31 @@ def resolve_execution_config(
         embedding_model=embedding_model,
         retrieval_config=retrieval_config,
     )
+
+
+def _resolve_resource_references(
+    stored: Mapping[str, Any],
+    selection: RetrievalResourceSelection | None,
+) -> tuple[tuple[str, str], tuple[str, str]]:
+    """Return the references the execution names, preferring an explicit choice."""
+    if selection is not None:
+        return (
+            (selection.retriever_name, selection.retriever_namespace or "default"),
+            (
+                selection.embedding_model_name,
+                selection.embedding_model_namespace or "default",
+            ),
+        )
+
+    retriever_reference = _read_reference(
+        stored, "retriever_name", "retriever_namespace"
+    )
+    if retriever_reference is None:
+        raise KnowledgeConfigError("stored config requires a retriever_name")
+    embedding_reference = _read_embedding_reference(stored)
+    if embedding_reference is None:
+        raise KnowledgeConfigError("stored config requires an embedding model_name")
+    return retriever_reference, embedding_reference
 
 
 def _authorized_slot(

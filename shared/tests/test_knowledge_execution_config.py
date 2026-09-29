@@ -17,6 +17,7 @@ from shared.knowledge_module import (
     AuthorizedRetrievalResources,
     KnowledgeConfigError,
     RetrievalResource,
+    RetrievalResourceSelection,
     resolve_execution_config,
 )
 
@@ -108,6 +109,48 @@ def test_rejects_resource_outside_authorized_set() -> None:
 
     with pytest.raises(KnowledgeConfigError, match="not in the authorized"):
         resolve_execution_config(stored, _authorized())
+
+
+def test_explicit_selection_executes_resources_different_from_stored() -> None:
+    """A caller-selected resource set supersedes the stored references."""
+    selected_retriever = RetrievalResource(name="retriever-b", kind="Retriever")
+    selected_embedding = RetrievalResource(
+        name="embed-b", kind="Model", category="embedding"
+    )
+    authorized = AuthorizedRetrievalResources(
+        retriever=selected_retriever, embedding_model=selected_embedding
+    )
+    stored = {**_STORED_CONFIG, "top_k": 7}
+
+    resolved = resolve_execution_config(
+        stored,
+        authorized,
+        resource_selection=RetrievalResourceSelection(
+            retriever_name="retriever-b",
+            retriever_namespace="default",
+            embedding_model_name="embed-b",
+            embedding_model_namespace="default",
+        ),
+    )
+
+    assert resolved.retriever == selected_retriever
+    assert resolved.embedding_model == selected_embedding
+    assert resolved.retrieval_config["top_k"] == 7
+
+
+def test_rejects_selection_outside_authorized_set() -> None:
+    """An explicit selection outside the augmented set never falls back."""
+    with pytest.raises(KnowledgeConfigError, match="not in the authorized"):
+        resolve_execution_config(
+            _STORED_CONFIG,
+            _authorized(),
+            resource_selection=RetrievalResourceSelection(
+                retriever_name="retriever-b",
+                retriever_namespace="default",
+                embedding_model_name="embed-b",
+                embedding_model_namespace="default",
+            ),
+        )
 
 
 def test_rejects_missing_authorized_resource() -> None:

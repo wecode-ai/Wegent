@@ -13,6 +13,7 @@ from knowledge_runtime.services.query_executor import QueryExecutor
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryAuthorizedResources,
+    RemoteQueryExplicitResources,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRetrievalResourceRef,
@@ -435,6 +436,74 @@ class TestQueryExecutor:
             await executor.execute(query_request)
 
     @pytest.mark.asyncio
+    async def test_execute_forwards_explicit_resource_selection(
+        self, query_request
+    ) -> None:
+        """The caller's explicit resources reach config resolution unchanged."""
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+        config = _make_query_config(1)
+        config_loader = _make_config_loader(config)
+        explicit = RemoteQueryExplicitResources(
+            knowledge_base_id=1,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="selected-retriever", namespace="default"
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="selected-embedding", namespace="default"
+            ),
+        )
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.knowledge_base_ids = [1]
+            query_request.explicit_resources = [explicit]
+
+            await QueryExecutor(config_loader=config_loader).execute(query_request)
+
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "explicit_resources"
+        ] == {1: explicit}
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_explicit_resources_for_unknown_kb(
+        self, query_request
+    ) -> None:
+        executor = QueryExecutor(config_loader=MagicMock())
+        query_request.knowledge_base_ids = [1]
+        query_request.explicit_resources = [
+            RemoteQueryExplicitResources(
+                knowledge_base_id=999,
+                retriever=RemoteRetrievalResourceRef(
+                    kind="Retriever", name="selected-retriever", namespace="default"
+                ),
+                embedding_model=RemoteRetrievalResourceRef(
+                    kind="Model", name="selected-embedding", namespace="default"
+                ),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="explicit_resources contains an unknown knowledge_base_id",
+        ):
+            await executor.execute(query_request)
+
+    @pytest.mark.asyncio
     async def test_execute_rejects_query_without_authorized_resources(
         self, query_request
     ) -> None:
@@ -610,6 +679,7 @@ class TestQueryExecutor:
             user_id=42,
             authorized={1: _authorized(1), 2: _authorized(2)},
             retrieval_overrides={},
+            explicit_resources={},
         )
 
     @pytest.mark.asyncio

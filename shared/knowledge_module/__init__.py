@@ -38,6 +38,7 @@ from .execution import (
     HISTORICAL_TOP_K_FALLBACK,
     AuthorizedRetrievalResources,
     ResolvedExecutionConfig,
+    RetrievalResourceSelection,
     resolve_execution_config,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     # Execution configuration
     "resolve_execution_config",
     "AuthorizedRetrievalResources",
+    "RetrievalResourceSelection",
     "ResolvedExecutionConfig",
     "HISTORICAL_TOP_K_FALLBACK",
     "HISTORICAL_SCORE_THRESHOLD_FALLBACK",
