@@ -983,9 +983,13 @@ async function verifyBackgroundTaskWindowLifecycle({
 
   // Regression: while the splash is up it is the only visible window, so its
   // native close button must quit the app too. Refusing the close without
-  // acting on it left the user staring at a window that ignored them.
+  // acting on it left the user staring at a window that ignored them. The
+  // harness holds the splash on screen, because it otherwise closes as soon as
+  // the workbench reports readiness, before the controller can command it.
   setPhase('close-during-startup-splash')
-  const startupCloseApp = await restartDesktopApp()
+  const startupCloseApp = await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '60000' },
+  })
   const closeSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
   assert.notEqual(
     closeSplash.state,
@@ -1011,7 +1015,9 @@ async function verifyBackgroundTaskWindowLifecycle({
       2
     )}\n`
   )
-  await restartDesktopApp()
+  await restartDesktopApp({
+    appEnvironmentOverrides: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' },
+  })
   return taskRowTestId
 }
 

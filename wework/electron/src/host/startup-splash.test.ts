@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupReadyHandler,
   createStartupSplash,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   startupSplashBlocksMainWindowActivation,
   type StartupSplashSnapshot,
@@ -290,6 +291,19 @@ describe('StartupSplash', () => {
     expect(resolveStartupSplashTheme('system', true)).toBe('dark')
     expect(resolveStartupSplashTheme('system', false)).toBe('light')
     expect(resolveStartupSplashTheme(undefined, true)).toBe('dark')
+  })
+
+  test('holds the splash only for the desktop E2E harness', () => {
+    const hold = (environment: NodeJS.ProcessEnv) =>
+      resolveStartupSplashHoldMs({ VITE_WEWORK_E2E: 'true', ...environment })
+
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(5000)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '0' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '-1' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: 'not-a-number' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '999999' })).toBe(120_000)
+    expect(resolveStartupSplashHoldMs({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(0)
   })
 
   test('blocks main-window activation until the startup splash closes', () => {

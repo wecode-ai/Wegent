@@ -79,6 +79,7 @@ import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
   createStartupReadyHandler,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -1161,6 +1162,16 @@ async function setDockVisible(visible: boolean): Promise<void> {
   dockVisible = visible
 }
 
+async function holdStartupSplashForDesktopE2e(): Promise<void> {
+  const holdMs = resolveStartupSplashHoldMs(process.env)
+  if (holdMs <= 0) return
+  logStartupStep('startup-splash-hold', 'started', { holdMs })
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, holdMs)
+  })
+  logStartupStep('startup-splash-hold', 'completed')
+}
+
 async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
   switch (decision.type) {
     case 'allow-close':
@@ -1658,6 +1669,7 @@ async function configureDesktopRuntime(): Promise<void> {
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
+            await holdStartupSplashForDesktopE2e()
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
