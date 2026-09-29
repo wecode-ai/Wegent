@@ -8,6 +8,7 @@ from app.api.endpoints.knowledge import _dump_retrieval_config_for_api
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import RetrievalConfigCreate, RetrievalConfigUpdate
+from tests.utils.namespace_members import add_group_member, group_namespace
 from tests.utils.retrieval_resources import embedding_model_kind, model_kind
 from tests.utils.retrieval_resources import retriever_kind as _retriever_kind
 
@@ -115,3 +116,70 @@ def test_create_rejects_a_non_embedding_model_reference(
 
     assert response.status_code == 400, response.text
     assert "chat-model" in response.json()["detail"]
+
+
+@pytest.mark.api
+def test_create_rejects_a_group_embedding_model_the_caller_cannot_use(
+    test_client, test_token: str, test_db, test_user: User
+) -> None:
+    """A personal knowledge base cannot borrow another group's embedding model."""
+    group = group_namespace(
+        test_db, "config-foreign-group", owner_user_id=test_user.id + 1000
+    )
+    test_db.add_all(
+        [
+            _retriever_kind(test_user.id, "chosen-retriever"),
+            model_kind(test_user.id + 1000, "group-embedding", "embedding", group.name),
+        ]
+    )
+    test_db.commit()
+
+    response = _create_knowledge_base(
+        test_client,
+        test_token,
+        {
+            "retriever_name": "chosen-retriever",
+            "embedding_config": {
+                "model_name": "group-embedding",
+                "model_namespace": group.name,
+            },
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "group-embedding" in response.json()["detail"]
+
+
+@pytest.mark.api
+def test_create_accepts_a_group_embedding_model_for_group_members(
+    test_client, test_token: str, test_db, test_user: User
+) -> None:
+    group = group_namespace(
+        test_db, "config-member-group", owner_user_id=test_user.id + 1000
+    )
+    add_group_member(test_db, group, test_user)
+    test_db.add_all(
+        [
+            _retriever_kind(test_user.id, "chosen-retriever"),
+            model_kind(test_user.id + 1000, "group-embedding", "embedding", group.name),
+        ]
+    )
+    test_db.commit()
+
+    response = _create_knowledge_base(
+        test_client,
+        test_token,
+        {
+            "retriever_name": "chosen-retriever",
+            "embedding_config": {
+                "model_name": "group-embedding",
+                "model_namespace": group.name,
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert (
+        response.json()["retrieval_config"]["embedding_config"]["model_namespace"]
+        == group.name
+    )

@@ -8,45 +8,14 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models.namespace import Namespace
-from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.services.knowledge.retrieval_resource_resolver import (
     resolve_embedding_model_resource,
     resolve_retriever_resource,
 )
+from tests.utils.namespace_members import add_group_member, group_namespace
 from tests.utils.retrieval_resources import embedding_model_kind, model_kind
 from tests.utils.retrieval_resources import retriever_kind as _retriever
-
-
-def _group(db: Session, name: str, owner_user_id: int) -> Namespace:
-    namespace = Namespace(
-        name=name,
-        display_name=name,
-        owner_user_id=owner_user_id,
-        visibility="internal",
-        level="group",
-        is_active=True,
-    )
-    db.add(namespace)
-    db.commit()
-    db.refresh(namespace)
-    return namespace
-
-
-def _join_group(db: Session, group: Namespace, user: User, role: str = "Reporter"):
-    db.add(
-        ResourceMember.create(
-            resource_type="Namespace",
-            resource_id=group.id,
-            entity_type="user",
-            entity_id=str(user.id),
-            role=role,
-            status=MemberStatus.APPROVED.value,
-            invited_by_user_id=group.owner_user_id,
-        )
-    )
-    db.commit()
 
 
 def test_resolves_the_callers_own_retriever(test_db: Session, test_user: User) -> None:
@@ -80,8 +49,10 @@ def test_group_reference_falls_back_to_the_public_retriever(
     test_db: Session, test_user: User
 ) -> None:
     """A group-scoped reference may legitimately resolve to the public one."""
-    group = _group(test_db, "resolver-group", owner_user_id=test_user.id + 1000)
-    _join_group(test_db, group, test_user)
+    group = group_namespace(
+        test_db, "resolver-group", owner_user_id=test_user.id + 1000
+    )
+    add_group_member(test_db, group, test_user)
     test_db.add(_retriever(0, "shared-retriever"))
     test_db.commit()
 
@@ -97,7 +68,9 @@ def test_group_reference_falls_back_to_the_public_retriever(
 def test_group_reference_outside_the_callers_groups_is_not_authorized(
     test_db: Session, test_user: User
 ) -> None:
-    foreign = _group(test_db, "foreign-group", owner_user_id=test_user.id + 1000)
+    foreign = group_namespace(
+        test_db, "foreign-group", owner_user_id=test_user.id + 1000
+    )
     test_db.add(_retriever(test_user.id + 1000, "shared-retriever", foreign.name))
     test_db.commit()
 
@@ -140,9 +113,7 @@ def test_reports_the_models_real_category(test_db: Session, test_user: User) -> 
     assert chat.category == "llm"
 
 
-def test_resolves_a_public_embeddingmodel_kind(
-    test_db: Session, test_user: User
-) -> None:
+def test_resolves_a_public_embedding_model(test_db: Session, test_user: User) -> None:
     test_db.add(model_kind(0, "public-embedding", "embedding"))
     test_db.commit()
 
@@ -152,6 +123,51 @@ def test_resolves_a_public_embeddingmodel_kind(
 
     assert resolved is not None
     assert resolved.category == "embedding"
+
+
+def test_group_embedding_model_is_not_authorized_for_non_members(
+    test_db: Session, test_user: User
+) -> None:
+    """A group model is only usable by members of the namespace that owns it."""
+    group = group_namespace(
+        test_db, "embedded-group", owner_user_id=test_user.id + 1000
+    )
+    test_db.add(
+        model_kind(test_user.id + 1000, "group-embedding", "embedding", group.name)
+    )
+    test_db.commit()
+
+    assert (
+        resolve_embedding_model_resource(
+            test_db,
+            user_id=test_user.id,
+            name="group-embedding",
+            namespace=group.name,
+        )
+        is None
+    )
+
+
+def test_group_embedding_model_is_authorized_for_group_members(
+    test_db: Session, test_user: User
+) -> None:
+    group = group_namespace(test_db, "member-group", owner_user_id=test_user.id + 1000)
+    add_group_member(test_db, group, test_user)
+    test_db.add(
+        model_kind(test_user.id + 1000, "group-embedding", "embedding", group.name)
+    )
+    test_db.commit()
+
+    resolved = resolve_embedding_model_resource(
+        test_db,
+        user_id=test_user.id,
+        name="group-embedding",
+        namespace=group.name,
+    )
+
+    assert resolved is not None
+    assert resolved.category == "embedding"
+    assert resolved.namespace == group.name
 
 
 def test_missing_embedding_model_is_not_resolved(
