@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
-from shared.db.capability_reference import resolve_model_kind
+from shared.db.capability_reference import resolve_model_kind, resolve_retriever_kind
 from shared.knowledge_module import (
     EMBEDDING_RESOURCE_CATEGORY,
     AuthorizedRetrievalResources,
@@ -28,7 +28,6 @@ from shared.knowledge_module import (
 )
 from shared.models import (
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -131,16 +130,15 @@ class ConfigResolver:
         user_id: int,
         authorized: RemoteQueryAuthorizedResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
-        explicit_resources: RemoteQueryExplicitResources | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base.
 
         The query only loads the retrieval resources Backend authorized for this
-        operation (``authorized``). The stored configuration must still name
-        those same resources, so a knowledge base edited to a resource outside
-        the authorized set fails instead of silently executing the new one.
-        ``explicit_resources`` lets a public query execute the resources the
-        caller selected; the module still rejects anything outside ``authorized``.
+        operation (``authorized``). When Backend marks them as the caller's
+        explicit selection they supersede the stored configuration; otherwise
+        the stored configuration must still name those same resources, so a
+        knowledge base edited to a resource outside the authorized set fails
+        instead of silently executing the new one.
         """
         if authorized is None:
             raise ConfigResolutionError(
@@ -162,7 +160,7 @@ class ConfigResolver:
                 db, authorized, index_owner_user_id, user_name
             ),
             retrieval_config=self._authorized_retrieval_settings(
-                kb, authorized, retrieval_override, explicit_resources
+                kb, authorized, retrieval_override
             ),
             user_name=user_name,
         )
@@ -224,24 +222,22 @@ class ConfigResolver:
         kb: Kind,
         authorized: RemoteQueryAuthorizedResources,
         retrieval_override: Mapping[str, Any] | None = None,
-        explicit_resources: RemoteQueryExplicitResources | None = None,
     ) -> RuntimeRetrievalConfig:
         """Resolve stored retrieval parameters inside the authorized set.
 
         The per-request override is applied by the module, so the effective
         parameters always pass the same composition and validation rules. An
-        explicit resource selection supersedes the stored references only when
-        the module confirms it is inside the authorized set.
+        explicit selection marked by Backend supersedes the stored references.
         """
         resource_selection = (
-            None
-            if explicit_resources is None
-            else RetrievalResourceSelection(
-                retriever_name=explicit_resources.retriever.name,
-                retriever_namespace=explicit_resources.retriever.namespace,
-                embedding_model_name=explicit_resources.embedding_model.name,
-                embedding_model_namespace=explicit_resources.embedding_model.namespace,
+            RetrievalResourceSelection(
+                retriever_name=authorized.retriever.name,
+                retriever_namespace=authorized.retriever.namespace,
+                embedding_model_name=authorized.embedding_model.name,
+                embedding_model_namespace=authorized.embedding_model.namespace,
             )
+            if authorized.explicit_selection
+            else None
         )
         try:
             resolved = resolve_execution_config(
@@ -471,44 +467,9 @@ class ConfigResolver:
         name: str,
         namespace: str,
     ) -> Kind | None:
-        """Get Retriever Kind with priority: user's own > public (user_id=0)."""
-        if namespace == "default":
-            return (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Retriever",
-                    Kind.name == name,
-                    Kind.namespace == namespace,
-                    Kind.is_active.is_(True),
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(Kind.user_id.desc())
-                .first()
-            )
-        # Group retriever: no user_id filter, fallback to public
-        kind = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Retriever",
-                Kind.name == name,
-                Kind.namespace == namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
-        if kind is not None:
-            return kind
-        # Fallback to public retriever
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.name == name,
-                Kind.kind == "Retriever",
-                Kind.namespace == "default",
-                Kind.is_active.is_(True),
-            )
-            .first()
+        """Resolve the same Retriever Kind Backend authorized for this call."""
+        return resolve_retriever_kind(
+            db, name=name, namespace=namespace, user_id=user_id
         )
 
     def _get_model_kind(

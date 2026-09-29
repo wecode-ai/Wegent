@@ -110,6 +110,11 @@ class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
     then sends only the references. The runtime loads just these records instead
     of widening the lookup with a bare Kind query.
 
+    ``explicit_selection`` marks the entry as the resources the caller
+    explicitly selected for this query, so they supersede the stored
+    configuration. Without it the stored configuration must name these same
+    resources, keeping the previous "edited outside the authorized set" failure.
+
     MVP trust boundary: the shared internal service token only proves the caller
     holds it. It cannot prove Backend generated these references, and it is not
     an authorization credential, so other services must not treat it as one.
@@ -119,20 +124,7 @@ class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
     index_owner_user_id: int
     retriever: RemoteRetrievalResourceRef
     embedding_model: RemoteRetrievalResourceRef
-
-
-class RemoteQueryExplicitResources(KnowledgeRuntimeProtocolModel):
-    """Retrieval resources a caller explicitly selected for one query.
-
-    The caller names the retriever and embedding model the query must execute.
-    Backend authorizes those references for this operation; the runtime loads
-    only its authorized entries and lets the module reject a selection the
-    authorized set does not cover.
-    """
-
-    knowledge_base_id: int
-    retriever: RemoteRetrievalResourceRef
-    embedding_model: RemoteRetrievalResourceRef
+    explicit_selection: bool = False
 
 
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
@@ -193,7 +185,6 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
     authorized_resources: list[RemoteQueryAuthorizedResources] | None = None
-    explicit_resources: list[RemoteQueryExplicitResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None

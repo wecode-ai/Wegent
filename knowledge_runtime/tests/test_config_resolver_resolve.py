@@ -17,7 +17,6 @@ from knowledge_runtime.services.config_resolver import (
 )
 from shared.models import (
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -39,6 +38,7 @@ def _authorized_entry(
     retriever_namespace: str = "default",
     embedding_model_name: str = "text-embedding-3-small",
     embedding_model_namespace: str = "default",
+    explicit_selection: bool = False,
 ) -> RemoteQueryAuthorizedResources:
     """Build the resources Backend authorized for one query."""
     return RemoteQueryAuthorizedResources(
@@ -52,6 +52,7 @@ def _authorized_entry(
             name=embedding_model_name,
             namespace=embedding_model_namespace,
         ),
+        explicit_selection=explicit_selection,
     )
 
 
@@ -365,23 +366,15 @@ class TestResolveQueryConfig:
         assert exc_info.value.code == "config_invalid"
         assert "not in the authorized" in str(exc_info.value)
 
-    def test_explicit_resources_replace_stored_references(
+    def test_explicit_selection_replaces_stored_references(
         self, resolver: ConfigResolver, mock_db: MagicMock
     ) -> None:
-        """A public caller's authorized selection executes instead of stored ones."""
+        """A public caller's marked selection executes instead of stored ones."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
         authorized = _authorized_entry(
             retriever_name="selected-retriever",
             embedding_model_name="selected-embedding",
-        )
-        explicit = RemoteQueryExplicitResources(
-            knowledge_base_id=1,
-            retriever=RemoteRetrievalResourceRef(
-                kind="Retriever", name="selected-retriever", namespace="default"
-            ),
-            embedding_model=RemoteRetrievalResourceRef(
-                kind="Model", name="selected-embedding", namespace="default"
-            ),
+            explicit_selection=True,
         )
 
         with (
@@ -403,7 +396,6 @@ class TestResolveQueryConfig:
                 knowledge_base_id=1,
                 user_id=42,
                 authorized=authorized,
-                explicit_resources=explicit,
             )
 
         assert result.retriever_config.name == "selected-retriever"
@@ -411,40 +403,29 @@ class TestResolveQueryConfig:
         assert result.embedding_model_config.model_name == "selected-embedding"
         assert result.retrieval_config.top_k == 10
 
-    def test_explicit_resources_outside_authorized_set_are_rejected(
-        self, resolver: ConfigResolver, mock_db: MagicMock
+    def test_resolves_referenced_retriever_into_personal_scope(
+        self,
+        resolver: ConfigResolver,
+        referenced_retriever_db,
     ) -> None:
-        """An explicit reference the authorized set does not cover is refused."""
-        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        explicit = RemoteQueryExplicitResources(
-            knowledge_base_id=1,
-            retriever=RemoteRetrievalResourceRef(
-                kind="Retriever", name="other-retriever", namespace="default"
-            ),
-            embedding_model=RemoteRetrievalResourceRef(
-                kind="Model", name="text-embedding-3-small", namespace="default"
-            ),
+        """The runtime loads the same approved Retriever reference Backend allows."""
+        authorized = _authorized_entry(
+            retriever_name="shared-retriever",
+            embedding_model_name="public-embedding",
         )
 
-        with (
-            patch.object(resolver, "_get_knowledge_base", return_value=kb),
-            patch.object(resolver, "_get_user_name", return_value="testuser"),
-            patch.object(
-                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
-            ),
-            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
-            pytest.raises(ConfigResolutionError) as exc_info,
-        ):
-            resolver.resolve_query_config(
-                mock_db,
-                knowledge_base_id=1,
-                user_id=42,
-                authorized=_authorized_entry(),
-                explicit_resources=explicit,
-            )
+        result = resolver.resolve_query_config(
+            referenced_retriever_db,
+            knowledge_base_id=1,
+            user_id=42,
+            authorized=authorized,
+        )
 
-        assert exc_info.value.code == "config_invalid"
-        assert "not in the authorized" in str(exc_info.value)
+        assert result.retriever_config.name == "shared-retriever"
+        assert result.retriever_config.storage_config["url"] == (
+            "http://shared-retriever:9200"
+        )
+        assert result.embedding_model_config.model_name == "public-embedding"
 
     def test_rejects_missing_authorized_resource(
         self, resolver: ConfigResolver, mock_db: MagicMock

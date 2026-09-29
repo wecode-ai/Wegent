@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, TypeVar
+from typing import Any
 
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
@@ -20,7 +20,6 @@ from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -28,8 +27,6 @@ from shared.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 class QueryExecutor:
@@ -69,10 +66,6 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.authorized_resources,
         )
-        explicit_resources_by_kb_id = self._build_explicit_resources_map(
-            request.knowledge_base_ids,
-            request.explicit_resources,
-        )
         configs_by_kb_id = self._config_loader.resolve_query_configs(
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
@@ -83,7 +76,6 @@ class QueryExecutor:
                 )
                 for knowledge_base_id, override in retrieval_override_by_kb_id.items()
             },
-            explicit_resources=explicit_resources_by_kb_id,
         )
         search_hints = self._search_hints_dict(request.search_hints)
         self._log_query_plan(plan, search_hints)
@@ -249,43 +241,21 @@ class QueryExecutor:
         knowledge_base_ids: list[int],
         retrieval_overrides: list[RemoteKnowledgeBaseRetrievalOverride] | None,
     ) -> dict[int, RemoteKnowledgeBaseRetrievalOverride]:
-        return self._index_by_knowledge_base_id(
-            retrieval_overrides,
-            knowledge_base_ids=knowledge_base_ids,
-            label="knowledge_base_retrieval_overrides",
-        )
-
-    @staticmethod
-    def _build_explicit_resources_map(
-        knowledge_base_ids: list[int],
-        explicit_resources: list[RemoteQueryExplicitResources] | None,
-    ) -> dict[int, RemoteQueryExplicitResources]:
-        """Index the caller's explicit resource selection by knowledge base ID."""
-        return QueryExecutor._index_by_knowledge_base_id(
-            explicit_resources,
-            knowledge_base_ids=knowledge_base_ids,
-            label="explicit_resources",
-        )
-
-    @staticmethod
-    def _index_by_knowledge_base_id(
-        entries: list[T] | None,
-        *,
-        knowledge_base_ids: list[int],
-        label: str,
-    ) -> dict[int, T]:
-        """Index protocol entries, rejecting unknown or duplicate knowledge base ids."""
         allowed_ids = set(knowledge_base_ids)
-        indexed: dict[int, T] = {}
-        for entry in entries or []:
-            if entry.knowledge_base_id not in allowed_ids:
-                raise ValueError(f"{label} contains an unknown knowledge_base_id")
-            if entry.knowledge_base_id in indexed:
+        overrides_by_kb_id: dict[int, RemoteKnowledgeBaseRetrievalOverride] = {}
+        for override in retrieval_overrides or []:
+            if override.knowledge_base_id not in allowed_ids:
                 raise ValueError(
-                    f"{label} contains duplicate knowledge_base_id entries"
+                    "knowledge_base_retrieval_overrides contains an unknown "
+                    "knowledge_base_id"
                 )
-            indexed[entry.knowledge_base_id] = entry
-        return indexed
+            if override.knowledge_base_id in overrides_by_kb_id:
+                raise ValueError(
+                    "knowledge_base_retrieval_overrides contains duplicate "
+                    "knowledge_base_id entries"
+                )
+            overrides_by_kb_id[override.knowledge_base_id] = override
+        return overrides_by_kb_id
 
     @staticmethod
     def _build_authorized_resources_map(

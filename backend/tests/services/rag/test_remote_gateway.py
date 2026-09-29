@@ -363,6 +363,7 @@ async def test_remote_gateway_query_posts_authorized_resource_references(
                 "name": "embed-a",
                 "namespace": "default",
             },
+            "explicit_selection": False,
         }
     ]
     # The resolved execution configs are dropped by the runtime request.

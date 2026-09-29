@@ -43,7 +43,6 @@ from shared.knowledge_module import (
 )
 from shared.models import (
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     SearchHints,
@@ -66,6 +65,7 @@ class _QueryResourceReferences:
         *,
         knowledge_base_id: int,
         index_owner_user_id: int,
+        explicit_selection: bool = False,
     ) -> RemoteQueryAuthorizedResources:
         """Bundle the references into the authorized-resources protocol entry."""
         retriever, embedding_model = self._resource_refs()
@@ -74,19 +74,7 @@ class _QueryResourceReferences:
             index_owner_user_id=index_owner_user_id,
             retriever=retriever,
             embedding_model=embedding_model,
-        )
-
-    def explicit_entry(
-        self,
-        *,
-        knowledge_base_id: int,
-    ) -> RemoteQueryExplicitResources:
-        """Bundle the references into the explicit-selection protocol entry."""
-        retriever, embedding_model = self._resource_refs()
-        return RemoteQueryExplicitResources(
-            knowledge_base_id=knowledge_base_id,
-            retriever=retriever,
-            embedding_model=embedding_model,
+            explicit_selection=explicit_selection,
         )
 
     def _resource_refs(
@@ -280,6 +268,7 @@ class RagRuntimeResolver:
         authorized_entry = references.authorized_entry(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
+            explicit_selection=True,
         )
         self._authorize_query_resources(db=db, entry=authorized_entry)
 
@@ -305,9 +294,6 @@ class RagRuntimeResolver:
                 }
             ],
             authorized_resources=[authorized_entry],
-            explicit_resources=[
-                references.explicit_entry(knowledge_base_id=knowledge_base_id)
-            ],
         )
 
     def build_query_knowledge_base_configs(

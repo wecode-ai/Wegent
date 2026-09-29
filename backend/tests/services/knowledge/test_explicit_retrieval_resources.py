@@ -17,6 +17,7 @@ import pytest
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.services.rag.local_gateway import LocalRagGateway
 from tests.utils.retrieval_resources import embedding_model_kind
@@ -148,24 +149,74 @@ def test_public_retrieve_executes_caller_selected_resources(
                 "name": "embed-b",
                 "namespace": "default",
             },
+            "explicit_selection": True,
         }
     ]
-    assert body["explicit_resources"] == [
+    assert "explicit_resources" not in body
+    local_query.assert_not_called()
+
+
+def test_public_retrieve_authorizes_an_approved_shared_retriever(
+    test_client,
+    test_db,
+    test_user: User,
+    test_token: str,
+    mocker,
+) -> None:
+    """A Retriever referenced into the owner's scope reaches the runtime."""
+    source_owner = User(
+        user_name="retriever-owner",
+        password_hash="unused",
+        email="retriever-owner@example.com",
+        is_active=True,
+    )
+    test_db.add(source_owner)
+    test_db.add(embedding_model_kind(test_user.id, "embed-a"))
+    test_db.commit()
+    test_db.refresh(source_owner)
+    shared_retriever = build_retriever_kind(source_owner.id, "shared-retriever")
+    test_db.add(shared_retriever)
+    test_db.commit()
+    test_db.refresh(shared_retriever)
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Retriever",
+            resource_id=shared_retriever.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            role="Reporter",
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=source_owner.id,
+        )
+    )
+    kb = _create_knowledge_base(test_db, owner_user_id=test_user.id)
+    post = mocker.patch("httpx.AsyncClient.post", return_value=_runtime_response())
+
+    response = test_client.post(
+        "/api/rag/retrieve",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json=_payload(kb.id, retriever="shared-retriever", embedding="embed-a"),
+    )
+
+    assert response.status_code == 200
+    body = post.await_args.kwargs["json"]
+    assert body["authorized_resources"] == [
         {
             "knowledge_base_id": kb.id,
+            "index_owner_user_id": test_user.id,
             "retriever": {
                 "kind": "Retriever",
-                "name": "retriever-b",
+                "name": "shared-retriever",
                 "namespace": "default",
             },
             "embedding_model": {
                 "kind": "Model",
-                "name": "embed-b",
+                "name": "embed-a",
                 "namespace": "default",
             },
+            "explicit_selection": True,
         }
     ]
-    local_query.assert_not_called()
 
 
 def test_public_retrieve_rejects_unavailable_explicit_resource(
@@ -188,6 +239,53 @@ def test_public_retrieve_rejects_unavailable_explicit_resource(
 
     assert response.status_code == 403
     assert "missing-retriever" in response.json()["detail"]
+    post.assert_not_called()
+
+
+def test_public_retrieve_rejects_unapproved_shared_retriever(
+    test_client,
+    test_db,
+    test_user: User,
+    test_token: str,
+    mocker,
+) -> None:
+    """A pending capability reference is not an authorized Retriever."""
+    source_owner = User(
+        user_name="pending-retriever-owner",
+        password_hash="unused",
+        email="pending-retriever-owner@example.com",
+        is_active=True,
+    )
+    test_db.add(source_owner)
+    test_db.add(embedding_model_kind(test_user.id, "embed-a"))
+    test_db.commit()
+    test_db.refresh(source_owner)
+    shared_retriever = build_retriever_kind(source_owner.id, "shared-retriever")
+    test_db.add(shared_retriever)
+    test_db.commit()
+    test_db.refresh(shared_retriever)
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Retriever",
+            resource_id=shared_retriever.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            role="Reporter",
+            status=MemberStatus.PENDING.value,
+            invited_by_user_id=source_owner.id,
+        )
+    )
+    kb = _create_knowledge_base(test_db, owner_user_id=test_user.id)
+    post = mocker.patch("httpx.AsyncClient.post")
+
+    response = test_client.post(
+        "/api/rag/retrieve",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json=_payload(kb.id, retriever="shared-retriever", embedding="embed-a"),
+    )
+
+    assert response.status_code == 403
+    assert "shared-retriever" in response.json()["detail"]
     post.assert_not_called()
 
 

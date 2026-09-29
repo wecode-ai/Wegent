@@ -30,7 +30,6 @@ from app.services.rag.runtime_specs import QueryRuntimeSpec
 from shared.knowledge_module import RetrievalResource
 from shared.models import (
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
 )
@@ -317,12 +316,13 @@ async def test_authorized_references_reach_the_runtime_request(
                 "name": "embed-a",
                 "namespace": "default",
             },
+            "explicit_selection": False,
         }
     ]
 
 
-async def test_explicit_resources_reach_the_runtime_request(mocker) -> None:
-    """The caller-selected resources travel to knowledge_runtime explicitly."""
+async def test_explicit_selection_reaches_the_runtime_request(mocker) -> None:
+    """The authorized entry is marked as the caller's explicit selection."""
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[7],
         query="policy",
@@ -339,17 +339,7 @@ async def test_explicit_resources_reach_the_runtime_request(mocker) -> None:
                 embedding_model=RemoteRetrievalResourceRef(
                     kind="Model", name="embed-b", namespace="default"
                 ),
-            )
-        ],
-        explicit_resources=[
-            RemoteQueryExplicitResources(
-                knowledge_base_id=7,
-                retriever=RemoteRetrievalResourceRef(
-                    kind="Retriever", name="retriever-b", namespace="default"
-                ),
-                embedding_model=RemoteRetrievalResourceRef(
-                    kind="Model", name="embed-b", namespace="default"
-                ),
+                explicit_selection=True,
             )
         ],
     )
@@ -368,10 +358,10 @@ async def test_explicit_resources_reach_the_runtime_request(mocker) -> None:
 
     assert post.await_args.args[0] == "http://knowledge-runtime/internal/rag/query"
     body = post.await_args.kwargs["json"]
-    assert body["authorized_resources"][0]["retriever"]["name"] == "retriever-b"
-    assert body["explicit_resources"] == [
+    assert body["authorized_resources"] == [
         {
             "knowledge_base_id": 7,
+            "index_owner_user_id": 42,
             "retriever": {
                 "kind": "Retriever",
                 "name": "retriever-b",
@@ -382,8 +372,10 @@ async def test_explicit_resources_reach_the_runtime_request(mocker) -> None:
                 "name": "embed-b",
                 "namespace": "default",
             },
+            "explicit_selection": True,
         }
     ]
+    assert "explicit_resources" not in body
 
 
 def _create_knowledge_base(db: Any, *, owner_user_id: int) -> int:

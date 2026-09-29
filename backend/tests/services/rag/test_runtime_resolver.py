@@ -9,7 +9,6 @@ from shared.knowledge_module import RetrievalResource
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -722,6 +721,7 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
             embedding_model=RemoteRetrievalResourceRef(
                 kind="Model", name="embed-a", namespace="default"
             ),
+            explicit_selection=True,
         ),
     )
     assert spec.authorized_resources[0].index_owner_user_id == 7
@@ -780,18 +780,8 @@ def test_build_public_query_runtime_spec_selects_caller_resources():
         embedding_model=RemoteRetrievalResourceRef(
             kind="Model", name="embed-b", namespace="default"
         ),
+        explicit_selection=True,
     )
-    assert spec.explicit_resources == [
-        RemoteQueryExplicitResources(
-            knowledge_base_id=7,
-            retriever=RemoteRetrievalResourceRef(
-                kind="Retriever", name="retriever-b", namespace="default"
-            ),
-            embedding_model=RemoteRetrievalResourceRef(
-                kind="Model", name="embed-b", namespace="default"
-            ),
-        )
-    ]
 
 
 def test_build_public_query_runtime_spec_rejects_unavailable_resource():

@@ -11,7 +11,6 @@ from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryAuthorizedResources,
-    RemoteQueryExplicitResources,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -89,7 +88,6 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     authorized_resources: list[RemoteQueryAuthorizedResources] = Field(
         default_factory=list
     )
-    explicit_resources: list[RemoteQueryExplicitResources] = Field(default_factory=list)
     knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
         default_factory=list
     )

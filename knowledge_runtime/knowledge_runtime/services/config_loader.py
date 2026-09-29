@@ -19,7 +19,7 @@ from knowledge_runtime.services.config_resolver import (
     QueryConfig,
 )
 from shared.db.sync_session import get_session_factory
-from shared.models import RemoteQueryAuthorizedResources, RemoteQueryExplicitResources
+from shared.models import RemoteQueryAuthorizedResources
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,6 @@ class RuntimeConfigLoader:
         user_id: int,
         authorized: RemoteQueryAuthorizedResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
-        explicit_resources: RemoteQueryExplicitResources | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         return self._resolve_with_session(
@@ -71,7 +70,6 @@ class RuntimeConfigLoader:
                 user_id=user_id,
                 authorized=authorized,
                 retrieval_override=retrieval_override,
-                explicit_resources=explicit_resources,
             )
         )
 
@@ -82,18 +80,14 @@ class RuntimeConfigLoader:
         user_id: int,
         authorized: dict[int, RemoteQueryAuthorizedResources] | None = None,
         retrieval_overrides: Mapping[int, Mapping[str, Any]] | None = None,
-        explicit_resources: dict[int, RemoteQueryExplicitResources] | None = None,
     ) -> dict[int, QueryConfig]:
         """Resolve query configs for multiple knowledge bases in one session.
 
         Each knowledge base must have an authorized-resources entry; the runtime
-        only loads the retrieval resources Backend authorized for this call. An
-        explicit selection, when present, is resolved through the module inside
-        that authorized set.
+        only loads the retrieval resources Backend authorized for this call.
         """
         authorized = authorized or {}
         retrieval_overrides = retrieval_overrides or {}
-        explicit_resources = explicit_resources or {}
         return self._resolve_with_session(
             lambda db: {
                 knowledge_base_id: self._resolver.resolve_query_config(
@@ -102,7 +96,6 @@ class RuntimeConfigLoader:
                     user_id=user_id,
                     authorized=authorized.get(knowledge_base_id),
                     retrieval_override=retrieval_overrides.get(knowledge_base_id),
-                    explicit_resources=explicit_resources.get(knowledge_base_id),
                 )
                 for knowledge_base_id in knowledge_base_ids
             }
