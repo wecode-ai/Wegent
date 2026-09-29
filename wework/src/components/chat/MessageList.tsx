@@ -10,11 +10,15 @@ import {
 export { AssistantMessage } from './AssistantMessage'
 export function MessageList({
   workspacePath,
+  imageTarget,
   ...props
-}: Omit<MessageListProps, DesktopConversationPresentationProp> & { workspacePath?: string }) {
+}: Omit<MessageListProps, DesktopConversationPresentationProp> & {
+  workspacePath?: string
+  imageTarget?: { deviceId: string; workspacePath: string } | null
+}) {
   const presentation = useDesktopConversationPresentation(props.messages, workspacePath)
   return (
-    <DesktopToolServices>
+    <DesktopToolServices imageTarget={imageTarget}>
       <SharedMessageList {...props} {...presentation} />
     </DesktopToolServices>
   )

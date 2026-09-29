@@ -18,6 +18,9 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
+  // Fresh packaged runtime extraction contends when these cloud checkpoints share a runner.
+  ['plugin-account-auth', ['desktop-runtime-intensive']],
+  ['cloud-device-lifecycle', ['desktop-runtime-intensive']],
   ['resilience', ['desktop-runtime-intensive']],
   ['environment-panel-scroll', ['desktop-runtime-intensive']],
   ['workspace-attachments', ['desktop-runtime-intensive']],

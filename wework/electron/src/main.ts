@@ -1444,11 +1444,15 @@ function downloadsDirectory(): string {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
+  logStartupStep('workbench-mode-initialize', 'started')
   await initializeWorkbenchModePreference(requiredPreferences(), {
     environment: process.env,
     homeDirectory: app.getPath('home'),
   })
+  logStartupStep('workbench-mode-initialize', 'completed')
+  logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
+  logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
       ...currentElectronLaunch(),
@@ -1470,7 +1474,9 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  logStartupStep('runtime-preferences-read', 'started')
   const codexSubscriptionPreferences = await preferences.read()
+  logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
   // back to the default (enabled) rather than being treated as disabled.
@@ -1505,7 +1511,9 @@ async function configureDesktopRuntime(): Promise<void> {
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  logStartupStep('embedded-browser-bridge', 'started')
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  logStartupStep('embedded-browser-bridge', 'completed')
   Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
@@ -1519,7 +1527,9 @@ async function configureDesktopRuntime(): Promise<void> {
     window: () => mainWindow,
     smartApps: () => smartApps,
   })
+  logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
+  logStartupStep('desktop-control-bridge', 'completed')
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -1962,6 +1972,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     !packagedApplication && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
+  logStartupStep('desktop-components-prepare', 'started')
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
@@ -1972,6 +1983,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       currentAppVersion: app.getVersion(),
     },
   })
+  logStartupStep('desktop-components-prepare', 'completed')
   componentUpdates = preparedComponents.manager
   const components = preparedComponents.paths
   const developmentRuntimeRoot = resolve(
@@ -1982,6 +1994,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     'harness-runtime-dev'
   )
   const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+  logStartupStep('core-runtime-materialize', 'started')
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : components
@@ -1989,8 +2002,12 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           'core',
         ])
       : developmentRuntimeRoot
+  logStartupStep('core-runtime-materialize', 'completed')
+  logStartupStep('node-runtime-prepare', 'started')
   const nodeRuntime = await electronNodeRuntime()
+  logStartupStep('node-runtime-prepare', 'completed')
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
+  logStartupStep('wework-cli-install', 'started')
   await installWeworkCli(
     cliBin,
     resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
@@ -2026,6 +2043,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
+  logStartupStep('wework-cli-install', 'completed')
   return applyBrandRuntimeEnvironment(
     {
       ...nodeRuntime.environment,

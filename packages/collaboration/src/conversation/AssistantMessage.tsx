@@ -366,17 +366,27 @@ export function AssistantMessage({
   const processingStartedAt = runtimeTurn
     ? runtimeTurn.startedAt
     : getProcessingSummaryStartMs(message, message.blocks ?? [], false);
+  const turnCompletedAt = runtimeTurn
+    ? getMessageTimestampMs(runtimeTurn.completedAt)
+    : undefined;
   const processingCompletedAt = runtimeTurn
-    ? undefined
+    ? isAssistantRunning
+      ? undefined
+      : turnCompletedAt
     : isAssistantRunning
       ? undefined
       : (getMessageTimestampMs(message.completedAt) ??
         lastProcessingBlock?.completedAt ??
         lastProcessingBlock?.createdAt);
+  const hasTurnDuration =
+    runtimeTurn?.durationMs !== undefined ||
+    (processingStartedAt !== undefined &&
+      turnCompletedAt !== undefined &&
+      turnCompletedAt >= processingStartedAt);
   const processingDurationLabel =
-    !isAssistantRunning &&
-    runtimeTurn &&
-    runtimeTurn.durationMs === undefined ? null : (
+    !isAssistantRunning && runtimeTurn && !hasTurnDuration ? (
+      <span>{t("processing_complete")}</span>
+    ) : (
       <ProcessingDurationLabel
         startedAt={processingStartedAt}
         completedAt={processingCompletedAt}
