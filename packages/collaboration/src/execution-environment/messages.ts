@@ -21,6 +21,8 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_configuration_description":
       "定义初始化执行环境时使用的代码来源和初始化命令。",
     "todo.execution_environment_repositories": "代码仓库",
+    "todo.show_advanced_options": "高级选项",
+    "todo.hide_advanced_options": "收起高级选项",
     "todo.execution_environment_repositories_description":
       "添加仓库后，主仓库是智能体默认工作目录；不添加则创建空白工作目录。",
     "todo.execution_environment_no_repositories":
@@ -117,6 +119,8 @@ export const executionEnvironmentMessages: Record<
     "todo.execution_environment_configuration_description":
       "Define the code source and commands used to initialize an execution environment.",
     "todo.execution_environment_repositories": "Code repositories",
+    "todo.show_advanced_options": "Advanced options",
+    "todo.hide_advanced_options": "Hide advanced options",
     "todo.execution_environment_repositories_description":
       "When repositories are added, the primary repository is the agent's default working directory. Without one, initialization creates a blank working directory.",
     "todo.execution_environment_no_repositories":

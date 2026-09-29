@@ -278,6 +278,9 @@ class LoopItemService:
             db, item=item, execution=execution, user_id=user_id
         )
         values["approval"] = self._approval_view(execution)
+        from app.services.human_issue_work import human_issue_work_service
+
+        values["human_work"] = human_issue_work_service.view(db, item, user_id)
         if execution is not None:
             values["ai_state"] = execution_ai_state(
                 db,
@@ -1385,6 +1388,18 @@ class LoopItemService:
         commit: bool = True,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
+        if "status" in values.model_fields_set and values.status != item.status:
+            from app.services.human_issue_work import human_issue_work_service
+
+            if human_issue_work_service.is_direct_human_assignment(db, item) or (
+                "assignee_user_id" in values.model_fields_set
+                and values.assignee_user_id is not None
+                and values.assignee_user_id != item.assignee_user_id
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Use the human Issue work actions to change status",
+                )
         if "security_level" in values.model_fields_set:
             require_cloud_project_role(
                 db, int(item.cloud_project_id), user_id, BaseRole.Maintainer
@@ -1644,6 +1659,9 @@ class LoopItemService:
                     trigger="manual",
                 )
             if assignment_created:
+                if target_type == "user" and item.assignee_user_id != int(target_id):
+                    metadata.pop("human_work", None)
+                    updates["metadata_json"] = metadata
                 if (
                     target_type == "user"
                     and item.assignee_user_id != int(target_id)
@@ -1987,6 +2005,7 @@ class LoopItemService:
                 comment_id=assignment_comment_id,
             )
             if assignment_created and previous_assignee_user_id != target_user_id:
+                metadata.pop("human_work", None)
                 if item.status in {"in_progress", "in_review", "completed"}:
                     write_status_change(
                         metadata,
@@ -2730,6 +2749,37 @@ class LoopItemService:
             .limit(limit)
             .all()
         )
+        from app.services.human_issue_work import human_issue_work_service
+
+        known_item_ids = {item.id for item in items}
+        review_candidates = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.cloud_project_id.in_(project_by_id),
+                LoopItem.status == "in_review",
+                LoopItem.metadata_json["human_work"]["state"].as_string()
+                == "submitted",
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .order_by(LoopItem.updated_at.desc(), LoopItem.id.desc())
+            .all()
+        )
+        for candidate in review_candidates:
+            if candidate.id in known_item_ids:
+                continue
+            metadata = (
+                candidate.metadata_json
+                if isinstance(candidate.metadata_json, dict)
+                else {}
+            )
+            work = metadata.get("human_work")
+            if not isinstance(work, dict) or work.get("state") != "submitted":
+                continue
+            view = human_issue_work_service.view(db, candidate, user_id)
+            if view is not None and view["can_review"]:
+                items.append(candidate)
+        items.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
+        items = items[:limit]
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
         active_task_items = (
@@ -2865,6 +2915,7 @@ class LoopItemService:
                     ),
                     "content_revision": content_revision(metadata),
                     "is_unread": is_unread(metadata, user_id),
+                    "human_work": human_issue_work_service.view(db, item, user_id),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": (
                         execution_display_state(execution)

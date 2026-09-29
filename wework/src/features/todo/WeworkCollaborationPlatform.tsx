@@ -292,6 +292,7 @@ export function WeworkSharedProject({
     conversationKey: string
     taskRequest?: RuntimeTaskCreateRequest | null
     dispatch?: IssueDispatchPersonalTaskAction
+    humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
   } | null>(null)
   const taskComposerSequenceRef = useRef(0)
   const acceptedDispatchTaskActions = useRef(new Set<string>())
@@ -582,6 +583,9 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const humanWorkBinding = issue.human_work?.can_submit
+        ? issue.human_work.ai_task_binding
+        : null
       const environments = await scopedApi.projects
         .listExecutionEnvironments(String(project.id))
         .catch(error => {
@@ -595,6 +599,7 @@ export function WeworkSharedProject({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
+        humanWorkBinding,
         taskRequest: {
           ...(projectExecutionEnvironmentTaskRequest(project, {
             workspace,
@@ -618,10 +623,25 @@ export function WeworkSharedProject({
                   humanAssignmentId: dispatch.humanAssignmentId,
                 },
               }
-            : {}),
+            : humanWorkBinding
+              ? {
+                  cloudProjectId: String(project.id),
+                  origin: {
+                    type: 'issue_dispatch',
+                    cloudProjectId: String(project.id),
+                    loopItemId: issue.id,
+                    dispatchId: humanWorkBinding.dispatchId,
+                    roundId: humanWorkBinding.dispatchRoundId,
+                    assignmentId: humanWorkBinding.assignmentId,
+                    humanAssignmentId: humanWorkBinding.humanAssignmentId,
+                  },
+                }
+              : {}),
         },
       })
-      projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      if (projectHost.location.issueId !== issue.id) {
+        projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      }
     },
     [project, projectHost, runtimePort, scopedApi.projects, workspace]
   )
@@ -685,6 +705,15 @@ export function WeworkSharedProject({
         embedded
         initialTaskInput={
           (taskComposer.dispatch ? issueDispatchPersonalTaskInput(taskComposer.dispatch) : null) ||
+          (taskComposer.humanWorkBinding
+            ? [
+                taskComposer.issue.title,
+                taskComposer.issue.description,
+                t('todo.human_work_ai_prompt'),
+              ]
+                .filter(Boolean)
+                .join('\n\n')
+            : null) ||
           taskComposer.issue.description ||
           taskComposer.issue.title
         }
@@ -710,7 +739,7 @@ export function WeworkSharedProject({
                   dispatchRoundId: taskComposer.dispatch.roundId,
                   assignmentId: taskComposer.dispatch.assignmentId,
                 }
-              : null
+              : (taskComposer.humanWorkBinding ?? null)
           )
           const projectRef = {
             projectStore: project.project_store,

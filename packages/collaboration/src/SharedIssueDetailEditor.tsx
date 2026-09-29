@@ -147,6 +147,11 @@ export interface SharedIssueDetailExtensions {
     readAttachment(attachmentId: string): Promise<Blob>;
   }): ReactNode;
   renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode;
+  renderHumanWork?(context: {
+    item: SharedEditorIssue;
+    onItemChange(item: SharedEditorIssue): void;
+    onCreateTask?: () => void;
+  }): ReactNode;
   renderAITableFields?(context: {
     item: SharedEditorIssue;
     project: SharedEditorProject;
@@ -1869,7 +1874,11 @@ export function TodoEditor(props: TodoEditorProps) {
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
   // every cell editable in place regardless of where it is rendered.
-  const statusSelect = (
+  const statusSelect = item?.human_work ? (
+    <span data-testid="cloud-todo-detail-status" className="sr-only">
+      {statusLabel}
+    </span>
+  ) : (
     <IssueDetailStatusSelect
       testId={
         isCreate ? "cloud-todo-create-status" : "cloud-todo-detail-status"
@@ -2115,7 +2124,9 @@ export function TodoEditor(props: TodoEditorProps) {
       <Circle className="h-3.5 w-3.5 text-text-muted" />
       <span className="text-text-muted">{t("todo.issue_status", "状态")}</span>
       {statusValue}
-      <ChevronDown className="h-3 w-3 text-text-muted" />
+      {!item?.human_work ? (
+        <ChevronDown className="h-3 w-3 text-text-muted" />
+      ) : null}
       {statusSelect}
     </span>
   );
@@ -2903,6 +2914,13 @@ export function TodoEditor(props: TodoEditorProps) {
                   </p>
                 </div>
               ) : null}
+              {item && editProps
+                ? extensions?.renderHumanWork?.({
+                    item,
+                    onItemChange: editProps.onUpdated,
+                    onCreateTask: props.onCreateTask,
+                  })
+                : null}
               {saveError && (
                 <p className="mt-2 text-xs text-destructive">{saveError}</p>
               )}
@@ -2989,7 +3007,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     <span className="task-detail-state-leading">
                       <span className="task-detail-state-primary relative">
                         {statusValue}
-                        {editable ? (
+                        {editable && !item?.human_work ? (
                           <ChevronDown aria-hidden="true" size={13} />
                         ) : null}
                         {statusSelect}

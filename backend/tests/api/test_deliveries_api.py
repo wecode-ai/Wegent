@@ -687,7 +687,7 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     assert item.current_delivery_id == delivery_id
 
 
-def test_direct_human_delivery_moves_issue_to_review(
+def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
@@ -737,11 +737,10 @@ def test_direct_human_delivery_moves_issue_to_review(
     test_db.expire_all()
     item = test_db.get(LoopItem, item_id)
     assert item is not None
-    assert item.status == "in_review"
+    assert item.status == "in_progress"
     assert item.completed_at is None
     assert item.current_delivery_id == delivery_id
-    assert item.metadata_json["status_history"][-1]["trigger"] == "human_delivery"
-    assert item.metadata_json["status_history"][-1]["to_status"] == "in_review"
+    assert item.metadata_json["human_work"]["ai_draft_delivery_id"] == delivery_id
 
 
 def test_delivery_response_reads_expired_orm_fields(
