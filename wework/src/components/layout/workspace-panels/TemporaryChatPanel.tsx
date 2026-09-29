@@ -25,7 +25,10 @@ import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
   applyRequestUserInputResponseToBlock,
+  findRequestUserInputPayload,
+  isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
+  requestUserInputResponseKey,
   requestUserInputResponseText,
 } from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -778,6 +781,23 @@ export function TemporaryChatPanel({
   const submitRequestUserInput = useCallback(
     async (response: RequestUserInputResponse): Promise<boolean> => {
       if (!address) return false
+      const appendUserMessage = isAsyncRequestUserInputPayload(
+        findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
+      )
+      // A non-blocking Codex question carries no runtime request to answer, so it
+      // is answered by the next user message: Codex steers the running turn while
+      // the model is still working and starts a new turn once it has stopped.
+      if (appendUserMessage) {
+        const answerMessage: RuntimePaneQueuedMessage = {
+          id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
+          content: requestUserInputResponseText(response),
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          ...selectedModelFields,
+        }
+        conversationQueue.enqueue(answerMessage)
+        return sendQueuedMessageAsGuidance(answerMessage)
+      }
       const sent = await sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
@@ -792,7 +812,16 @@ export function TemporaryChatPanel({
       )
       return true
     },
-    [address, runtimeContext, sendRuntimePaneMessage]
+    [
+      address,
+      conversationQueue,
+      messages,
+      queuedMessages.length,
+      runtimeContext,
+      selectedModelFields,
+      sendQueuedMessageAsGuidance,
+      sendRuntimePaneMessage,
+    ]
   )
 
   const ignoreRequestUserInput = useCallback(

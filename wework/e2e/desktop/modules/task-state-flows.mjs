@@ -5,6 +5,8 @@ import {
   waitForSnapshot,
 } from './conversation-layout.mjs'
 
+import { inputUserMessageTexts } from './desktop-server.mjs'
+
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
@@ -31,14 +33,26 @@ import {
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+  REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+  REQUEST_USER_INPUT_ASYNC_PROMPT,
+  REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
   RUNNING_FORK_COMPLETION_TEXT,
   RUNNING_FORK_FOLLOW_UP_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
+  mkdir,
   readFile,
+  rm,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
+  writeFile,
   withTimeout,
 } from './shared.mjs'
 
@@ -212,6 +226,161 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       }
     }
   }
+}
+
+/**
+ * Codex's non-blocking `request_user_input_async` question must render as the
+ * interactive card and be answered with the next user message.
+ */
+async function setCatalogOverride(executorHome, slug, fields) {
+  const capabilities = join(executorHome, 'capabilities')
+  await mkdir(capabilities, { recursive: true })
+  await writeFile(
+    join(capabilities, 'model-catalog-overrides.json'),
+    `${JSON.stringify([{ slug, fields }], null, 2)}\n`
+  )
+  // Codex caches the served catalog; drop it so the new entry is picked up.
+  await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
+}
+
+export async function verifyAsyncRequestUserInput({ composerSelector, control, executorHome }) {
+  // Codex only exposes its non-blocking question tool to models that declare it,
+  // which the cloud catalog does in production. Declare it for the E2E model so
+  // the regression exercises the real app-server path.
+  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
+    experimental_supported_tools: ['request_user_input_async'],
+  })
+  control.setScenario('request_user_input_async')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  const composerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (composerSnapshot.testIds.includes('plan-mode-pill')) {
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+  }
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plan-mode-pill'),
+    'The async request-user-input regression must run in Default mode'
+  )
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    REQUEST_USER_INPUT_ASYNC_PROMPT,
+    'request_user_input_async'
+  )
+
+  // The question used to be flattened into the assistant's final text, so the
+  // interactive card never appeared.
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: REQUEST_USER_INPUT_ASYNC_QUESTION,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.status?.isBusy === false,
+    'The async question turn did not settle before it was answered'
+  )
+  await captureVerificationScreenshot(control, 'request-user-input-async-01-question-card.png')
+
+  await control.command('click', '[data-testid="request-user-input-option-question_1-1"]')
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: REQUEST_USER_INPUT_ASYNC_ANSWER,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="request-user-input-card"]')),
+    0,
+    'The answered async question must not stay interactive'
+  )
+  await captureVerificationScreenshot(control, 'request-user-input-async-02-answered.png')
+
+  // The non-blocking question must also be answerable while the model keeps
+  // working, otherwise the "async" contract only holds once the turn settles.
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    REQUEST_USER_INPUT_ASYNC_BUSY_PROMPT,
+    'request_user_input_async'
+  )
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.status?.isBusy === true,
+    'The model stopped working while the async question waited to be answered'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'request-user-input-async-03-question-while-running.png'
+  )
+
+  await control.command('click', '[data-testid="request-user-input-option-question_1-1"]')
+  // Hold the turn open until the answer has provably landed, so the assertion
+  // covers delivery while the model is still working rather than after it stops.
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.status?.isBusy === true,
+    'The async answer only landed after the model stopped working'
+  )
+  await withTimeout(
+    control.releaseAsyncRequestUserInputHold(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Timed out releasing the running async question turn'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.ok(
+    control.modelRequests.some(
+      request =>
+        request.scenario === 'request_user_input_async' &&
+        inputUserMessageTexts(request.body).some(text =>
+          text.includes(REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER)
+        )
+    ),
+    'The async answer never reached the model while the turn kept running'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="request-user-input-card"]')),
+    0,
+    'The async question answered while running must not stay interactive'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'request-user-input-async-04-answered-while-running.png'
+  )
 }
 
 async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
