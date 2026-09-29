@@ -267,6 +267,99 @@ describe('model-ui', () => {
     }
   })
 
+  test.each(['gpt', 'model-interface', 'codex-provider:cloud'])(
+    'uses catalog reasoning instead of the generic %s control for cloud DeepSeek',
+    family => {
+      const model: UnifiedModel = {
+        name: 'deepseek-flash-responses(公网)',
+        type: 'public',
+        modelId: 'deepseek-flash',
+        config: {
+          protocol: 'openai-responses',
+          ui: { family, controls: ['speed'] },
+        },
+      }
+      const controls = getControlsForModel(model)
+      const reasoning = controls.find(control => control.id === 'reasoning')
+
+      expect(controls.map(control => control.id)).toEqual([
+        'reasoning',
+        'collaborationMode',
+        'speed',
+      ])
+      expect(reasoning?.options.map(option => option.value)).toEqual(['low', 'high', 'max'])
+      expect(reasoning?.defaultValue).toBe('high')
+      expect(desktopModelControl(reasoning, model)?.options).toEqual(reasoning?.options)
+      expect(normalizeModelOptions(model, { reasoning: 'max' }).reasoning).toBe('max')
+      expect(normalizeModelOptions(model, { reasoning: 'medium' }).reasoning).toBe('high')
+      expect(inferModelFamily(model)).toBe(family)
+    }
+  )
+
+  test.each(['gpt', 'model-interface'])(
+    'preserves explicitly declared %s reasoning instead of overwriting it with the catalog',
+    family => {
+      const model: UnifiedModel = {
+        name: 'deepseek-flash-responses(公网)',
+        type: 'public',
+        modelId: 'deepseek-flash',
+        config: {
+          protocol: 'openai-responses',
+          ui: {
+            family,
+            reasoningEfforts: ['low', 'high'],
+            defaultReasoningEffort: 'low',
+          },
+        },
+      }
+      const reasoning = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+      expect(reasoning?.options.map(option => option.value)).toEqual(['low', 'high'])
+      expect(reasoning?.defaultValue).toBe('low')
+      expect(normalizeModelOptions(model, { reasoning: 'max' }).reasoning).toBe('low')
+    }
+  )
+
+  test('does not restore catalog reasoning when an interface explicitly declares no efforts', () => {
+    const model: UnifiedModel = {
+      name: 'deepseek-flash-responses(公网)',
+      type: 'public',
+      modelId: 'deepseek-flash',
+      config: {
+        protocol: 'openai-responses',
+        ui: { family: 'model-interface', reasoningEfforts: [] },
+      },
+    }
+
+    expect(getControlsForModel(model).map(control => control.id)).toEqual(['collaborationMode'])
+    expect(normalizeModelOptions(model, { reasoning: 'max' })).not.toHaveProperty('reasoning')
+  })
+
+  test.each([
+    { provider: 'local', modelId: 'deepseek-flash' },
+    { provider: 'openai', modelId: 'unknown-model' },
+    { provider: 'openai', modelId: 'kimi-for-coding' },
+  ])('preserves generic controls without usable cloud catalog reasoning: %o', identity => {
+    const model: UnifiedModel = {
+      ...identity,
+      name: 'generic-interface',
+      type: 'runtime',
+      config: {
+        protocol: 'openai-responses',
+        ui: { family: 'model-interface' },
+      },
+    }
+    const reasoning = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+    expect(reasoning?.options.map(option => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ])
+    expect(reasoning?.defaultValue).toBe('high')
+  })
+
   test('keeps cloud reasoning limited to catalogs that declare reasoning levels', () => {
     const chatCompletionsDeepseek: UnifiedModel = {
       name: 'deepseek-chat(公网)',
