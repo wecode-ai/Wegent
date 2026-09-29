@@ -49,6 +49,11 @@ export interface StartupSplashOptions {
   theme: StartupSplashTheme
   now?: () => number
   writePng?: (path: string, bytes: Buffer) => Promise<void>
+  /**
+   * Notified after a user-initiated close request is refused. The splash is the
+   * only visible window during startup, so the host decides what closing it means.
+   */
+  onCloseRequest?: () => void
 }
 
 export interface CloseStartupSplashOptions {
@@ -116,7 +121,9 @@ export class StartupSplash {
     this.now = options.now ?? Date.now
     this.persistPng = options.writePng ?? writePng
     options.window.on('close', event => {
-      if (!this.controlledClose) event.preventDefault()
+      if (this.controlledClose) return
+      event.preventDefault()
+      options.onCloseRequest?.()
     })
     this.record('created')
   }

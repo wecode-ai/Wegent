@@ -79,7 +79,7 @@ class FakeSplashWindow implements StartupSplashWindow {
   }
 }
 
-function createFixture(theme: StartupSplashTheme = 'light') {
+function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () => void) {
   const target = new FakeSplashWindow()
   const writePng = vi.fn(async () => undefined)
   let timestamp = 100
@@ -88,6 +88,7 @@ function createFixture(theme: StartupSplashTheme = 'light') {
     theme,
     now: () => timestamp++,
     writePng,
+    onCloseRequest,
   })
   const show = () => splash.show()
   return { show, splash, target, writePng }
@@ -339,6 +340,22 @@ describe('StartupSplash', () => {
     await splash.close()
 
     expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
+  })
+
+  test('reports refused native close requests so the host can decide what closing means', async () => {
+    const onCloseRequest = vi.fn()
+    const { show, splash, target } = createFixture('light', onCloseRequest)
+    await show()
+
+    expect(target.requestNativeClose()).toBe(false)
+    expect(onCloseRequest).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('visible')
+
+    await splash.close()
+
+    expect(onCloseRequest).toHaveBeenCalledOnce()
     expect(splash.snapshot().state).toBe('closed')
     expect(target.isDestroyed()).toBe(true)
   })

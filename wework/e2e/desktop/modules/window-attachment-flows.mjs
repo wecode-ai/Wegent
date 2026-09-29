@@ -980,6 +980,37 @@ async function verifyBackgroundTaskWindowLifecycle({
       2
     )}\n`
   )
+
+  // Regression: while the splash is up it is the only visible window, so its
+  // native close button must quit the app too. Refusing the close without
+  // acting on it left the user staring at a window that ignored them.
+  setPhase('close-during-startup-splash')
+  const startupCloseApp = await restartDesktopApp()
+  const closeSplash = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+  assert.notEqual(
+    closeSplash.state,
+    'closed',
+    'The startup splash had already closed before the close-during-startup request'
+  )
+  await control.command('requestStartupSplashClose', 'body')
+  const startupCloseExitMs = await waitForProcessExitWithin(
+    startupCloseApp.pid,
+    STARTUP_QUIT_TIMEOUT_MS,
+    'Wework ignored its startup splash close button and kept running'
+  )
+  await writeFile(
+    join(resultDir, 'close-during-startup.json'),
+    `${JSON.stringify(
+      {
+        appProcessId: startupCloseApp.pid,
+        platform: process.platform,
+        startupSplash: closeSplash,
+        appExitMs: startupCloseExitMs,
+      },
+      null,
+      2
+    )}\n`
+  )
   await restartDesktopApp()
   return taskRowTestId
 }

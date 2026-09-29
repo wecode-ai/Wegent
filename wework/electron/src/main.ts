@@ -1101,6 +1101,13 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       },
     },
     theme: startupTheme,
+    // The splash is the only visible window until the workbench reports
+    // readiness, so a user closing it through the native close button means
+    // quitting the application instead of dismissing the window.
+    onCloseRequest: () => {
+      if (quitting) return
+      requestApplicationShutdown(() => app.quit())
+    },
   })
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
@@ -1668,6 +1675,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
+          closeStartupSplash: () => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) return false
+            target.close()
+            return true
+          },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)
