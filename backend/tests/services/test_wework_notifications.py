@@ -142,7 +142,8 @@ def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):
     assert rows[0].user_id == member.id
     assert rows[0].url == issue_url(str(project.id), item.id)
     assert rows[0].actor_user_id == test_user.id
-    assert rows[0].payload["action"] == "create_personal_task"
+    assert rows[0].payload["action"] == "open_issue"
+    assert rows[0].payload["itemId"] == item.id
     assert rows[0].payload["taskTitle"] == item.title
 
 
