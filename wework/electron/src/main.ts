@@ -1670,6 +1670,9 @@ async function configureDesktopRuntime(): Promise<void> {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
             await holdStartupSplashForDesktopE2e()
+            // A quit request during startup owns the exit: never present the
+            // workbench while shutdown is already tearing the app down.
+            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
