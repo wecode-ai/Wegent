@@ -33,6 +33,13 @@ from .config import (
     validate_knowledge_config,
     validate_retrieval_config_update,
 )
+from .execution import (
+    HISTORICAL_SCORE_THRESHOLD_FALLBACK,
+    HISTORICAL_TOP_K_FALLBACK,
+    AuthorizedRetrievalResources,
+    ResolvedExecutionConfig,
+    resolve_execution_config,
+)
 
 __all__ = [
     # Adapter boundary
@@ -49,6 +56,12 @@ __all__ = [
     "validate_knowledge_config",
     "validate_retrieval_config_update",
     "evaluate_profile",
+    # Execution configuration
+    "resolve_execution_config",
+    "AuthorizedRetrievalResources",
+    "ResolvedExecutionConfig",
+    "HISTORICAL_TOP_K_FALLBACK",
+    "HISTORICAL_SCORE_THRESHOLD_FALLBACK",
     "DEFAULT_RETRIEVAL_MODE",
     "DEFAULT_TOP_K",
     "DEFAULT_SCORE_THRESHOLD",

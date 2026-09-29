@@ -18,7 +18,15 @@ from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind
+from shared.knowledge_module import (
+    EMBEDDING_RESOURCE_CATEGORY,
+    AuthorizedRetrievalResources,
+    KnowledgeConfigError,
+    RetrievalResource,
+    resolve_execution_config,
+)
 from shared.models import (
+    RemoteQueryAuthorizedResources,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -119,55 +127,116 @@ class ConfigResolver:
         *,
         knowledge_base_id: int,
         user_id: int,
+        authorized: RemoteQueryAuthorizedResources | None = None,
     ) -> QueryConfig:
-        """Resolve configs needed for querying a single knowledge base."""
+        """Resolve configs needed for querying a single knowledge base.
+
+        The query only loads the retrieval resources Backend authorized for this
+        operation (``authorized``). The stored configuration must still name
+        those same resources, so a knowledge base edited to a resource outside
+        the authorized set fails instead of silently executing the new one.
+        """
+        if authorized is None:
+            raise ConfigResolutionError(
+                "authorization_required",
+                f"Knowledge base {knowledge_base_id} query requires authorized "
+                "retrieval resources",
+            )
         kb = self._get_knowledge_base(db, knowledge_base_id)
-        index_owner_user_id = kb.user_id
+        index_owner_user_id = authorized.index_owner_user_id
         user_name = self._get_user_name(db, user_id)
-
-        retrieval_config = self._parse_kb_retrieval_config(kb)
-
-        retriever_config = self._build_resolved_retriever_config(
-            db=db,
-            user_id=index_owner_user_id,
-            name=retrieval_config["retriever_name"],
-            namespace=retrieval_config["retriever_namespace"],
-        )
-        embedding_model_config = self._build_resolved_embedding_model_config(
-            db=db,
-            user_id=index_owner_user_id,
-            model_name=retrieval_config["embedding_model_name"],
-            model_namespace=retrieval_config["embedding_model_namespace"],
-            user_name=user_name,
-        )
-
-        rc = retrieval_config
-        retrieval_mode = rc.get("retrieval_mode", "vector")
-        hybrid_weights = rc.get("hybrid_weights") or {}
-        runtime_retrieval_config = RuntimeRetrievalConfig(
-            top_k=rc.get("top_k", 20),
-            score_threshold=rc.get("score_threshold", 0.7),
-            retrieval_mode=retrieval_mode,
-            vector_weight=(
-                hybrid_weights.get("vector_weight")
-                if retrieval_mode == "hybrid"
-                else None
-            ),
-            keyword_weight=(
-                hybrid_weights.get("keyword_weight")
-                if retrieval_mode == "hybrid"
-                else None
-            ),
-        )
 
         return QueryConfig(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
-            retriever_config=retriever_config,
-            embedding_model_config=embedding_model_config,
-            retrieval_config=runtime_retrieval_config,
+            retriever_config=self._authorized_retriever_config(
+                db, authorized, index_owner_user_id
+            ),
+            embedding_model_config=self._authorized_embedding_config(
+                db, authorized, index_owner_user_id, user_name
+            ),
+            retrieval_config=self._authorized_retrieval_settings(kb, authorized),
             user_name=user_name,
         )
+
+    def _authorized_retriever_config(
+        self,
+        db: Session,
+        authorized: RemoteQueryAuthorizedResources,
+        index_owner_user_id: int,
+    ) -> RuntimeRetrieverConfig:
+        """Load the runner's retriever Kind inside the authorized reference."""
+        retriever_kind = self._get_retriever_kind(
+            db,
+            user_id=index_owner_user_id,
+            name=authorized.retriever.name,
+            namespace=authorized.retriever.namespace,
+        )
+        if retriever_kind is None:
+            raise ConfigResolutionError(
+                "config_not_found",
+                f"Retriever {authorized.retriever.name} "
+                f"(namespace: {authorized.retriever.namespace}) not found",
+            )
+        return self._build_retriever_config_from_kind(
+            retriever_kind,
+            name=authorized.retriever.name,
+            namespace=authorized.retriever.namespace,
+        )
+
+    def _authorized_embedding_config(
+        self,
+        db: Session,
+        authorized: RemoteQueryAuthorizedResources,
+        index_owner_user_id: int,
+        user_name: str | None,
+    ) -> RuntimeEmbeddingModelConfig:
+        """Load the runner's embedding Kind inside the authorized reference."""
+        embedding_kind = self._get_model_kind(
+            db=db,
+            user_id=index_owner_user_id,
+            model_name=authorized.embedding_model.name,
+            model_namespace=authorized.embedding_model.namespace,
+        )
+        if embedding_kind is None:
+            raise ConfigResolutionError(
+                "config_not_found",
+                f"Embedding model '{authorized.embedding_model.name}' not found in "
+                f"namespace '{authorized.embedding_model.namespace}'",
+            )
+        return self._build_embedding_config_from_kind(
+            embedding_kind,
+            model_name=authorized.embedding_model.name,
+            model_namespace=authorized.embedding_model.namespace,
+            user_name=user_name,
+        )
+
+    def _authorized_retrieval_settings(
+        self,
+        kb: Kind,
+        authorized: RemoteQueryAuthorizedResources,
+    ) -> RuntimeRetrievalConfig:
+        """Resolve stored retrieval parameters inside the authorized set."""
+        try:
+            resolved = resolve_execution_config(
+                self._read_kb_retrieval_config(kb),
+                AuthorizedRetrievalResources(
+                    retriever=RetrievalResource(
+                        name=authorized.retriever.name,
+                        kind=authorized.retriever.kind,
+                        namespace=authorized.retriever.namespace,
+                    ),
+                    embedding_model=RetrievalResource(
+                        name=authorized.embedding_model.name,
+                        kind=authorized.embedding_model.kind,
+                        category=EMBEDDING_RESOURCE_CATEGORY,
+                        namespace=authorized.embedding_model.namespace,
+                    ),
+                ),
+            )
+        except KnowledgeConfigError as exc:
+            raise ConfigResolutionError("config_invalid", str(exc)) from exc
+        return RuntimeRetrievalConfig(**resolved.retrieval_config)
 
     def resolve_admin_config(
         self,
@@ -213,7 +282,7 @@ class ConfigResolver:
 
     def _parse_kb_retrieval_config(self, kb: Kind) -> dict[str, Any]:
         """Parse KB's retrievalConfig from its JSON spec."""
-        retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
+        retrieval_config = self._read_kb_retrieval_config(kb)
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
         embedding_config = retrieval_config.get("embedding_config") or {}
@@ -242,6 +311,11 @@ class ConfigResolver:
             "hybrid_weights": retrieval_config.get("hybrid_weights"),
         }
 
+    @staticmethod
+    def _read_kb_retrieval_config(kb: Kind) -> dict[str, Any]:
+        """Return the raw stored retrievalConfig without applying defaults."""
+        return (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
+
     def _build_resolved_retriever_config(
         self,
         *,
@@ -259,7 +333,18 @@ class ConfigResolver:
                 "config_not_found",
                 f"Retriever {name} (namespace: {namespace}) not found",
             )
+        return self._build_retriever_config_from_kind(
+            retriever, name=name, namespace=namespace
+        )
 
+    def _build_retriever_config_from_kind(
+        self,
+        retriever: Kind,
+        *,
+        name: str,
+        namespace: str,
+    ) -> RuntimeRetrieverConfig:
+        """Build a runtime retriever config from an authorized Retriever Kind."""
         spec = retriever.json or {}
         storage_config = spec.get("spec", {}).get("storageConfig", {})
 
@@ -302,7 +387,22 @@ class ConfigResolver:
                 "config_not_found",
                 f"Embedding model '{model_name}' not found in namespace '{model_namespace}'",
             )
+        return self._build_embedding_config_from_kind(
+            model_kind,
+            model_name=model_name,
+            model_namespace=model_namespace,
+            user_name=user_name,
+        )
 
+    def _build_embedding_config_from_kind(
+        self,
+        model_kind: Kind,
+        *,
+        model_name: str,
+        model_namespace: str,
+        user_name: str | None,
+    ) -> RuntimeEmbeddingModelConfig:
+        """Build a runtime embedding config from an authorized Model Kind."""
         spec = (model_kind.json or {}).get("spec", {})
         model_config = spec.get("modelConfig", {})
         env = model_config.get("env", {})

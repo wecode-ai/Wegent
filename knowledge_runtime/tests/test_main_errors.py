@@ -11,7 +11,10 @@ from knowledge_engine.embedding.errors import (
     CollectionDimensionMismatchError,
     EmbeddingDimensionMismatchError,
 )
-from knowledge_runtime.main import embedding_dimension_mismatch_handler
+from knowledge_runtime.main import (
+    embedding_dimension_mismatch_handler,
+    value_error_handler,
+)
 
 
 def _index_request() -> Request:
@@ -76,3 +79,21 @@ async def test_embedding_dimension_mismatch_returns_stable_nonretryable_error(
     }
     for leaked in ("milvus", "localhost", "http", "0.5"):
         assert leaked not in json.dumps(payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_value_error_handler_maps_request_errors_to_invalid_request() -> None:
+    """A rejected query request returns a stable non-retryable 400 payload."""
+    request = _index_request()
+    error = ValueError("query requires authorized retrieval resources for bases [7]")
+
+    response = await value_error_handler(request, error)
+    payload = json.loads(response.body)
+
+    assert response.status_code == 400
+    assert payload == {
+        "code": "invalid_request",
+        "message": "query requires authorized retrieval resources for bases [7]",
+        "retryable": False,
+        "details": None,
+    }

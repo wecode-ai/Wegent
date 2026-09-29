@@ -101,10 +101,12 @@ from .knowledge_runtime_protocol import (
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
+    RemoteQueryAuthorizedResources,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteRetrievalResourceRef,
     RetrievalScope,
 )
 
@@ -169,6 +171,8 @@ __all__ = [
     "coerce_search_hints",
     "RemoteKnowledgeBaseQueryConfig",
     "RemoteKnowledgeBaseRetrievalOverride",
+    "RemoteQueryAuthorizedResources",
+    "RemoteRetrievalResourceRef",
     "RetrievalScope",
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",

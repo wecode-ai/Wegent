@@ -178,6 +178,10 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
             ),
         ),
         patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_authorized_resources",
+            return_value=["authorized-resources"],
+        ),
+        patch(
             patch_target,
             new_callable=AsyncMock,
             return_value=COMMON_QUERY_RESULT,
@@ -198,7 +202,7 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
     mock_query.assert_awaited_once()
 
 
-def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integration(
+def test_internal_retrieve_exposes_remote_query_failure_integration(
     test_client: TestClient,
     monkeypatch,
 ) -> None:
@@ -210,6 +214,10 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(with_remote_configs=True),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_authorized_resources",
+            return_value=["authorized-resources"],
         ),
         patch(
             "app.services.rag.remote_gateway.RemoteRagGateway.query",
@@ -237,10 +245,10 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
             headers=_internal_headers(),
         )
 
-    assert response.status_code == 200
-    assert response.json() == EXPECTED_QUERY_RESPONSE
+    assert response.status_code == 503
+    assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_remote_query.assert_awaited_once()
-    mock_local_query.assert_awaited_once()
+    mock_local_query.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -94,6 +94,33 @@ class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
     retrieval_config: RuntimeRetrievalConfig
 
 
+class RemoteRetrievalResourceRef(KnowledgeRuntimeProtocolModel):
+    """A retrieval resource reference authorized by Backend for this call."""
+
+    kind: Literal["Retriever", "Model"]
+    name: str
+    namespace: str = "default"
+
+
+class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
+    """Per-knowledge-base resources Backend authorized for this query.
+
+    Backend verifies the caller may read the knowledge base and that the
+    knowledge base owner may use these retriever and embedding model records,
+    then sends only the references. The runtime loads just these records instead
+    of widening the lookup with a bare Kind query.
+
+    MVP trust boundary: the shared internal service token only proves the caller
+    holds it. It cannot prove Backend generated these references, and it is not
+    an authorization credential, so other services must not treat it as one.
+    """
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever: RemoteRetrievalResourceRef
+    embedding_model: RemoteRetrievalResourceRef
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     """Index request - reference mode. KR resolves configs from DB."""
 
@@ -151,6 +178,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
+    authorized_resources: list[RemoteQueryAuthorizedResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None

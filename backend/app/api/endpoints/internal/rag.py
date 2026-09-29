@@ -32,11 +32,7 @@ from app.services.knowledge.retrieval_persistence import (
 )
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGateway,
-    RemoteRagGatewayError,
-    should_fallback_to_local,
-)
+from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.sources import (
@@ -626,29 +622,22 @@ async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
     if (
         isinstance(rag_gateway, RemoteRagGateway)
         and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
-        and not getattr(runtime_spec, "knowledge_base_configs", None)
+        and not getattr(runtime_spec, "authorized_resources", None)
     ):
         runtime_spec = runtime_spec.model_copy(
             update={
-                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
-                    db=db,
-                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
-                    current_user_id=runtime_spec.user_id,
-                    user_name=runtime_spec.user_name,
+                "authorized_resources": (
+                    runtime_resolver.build_query_authorized_resources(
+                        db=db,
+                        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                        current_user_id=runtime_spec.user_id,
+                    )
                 )
             }
         )
-    try:
-        return await rag_gateway.query(runtime_spec, db=db)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
-            getattr(runtime_spec, "knowledge_base_ids", []),
-            exc,
-        )
-        return await LocalRagGateway().query(runtime_spec, db=db)
+    # Remote failures are surfaced instead of falling back to the deprecated
+    # local data plane; local is not a rollback path.
+    return await rag_gateway.query(runtime_spec, db=db)
 
 
 @router.post(

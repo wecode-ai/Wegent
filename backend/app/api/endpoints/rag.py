@@ -116,12 +116,9 @@ async def retrieve_documents(
         )
 
         gateway = get_query_gateway()
-        try:
-            result = await gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            result = await LocalRagGateway().query(runtime_spec, db=db)
+        # Remote failures are surfaced instead of falling back to the deprecated
+        # local data plane; local is not a rollback path.
+        result = await gateway.query(runtime_spec, db=db)
 
         return {"records": result.get("records", [])}
     except HTTPException:

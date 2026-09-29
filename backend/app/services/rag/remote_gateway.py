@@ -155,6 +155,7 @@ class RemoteRagGateway:
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
+            authorized_resources=spec.authorized_resources or None,
             knowledge_base_retrieval_overrides=(
                 spec.knowledge_base_retrieval_overrides or None
             ),

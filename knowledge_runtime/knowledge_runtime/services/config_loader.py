@@ -10,15 +10,16 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar
 
+from sqlalchemy.orm import Session, sessionmaker
+
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
     ConfigResolver,
     IndexConfig,
     QueryConfig,
 )
-from sqlalchemy.orm import Session, sessionmaker
-
 from shared.db.sync_session import get_session_factory
+from shared.models import RemoteQueryAuthorizedResources
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_id: int,
         user_id: int,
+        authorized: RemoteQueryAuthorizedResources | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         return self._resolve_with_session(
@@ -65,6 +67,7 @@ class RuntimeConfigLoader:
                 db=db,
                 knowledge_base_id=knowledge_base_id,
                 user_id=user_id,
+                authorized=authorized,
             )
         )
 
@@ -73,14 +76,21 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_ids: list[int],
         user_id: int,
+        authorized: dict[int, RemoteQueryAuthorizedResources] | None = None,
     ) -> dict[int, QueryConfig]:
-        """Resolve query configs for multiple knowledge bases in one session."""
+        """Resolve query configs for multiple knowledge bases in one session.
+
+        Each knowledge base must have an authorized-resources entry; the runtime
+        only loads the retrieval resources Backend authorized for this call.
+        """
+        authorized = authorized or {}
         return self._resolve_with_session(
             lambda db: {
                 knowledge_base_id: self._resolver.resolve_query_config(
                     db=db,
                     knowledge_base_id=knowledge_base_id,
                     user_id=user_id,
+                    authorized=authorized.get(knowledge_base_id),
                 )
                 for knowledge_base_id in knowledge_base_ids
             }

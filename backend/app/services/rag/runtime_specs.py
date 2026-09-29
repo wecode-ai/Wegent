@@ -10,6 +10,7 @@ from app.services.knowledge.splitter_config import (
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
+    RemoteQueryAuthorizedResources,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -84,6 +85,9 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
+    authorized_resources: list[RemoteQueryAuthorizedResources] = Field(
+        default_factory=list
+    )
     knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
         default_factory=list
     )

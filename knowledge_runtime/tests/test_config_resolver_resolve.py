@@ -16,6 +16,8 @@ from knowledge_runtime.services.config_resolver import (
     QueryConfig,
 )
 from shared.models import (
+    RemoteQueryAuthorizedResources,
+    RemoteRetrievalResourceRef,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -26,6 +28,30 @@ from .conftest import (
     _make_model_kind,
     _make_retriever_kind,
 )
+
+
+def _authorized_entry(
+    *,
+    knowledge_base_id: int = 1,
+    index_owner_user_id: int = 42,
+    retriever_name: str = "test-retriever",
+    retriever_namespace: str = "default",
+    embedding_model_name: str = "text-embedding-3-small",
+    embedding_model_namespace: str = "default",
+) -> RemoteQueryAuthorizedResources:
+    """Build the resources Backend authorized for one query."""
+    return RemoteQueryAuthorizedResources(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=index_owner_user_id,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name=retriever_name, namespace=retriever_namespace
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model",
+            name=embedding_model_name,
+            namespace=embedding_model_namespace,
+        ),
+    )
 
 
 class TestResolveIndexConfig:
@@ -152,33 +178,21 @@ class TestResolveQueryConfig:
     def test_success(self, resolver: ConfigResolver, mock_db: MagicMock) -> None:
         """Test successful query config resolution."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+        authorized = _authorized_entry()
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
             patch.object(resolver, "_get_user_name", return_value="testuser"),
             patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={"type": "qdrant"},
-                ),
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
             ),
-            patch.object(
-                resolver,
-                "_build_resolved_embedding_model_config",
-                return_value=RuntimeEmbeddingModelConfig(
-                    model_name="text-embedding-3-small",
-                    model_namespace="default",
-                    resolved_config={"protocol": "openai"},
-                ),
-            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
         ):
             result = resolver.resolve_query_config(
                 mock_db,
                 knowledge_base_id=1,
                 user_id=42,
+                authorized=authorized,
             )
 
         assert isinstance(result, QueryConfig)
@@ -198,10 +212,15 @@ class TestResolveQueryConfig:
         shared_model_db: Session,
     ) -> None:
         """A group-visible model reference resolves to its source Model Kind."""
+        authorized = _authorized_entry(
+            embedding_model_name="shared-embedding",
+            embedding_model_namespace="search-team",
+        )
         query_config = resolver.resolve_query_config(
             shared_model_db,
             knowledge_base_id=1,
             user_id=42,
+            authorized=authorized,
         )
         index_config = resolver.resolve_index_config(
             shared_model_db,
@@ -246,28 +265,15 @@ class TestResolveQueryConfig:
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
             patch.object(resolver, "_get_user_name", return_value="testuser"),
             patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={},
-                ),
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
             ),
-            patch.object(
-                resolver,
-                "_build_resolved_embedding_model_config",
-                return_value=RuntimeEmbeddingModelConfig(
-                    model_name="text-embedding-3-small",
-                    model_namespace="default",
-                    resolved_config={},
-                ),
-            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
         ):
             result = resolver.resolve_query_config(
                 mock_db,
                 knowledge_base_id=1,
                 user_id=42,
+                authorized=_authorized_entry(),
             )
 
         assert result.retrieval_config.retrieval_mode == "hybrid"
@@ -294,28 +300,15 @@ class TestResolveQueryConfig:
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
             patch.object(resolver, "_get_user_name", return_value="testuser"),
             patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={},
-                ),
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
             ),
-            patch.object(
-                resolver,
-                "_build_resolved_embedding_model_config",
-                return_value=RuntimeEmbeddingModelConfig(
-                    model_name="text-embedding-3-small",
-                    model_namespace="default",
-                    resolved_config={},
-                ),
-            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
         ):
             result = resolver.resolve_query_config(
                 mock_db,
                 knowledge_base_id=1,
                 user_id=42,
+                authorized=_authorized_entry(),
             )
 
         assert result.retrieval_config.top_k == 20
@@ -323,3 +316,70 @@ class TestResolveQueryConfig:
         assert result.retrieval_config.retrieval_mode == "vector"
         assert result.retrieval_config.vector_weight is None
         assert result.retrieval_config.keyword_weight is None
+
+    def test_requires_authorized_resources(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """A query without Backend authorization is rejected, not widened."""
+        with pytest.raises(ConfigResolutionError) as exc_info:
+            resolver.resolve_query_config(
+                mock_db,
+                knowledge_base_id=1,
+                user_id=42,
+            )
+        assert exc_info.value.code == "authorization_required"
+
+    def test_rejects_kb_edited_outside_authorized_set(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """A stored config changed to another resource must not execute."""
+        retrieval_config = {
+            "retriever_name": "changed-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "text-embedding-3-small",
+                "model_namespace": "default",
+            },
+        }
+        kb = _make_kb_kind(
+            knowledge_base_id=1, user_id=42, retrieval_config=retrieval_config
+        )
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_user_name", return_value="testuser"),
+            patch.object(
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
+            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
+            pytest.raises(ConfigResolutionError) as exc_info,
+        ):
+            resolver.resolve_query_config(
+                mock_db,
+                knowledge_base_id=1,
+                user_id=42,
+                authorized=_authorized_entry(),
+            )
+
+        assert exc_info.value.code == "config_invalid"
+        assert "not in the authorized" in str(exc_info.value)
+
+    def test_rejects_missing_authorized_resource(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """A resource the runtime cannot load inside the set is rejected."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_user_name", return_value="testuser"),
+            patch.object(resolver, "_get_retriever_kind", return_value=None),
+        ):
+            with pytest.raises(ConfigResolutionError) as exc_info:
+                resolver.resolve_query_config(
+                    mock_db,
+                    knowledge_base_id=1,
+                    user_id=42,
+                    authorized=_authorized_entry(),
+                )
+        assert exc_info.value.code == "config_not_found"

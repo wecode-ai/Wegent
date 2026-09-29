@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
@@ -30,9 +31,50 @@ from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
 from shared.db.capability_reference import resolve_model_kind
-from shared.models import RetrievalScope, SearchHints
+from shared.knowledge_module import (
+    MODEL_RESOURCE_KIND,
+    RETRIEVER_RESOURCE_KIND,
+)
+from shared.models import (
+    RemoteQueryAuthorizedResources,
+    RemoteRetrievalResourceRef,
+    RetrievalScope,
+    SearchHints,
+)
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
+
+
+@dataclass(frozen=True)
+class _QueryResourceReferences:
+    """The retriever and embedding references one knowledge base executes."""
+
+    retriever_name: str
+    retriever_namespace: str
+    embedding_model_name: str
+    embedding_model_namespace: str
+
+    def authorized_entry(
+        self,
+        *,
+        knowledge_base_id: int,
+        index_owner_user_id: int,
+    ) -> RemoteQueryAuthorizedResources:
+        """Bundle the references into the authorized-resources protocol entry."""
+        return RemoteQueryAuthorizedResources(
+            knowledge_base_id=knowledge_base_id,
+            index_owner_user_id=index_owner_user_id,
+            retriever=RemoteRetrievalResourceRef(
+                kind=RETRIEVER_RESOURCE_KIND,
+                name=self.retriever_name,
+                namespace=self.retriever_namespace,
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind=MODEL_RESOURCE_KIND,
+                name=self.embedding_model_name,
+                namespace=self.embedding_model_namespace,
+            ),
+        )
 
 
 class RagRuntimeResolver:
@@ -111,6 +153,7 @@ class RagRuntimeResolver:
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
         knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
+        authorized_resources: list[RemoteQueryAuthorizedResources] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -125,16 +168,18 @@ class RagRuntimeResolver:
         resolved_knowledge_base_configs = (
             [] if knowledge_base_configs is None else knowledge_base_configs
         )
+        resolved_authorized_resources = (
+            [] if authorized_resources is None else authorized_resources
+        )
         if (
             db is not None
             and route_mode == "rag_retrieval"
-            and knowledge_base_configs is None
+            and authorized_resources is None
         ):
-            resolved_knowledge_base_configs = self.build_query_knowledge_base_configs(
+            resolved_authorized_resources = self.build_query_authorized_resources(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 current_user_id=user_id,
-                user_name=user_name,
             )
 
         return QueryRuntimeSpec(
@@ -149,6 +194,7 @@ class RagRuntimeResolver:
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
+            authorized_resources=resolved_authorized_resources,
             knowledge_base_configs=resolved_knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
@@ -193,6 +239,17 @@ class RagRuntimeResolver:
             current_user_id=user_id,
         )
 
+        authorized_entry = _QueryResourceReferences(
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+        ).authorized_entry(
+            knowledge_base_id=knowledge_base_id,
+            index_owner_user_id=kb_info.index_owner_user_id,
+        )
+        self._authorize_query_resources(db=db, entry=authorized_entry)
+
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],
             query=query,
@@ -214,32 +271,7 @@ class RagRuntimeResolver:
                     ),
                 }
             ],
-            knowledge_base_configs=[
-                QueryKnowledgeBaseRuntimeConfig(
-                    knowledge_base_id=knowledge_base_id,
-                    index_owner_user_id=kb_info.index_owner_user_id,
-                    retriever_config=self._build_resolved_retriever_config(
-                        db=db,
-                        user_id=kb_info.index_owner_user_id,
-                        name=retriever_name,
-                        namespace=retriever_namespace,
-                    ),
-                    embedding_model_config=self._build_resolved_embedding_model_config(
-                        db=db,
-                        user_id=kb_info.index_owner_user_id,
-                        model_name=embedding_model_name,
-                        model_namespace=embedding_model_namespace,
-                        user_name=user_name,
-                    ),
-                    retrieval_config=RuntimeRetrievalConfig(
-                        top_k=max_results,
-                        score_threshold=score_threshold,
-                        retrieval_mode=retrieval_mode,
-                        vector_weight=vector_weight,
-                        keyword_weight=keyword_weight,
-                    ),
-                )
-            ],
+            authorized_resources=[authorized_entry],
         )
 
     def build_query_knowledge_base_configs(
@@ -256,6 +288,122 @@ class RagRuntimeResolver:
             current_user_id=current_user_id,
             user_name=user_name,
         )
+
+    def build_query_authorized_resources(
+        self,
+        *,
+        db: Session,
+        knowledge_base_ids: list[int],
+        current_user_id: int | None = None,
+    ) -> list[RemoteQueryAuthorizedResources]:
+        """Authorize the retrieval resources each knowledge base would execute.
+
+        The knowledge base owner -- not the caller -- owns the retriever and
+        embedding model, so resolution runs as the owner and fails when the owner
+        may not use a configured resource. Backend sends only these references;
+        the runtime loads just them instead of widening the lookup.
+        """
+        knowledge_base_records = []
+        for knowledge_base_id in knowledge_base_ids:
+            kb = self._get_knowledge_base_record(
+                db=db, knowledge_base_id=knowledge_base_id
+            )
+            if kb is None:
+                raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+            knowledge_base_records.append(kb)
+
+        return self.build_query_authorized_resources_from_records(
+            db=db,
+            knowledge_base_records=knowledge_base_records,
+            current_user_id=current_user_id,
+        )
+
+    def build_query_authorized_resources_from_records(
+        self,
+        *,
+        db: Session,
+        knowledge_base_records: list[Kind],
+        current_user_id: int | None = None,
+    ) -> list[RemoteQueryAuthorizedResources]:
+        authorized: list[RemoteQueryAuthorizedResources] = []
+        for kb in knowledge_base_records:
+            references = self._read_query_resource_references(
+                knowledge_base_id=kb.id,
+                retrieval_config=self._read_retrieval_config(kb),
+            )
+
+            owner_user_id = kb.user_id
+            if current_user_id is not None:
+                kb_info = get_kb_index_info_by_record(
+                    db=db,
+                    knowledge_base=kb,
+                    current_user_id=current_user_id,
+                )
+                owner_user_id = kb_info.index_owner_user_id
+
+            entry = references.authorized_entry(
+                knowledge_base_id=kb.id,
+                index_owner_user_id=owner_user_id,
+            )
+            self._authorize_query_resources(db=db, entry=entry)
+            authorized.append(entry)
+        return authorized
+
+    @staticmethod
+    def _read_retrieval_config(kb: Kind) -> dict[str, Any]:
+        return (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
+
+    @staticmethod
+    def _read_query_resource_references(
+        *,
+        knowledge_base_id: int,
+        retrieval_config: dict[str, Any],
+    ) -> _QueryResourceReferences:
+        retriever_name = retrieval_config.get("retriever_name")
+        embedding_config = retrieval_config.get("embedding_config") or {}
+        embedding_model_name = embedding_config.get("model_name")
+        if not retriever_name:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete retrieval "
+                "config (missing retriever_name)"
+            )
+        if not embedding_model_name:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete embedding config"
+            )
+        return _QueryResourceReferences(
+            retriever_name=retriever_name,
+            retriever_namespace=retrieval_config.get("retriever_namespace", "default"),
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_config.get(
+                "model_namespace", "default"
+            ),
+        )
+
+    def _authorize_query_resources(
+        self,
+        *,
+        db: Session,
+        entry: RemoteQueryAuthorizedResources,
+    ) -> None:
+        """Reject the query when the owner may not use a configured resource."""
+        retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=entry.index_owner_user_id,
+            name=entry.retriever.name,
+            namespace=entry.retriever.namespace,
+        )
+        embedding_model = self._get_model_kind(
+            db=db,
+            user_id=entry.index_owner_user_id,
+            model_name=entry.embedding_model.name,
+            model_namespace=entry.embedding_model.namespace,
+        )
+        if embedding_model is None:
+            raise ValueError(
+                f"Embedding model '{entry.embedding_model.name}' not found in "
+                f"namespace '{entry.embedding_model.namespace}'"
+            )
 
     def build_public_list_chunks_runtime_spec(
         self,

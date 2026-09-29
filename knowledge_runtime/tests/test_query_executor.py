@@ -7,18 +7,34 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
-
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
+    RemoteQueryAuthorizedResources,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+
+
+def _authorized(knowledge_base_id: int) -> RemoteQueryAuthorizedResources:
+    """Authorize one knowledge base's stored retrieval resources."""
+    return RemoteQueryAuthorizedResources(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=7,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="test-retriever", namespace="default"
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model", name="text-embedding-3-small", namespace="default"
+        ),
+    )
 
 
 def _make_query_config(knowledge_base_id: int = 1) -> QueryConfig:
@@ -66,6 +82,7 @@ def query_request():
         user_id=42,
         query="test query",
         max_results=10,
+        authorized_resources=[_authorized(1), _authorized(2)],
     )
 
 
@@ -248,11 +265,8 @@ class TestQueryExecutor:
             query_request.knowledge_base_ids = [1]
             query_request.scope = RetrievalScope(document_ids=[20])
             query_request.document_ids = [20]
-            executor = QueryExecutor(db=MagicMock())
-            config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            config_loader = _make_config_loader(_make_query_config(1))
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
@@ -411,6 +425,17 @@ class TestQueryExecutor:
             ValueError,
             match="unknown knowledge_base_id",
         ):
+            await executor.execute(query_request)
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_query_without_authorized_resources(
+        self, query_request
+    ) -> None:
+        """Backend must authorize the retrieval resources before the query runs."""
+        query_request.authorized_resources = None
+        executor = QueryExecutor(config_loader=MagicMock())
+
+        with pytest.raises(ValueError, match="authorized retrieval resources"):
             await executor.execute(query_request)
 
     @pytest.mark.asyncio
@@ -576,6 +601,7 @@ class TestQueryExecutor:
         config_loader.resolve_query_configs.assert_called_once_with(
             knowledge_base_ids=[1, 2],
             user_id=42,
+            authorized={1: _authorized(1), 2: _authorized(2)},
         )
 
     @pytest.mark.asyncio

@@ -18,10 +18,6 @@ from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGatewayError,
-    should_fallback_to_local,
-)
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import RetrievalScope, SearchHints
@@ -84,17 +80,9 @@ class KnowledgeSearchRunner:
         if isinstance(gateway, LocalRagGateway):
             result = await self._query_local(runtime_spec)
         else:
-            try:
-                result = await gateway.query(runtime_spec)
-            except RemoteRagGatewayError as exc:
-                if not should_fallback_to_local(exc):
-                    raise
-                logger.warning(
-                    "[KnowledgeSearch] Remote query failed for KB %s; falling back: %s",
-                    knowledge_base_id,
-                    exc,
-                )
-                result = await self._query_local(runtime_spec)
+            # Remote failures are surfaced instead of falling back to the
+            # deprecated local data plane; local is not a rollback path.
+            result = await gateway.query(runtime_spec)
 
         return {
             "query": query,
@@ -214,13 +202,18 @@ class KnowledgeSearchRunner:
             runtime_spec = runtime_spec.model_copy(
                 update={"route_mode": resolved_route_mode}
             )
-            if resolved_route_mode == "rag_retrieval":
+            if (
+                resolved_route_mode == "rag_retrieval"
+                and not runtime_spec.authorized_resources
+            ):
                 runtime_spec = runtime_spec.model_copy(
                     update={
-                        "knowledge_base_configs": resolver.build_query_knowledge_base_configs(
-                            db=db,
-                            knowledge_base_ids=[knowledge_base_id],
-                            user_name=user.user_name,
+                        "authorized_resources": (
+                            resolver.build_query_authorized_resources(
+                                db=db,
+                                knowledge_base_ids=[knowledge_base_id],
+                                current_user_id=user.id,
+                            )
                         )
                     }
                 )

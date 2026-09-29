@@ -9,17 +9,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.config_resolver import QueryConfig
-from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
-
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.config_resolver import QueryConfig
+from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
+    RemoteQueryAuthorizedResources,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -62,30 +62,17 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
         )
+        authorized_by_kb_id = self._build_authorized_resources_map(
+            request.knowledge_base_ids,
+            request.authorized_resources,
+        )
         configs_by_kb_id = self._config_loader.resolve_query_configs(
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
+            authorized=authorized_by_kb_id,
         )
-
-        if request.search_hints is None:
-            search_hints: dict[str, Any] = {}
-        elif isinstance(request.search_hints, dict):
-            search_hints = dict(request.search_hints)
-        else:
-            search_hints = request.search_hints.model_dump(exclude_none=True)
-        logger.info(
-            "Query request: hint_source=%s, normalized_query='%s...', "
-            "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
-            "semantic_query=%s, keywords=%s, phrases=%s",
-            plan.hint_source,
-            plan.normalized_query[:50],
-            plan.dense_query[:50],
-            plan.sparse_query[:50],
-            bool(search_hints),
-            bool(search_hints.get("semantic_query")),
-            len(search_hints.get("keywords") or []),
-            len(search_hints.get("phrases") or []),
-        )
+        search_hints = self._search_hints_dict(request.search_hints)
+        self._log_query_plan(plan, search_hints)
 
         # Query each knowledge base after config loading has closed its DB session.
         for knowledge_base_id in request.knowledge_base_ids:
@@ -106,7 +93,47 @@ class QueryExecutor:
         total_tokens = sum(
             self._estimate_tokens(record.content) for record in limited_records
         )
+        self._log_query_result(plan, all_records, limited_records)
 
+        return RemoteQueryResponse(
+            records=limited_records,
+            total=len(all_records),
+            total_estimated_tokens=total_tokens,
+        )
+
+    @staticmethod
+    def _search_hints_dict(
+        search_hints: Any,
+    ) -> dict[str, Any]:
+        """Normalize optional search hints to a plain mapping."""
+        if search_hints is None:
+            return {}
+        if isinstance(search_hints, dict):
+            return dict(search_hints)
+        return search_hints.model_dump(exclude_none=True)
+
+    @staticmethod
+    def _log_query_plan(plan: QueryPlan, search_hints: dict[str, Any]) -> None:
+        logger.info(
+            "Query request: hint_source=%s, normalized_query='%s...', "
+            "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
+            "semantic_query=%s, keywords=%s, phrases=%s",
+            plan.hint_source,
+            plan.normalized_query[:50],
+            plan.dense_query[:50],
+            plan.sparse_query[:50],
+            bool(search_hints),
+            bool(search_hints.get("semantic_query")),
+            len(search_hints.get("keywords") or []),
+            len(search_hints.get("phrases") or []),
+        )
+
+    @staticmethod
+    def _log_query_result(
+        plan: QueryPlan,
+        all_records: list[RemoteQueryRecord],
+        limited_records: list[RemoteQueryRecord],
+    ) -> None:
         logger.info(
             "Query complete: hint_source=%s, normalized_query='%s...', "
             "total_results=%d, returned=%d",
@@ -114,12 +141,6 @@ class QueryExecutor:
             plan.normalized_query[:50],
             len(all_records),
             len(limited_records),
-        )
-
-        return RemoteQueryResponse(
-            records=limited_records,
-            total=len(all_records),
-            total_estimated_tokens=total_tokens,
         )
 
     async def _query_knowledge_base(
@@ -241,6 +262,32 @@ class QueryExecutor:
                 )
             overrides_by_kb_id[override.knowledge_base_id] = override
         return overrides_by_kb_id
+
+    @staticmethod
+    def _build_authorized_resources_map(
+        knowledge_base_ids: list[int],
+        authorized_resources: list[RemoteQueryAuthorizedResources] | None,
+    ) -> dict[int, RemoteQueryAuthorizedResources]:
+        """Index the authorized retrieval resources by knowledge base ID."""
+        authorized_by_kb_id: dict[int, RemoteQueryAuthorizedResources] = {}
+        for entry in authorized_resources or []:
+            if entry.knowledge_base_id in authorized_by_kb_id:
+                raise ValueError(
+                    "authorized_resources contains duplicate knowledge_base_id entries"
+                )
+            authorized_by_kb_id[entry.knowledge_base_id] = entry
+
+        missing = [
+            knowledge_base_id
+            for knowledge_base_id in knowledge_base_ids
+            if knowledge_base_id not in authorized_by_kb_id
+        ]
+        if missing:
+            raise ValueError(
+                "query requires authorized retrieval resources for knowledge "
+                f"bases {missing}"
+            )
+        return authorized_by_kb_id
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
         """Extract document ID from record metadata."""

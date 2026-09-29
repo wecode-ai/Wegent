@@ -1,16 +1,122 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RemoteQueryAuthorizedResources,
+    RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+
+_QUERY_KB = SimpleNamespace(
+    id=7,
+    user_id=42,
+    namespace="default",
+    json={
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "retriever-a",
+                "retriever_namespace": "default",
+                "embedding_config": {
+                    "model_name": "embed-a",
+                    "model_namespace": "default",
+                },
+            }
+        }
+    },
+)
+
+
+def test_build_query_authorized_resources_authorizes_owner_resources() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever"
+        ) as get_retriever,
+        patch.object(
+            resolver, "_get_model_kind", return_value=MagicMock()
+        ) as get_model,
+    ):
+        authorized = resolver.build_query_authorized_resources(
+            db=db,
+            knowledge_base_ids=[7],
+            current_user_id=9,
+        )
+
+    assert len(authorized) == 1
+    entry = authorized[0]
+    assert entry.knowledge_base_id == 7
+    assert entry.index_owner_user_id == 42
+    assert entry.retriever.kind == "Retriever"
+    assert entry.retriever.name == "retriever-a"
+    assert entry.embedding_model.kind == "Model"
+    assert entry.embedding_model.name == "embed-a"
+    get_retriever.assert_called_once_with(
+        db=db,
+        user_id=42,
+        name="retriever-a",
+        namespace="default",
+    )
+    get_model.assert_called_once_with(
+        db=db,
+        user_id=42,
+        model_name="embed-a",
+        model_namespace="default",
+    )
+
+
+def test_build_query_authorized_resources_rejects_group_denied_retriever() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            side_effect=HTTPException(
+                status_code=403, detail="Access denied to this group"
+            ),
+        ),
+        patch.object(resolver, "_get_model_kind") as get_model,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            resolver.build_query_authorized_resources(
+                db=db,
+                knowledge_base_ids=[7],
+                current_user_id=9,
+            )
+
+    assert exc_info.value.status_code == 403
+    get_model.assert_not_called()
+
+
+def test_build_query_authorized_resources_rejects_missing_embedding_model() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch.object(resolver, "_get_knowledge_base_record", return_value=_QUERY_KB),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever"
+        ),
+        patch.object(resolver, "_get_model_kind", return_value=None),
+    ):
+        with pytest.raises(ValueError, match="Embedding model 'embed-a'"):
+            resolver.build_query_authorized_resources(
+                db=db,
+                knowledge_base_ids=[7],
+                current_user_id=9,
+            )
 
 
 def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
@@ -152,29 +258,24 @@ def test_build_query_runtime_spec_omits_budget_without_context_window():
 
 def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
     resolver = RagRuntimeResolver()
-    resolved_configs = [
-        RemoteKnowledgeBaseQueryConfig(
+    authorized = [
+        RemoteQueryAuthorizedResources(
             knowledge_base_id=1,
             index_owner_user_id=5,
-            retriever_config=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={"type": "qdrant"},
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-a", namespace="default"
             ),
-            embedding_model_config=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embed-a", namespace="default"
             ),
-            retrieval_config=RuntimeRetrievalConfig(top_k=20),
         )
     ]
 
     with patch.object(
         resolver,
-        "_build_query_knowledge_base_configs",
-        return_value=resolved_configs,
-    ):
+        "build_query_authorized_resources",
+        return_value=authorized,
+    ) as build_authorized:
         spec = resolver.build_query_runtime_spec(
             db=MagicMock(),
             knowledge_base_ids=[1],
@@ -183,41 +284,42 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
             route_mode="rag_retrieval",
         )
 
-    assert spec.knowledge_base_configs == resolved_configs
+    build_authorized.assert_called_once_with(
+        db=ANY,
+        knowledge_base_ids=[1],
+        current_user_id=None,
+    )
+    assert spec.authorized_resources == authorized
+    assert spec.knowledge_base_configs == []
 
 
 def test_build_query_runtime_spec_reuses_provided_rag_configs():
     resolver = RagRuntimeResolver()
-    resolved_configs = [
-        RemoteKnowledgeBaseQueryConfig(
+    authorized = [
+        RemoteQueryAuthorizedResources(
             knowledge_base_id=1,
             index_owner_user_id=5,
-            retriever_config=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={"type": "qdrant"},
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-a", namespace="default"
             ),
-            embedding_model_config=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embed-a", namespace="default"
             ),
-            retrieval_config=RuntimeRetrievalConfig(top_k=20),
         )
     ]
 
-    with patch.object(resolver, "_build_query_knowledge_base_configs") as build_configs:
+    with patch.object(resolver, "build_query_authorized_resources") as build_authorized:
         spec = resolver.build_query_runtime_spec(
             db=MagicMock(),
             knowledge_base_ids=[1],
             query="release checklist",
             max_results=3,
             route_mode="rag_retrieval",
-            knowledge_base_configs=resolved_configs,
+            authorized_resources=authorized,
         )
 
-    build_configs.assert_not_called()
-    assert spec.knowledge_base_configs == resolved_configs
+    build_authorized.assert_not_called()
+    assert spec.authorized_resources == authorized
 
 
 def test_build_public_list_chunks_runtime_spec_carries_metadata_condition() -> None:
@@ -489,22 +591,8 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
         ) as build_kb_index_info,
         patch.object(
             resolver,
-            "_build_resolved_retriever_config",
-            return_value=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={"type": "qdrant"},
-            ),
-        ),
-        patch.object(
-            resolver,
-            "_build_resolved_embedding_model_config",
-            return_value=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
-            ),
-        ),
+            "_authorize_query_resources",
+        ) as authorize_resources,
     ):
         spec = resolver.build_public_query_runtime_spec(
             db=db,
@@ -526,7 +614,22 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
         knowledge_base=kb,
         current_user_id=9,
     )
-    assert spec.knowledge_base_configs[0].index_owner_user_id == 7
+    authorize_resources.assert_called_once_with(
+        db=db,
+        entry=RemoteQueryAuthorizedResources(
+            knowledge_base_id=7,
+            index_owner_user_id=7,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-a", namespace="default"
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embed-a", namespace="default"
+            ),
+        ),
+    )
+    assert spec.authorized_resources[0].index_owner_user_id == 7
+    assert spec.authorized_resources[0].retriever.name == "retriever-a"
+    assert spec.authorized_resources[0].embedding_model.name == "embed-a"
     assert len(spec.knowledge_base_retrieval_overrides) == 1
     assert spec.knowledge_base_retrieval_overrides[0].knowledge_base_id == 7
     assert spec.knowledge_base_retrieval_overrides[0].retrieval_config == (
@@ -568,22 +671,8 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
         ) as build_kb_index_info,
         patch.object(
             resolver,
-            "_build_resolved_retriever_config",
-            return_value=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={"type": "qdrant"},
-            ),
-        ) as build_retriever,
-        patch.object(
-            resolver,
-            "_build_resolved_embedding_model_config",
-            return_value=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
-            ),
-        ) as build_embedding,
+            "_authorize_query_resources",
+        ) as authorize_resources,
     ):
         spec = resolver.build_query_runtime_spec(
             db=db,
@@ -600,21 +689,22 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
         knowledge_base=kb,
         current_user_id=9,
     )
-    build_retriever.assert_called_once_with(
+    authorize_resources.assert_called_once_with(
         db=db,
-        user_id=42,
-        name="retriever-a",
-        namespace="default",
+        entry=RemoteQueryAuthorizedResources(
+            knowledge_base_id=7,
+            index_owner_user_id=42,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-a", namespace="default"
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embed-a", namespace="default"
+            ),
+        ),
     )
-    build_embedding.assert_called_once_with(
-        db=db,
-        user_id=42,
-        model_name="embed-a",
-        model_namespace="default",
-        user_name="alice",
-    )
-    assert spec.knowledge_base_configs[0].index_owner_user_id == 42
-    assert spec.knowledge_base_configs[0].retrieval_config.retrieval_mode == "vector"
+    assert spec.authorized_resources[0].index_owner_user_id == 42
+    assert spec.authorized_resources[0].retriever.namespace == "default"
+    assert spec.authorized_resources[0].embedding_model.namespace == "default"
 
 
 def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> None:

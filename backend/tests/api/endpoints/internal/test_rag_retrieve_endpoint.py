@@ -851,7 +851,7 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
     assert mock_local_query.await_args.args[0].route_mode == "direct_injection"
 
 
-def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
+def test_internal_retrieve_exposes_retryable_remote_error_without_local_fallback(
     test_client, monkeypatch
 ):
     monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
@@ -902,22 +902,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
         patch(
             "app.api.endpoints.internal.rag.LocalRagGateway.query",
             new_callable=AsyncMock,
-            return_value={
-                "mode": "rag_retrieval",
-                "records": [
-                    {
-                        "content": "fallback result",
-                        "title": "Fallback doc",
-                        "knowledge_base_id": 1,
-                    }
-                ],
-                "total": 1,
-                "total_estimated_tokens": 4,
-            },
         ) as mock_local_query,
-        patch(
-            "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
-        ) as mock_persist,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -925,28 +910,11 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
             headers=_internal_headers(),
         )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "mode": "rag_retrieval",
-        "records": [
-            {
-                "content": "fallback result",
-                "score": None,
-                "title": "Fallback doc",
-                "metadata": None,
-                "knowledge_base_id": 1,
-                "document_id": None,
-            }
-        ],
-        "total": 1,
-        "total_estimated_tokens": 4,
-        "message": None,
-    }
+    assert response.status_code == 503
+    assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_get_query_gateway.assert_called_once()
     remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)
-    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
-    assert mock_local_query.await_args.args[0].route_mode == "rag_retrieval"
-    mock_persist.assert_called_once()
+    mock_local_query.assert_not_called()
 
 
 def test_internal_retrieve_returns_remote_error_without_local_fallback(

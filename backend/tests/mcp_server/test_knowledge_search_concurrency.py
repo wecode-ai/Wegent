@@ -26,7 +26,7 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 
 @pytest.mark.parametrize(
-    "stage", ["reader", "scope", "permission", "runtime", "route", "config"]
+    "stage", ["reader", "scope", "permission", "runtime", "route", "authorized"]
 )
 async def test_search_keeps_event_loop_responsive(
     monkeypatch: pytest.MonkeyPatch, stage: str
@@ -57,11 +57,12 @@ async def test_search_keeps_event_loop_responsive(
         }
     )
     runtime = MagicMock()
+    runtime.authorized_resources = []
     runtime.model_copy.return_value = runtime
 
     def at_stage(name: str, result: Any) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if name in {"permission", "runtime", "route", "config"}:
+            if name in {"permission", "runtime", "route", "authorized"}:
                 preparation_threads.append(get_ident())
             if stage == name:
                 blocking_io()
@@ -91,14 +92,14 @@ async def test_search_keeps_event_loop_responsive(
         at_stage("runtime", runtime),
     )
     monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        at_stage("config", []),
-    )
-    monkeypatch.setattr(
         search_execution.RetrievalService,
         "decide_route_mode_for_chat_shell",
         at_stage("route", "rag_retrieval"),
+    )
+    monkeypatch.setattr(
+        search_execution.RagRuntimeResolver,
+        "build_query_authorized_resources",
+        at_stage("authorized", []),
     )
     gateway = SimpleNamespace(query=AsyncMock(return_value={"records": [], "total": 0}))
     monkeypatch.setattr(search_execution, "get_query_gateway", lambda: gateway)
@@ -173,11 +174,6 @@ async def test_openapi_search_resolves_scope_in_worker(
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )
-    monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        lambda *args, **kwargs: [],
-    )
     gateway = SimpleNamespace(query=AsyncMock(return_value={"records": []}))
     monkeypatch.setattr(search_execution, "get_query_gateway", lambda: gateway)
 
@@ -250,23 +246,15 @@ async def test_cancelled_search_waits_for_session_worker(
     assert closed_after_worker == [True]
 
 
-async def test_remote_failure_falls_back_to_local_with_worker_owned_session(
+async def test_remote_failure_is_exposed_without_local_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Retryable remote errors must execute local fallback with a closed Session."""
+    """Retryable remote errors must surface instead of querying local storage."""
     session = MagicMock()
     session.__enter__.return_value = MagicMock()
-    local_finished = Event()
-    session.__exit__.side_effect = lambda *args: local_finished.is_set()
     runtime_spec = object()
     remote_error = RemoteRagGatewayError("runtime unavailable", retryable=True)
     remote_gateway = SimpleNamespace(query=AsyncMock(side_effect=remote_error))
-
-    async def local_query(_self: LocalRagGateway, spec: Any, *, db: Any) -> dict:
-        assert spec is runtime_spec
-        assert db is session.__enter__.return_value
-        local_finished.set()
-        return {"records": [{"content": "local"}], "total": 1}
 
     monkeypatch.setattr(search_execution, "SessionLocal", lambda: session)
     monkeypatch.setattr(
@@ -275,32 +263,30 @@ async def test_remote_failure_falls_back_to_local_with_worker_owned_session(
         staticmethod(lambda **kwargs: runtime_spec),
     )
     monkeypatch.setattr(search_execution, "get_query_gateway", lambda: remote_gateway)
+    local_query = AsyncMock(side_effect=AssertionError("local must not be called"))
     monkeypatch.setattr(LocalRagGateway, "query", local_query)
 
-    result = await search_execution.knowledge_search_runner.retrieve(
-        user_id=3,
-        task_id=None,
-        knowledge_base_id=7,
-        query="policy",
-        max_results=10,
-        document_ids=None,
-        folder_ids=None,
-        include_subfolders=True,
-        route_mode="rag_retrieval",
-        context_window=128000,
-        used_context_tokens=0,
-        reserved_output_tokens=4096,
-        context_buffer_ratio=0.1,
-        max_direct_chunks=500,
-        search_hints=None,
-    )
+    with pytest.raises(RemoteRagGatewayError):
+        await search_execution.knowledge_search_runner.retrieve(
+            user_id=3,
+            task_id=None,
+            knowledge_base_id=7,
+            query="policy",
+            max_results=10,
+            document_ids=None,
+            folder_ids=None,
+            include_subfolders=True,
+            route_mode="rag_retrieval",
+            context_window=128000,
+            used_context_tokens=0,
+            reserved_output_tokens=4096,
+            context_buffer_ratio=0.1,
+            max_direct_chunks=500,
+            search_hints=None,
+        )
 
-    assert result["records"] == [{"content": "local"}]
     remote_gateway.query.assert_awaited_once_with(runtime_spec)
-    session.__exit__.assert_called_once()
-    assert (
-        session.__exit__.call_args.args and session.__exit__.call_args.args[0] is None
-    )
+    local_query.assert_not_called()
 
 
 async def test_retrieve_knowledge_restores_default_for_non_positive_max_results(

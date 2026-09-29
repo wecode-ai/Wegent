@@ -26,7 +26,16 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
-from shared.models import PresignedUrlContentRef, RetrievalScope, RuntimeRetrieverConfig
+from shared.models import (
+    PresignedUrlContentRef,
+    RemoteKnowledgeBaseQueryConfig,
+    RemoteQueryAuthorizedResources,
+    RemoteRetrievalResourceRef,
+    RetrievalScope,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
 
 
 def _build_response(
@@ -291,6 +300,73 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_query_posts_authorized_resource_references(
+    mocker,
+) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0},
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="release checklist",
+        user_id=8,
+        authorized_resources=[
+            RemoteQueryAuthorizedResources(
+                knowledge_base_id=1,
+                index_owner_user_id=8,
+                retriever=RemoteRetrievalResourceRef(
+                    kind="Retriever", name="retriever-a", namespace="default"
+                ),
+                embedding_model=RemoteRetrievalResourceRef(
+                    kind="Model", name="embed-a", namespace="default"
+                ),
+            )
+        ],
+        knowledge_base_configs=[
+            RemoteKnowledgeBaseQueryConfig(
+                knowledge_base_id=1,
+                index_owner_user_id=8,
+                retriever_config=RuntimeRetrieverConfig(
+                    name="retriever-a", namespace="default"
+                ),
+                embedding_model_config=RuntimeEmbeddingModelConfig(
+                    model_name="embed-a", model_namespace="default"
+                ),
+                retrieval_config=RuntimeRetrievalConfig(top_k=20),
+            )
+        ],
+    )
+
+    await gateway.query(spec)
+
+    _, kwargs = post_mock.await_args
+    assert kwargs["json"]["authorized_resources"] == [
+        {
+            "knowledge_base_id": 1,
+            "index_owner_user_id": 8,
+            "retriever": {
+                "kind": "Retriever",
+                "name": "retriever-a",
+                "namespace": "default",
+            },
+            "embedding_model": {
+                "kind": "Model",
+                "name": "embed-a",
+                "namespace": "default",
+            },
+        }
+    ]
+    # The resolved execution configs are dropped by the runtime request.
+    assert "knowledge_base_configs" not in kwargs["json"]
 
 
 @pytest.mark.asyncio
