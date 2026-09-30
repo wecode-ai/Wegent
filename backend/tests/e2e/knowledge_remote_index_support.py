@@ -13,6 +13,7 @@ calls for operations configured remote.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -31,6 +32,12 @@ MOCK_MODEL_SERVER_URL = os.environ.get(
 EMBEDDING_MODEL_URL = (
     os.environ.get("E2E_EMBEDDING_BASE_URL") or f"{MOCK_MODEL_SERVER_URL}/v1/embeddings"
 )
+MINERU_BASE_URL = os.environ.get(
+    "E2E_MINERU_BASE_URL", f"{MOCK_MODEL_SERVER_URL}/mineru"
+)
+# Converted documents echo this marker back, so the scenario can prove that the
+# converted body - not the uploaded source bytes - reached the remote index.
+CONVERSION_MARKER_PREFIX = "WEGENT-E2E-CONVERT"
 INTERNAL_SERVICE_TOKEN = os.environ.get("E2E_INTERNAL_SERVICE_TOKEN") or os.environ.get(
     "INTERNAL_SERVICE_TOKEN", ""
 )
@@ -231,21 +238,147 @@ def _upload_attachment(
 
 
 def _create_document(
-    client: httpx.Client, token: str, knowledge_base_id: int, attachment_id: int
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    attachment_id: int,
+    *,
+    name: str = "release-notes.md",
+    file_extension: str = "md",
 ) -> dict[str, Any]:
     response = client.post(
         f"/api/knowledge-bases/{knowledge_base_id}/documents",
         headers=_auth_headers(token),
         json={
             "attachment_id": attachment_id,
-            "name": "release-notes.md",
-            "file_extension": "md",
+            "name": name,
+            "file_extension": file_extension,
             "folder_id": 0,
             "source_type": "file",
         },
     )
     _check(response.status_code < 300, f"creating the document failed: {response.text}")
     return response.json()
+
+
+def _upload_conversion_attachment(
+    client: httpx.Client,
+    token: str,
+    marker: str,
+    *,
+    filename: str = "converted-source.pdf",
+) -> tuple[int, bytes]:
+    """Upload a source file whose bytes carry the marker MinerU echoes back."""
+
+    content = _build_marker_pdf(marker)
+    response = client.post(
+        "/api/attachments/upload",
+        headers=_auth_headers(token),
+        files={"file": (filename, content, "application/pdf")},
+    )
+    _check(
+        response.status_code == 200,
+        f"uploading the conversion source failed: {response.text}",
+    )
+    return int(response.json()["id"]), content
+
+
+def _build_marker_pdf(marker: str) -> bytes:
+    """Build a minimal, structurally valid PDF carrying the marker text.
+
+    The attachment parser validates the source PDF, so the fixture needs real
+    xref offsets; the marker is embedded as page text and is what the simulated
+    MinerU service echoes back into the converted Markdown.
+    """
+
+    content_stream = b"BT /F1 12 Tf 72 720 Td (" + marker.encode("ascii") + b") Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length "
+        + str(len(content_stream)).encode("ascii")
+        + b" >>\nstream\n"
+        + content_stream
+        + b"\nendstream",
+    ]
+
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf += f"{number} 0 obj\n".encode("ascii") + body + b"\nendobj\n"
+
+    xref_offset = len(pdf)
+    pdf += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
+    pdf += b"0000000000 65535 f \n"
+    for offset in offsets:
+        pdf += f"{offset:010d} 00000 n \n".encode("ascii")
+    pdf += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n"
+    ).encode("ascii")
+    return bytes(pdf)
+
+
+def _load_document_row(document_id: int) -> dict[str, Any]:
+    """Read the raw document row fields the product API does not expose."""
+
+    from app.db.session import SessionLocal
+    from app.models.knowledge import KnowledgeDocument
+
+    with SessionLocal() as db:
+        document = db.get(KnowledgeDocument, document_id)
+        _check(document is not None, f"document {document_id} disappeared")
+        return {
+            "id": int(document.id),
+            "attachment_id": int(document.attachment_id),
+            "converted_attachment_id": (
+                int(document.converted_attachment_id)
+                if document.converted_attachment_id is not None
+                else None
+            ),
+            "index_generation": int(document.index_generation),
+            "index_status": (
+                document.index_status.value
+                if hasattr(document.index_status, "value")
+                else document.index_status
+            ),
+        }
+
+
+def _post_conversion_completed(
+    client: httpx.Client,
+    *,
+    document_id: int,
+    generation: int,
+    attachment_id: int,
+    knowledge_base_id: int,
+    markdown: bytes = b"# duplicate callback\n",
+    converted_name: str = "duplicate.pdf.md",
+) -> httpx.Response:
+    """Re-post one conversion completion callback on the internal endpoint."""
+
+    _check(INTERNAL_SERVICE_TOKEN, "the internal service token is required")
+    return client.post(
+        "/api/internal/conversion/callback/completed",
+        headers={"Authorization": f"Bearer {INTERNAL_SERVICE_TOKEN}"},
+        json={
+            "document_id": document_id,
+            "generation": generation,
+            "converted_name": converted_name,
+            "converted_extension": "md",
+            "file_size": len(markdown),
+            "markdown_bytes": base64.b64encode(markdown).decode(),
+            "index_dispatch_payload": {
+                "attachment_id": attachment_id,
+                "knowledge_base_id": knowledge_base_id,
+                "document_id": document_id,
+            },
+        },
+    )
 
 
 def _document_row(

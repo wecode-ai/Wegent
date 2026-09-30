@@ -31,7 +31,8 @@ FORBIDDEN_MODULES = (
     "celery",
 )
 
-_BOUNDARY_SCRIPT = textwrap.dedent(f"""
+_BOUNDARY_SCRIPT = textwrap.dedent(
+    f"""
     import json
     import sys
 
@@ -47,6 +48,11 @@ _BOUNDARY_SCRIPT = textwrap.dedent(f"""
         RuntimeRetrieverConfig,
         SearchHints,
         normalize_runtime_splitter_config,
+    )
+    from shared.knowledge_module import (
+        ConversionEngineResult,
+        ConversionRequest,
+        convert_content,
     )
 
     forbidden = {FORBIDDEN_MODULES!r}
@@ -74,9 +80,29 @@ _BOUNDARY_SCRIPT = textwrap.dedent(f"""
     retriever_config = RuntimeRetrieverConfig(name="opensource")
     embedding_config = RuntimeEmbeddingModelConfig(model_name="text-embedding-v1")
 
+    class _Adapter:
+        def supports_conversion(self, extension):
+            return extension == "pdf"
+
+        def convert(self, *, binary_data, extension, storage_prefix):
+            return ConversionEngineResult(markdown_bytes=b"# converted")
+
+    converted = convert_content(
+        _Adapter(),
+        ConversionRequest(
+            binary_data=b"%PDF-1.7",
+            file_extension=".pdf",
+            original_filename="report.pdf",
+            knowledge_base_name="Handbook",
+            document_id=42,
+        ),
+    )
+
     print(json.dumps({{
         "loaded_forbidden": loaded_forbidden,
         "contract_modules": contract_modules,
+        "converted_name": converted.converted_name,
+        "conversion_prefix": converted.storage_prefix,
         "retrieval_config": retrieval_config.model_dump(),
         "scope_document_ids": scope.document_ids,
         "hints_semantic_query": hints.semantic_query,
@@ -85,7 +111,8 @@ _BOUNDARY_SCRIPT = textwrap.dedent(f"""
         "retriever_namespace": retriever_config.namespace,
         "embedding_namespace": embedding_config.model_namespace,
     }}))
-    """)
+    """
+)
 
 
 def _run_boundary_script() -> dict[str, Any]:
@@ -126,6 +153,9 @@ def test_contracts_remain_usable_in_orm_free_process(
     assert boundary_payload["splitter_strategy"] == "flat"
     assert boundary_payload["retriever_namespace"] == "default"
     assert boundary_payload["embedding_namespace"] == "default"
+    # The conversion rules run in the same ORM-free process.
+    assert boundary_payload["converted_name"] == "report.pdf.md"
+    assert boundary_payload["conversion_prefix"] == "doc-converter/Handbook/42/report"
 
 
 def test_existing_callers_share_one_contract_definition() -> None:

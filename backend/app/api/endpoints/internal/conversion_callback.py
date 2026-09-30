@@ -26,6 +26,7 @@ from app.services.knowledge.attachment_cleanup import (
 )
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.index_state_machine import (
+    conversion_complete_statuses,
     mark_document_conversion_started,
     mark_document_conversion_succeeded,
     mark_document_index_failed,
@@ -35,6 +36,7 @@ from app.services.knowledge.processing_errors import (
     build_processing_error,
 )
 from app.tasks.knowledge_tasks import index_document_task
+from shared.knowledge_module import decide_conversion_completed
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -211,30 +213,26 @@ def conversion_completed_callback(
     # mutation. Without this, a late callback from an older generation would
     # create an orphan Markdown attachment and point converted_attachment_id at
     # stale content (which DocumentReadService then prefers over the original).
-    # The filter mirrors mark_document_conversion_succeeded so the pre-check and
-    # the transition agree on what "current" means.
-    from app.models.knowledge import DocumentIndexStatus
-
-    is_current_generation = (
+    # The module owns the decision; mark_document_conversion_succeeded accepts
+    # the same module status set, so the pre-check and the transition agree on
+    # what "current" means.
+    current = (
         db.query(KnowledgeDocument)
         .filter(
             KnowledgeDocument.id == request.document_id,
-            KnowledgeDocument.index_generation == request.generation,
-            KnowledgeDocument.index_status.in_(
-                [
-                    DocumentIndexStatus.CONVERTING,
-                    DocumentIndexStatus.PENDING_CONVERSION,
-                ]
-            ),
         )
-        .count()
-        > 0
+        .first()
     )
-    if not is_current_generation:
+    decision = decide_conversion_completed(
+        generation=request.generation,
+        current_generation=getattr(current, "index_generation", None),
+        status=getattr(current, "index_status", None),
+    )
+    if not decision.should_execute:
         logger.info(
             f"[ConversionCallback] Stale conversion callback: "
             f"document_id={request.document_id}, generation={request.generation} "
-            f"is not current; skipping attachment creation"
+            f"is not current ({decision.reason}); skipping attachment creation"
         )
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"

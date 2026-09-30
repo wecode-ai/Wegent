@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Minimal second caller: resolve config with the module, then index and query.
+"""Minimal second caller: resolve config, convert and index with the module.
 
-This caller supplies its own authorized resource records and an in-memory
-storage backend. It never loads a Wegent product table, a database session or a
-task worker, and proves the module public interface is reusable for indexing a
-plain document and for a scope-limited query that returns its reference.
+This caller supplies its own authorized resource records, its own conversion
+engine and an in-memory storage backend. It never loads a Wegent product table,
+a database session or a task worker, and proves the module public interface is
+reusable for converting a document, indexing its content, and for a
+scope-limited query that returns its reference.
 """
 
 from __future__ import annotations
@@ -20,7 +21,12 @@ from pydantic import ValidationError
 from shared.knowledge_contracts import RetrievalScope
 from shared.knowledge_module import (
     AuthorizedRetrievalResources,
+    ConversionEngineResult,
+    ConversionRequest,
+    DocumentIndexRequest,
     RetrievalResource,
+    convert_content,
+    index_document,
     resolve_execution_config,
 )
 
@@ -125,6 +131,40 @@ _STORED_CONFIG = {
 
 _KNOWLEDGE_ID = "7"
 _PLAIN_DOCUMENT = b"# Release notes\n\nVerify the release checklist before shipping."
+_CONVERTED_DOCUMENT = b"# Converted report\n\nChecklist marker: converted body."
+
+
+class _EngineDocumentIndexAdapter:
+    """Second-service adapter: the module identity, this side's index engine."""
+
+    def __init__(self, storage: "_InMemoryStorage") -> None:
+        from knowledge_engine.services.document_service import DocumentService
+
+        self._service = DocumentService(storage_backend=storage)
+
+    async def index_chunks(self, *, metadata, request: DocumentIndexRequest):
+        return await self._service.index_with_metadata(
+            metadata=metadata,
+            binary_data=request.binary_data,
+            file_extension=request.file_extension,
+            embed_model=object(),
+            user_id=request.user_id,
+            splitter_config=request.splitter_config,
+        )
+
+
+class _MarkdownConversionAdapter:
+    """Second-service adapter: supplies the conversion engine and its formats."""
+
+    supported = ("pdf", "docx")
+
+    def supports_conversion(self, extension: str) -> bool:
+        return extension in self.supported
+
+    def convert(self, *, binary_data: bytes, extension: str, storage_prefix: str):
+        assert binary_data
+        assert storage_prefix.startswith("doc-converter/")
+        return ConversionEngineResult(markdown_bytes=_CONVERTED_DOCUMENT)
 
 
 async def _index_plain_document(
@@ -132,19 +172,48 @@ async def _index_plain_document(
     *,
     document_id: int,
 ) -> dict[str, Any]:
-    """Index plain markdown content through the shared execution kernel."""
-    from knowledge_engine.services.document_service import DocumentService
+    """Index plain markdown content through the module public interface."""
+    return await index_document(
+        _EngineDocumentIndexAdapter(storage),
+        DocumentIndexRequest(
+            knowledge_id=_KNOWLEDGE_ID,
+            binary_data=_PLAIN_DOCUMENT,
+            source_file="release-notes.md",
+            file_extension=".md",
+            user_id=7,
+            document_id=document_id,
+        ),
+    )
 
-    service = DocumentService(storage_backend=storage)
-    return await service.index_document_from_binary(
-        knowledge_id=_KNOWLEDGE_ID,
-        binary_data=_PLAIN_DOCUMENT,
-        source_file="release-notes.md",
-        file_extension=".md",
-        embed_model=object(),
-        user_id=7,
-        splitter_config=None,
-        document_id=document_id,
+
+async def _convert_and_index_document(
+    storage: _InMemoryStorage,
+    *,
+    document_id: int,
+) -> dict[str, Any]:
+    """Convert a PDF source and index the converted body through the module."""
+    converted = convert_content(
+        _MarkdownConversionAdapter(),
+        ConversionRequest(
+            binary_data=b"%PDF-1.7 source",
+            file_extension=".pdf",
+            original_filename="converted-report.pdf",
+            knowledge_base_name="Handbook",
+            document_id=document_id,
+        ),
+    )
+    assert converted.markdown_bytes == _CONVERTED_DOCUMENT
+
+    return await index_document(
+        _EngineDocumentIndexAdapter(storage),
+        DocumentIndexRequest(
+            knowledge_id=_KNOWLEDGE_ID,
+            binary_data=converted.markdown_bytes,
+            source_file=converted.converted_name,
+            file_extension=".md",
+            user_id=7,
+            document_id=document_id,
+        ),
     )
 
 
@@ -240,3 +309,25 @@ async def test_scoped_query_returns_only_the_requested_document() -> None:
     assert records
     assert {record["metadata"]["doc_ref"] for record in records} == {"43"}
     assert {record["metadata"]["knowledge_id"] for record in records} == {_KNOWLEDGE_ID}
+
+
+@pytest.mark.asyncio
+async def test_converted_document_reuses_the_module_index_and_query_path() -> None:
+    """Conversion output enters the same index and scoped query as plain text."""
+    adapter = _FakeAdapter()
+    config = resolve_execution_config(_STORED_CONFIG, adapter.authorized())
+    storage = _InMemoryStorage()
+
+    indexed = await _convert_and_index_document(storage, document_id=51)
+
+    assert indexed["doc_ref"] == "51"
+    assert indexed["source_file"] == "converted-report.pdf.md"
+    assert indexed["knowledge_id"] == _KNOWLEDGE_ID
+
+    records = await _query_plain_document(
+        storage, config, RetrievalScope(document_ids=[51])
+    )
+
+    assert records
+    assert {record["metadata"]["doc_ref"] for record in records} == {"51"}
+    assert "converted body" in records[0]["content"]

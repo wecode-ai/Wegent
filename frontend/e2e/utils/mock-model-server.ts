@@ -14,6 +14,7 @@
 
 import * as http from 'http'
 import { handleEmbeddingRequest } from './mock-embedding'
+import { handleMineruRequest } from './mock-mineru'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 
 interface CapturedRequest {
@@ -940,6 +941,8 @@ const server = http.createServer((req, res) => {
     }
 
     if (handleEmbeddingRequest(req, res, body)) return
+
+    if (handleMineruRequest(req, res, body)) return
 
     // Check for image_url in messages
     if (parsedBody?.messages) {

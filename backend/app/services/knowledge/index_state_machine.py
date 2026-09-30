@@ -31,7 +31,27 @@ from app.services.knowledge.external_refresh_snapshot import (
     restore_external_refresh_snapshot,
 )
 from app.services.knowledge.processing_errors import generic_processing_error
+from shared.knowledge_module import (
+    CONVERSION_COMPLETE_STATUSES,
+    decide_conversion_started,
+)
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
+
+
+def conversion_complete_statuses() -> list[DocumentIndexStatus]:
+    """The statuses a completed conversion callback may still replace.
+
+    The module owns the rule; the callback endpoint and the state transition
+    both read it here so their pre-check and their update can never disagree.
+    """
+    return [
+        DocumentIndexStatus(value) for value in sorted(CONVERSION_COMPLETE_STATUSES)
+    ]
+
+
+def _status_value(status: DocumentIndexStatus | str | None) -> str | None:
+    """Return the stored status string for the module's pure decision rules."""
+    return getattr(status, "value", status)
 
 
 @dataclass(frozen=True)
@@ -953,33 +973,24 @@ def mark_document_conversion_started(
         )
         return IndexExecutionDecision(should_execute=False, reason="document_not_found")
 
-    if document.index_generation != generation:
-        db.rollback()
-        _record_transition(
-            "knowledge.conversion.start.skipped",
-            document_id=document_id,
-            generation=generation,
-            reason="stale_generation",
-            previous_status=document.index_status,
-        )
-        return IndexExecutionDecision(should_execute=False, reason="stale_generation")
-
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if current_status not in (
-        DocumentIndexStatus.QUEUED,
-        DocumentIndexStatus.PENDING_CONVERSION,
-    ):
+    decision = decide_conversion_started(
+        generation=generation,
+        current_generation=document.index_generation,
+        status=_status_value(current_status),
+    )
+    if not decision.should_execute:
         db.rollback()
         _record_transition(
             "knowledge.conversion.start.skipped",
             document_id=document_id,
             generation=generation,
-            reason=f"unexpected_status_{current_status.value}",
+            reason=decision.reason,
             previous_status=current_status,
         )
         return IndexExecutionDecision(
             should_execute=False,
-            reason=f"unexpected_status_{current_status.value}",
+            reason=decision.reason,
         )
 
     document.index_status = DocumentIndexStatus.CONVERTING
@@ -1034,12 +1045,7 @@ def mark_document_conversion_succeeded(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(
-                [
-                    DocumentIndexStatus.CONVERTING,
-                    DocumentIndexStatus.PENDING_CONVERSION,
-                ]
-            ),
+            KnowledgeDocument.index_status.in_(conversion_complete_statuses()),
         )
         .update(update_payload, synchronize_session=False)
     )

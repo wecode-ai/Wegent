@@ -63,10 +63,11 @@ def _query_first(value) -> MagicMock:
     return q
 
 
-def _query_count(value: int) -> MagicMock:
-    q = MagicMock()
-    q.filter.return_value.count.return_value = value
-    return q
+def _current_document(
+    *, generation: int, status: str = "converting"
+) -> SimpleNamespace:
+    """The row the completed-callback staleness pre-check reads."""
+    return SimpleNamespace(index_generation=generation, index_status=status)
 
 
 @pytest.mark.unit
@@ -116,7 +117,7 @@ class TestConversionCompletedCallback:
         db = _build_db_chain(
             _query_first(doc),
             _query_first(original_attachment),
-            _query_count(1),  # pre-check: current generation
+            _query_first(_current_document(generation=5)),  # pre-check: current
         )
         request = _make_request()
 
@@ -162,7 +163,8 @@ class TestConversionCompletedCallback:
         db = _build_db_chain(
             _query_first(doc),
             _query_first(original_attachment),
-            _query_count(0),  # pre-check: stale generation
+            # pre-check: the stored row is a newer generation
+            _query_first(_current_document(generation=5)),
         )
         request = _make_request(generation=3)  # older generation
 
@@ -204,7 +206,8 @@ class TestConversionCompletedCallback:
         db = _build_db_chain(
             _query_first(doc),
             _query_first(original_attachment),
-            _query_count(1),  # pre-check passes...
+            # pre-check passes: the callback's generation is still current...
+            _query_first(_current_document(generation=3)),
         )
         request = _make_request(generation=3)
 

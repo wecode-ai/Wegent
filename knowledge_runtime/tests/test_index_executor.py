@@ -88,7 +88,7 @@ class TestIndexExecutor:
         mock_config_loader = MagicMock()
         mock_config_loader.resolve_index_config.return_value = mock_index_config
 
-        mock_document_service.index_document_from_binary = AsyncMock(
+        mock_document_service.index_with_metadata = AsyncMock(
             return_value={
                 "chunk_count": 5,
                 "doc_ref": "100",
@@ -128,7 +128,7 @@ class TestIndexExecutor:
 
         assert result["chunk_count"] == 5
         assert result["doc_ref"] == "100"
-        mock_document_service.index_document_from_binary.assert_called_once()
+        mock_document_service.index_with_metadata.assert_called_once()
 
         # Verify RuntimeConfigLoader was called with correct args
         mock_config_loader.resolve_index_config.assert_called_once_with(
@@ -149,7 +149,7 @@ class TestIndexExecutor:
         mock_config_loader = MagicMock()
         mock_config_loader.resolve_index_config.return_value = mock_index_config
 
-        mock_document_service.index_document_from_binary = AsyncMock(
+        mock_document_service.index_with_metadata = AsyncMock(
             return_value={
                 "chunk_count": 3,
                 "doc_ref": "100",
@@ -184,9 +184,12 @@ class TestIndexExecutor:
 
             await executor.execute(index_request)
 
-        call_kwargs = mock_document_service.index_document_from_binary.call_args.kwargs
-        # Should use request metadata, not fetched
-        assert call_kwargs["source_file"] == "test.pdf"
+        call_kwargs = mock_document_service.index_with_metadata.call_args.kwargs
+        # Should use request metadata, not fetched. The module builds the
+        # document identity, so the source file travels on the chunk metadata.
+        assert call_kwargs["metadata"].source_file == "test.pdf"
+        assert call_kwargs["metadata"].doc_ref == "100"
+        assert call_kwargs["metadata"].knowledge_id == "1"
         assert call_kwargs["file_extension"] == ".pdf"
 
     @pytest.mark.asyncio
@@ -200,7 +203,7 @@ class TestIndexExecutor:
         mock_config_loader = MagicMock()
         mock_config_loader.resolve_index_config.return_value = mock_index_config
 
-        mock_document_service.index_document_from_binary = AsyncMock(
+        mock_document_service.index_with_metadata = AsyncMock(
             return_value={"chunk_count": 1, "doc_ref": "100"}
         )
 
@@ -238,7 +241,7 @@ class TestIndexExecutor:
         )
 
         # Verify document service was called with resolved user_id and splitter_config
-        call_kwargs = mock_document_service.index_document_from_binary.call_args.kwargs
+        call_kwargs = mock_document_service.index_with_metadata.call_args.kwargs
         assert call_kwargs["user_id"] == 7
         assert call_kwargs["splitter_config"] == {
             "chunk_size": 500,
@@ -281,7 +284,7 @@ class TestIndexExecutor:
         mock_config_loader = MagicMock()
         mock_config_loader.resolve_index_config.return_value = mock_index_config
 
-        mock_document_service.index_document_from_binary = AsyncMock(
+        mock_document_service.index_with_metadata = AsyncMock(
             side_effect=ValueError("Storage connection failed")
         )
 
