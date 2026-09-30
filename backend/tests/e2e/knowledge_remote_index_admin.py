@@ -35,8 +35,6 @@ from knowledge_remote_index_support import (
     _create_knowledge_base,
     _create_retrieval_resources,
     _create_retriever_only,
-    _delete_knowledge_base,
-    _delete_retrieval_resources,
     _delete_scenario_fixtures,
     _internal_retrieve_knowledge_base,
     _log,
@@ -224,6 +222,30 @@ def _rebuild_and_assert_chunks(
     _log(f"rebuilding document {document_id} restored its chunks after the purge")
 
 
+def _purge_and_assert_empty(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    owner_user_id: int,
+) -> None:
+    """The purge entry must report its removal and leave no chunk behind."""
+
+    purged = _public_purge_index(client, token, knowledge_base_id)
+    _check(
+        purged.status_code == 200,
+        f"the purge entry failed: {purged.status_code} {purged.text}",
+    )
+    body = purged.json()
+    _check(
+        body.get("status") == "deleted" and int(body.get("deleted_chunks", 0)) > 0,
+        f"the purge entry must remove the indexed chunks: {purged.text}",
+    )
+    _log(f"purged knowledge base {knowledge_base_id}: {body}")
+    _assert_no_chunks(
+        client, token, knowledge_base_id, owner_user_id, "the purged index"
+    )
+
+
 def _assert_admin_calls_fail(
     calls: list[tuple[str, AdminCall]],
     expected_status: int,
@@ -263,6 +285,18 @@ def _admin_calls(
     ]
 
 
+def _delete_retriever(client: httpx.Client, token: str, resource_name: str) -> None:
+    """Remove the retriever the stored knowledge base config points at."""
+
+    deleted = client.delete(
+        f"/api/retrievers/{resource_name}", headers=_auth_headers(token)
+    )
+    _check(
+        deleted.status_code < 300,
+        f"deleting the retriever failed: {deleted.text}",
+    )
+
+
 def _run_list_and_purge_scenario(
     client: httpx.Client, token: str, owner_user_id: int
 ) -> None:
@@ -287,22 +321,7 @@ def _run_list_and_purge_scenario(
             f"the runtime store and the public entry listed the chunks of "
             f"knowledge base {knowledge_base_id}"
         )
-
-        purged = _public_purge_index(client, token, knowledge_base_id)
-        _check(
-            purged.status_code == 200,
-            f"the purge entry failed: {purged.status_code} {purged.text}",
-        )
-        body = purged.json()
-        _check(
-            body.get("status") == "deleted" and int(body.get("deleted_chunks", 0)) > 0,
-            f"the purge entry must remove the indexed chunks: {purged.text}",
-        )
-        _log(f"purged knowledge base {knowledge_base_id}: {body}")
-
-        _assert_no_chunks(
-            client, token, knowledge_base_id, owner_user_id, "the purged index"
-        )
+        _purge_and_assert_empty(client, token, knowledge_base_id, owner_user_id)
         _assert_no_queryable_result(
             client,
             token,
@@ -391,13 +410,7 @@ def _run_admin_failure_scenario(
         # runtime maps that to a bad request, while the Backend's own retriever
         # lookup would have answered 404; a local fallback would have removed the
         # chunks while reporting success.
-        deleted = client.delete(
-            f"/api/retrievers/{resource_name}", headers=_auth_headers(token)
-        )
-        _check(
-            deleted.status_code < 300,
-            f"deleting the retriever failed: {deleted.text}",
-        )
+        _delete_retriever(client, token, resource_name)
         retriever_deleted = True
         _assert_admin_calls_fail(
             _admin_calls(client, token, knowledge_base_id),
