@@ -902,10 +902,10 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
   router.register('smartApps.createDirectory', params =>
     requiredSmartApps(smartApps).createDirectory({
-      parentPath: stringParam(params, 'parentPath'),
+      parentPath: rawStringParam(params, 'parentPath'),
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
-      description: stringParam(params, 'description'),
+      description: rawStringParam(params, 'description'),
       template: stringParam(params, 'template'),
     })
   )
