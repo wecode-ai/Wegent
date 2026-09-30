@@ -8,6 +8,10 @@ inputs:
   backend-rs-image:
     description: Content-addressed Rust backend runtime image
     required: true
+  runtime-binaries-ready:
+    description: Whether the caller already provided the runtime binaries from images that could not be pulled
+    required: false
+    default: "false"
   save-cache:
     description: Whether writable dependency caches may be saved
     required: false
@@ -38,6 +42,7 @@ runs:
       env:
         EXECUTOR_IMAGE: ${{ inputs.executor-image }}
         BACKEND_RS_IMAGE: ${{ inputs.backend-rs-image }}
+        RUNTIME_BINARIES_READY: ${{ inputs.runtime-binaries-ready }}
         GITHUB_TOKEN: ${{ github.token }}
         OCI_RUNTIME_WAIT_SECONDS: "420"
         CI: true
@@ -46,21 +51,34 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        .github/scripts/restore-oci-runtime-binary.sh \
-          "$EXECUTOR_IMAGE" \
-          /app/executor \
-          .ci-artifacts/wegent-executor &
-        executor_pid=$!
-        .github/scripts/restore-oci-runtime-binary.sh \
-          "$BACKEND_RS_IMAGE" \
-          /app/wegent-backend-rs \
-          .ci-artifacts/wegent-backend-rs &
-        backend_pid=$!
+        executor_pid=""
+        backend_pid=""
+        if [[ "$RUNTIME_BINARIES_READY" == "true" ]]; then
+          for runtime in executor backend-rs; do
+            if [[ ! -s ".ci-artifacts/wegent-$runtime" ]]; then
+              echo "Provided runtime binary is missing: .ci-artifacts/wegent-$runtime" >&2
+              exit 1
+            fi
+            # Artifact upload does not preserve the executable bit.
+            chmod 0755 ".ci-artifacts/wegent-$runtime"
+          done
+        else
+          .github/scripts/restore-oci-runtime-binary.sh \
+            "$EXECUTOR_IMAGE" \
+            /app/executor \
+            .ci-artifacts/wegent-executor &
+          executor_pid=$!
+          .github/scripts/restore-oci-runtime-binary.sh \
+            "$BACKEND_RS_IMAGE" \
+            /app/wegent-backend-rs \
+            .ci-artifacts/wegent-backend-rs &
+          backend_pid=$!
+        fi
 
         status=0
         pnpm --filter wework ai:verify:electron:build || status=$?
-        if ! wait "$executor_pid"; then status=1; fi
-        if ! wait "$backend_pid"; then status=1; fi
+        if [[ -n "$executor_pid" ]] && ! wait "$executor_pid"; then status=1; fi
+        if [[ -n "$backend_pid" ]] && ! wait "$backend_pid"; then status=1; fi
         if ((status == 0)); then
           test -x wework/electron/release/WeWork-linux-x64/WeWork
           test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
