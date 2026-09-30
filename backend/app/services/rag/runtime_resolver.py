@@ -842,7 +842,7 @@ class RagRuntimeResolver:
         current_user_id: int,
         user_name: str | None,
         spec_type: Literal["purge", "drop"],
-        resolve_execution_configs: bool = True,
+        resolve_execution_configs: bool,
     ) -> PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")

@@ -27,22 +27,29 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 router = APIRouter()
 runtime_resolver = RagRuntimeResolver()
 INDEX_CHUNK_LIST_MAX_CHUNKS = 10000
+# The data plane owns the index strategy; both the local plane and the runtime
+# refuse a physical drop on a shared index with this message.
+INDEX_DROP_STRATEGY_REFUSAL = "Physical index drop is only allowed"
+
+
+def _map_public_admin_error(status_code: int, detail: str) -> HTTPException:
+    """Surface an admin failure, keeping the public conflict contract.
+
+    A physical drop is only possible for a per-dataset index, so an unavailable
+    drop is reported as a conflict whichever data plane refused it.
+    """
+
+    if INDEX_DROP_STRATEGY_REFUSAL in detail:
+        return HTTPException(status_code=409, detail=detail)
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _map_public_admin_value_error(error: ValueError) -> HTTPException:
-    detail = str(error)
-    if "Physical index drop is only allowed" in detail:
-        return HTTPException(status_code=409, detail=detail)
-    return HTTPException(status_code=400, detail=detail)
+    return _map_public_admin_error(400, str(error))
 
 
 def _map_public_admin_remote_error(error: RemoteRagGatewayError) -> HTTPException:
-    """Surface a runtime failure, keeping the drop-strategy conflict contract."""
-
-    detail = str(error)
-    if "Physical index drop is only allowed" in detail:
-        return HTTPException(status_code=409, detail=detail)
-    return HTTPException(status_code=error.status_code or 502, detail=detail)
+    return _map_public_admin_error(error.status_code or 502, str(error))
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)

@@ -680,17 +680,18 @@ def _delete_retrieval_resources(client: httpx.Client, token: str, name: str) -> 
 
 
 def _assert_remote_gateways() -> None:
-    """Index, delete, and query must resolve to the remote runtime."""
+    """Index, delete, query, and chunk listing must resolve to the runtime."""
 
     from app.core.config import settings
     from app.services.rag.gateway_factory import (
         get_delete_gateway,
         get_index_gateway,
+        get_list_chunks_gateway,
         get_query_gateway,
     )
     from app.services.rag.remote_gateway import RemoteRagGateway
 
-    for operation in ("index", "delete", "query"):
+    for operation in ("index", "delete", "query", "list_chunks"):
         _check(
             settings.get_rag_runtime_mode(operation) == "remote",
             f"the Backend must run '{operation}' through the remote runtime",
@@ -699,6 +700,7 @@ def _assert_remote_gateways() -> None:
         ("index", get_index_gateway()),
         ("delete", get_delete_gateway()),
         ("query", get_query_gateway()),
+        ("list_chunks", get_list_chunks_gateway()),
     ):
         _check(
             isinstance(gateway, RemoteRagGateway),
@@ -733,10 +735,12 @@ def _assert_local_operations_are_refused(
     resource_name: str,
     owner_user_id: int,
 ) -> None:
-    """Local indexing, index deletion, and retrieval must fail immediately.
+    """Local indexing, retrieval, and every index admin call must fail immediately.
 
     The guard lives in ``LocalRagGateway``, so the Backend process and the
     embedded Celery worker refuse a local fallback exactly like this process.
+    The purge/drop/list-chunk guards cover the public management entries, which
+    resolve the same way while the deployment is configured remote.
     """
 
     from app.db.session import SessionLocal
@@ -744,8 +748,11 @@ def _assert_local_operations_are_refused(
     from app.services.rag.local_gateway import LocalRagGateway
     from app.services.rag.runtime_specs import (
         DeleteRuntimeSpec,
+        DropKnowledgeIndexRuntimeSpec,
         IndexRuntimeSpec,
         IndexSource,
+        ListChunksRuntimeSpec,
+        PurgeKnowledgeRuntimeSpec,
         QueryRuntimeSpec,
     )
     from shared.knowledge_contracts.runtime_config import RuntimeRetrieverConfig
@@ -781,6 +788,19 @@ def _assert_local_operations_are_refused(
         query="WEGENT-E2E-LOCAL-GUARD",
         route_mode="rag_retrieval",
     )
+    purge_spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+    )
+    drop_spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+    )
+    list_spec = ListChunksRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+        query="WEGENT-E2E-LOCAL-GUARD",
+    )
 
     _expect_local_operation_refused(
         "index", lambda: local.index_document(index_spec, db=None)
@@ -788,9 +808,21 @@ def _assert_local_operations_are_refused(
     _expect_local_operation_refused(
         "delete", lambda: local.delete_document_index(delete_spec, db=None)
     )
+    _expect_local_operation_refused(
+        "delete", lambda: local.purge_knowledge_index(purge_spec, db=None)
+    )
+    _expect_local_operation_refused(
+        "delete", lambda: local.drop_knowledge_index(drop_spec, db=None)
+    )
+    _expect_local_operation_refused(
+        "list_chunks", lambda: local.list_chunks(list_spec, db=None)
+    )
     with SessionLocal() as db:
         _expect_local_operation_refused("query", lambda: local.query(query_spec, db=db))
-    _log("local index, delete, and retrieval calls are refused by the gateway")
+    _log(
+        "local index, delete, purge, drop, chunk listing, and retrieval calls are "
+        "refused by the gateway"
+    )
 
 
 def _delete_scenario_fixtures(
@@ -880,71 +912,3 @@ def _response_detail(response: httpx.Response) -> str:
         return ""
     detail = response.json().get("detail")
     return detail if isinstance(detail, str) else ""
-
-
-def _assert_admin_remote_gateways() -> None:
-    """Chunk listing and the index admin operations must run in the runtime."""
-
-    from app.core.config import settings
-    from app.services.rag.gateway_factory import (
-        get_delete_gateway,
-        get_list_chunks_gateway,
-    )
-    from app.services.rag.remote_gateway import RemoteRagGateway
-
-    for operation in ("delete", "list_chunks"):
-        _check(
-            settings.get_rag_runtime_mode(operation) == "remote",
-            f"the Backend must run '{operation}' through the remote runtime",
-        )
-    for operation, gateway in (
-        ("delete", get_delete_gateway()),
-        ("list_chunks", get_list_chunks_gateway()),
-    ):
-        _check(
-            isinstance(gateway, RemoteRagGateway),
-            f"the {operation} gateway must be the remote gateway",
-        )
-
-
-def _assert_local_admin_operations_are_refused(
-    knowledge_base_id: int, owner_user_id: int
-) -> None:
-    """Local purge, drop, and chunk listing must fail immediately.
-
-    The guard lives in ``LocalRagGateway``, so the Backend process refuses a
-    local data-plane call for these operations exactly like this process does.
-    """
-
-    from app.services.rag.local_gateway import LocalRagGateway
-    from app.services.rag.runtime_specs import (
-        DropKnowledgeIndexRuntimeSpec,
-        ListChunksRuntimeSpec,
-        PurgeKnowledgeRuntimeSpec,
-    )
-
-    local = LocalRagGateway()
-    purge_spec = PurgeKnowledgeRuntimeSpec(
-        knowledge_base_id=knowledge_base_id,
-        index_owner_user_id=owner_user_id,
-    )
-    drop_spec = DropKnowledgeIndexRuntimeSpec(
-        knowledge_base_id=knowledge_base_id,
-        index_owner_user_id=owner_user_id,
-    )
-    list_spec = ListChunksRuntimeSpec(
-        knowledge_base_id=knowledge_base_id,
-        index_owner_user_id=owner_user_id,
-        query="list_index_chunks",
-    )
-
-    _expect_local_operation_refused(
-        "delete", lambda: local.purge_knowledge_index(purge_spec, db=None)
-    )
-    _expect_local_operation_refused(
-        "delete", lambda: local.drop_knowledge_index(drop_spec, db=None)
-    )
-    _expect_local_operation_refused(
-        "list_chunks", lambda: local.list_chunks(list_spec, db=None)
-    )
-    _log("local purge, drop, and chunk listing calls are refused by the gateway")

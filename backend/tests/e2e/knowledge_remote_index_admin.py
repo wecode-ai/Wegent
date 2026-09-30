@@ -10,6 +10,10 @@ physical index all execute in ``knowledge_runtime``. The chunk and query results
 after each operation match the operation, a runtime failure stays visible with
 its own status and detail instead of a local success, and the local data plane
 refuses every one of these operations while the deployment is configured remote.
+
+The runtime resolves the retriever itself, so a knowledge base whose retriever
+was removed fails with the runtime's bad-request mapping instead of the Backend's
+own retriever lookup; the failure scenario pins that mapping.
 """
 
 from __future__ import annotations
@@ -22,8 +26,8 @@ from knowledge_remote_index_support import (
     EMBEDDING_MODEL_URL,
     QDRANT_URL,
     UNREACHABLE_QDRANT_URL,
-    _assert_admin_remote_gateways,
-    _assert_local_admin_operations_are_refused,
+    _assert_local_operations_are_refused,
+    _assert_remote_gateways,
     _auth_headers,
     _check,
     _chunk_contents,
@@ -31,9 +35,9 @@ from knowledge_remote_index_support import (
     _create_knowledge_base,
     _create_retrieval_resources,
     _create_retriever_only,
-    _delete_document,
     _delete_knowledge_base,
     _delete_retrieval_resources,
+    _delete_scenario_fixtures,
     _internal_retrieve_knowledge_base,
     _log,
     _point_retriever_at,
@@ -45,6 +49,8 @@ from knowledge_remote_index_support import (
     _upload_attachment,
     _wait_for_index_status,
 )
+
+AdminCall = Callable[[], httpx.Response]
 
 
 def _listed_items(response: httpx.Response) -> list[dict]:
@@ -97,58 +103,186 @@ def _assert_no_queryable_result(
     )
 
 
-def _run_list_and_purge_scenario(
-    client: httpx.Client, token: str, owner_user_id: int
-) -> None:
-    """Listing exposes the runtime's chunks, and purging removes exactly them."""
+def _create_indexed_document(
+    client: httpx.Client, token: str, scenario: str, marker: str
+) -> tuple[str, int, int, int]:
+    """Create one indexed single-document knowledge base for a scenario."""
 
-    _assert_admin_remote_gateways()
-    resource_name = f"e2e-admin-{uuid.uuid4().hex[:10]}"
-    marker = f"WEGENT-E2E-ADMIN-PURGE-{uuid.uuid4().hex[:8]}"
+    resource_name = f"e2e-{scenario}-{uuid.uuid4().hex[:10]}"
     _create_retrieval_resources(
         client, token, resource_name, embedding_url=EMBEDDING_MODEL_URL
     )
     knowledge_base = _create_knowledge_base(
-        client, token, f"E2E-KB-ADMIN-{resource_name}", resource_name
+        client, token, f"E2E-KB-{scenario.upper()}-{resource_name}", resource_name
     )
     knowledge_base_id = int(knowledge_base["id"])
     attachment_id, _ = _upload_attachment(client, token, marker)
     document = _create_document(client, token, knowledge_base_id, attachment_id)
     document_id = int(document["id"])
+    indexed = _wait_for_index_status(
+        client, token, knowledge_base_id, document_id, "success"
+    )
     _log(
-        f"admin scenario document {document_id} created in knowledge base "
+        f"{scenario} scenario document {document_id} indexed in knowledge base "
         f"{knowledge_base_id}"
     )
+    return (
+        resource_name,
+        knowledge_base_id,
+        document_id,
+        int(indexed["index_generation"]),
+    )
+
+
+def _assert_listed_chunks(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    marker: str,
+    context: str,
+) -> None:
+    """The public chunk listing must expose the indexed content."""
+
+    listed = _public_list_chunks(client, token, knowledge_base_id)
+    _check(
+        int(listed.json().get("total", 0)) > 0,
+        f"{context} must list chunks: {listed.text}",
+    )
+    _assert_marker_listed(_listed_items(listed), marker, context)
+
+
+def _assert_runtime_chunks(
+    knowledge_base_id: int, owner_user_id: int, marker: str
+) -> None:
+    """The runtime store itself must hold the indexed content."""
+
+    runtime_chunks = _runtime_list_chunks(knowledge_base_id, owner_user_id)
+    _check(
+        runtime_chunks.status_code == 200,
+        f"the runtime chunk listing failed: {runtime_chunks.status_code} "
+        f"{runtime_chunks.text}",
+    )
+    _assert_marker_listed(
+        list(runtime_chunks.json().get("chunks", [])),
+        marker,
+        f"the runtime store for {knowledge_base_id}",
+    )
+
+
+def _assert_no_chunks(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    owner_user_id: int,
+    context: str,
+) -> None:
+    """Neither the runtime store nor the public entry may list chunks."""
+
+    after_runtime = _runtime_list_chunks(knowledge_base_id, owner_user_id)
+    _check(
+        after_runtime.status_code == 200 and after_runtime.json().get("chunks") == [],
+        f"{context} must leave the runtime store empty: "
+        f"{after_runtime.status_code} {after_runtime.text}",
+    )
+    after_list = _public_list_chunks(client, token, knowledge_base_id)
+    _check(
+        after_list.status_code == 200 and int(after_list.json().get("total", 0)) == 0,
+        f"{context} must leave the public listing empty: "
+        f"{after_list.status_code} {after_list.text}",
+    )
+
+
+def _rebuild_and_assert_chunks(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    document_id: int,
+    marker: str,
+    generation: int,
+) -> None:
+    """Rebuilding must restore exactly the chunks the purge removed."""
+
+    reindexed = client.post(
+        f"/api/knowledge-documents/{document_id}/reindex",
+        headers=_auth_headers(token),
+    )
+    _check(
+        reindexed.status_code < 300,
+        f"the rebuild entry was rejected: {reindexed.text}",
+    )
+    _wait_for_index_status(
+        client,
+        token,
+        knowledge_base_id,
+        document_id,
+        "success",
+        generation=generation + 1,
+    )
+    _assert_listed_chunks(
+        client, token, knowledge_base_id, marker, "the rebuilt knowledge base"
+    )
+    _log(f"rebuilding document {document_id} restored its chunks after the purge")
+
+
+def _assert_admin_calls_fail(
+    calls: list[tuple[str, AdminCall]],
+    expected_status: int,
+    context: str,
+) -> None:
+    """Each admin entry must answer with the expected failure and a detail."""
+
+    for operation, call in calls:
+        response = call()
+        detail = _response_detail(response)
+        _check(
+            response.status_code == expected_status and detail,
+            f"{operation} must surface the {context}: "
+            f"{response.status_code} {response.text}",
+        )
+        _log(f"{operation} surfaced the {context}: detail={detail}")
+
+
+def _admin_calls(
+    client: httpx.Client, token: str, knowledge_base_id: int
+) -> list[tuple[str, AdminCall]]:
+    """The three public index-management entries for one knowledge base."""
+
+    return [
+        (
+            "listing chunks",
+            lambda: _public_list_chunks(client, token, knowledge_base_id),
+        ),
+        (
+            "purging the index",
+            lambda: _public_purge_index(client, token, knowledge_base_id),
+        ),
+        (
+            "dropping the index",
+            lambda: _public_drop_index(client, token, knowledge_base_id),
+        ),
+    ]
+
+
+def _run_list_and_purge_scenario(
+    client: httpx.Client, token: str, owner_user_id: int
+) -> None:
+    """Listing exposes the runtime's chunks, and purging removes exactly them."""
+
+    _assert_remote_gateways()
+    marker = f"WEGENT-E2E-ADMIN-PURGE-{uuid.uuid4().hex[:8]}"
+    resource_name, knowledge_base_id, document_id, generation = (
+        _create_indexed_document(client, token, "admin", marker)
+    )
     try:
-        indexed = _wait_for_index_status(
-            client, token, knowledge_base_id, document_id, "success"
+        _assert_local_operations_are_refused(
+            knowledge_base_id, document_id, resource_name, owner_user_id
         )
-        generation = int(indexed["index_generation"])
-        _assert_local_admin_operations_are_refused(knowledge_base_id, owner_user_id)
-
-        listed = _public_list_chunks(client, token, knowledge_base_id)
-        items = _listed_items(listed)
-        _check(
-            int(listed.json().get("total", 0)) > 0,
-            f"the indexed knowledge base must list chunks: {listed.text}",
+        _assert_listed_chunks(
+            client, token, knowledge_base_id, marker, "the public chunk listing"
         )
-        _assert_marker_listed(
-            items, marker, f"the public chunk listing for {knowledge_base_id}"
-        )
-
-        # The runtime store itself holds the same chunks, so the listing is not
-        # served from a Backend-side copy.
-        runtime_chunks = _runtime_list_chunks(knowledge_base_id, owner_user_id)
-        _check(
-            runtime_chunks.status_code == 200,
-            f"the runtime chunk listing failed: {runtime_chunks.status_code} "
-            f"{runtime_chunks.text}",
-        )
-        _assert_marker_listed(
-            list(runtime_chunks.json().get("chunks", [])),
-            marker,
-            f"the runtime store for {knowledge_base_id}",
-        )
+        # The runtime store holds the same chunks, so the listing is not served
+        # from a Backend-side copy.
+        _assert_runtime_chunks(knowledge_base_id, owner_user_id, marker)
         _log(
             f"the runtime store and the public entry listed the chunks of "
             f"knowledge base {knowledge_base_id}"
@@ -161,28 +295,13 @@ def _run_list_and_purge_scenario(
         )
         body = purged.json()
         _check(
-            body.get("status") == "deleted",
-            f"the purge entry must report a deletion: {purged.text}",
-        )
-        _check(
-            int(body.get("deleted_chunks", 0)) > 0,
+            body.get("status") == "deleted" and int(body.get("deleted_chunks", 0)) > 0,
             f"the purge entry must remove the indexed chunks: {purged.text}",
         )
         _log(f"purged knowledge base {knowledge_base_id}: {body}")
 
-        after_runtime = _runtime_list_chunks(knowledge_base_id, owner_user_id)
-        _check(
-            after_runtime.status_code == 200
-            and after_runtime.json().get("chunks") == [],
-            f"the runtime store must be empty after the purge: "
-            f"{after_runtime.status_code} {after_runtime.text}",
-        )
-        after_list = _public_list_chunks(client, token, knowledge_base_id)
-        _check(
-            after_list.status_code == 200
-            and int(after_list.json().get("total", 0)) == 0,
-            f"the public listing must be empty after the purge: "
-            f"{after_list.status_code} {after_list.text}",
+        _assert_no_chunks(
+            client, token, knowledge_base_id, owner_user_id, "the purged index"
         )
         _assert_no_queryable_result(
             client,
@@ -193,86 +312,47 @@ def _run_list_and_purge_scenario(
             "the cleared knowledge base",
         )
         _log(f"the purge of knowledge base {knowledge_base_id} left no result")
-
         # Rebuilding proves the purge removed this knowledge base's chunks only
         # and that the indexing pipeline still works afterwards.
-        reindexed = client.post(
-            f"/api/knowledge-documents/{document_id}/reindex",
-            headers=_auth_headers(token),
+        _rebuild_and_assert_chunks(
+            client, token, knowledge_base_id, document_id, marker, generation
         )
-        _check(
-            reindexed.status_code < 300,
-            f"the rebuild entry was rejected: {reindexed.text}",
-        )
-        _wait_for_index_status(
+    finally:
+        _delete_scenario_fixtures(
             client,
             token,
-            knowledge_base_id,
-            document_id,
-            "success",
-            generation=generation + 1,
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            resource_name=resource_name,
         )
-        rebuilt = _public_list_chunks(client, token, knowledge_base_id)
-        _assert_marker_listed(
-            _listed_items(rebuilt),
-            marker,
-            f"the rebuilt knowledge base {knowledge_base_id}",
-        )
-        _log(f"rebuilding document {document_id} restored its chunks after the purge")
-    finally:
-        _delete_document(client, token, document_id)
-        _delete_knowledge_base(client, token, knowledge_base_id)
-        _delete_retrieval_resources(client, token, resource_name)
 
 
 def _run_drop_scenario(client: httpx.Client, token: str, owner_user_id: int) -> None:
     """Dropping the physical index takes its chunks out of every reader."""
 
-    _assert_admin_remote_gateways()
-    resource_name = f"e2e-admin-drop-{uuid.uuid4().hex[:10]}"
+    _assert_remote_gateways()
     marker = f"WEGENT-E2E-ADMIN-DROP-{uuid.uuid4().hex[:8]}"
-    _create_retrieval_resources(
-        client, token, resource_name, embedding_url=EMBEDDING_MODEL_URL
+    resource_name, knowledge_base_id, document_id, _generation = (
+        _create_indexed_document(client, token, "admin-drop", marker)
     )
-    knowledge_base = _create_knowledge_base(
-        client, token, f"E2E-KB-ADMIN-DROP-{resource_name}", resource_name
-    )
-    knowledge_base_id = int(knowledge_base["id"])
-    attachment_id, _ = _upload_attachment(client, token, marker)
-    document = _create_document(client, token, knowledge_base_id, attachment_id)
-    document_id = int(document["id"])
     try:
-        _wait_for_index_status(client, token, knowledge_base_id, document_id, "success")
-        _assert_marker_listed(
-            _listed_items(_public_list_chunks(client, token, knowledge_base_id)),
+        _assert_listed_chunks(
+            client,
+            token,
+            knowledge_base_id,
             marker,
             f"the indexed knowledge base {knowledge_base_id}",
         )
 
         dropped = _public_drop_index(client, token, knowledge_base_id)
         _check(
-            dropped.status_code == 200,
-            f"the drop entry failed: {dropped.status_code} {dropped.text}",
-        )
-        _check(
-            dropped.json().get("status") == "dropped",
+            dropped.status_code == 200 and dropped.json().get("status") == "dropped",
             f"the drop entry must report a dropped index: {dropped.text}",
         )
         _log(f"dropped the index of knowledge base {knowledge_base_id}: {dropped.text}")
 
-        after_runtime = _runtime_list_chunks(knowledge_base_id, owner_user_id)
-        _check(
-            after_runtime.status_code == 200
-            and after_runtime.json().get("chunks") == [],
-            f"the dropped index must hold no chunks: {after_runtime.status_code} "
-            f"{after_runtime.text}",
-        )
-        after_list = _public_list_chunks(client, token, knowledge_base_id)
-        _check(
-            after_list.status_code == 200
-            and int(after_list.json().get("total", 0)) == 0,
-            f"the public listing must be empty after the drop: "
-            f"{after_list.status_code} {after_list.text}",
+        _assert_no_chunks(
+            client, token, knowledge_base_id, owner_user_id, "the dropped index"
         )
         _assert_no_queryable_result(
             client,
@@ -284,9 +364,13 @@ def _run_drop_scenario(client: httpx.Client, token: str, owner_user_id: int) -> 
         )
         _log(f"the drop of knowledge base {knowledge_base_id} left no result")
     finally:
-        _delete_document(client, token, document_id)
-        _delete_knowledge_base(client, token, knowledge_base_id)
-        _delete_retrieval_resources(client, token, resource_name)
+        _delete_scenario_fixtures(
+            client,
+            token,
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            resource_name=resource_name,
+        )
 
 
 def _run_admin_failure_scenario(
@@ -294,26 +378,19 @@ def _run_admin_failure_scenario(
 ) -> None:
     """Runtime failures for the admin entries stay visible to the caller."""
 
-    _assert_admin_remote_gateways()
-    resource_name = f"e2e-admin-fail-{uuid.uuid4().hex[:10]}"
+    _assert_remote_gateways()
     marker = f"WEGENT-E2E-ADMIN-FAIL-{uuid.uuid4().hex[:8]}"
-    _create_retrieval_resources(
-        client, token, resource_name, embedding_url=EMBEDDING_MODEL_URL
+    resource_name, knowledge_base_id, document_id, _generation = (
+        _create_indexed_document(client, token, "admin-fail", marker)
     )
-    knowledge_base = _create_knowledge_base(
-        client, token, f"E2E-KB-ADMIN-FAIL-{resource_name}", resource_name
-    )
-    knowledge_base_id = int(knowledge_base["id"])
-    attachment_id, _ = _upload_attachment(client, token, marker)
-    document = _create_document(client, token, knowledge_base_id, attachment_id)
-    document_id = int(document["id"])
     retriever_deleted = False
     try:
-        _wait_for_index_status(client, token, knowledge_base_id, document_id, "success")
-
         # Delete the retriever the stored config points at. The Backend keeps the
         # knowledge base access check, but the remote path no longer resolves the
-        # retriever, so the runtime reports the missing resource itself.
+        # retriever, so the runtime reports the missing resource itself. The
+        # runtime maps that to a bad request, while the Backend's own retriever
+        # lookup would have answered 404; a local fallback would have removed the
+        # chunks while reporting success.
         deleted = client.delete(
             f"/api/retrievers/{resource_name}", headers=_auth_headers(token)
         )
@@ -322,66 +399,27 @@ def _run_admin_failure_scenario(
             f"deleting the retriever failed: {deleted.text}",
         )
         retriever_deleted = True
-
-        missing_retriever_calls: list[tuple[str, Callable[[], httpx.Response]]] = [
-            (
-                "listing chunks",
-                lambda: _public_list_chunks(client, token, knowledge_base_id),
-            ),
-            (
-                "purging the index",
-                lambda: _public_purge_index(client, token, knowledge_base_id),
-            ),
-            (
-                "dropping the index",
-                lambda: _public_drop_index(client, token, knowledge_base_id),
-            ),
-        ]
-        for operation, call in missing_retriever_calls:
-            response = call()
-            detail = _response_detail(response)
-            # The runtime maps a missing resource to a bad request, while the
-            # Backend's own retriever lookup would have answered 404. A local
-            # fallback would have removed the chunks while reporting success.
-            _check(
-                response.status_code == 400 and detail,
-                f"{operation} must surface the runtime failure: "
-                f"{response.status_code} {response.text}",
-            )
-            _log(f"{operation} surfaced the runtime failure: detail={detail}")
+        _assert_admin_calls_fail(
+            _admin_calls(client, token, knowledge_base_id),
+            400,
+            "runtime failure",
+        )
 
         # A store that cannot be reached surfaces too, for the operations that
         # touch storage directly.
         _create_retriever_only(client, token, resource_name, QDRANT_URL)
         retriever_deleted = False
         _point_retriever_at(client, token, resource_name, UNREACHABLE_QDRANT_URL)
-        unreachable_calls: list[tuple[str, Callable[[], httpx.Response]]] = [
-            (
-                "purging the index",
-                lambda: _public_purge_index(client, token, knowledge_base_id),
-            ),
-            (
-                "dropping the index",
-                lambda: _public_drop_index(client, token, knowledge_base_id),
-            ),
-        ]
-        for operation, call in unreachable_calls:
-            response = call()
-            detail = _response_detail(response)
-            _check(
-                response.status_code >= 500 and detail,
-                f"{operation} must surface the unreachable store: "
-                f"{response.status_code} {response.text}",
-            )
-            _log(f"{operation} surfaced the unreachable store: detail={detail}")
+        _assert_admin_calls_fail(
+            _admin_calls(client, token, knowledge_base_id)[1:],
+            500,
+            "unreachable store",
+        )
 
         # Restoring the store lets the same operations succeed again.
         _point_retriever_at(client, token, resource_name, QDRANT_URL)
-        restored = _public_list_chunks(client, token, knowledge_base_id)
-        _assert_marker_listed(
-            _listed_items(restored),
-            marker,
-            f"the restored knowledge base {knowledge_base_id}",
+        _assert_listed_chunks(
+            client, token, knowledge_base_id, marker, "the restored knowledge base"
         )
         purged = _public_purge_index(client, token, knowledge_base_id)
         _check(
@@ -396,9 +434,13 @@ def _run_admin_failure_scenario(
         if retriever_deleted:
             _create_retriever_only(client, token, resource_name, QDRANT_URL)
         _point_retriever_at(client, token, resource_name, QDRANT_URL)
-        _delete_document(client, token, document_id)
-        _delete_knowledge_base(client, token, knowledge_base_id)
-        _delete_retrieval_resources(client, token, resource_name)
+        _delete_scenario_fixtures(
+            client,
+            token,
+            document_id=document_id,
+            knowledge_base_id=knowledge_base_id,
+            resource_name=resource_name,
+        )
 
 
 def run_admin_scenarios(client: httpx.Client, token: str, owner_user_id: int) -> None:
