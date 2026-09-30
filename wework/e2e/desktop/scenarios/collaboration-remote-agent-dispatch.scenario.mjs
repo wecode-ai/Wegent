@@ -331,6 +331,100 @@ async function verifyConfiguredExecutionEnvironment(
   await captureScreenshot(control, 'remote-environment-02-retried-ready.png', CONTENT)
 }
 
+async function verifyAutomaticProcessingControls(
+  control,
+  request,
+  projectId,
+  timeoutMs,
+  captureScreenshot
+) {
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-settings-automatic-processing"]')
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="collaboration-project-automatic-processing-page"]'),
+    { timeoutMs }
+  )
+  await control.command('click', scoped('[data-testid="automatic-processing-create"]'))
+  const form = scoped('[data-testid="automatic-processing-form"]')
+  await control.command('waitFor', form, { visible: true, timeoutMs })
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      scoped('[data-testid="automatic-processing-trigger-created"]'),
+      { value: 'checked' }
+    ),
+    ''
+  )
+  await control.command('click', scoped('[data-testid="automatic-processing-target-kind-human"]'))
+  assert.equal(
+    await control.command(
+      'getAttribute',
+      scoped('[data-testid="automatic-processing-target-kind-human"]'),
+      { value: 'aria-pressed' }
+    ),
+    'true'
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-save"]'), {
+    timeoutMs,
+  })
+  const rule = await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}/automations`),
+    rules =>
+      rules.find(
+        candidate => candidate.eventType === 'task.created' && candidate.targetKind === 'human'
+      ),
+    'The human automatic processing rule was not persisted',
+    timeoutMs
+  )
+  const ruleSelector = scoped(`[data-testid="automatic-processing-rule-${rule.id}"]`)
+  await control.command('waitFor', ruleSelector, { visible: true, timeoutMs })
+  await captureScreenshot(control, 'remote-automatic-processing-01-created.png', CONTENT)
+  const enabledSelector = scoped(`[data-testid="automatic-processing-enabled-${rule.id}"]`)
+  await control.command('click', enabledSelector)
+  await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}/automations`),
+    rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === false),
+    'The automatic processing rule did not pause',
+    timeoutMs
+  )
+  await control.command('waitFor', enabledSelector, {
+    attribute: 'aria-checked',
+    value: 'false',
+    timeoutMs,
+  })
+  await control.command('click', enabledSelector)
+  await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}/automations`),
+    rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === true),
+    'The automatic processing rule did not resume',
+    timeoutMs
+  )
+  await control.command('waitFor', enabledSelector, {
+    attribute: 'aria-checked',
+    value: 'true',
+    timeoutMs,
+  })
+  await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
+  await control.command('waitFor', form, { visible: true, timeoutMs })
+  await control.command('click', scoped('[data-testid="automatic-processing-cancel"]'))
+  await control.command('waitFor', form, { visible: false, timeoutMs })
+  await control.command('click', scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`))
+  await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}/automations`),
+    rules => !rules.some(candidate => candidate.id === rule.id),
+    'The automatic processing rule was not deleted',
+    timeoutMs
+  )
+  await control.command('waitFor', scoped('[data-testid="automatic-processing"]'), {
+    text: '暂无自动处理规则',
+    timeoutMs,
+  })
+  await captureScreenshot(control, 'remote-automatic-processing-02-deleted.png', CONTENT)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -539,6 +633,14 @@ export function createDesktopScenario({
         modelResponseTimeoutMs,
         captureScreenshot
       )
+      await verifyAutomaticProcessingControls(
+        control,
+        request,
+        project.id,
+        uiTimeoutMs,
+        captureScreenshot
+      )
+      assert.equal(modelRequests, 1, 'Managing a default human automation invoked the model')
     },
 
     diagnostics() {
