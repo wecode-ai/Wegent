@@ -67,9 +67,32 @@ from .execution import (
     ResolvedExecutionConfig,
     RetrievalResourceSelection,
     resolve_execution_config,
+    resolve_management_config,
+)
+from .index_state import (
+    IndexStateDecision,
+    IndexStateSnapshot,
+    active_index_stale_reason,
+    decide_index_transition,
+)
+from .operations import (
+    IndexManagementAdapter,
+    QueryAdapter,
+    QueryTarget,
+    manage_index,
+    query_documents,
 )
 
 __all__ = [
+    "IndexStateSnapshot",
+    "IndexStateDecision",
+    "active_index_stale_reason",
+    "decide_index_transition",
+    "IndexManagementAdapter",
+    "QueryAdapter",
+    "QueryTarget",
+    "manage_index",
+    "query_documents",
     # Adapter boundary
     "KnowledgeConfigAdapter",
     "RetrievalResource",
@@ -86,6 +109,7 @@ __all__ = [
     "evaluate_profile",
     # Execution configuration
     "resolve_execution_config",
+    "resolve_management_config",
     "AuthorizedRetrievalResources",
     "RetrievalResourceSelection",
     "ResolvedExecutionConfig",

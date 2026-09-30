@@ -101,6 +101,7 @@ def _delete_document_index(
         # KnowledgeService.delete_document also uses.
         document_ref=str(document_id),
         index_owner_user_id=index_info.index_owner_user_id,
+        resolve_execution_configs=get_delete_gateway().requires_resolved_configs,
     )
     result = _run(get_delete_gateway().delete_document_index(delete_spec, db=db))
     status = (result or {}).get("status")

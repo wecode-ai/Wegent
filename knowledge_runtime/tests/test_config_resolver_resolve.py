@@ -551,3 +551,79 @@ class TestResolveQueryConfig:
 
         assert exc_info.value.code == "config_invalid"
         assert "hybrid_weights" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("target,owner", [(2, 42), (1, 99)])
+def test_query_rejects_authorization_for_another_target_or_owner(
+    resolver, shared_model_db, target, owner
+):
+    authorized = _authorized_entry(
+        knowledge_base_id=target,
+        index_owner_user_id=owner,
+        embedding_model_name="shared-embedding",
+        embedding_model_namespace="search-team",
+    )
+    with pytest.raises(ConfigResolutionError, match="[Aa]uthorized"):
+        resolver.resolve_query_config(
+            shared_model_db, knowledge_base_id=1, user_id=42, authorized=authorized
+        )
+
+
+@pytest.mark.parametrize(
+    "operation,target,owner,namespace",
+    [
+        ("purge", 1, 42, "default"),
+        ("drop", 1, 42, "other"),
+        ("drop", 2, 42, "default"),
+        ("drop", 1, 99, "default"),
+    ],
+)
+def test_management_rejects_mismatched_authorization(
+    resolver, shared_model_db, operation, target, owner, namespace
+):
+    from shared.models import RemoteAuthorizedIndexResources
+
+    authorized = RemoteAuthorizedIndexResources(
+        knowledge_base_id=target,
+        index_owner_user_id=owner,
+        operation=operation,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="test-retriever", namespace=namespace
+        ),
+    )
+    with pytest.raises(ConfigResolutionError):
+        resolver.resolve_admin_config(
+            shared_model_db,
+            knowledge_base_id=1,
+            operation="drop",
+            authorized=authorized,
+        )
+
+
+def test_management_executes_without_embedding_or_query_parameters(
+    resolver, shared_model_db
+):
+    from shared.models import RemoteAuthorizedIndexResources
+    from shared.models.db import Kind
+
+    kb = shared_model_db.get(Kind, 1)
+    kb.json = {
+        "spec": {
+            "retrievalConfig": {
+                "retriever_name": "test-retriever",
+                "retriever_namespace": "default",
+            }
+        }
+    }
+    shared_model_db.commit()
+    authorized = RemoteAuthorizedIndexResources(
+        knowledge_base_id=1,
+        index_owner_user_id=42,
+        operation="purge",
+        retriever=RemoteRetrievalResourceRef(kind="Retriever", name="test-retriever"),
+    )
+    config = resolver.resolve_admin_config(
+        shared_model_db, knowledge_base_id=1, operation="purge", authorized=authorized
+    )
+    assert config.index_owner_user_id == 42
+    assert config.retriever_config.storage_config["type"] == "qdrant"

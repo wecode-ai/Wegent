@@ -818,6 +818,7 @@ class KnowledgeTransferService:
                     knowledge_base_id=source_kb.id,
                     document_ref=str(doc.id),
                     index_owner_user_id=kb_info.index_owner_user_id,
+                    resolve_execution_configs=rag_gateway.requires_resolved_configs,
                 )
                 _run_async_in_new_loop(
                     rag_gateway.delete_document_index(delete_runtime_spec, db=db)

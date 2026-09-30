@@ -175,6 +175,7 @@ class RemoteRagGateway:
         payload = RemoteDeleteDocumentIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
             document_ref=spec.document_ref,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
@@ -189,6 +190,7 @@ class RemoteRagGateway:
         payload = RemotePurgeKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
         )
         return await self._post_model("/internal/rag/purge-knowledge-index", payload)
 
@@ -202,6 +204,7 @@ class RemoteRagGateway:
         payload = RemoteDropKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
         )
         return await self._post_model("/internal/rag/drop-knowledge-index", payload)
 
@@ -215,6 +218,7 @@ class RemoteRagGateway:
         payload = RemoteListChunksRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
             max_chunks=spec.max_chunks,
             query=spec.query,
             metadata_condition=spec.metadata_condition,

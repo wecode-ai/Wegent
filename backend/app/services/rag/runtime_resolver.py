@@ -18,7 +18,6 @@ from app.services.knowledge.retrieval_resource_resolver import (
 )
 from app.services.rag import retrieval_resource_configs
 from app.services.rag.runtime_specs import (
-    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     DirectInjectionBudget,
     DropKnowledgeIndexRuntimeSpec,
@@ -36,6 +35,7 @@ from shared.knowledge_module import (
     RETRIEVER_RESOURCE_KIND,
 )
 from shared.models import (
+    RemoteAuthorizedIndexResources,
     RemoteAuthorizedRetrievalResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
@@ -603,6 +603,9 @@ class RagRuntimeResolver:
         return ListChunksRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=owner_user_id,
+            authorized_resources=self._admin_authorization(
+                kb.id, owner_user_id, "list_chunks", retriever_name, retriever_namespace
+            ),
             retriever_config=retrieval_resource_configs.owner_retriever_config(
                 db=db,
                 user_id=owner_user_id,
@@ -623,6 +626,7 @@ class RagRuntimeResolver:
         document_ref: str,
         index_owner_user_id: int | None = None,
         enabled_index_families: list[str] | None = None,
+        resolve_execution_configs: bool = False,
     ) -> DeleteRuntimeSpec:
         kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
         if kb is None:
@@ -642,12 +646,20 @@ class RagRuntimeResolver:
         return DeleteRuntimeSpec(
             knowledge_base_id=knowledge_base_id,
             document_ref=document_ref,
+            authorized_resources=self._admin_authorization(
+                knowledge_base_id,
+                runtime_user_id,
+                "delete",
+                retriever_name,
+                retriever_namespace,
+            ),
             index_owner_user_id=runtime_user_id,
-            retriever_config=retrieval_resource_configs.build_retriever_config(
+            retriever_config=retrieval_resource_configs.owner_retriever_config(
                 db=db,
                 user_id=runtime_user_id,
                 name=retriever_name,
                 namespace=retriever_namespace,
+                resolve_execution_configs=resolve_execution_configs,
             ),
             enabled_index_families=enabled_index_families or ["chunk_vector"],
         )
@@ -872,10 +884,42 @@ class RagRuntimeResolver:
                 knowledge_base_id=kb.id,
                 index_owner_user_id=kb_info.index_owner_user_id,
                 retriever_config=resolved_retriever_config,
+                authorized_resources=self._admin_authorization(
+                    kb.id,
+                    kb_info.index_owner_user_id,
+                    "purge",
+                    retriever_name,
+                    retriever_namespace,
+                ),
             )
 
         return DropKnowledgeIndexRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=kb_info.index_owner_user_id,
             retriever_config=resolved_retriever_config,
+            authorized_resources=self._admin_authorization(
+                kb.id,
+                kb_info.index_owner_user_id,
+                "drop",
+                retriever_name,
+                retriever_namespace,
+            ),
+        )
+
+    @staticmethod
+    def _admin_authorization(
+        kb_id: int,
+        owner_id: int,
+        operation: Literal["delete", "purge", "drop", "list_chunks"],
+        name: str,
+        namespace: str,
+    ) -> RemoteAuthorizedIndexResources:
+        """Carry the owner's access verdict without storage secrets."""
+        return RemoteAuthorizedIndexResources(
+            knowledge_base_id=kb_id,
+            index_owner_user_id=owner_id,
+            operation=operation,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name=name, namespace=namespace
+            ),
         )

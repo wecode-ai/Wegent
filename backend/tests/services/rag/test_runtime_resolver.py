@@ -860,6 +860,7 @@ def test_build_delete_runtime_spec_resolves_retriever_config():
             db=db,
             knowledge_base_id=7,
             document_ref="doc-8",
+            resolve_execution_configs=True,
             index_owner_user_id=99,
             enabled_index_families=["chunk_vector", "summary_vector_index"],
         )
@@ -903,6 +904,7 @@ def test_build_delete_runtime_spec_preserves_explicit_public_owner_scope():
             db=db,
             knowledge_base_id=7,
             document_ref="doc-8",
+            resolve_execution_configs=True,
             index_owner_user_id=0,
         )
 

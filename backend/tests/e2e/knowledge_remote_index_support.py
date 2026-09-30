@@ -891,6 +891,18 @@ def _runtime_list_chunks(
 ) -> httpx.Response:
     """Read the runtime store's chunks directly, bypassing the Backend plane."""
 
+    from app.db.session import SessionLocal
+    from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+    with SessionLocal() as db:
+        spec = RagRuntimeResolver().build_public_list_chunks_runtime_spec(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=owner_user_id,
+            user_name=None,
+            max_chunks=max_chunks,
+            resolve_execution_configs=False,
+        )
     _check(INTERNAL_SERVICE_TOKEN, "the internal service token is required")
     return httpx.post(
         f"{KNOWLEDGE_RUNTIME_URL}/internal/rag/all-chunks",
@@ -899,6 +911,7 @@ def _runtime_list_chunks(
         json={
             "knowledge_base_id": knowledge_base_id,
             "user_id": owner_user_id,
+            "authorized_resources": spec.authorized_resources.model_dump(),
             "max_chunks": max_chunks,
             "query": "list_index_chunks",
         },

@@ -336,6 +336,7 @@ def _prepare_indexing_runtime(
                 knowledge_base_id=int(knowledge_base_id),
                 document_ref=str(document_id),
                 index_owner_user_id=kb_info.index_owner_user_id,
+                resolve_execution_configs=index_gateway.requires_resolved_configs,
             )
         except Exception as e:
             logger.error(

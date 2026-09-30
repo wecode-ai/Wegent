@@ -17,13 +17,13 @@ from knowledge_engine.storage.factory import create_storage_backend_from_runtime
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
+from shared.knowledge_module import QueryTarget, query_documents
 from shared.models import (
     RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
-    RetrievalScope,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,6 @@ class QueryExecutor:
             Query response with ranked records.
         """
         plan = self._planner.plan(request.query, request.search_hints)
-        all_records: list[RemoteQueryRecord] = []
         retrieval_override_by_kb_id = self._build_retrieval_override_map(
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
@@ -80,30 +79,52 @@ class QueryExecutor:
         search_hints = self._search_hints_dict(request.search_hints)
         self._log_query_plan(plan, search_hints)
 
-        # Query each knowledge base after config loading has closed its DB session.
-        for knowledge_base_id in request.knowledge_base_ids:
-            records = await self._query_knowledge_base(
-                request=request,
-                knowledge_base_id=knowledge_base_id,
-                config=configs_by_kb_id[knowledge_base_id],
-                plan=plan,
+        targets = [
+            self._build_query_target(
+                knowledge_base_id, configs_by_kb_id[knowledge_base_id]
             )
-            all_records.extend(records)
-
-        # Sort by score (descending) and limit to max_results
-        all_records.sort(key=lambda r: r.score or 0, reverse=True)
-        limited_records = all_records[: request.max_results]
-
-        # Calculate total estimated tokens (rough estimate)
-        total_tokens = sum(
-            self._estimate_tokens(record.content) for record in limited_records
+            for knowledge_base_id in request.knowledge_base_ids
+        ]
+        scope = (
+            request.scope.document_ids
+            if request.scope is not None
+            else request.document_ids
         )
-        self._log_query_result(plan, all_records, limited_records)
-
+        result = await query_documents(
+            targets,
+            query=plan.normalized_query,
+            document_ids=scope,
+            query_plan={
+                "dense_query": plan.dense_query,
+                "sparse_query": plan.sparse_query,
+                "keywords": plan.keywords,
+                "phrases": plan.phrases,
+                "hint_source": plan.hint_source,
+            },
+            metadata_condition=request.metadata_condition,
+            max_results=request.max_results,
+        )
+        records = [
+            RemoteQueryRecord(
+                content=record.get("content", ""),
+                title=record.get("title", ""),
+                score=record.get("score"),
+                metadata=record.get("metadata"),
+                knowledge_base_id=int(record["knowledge_id"]),
+                document_id=record["document_id"],
+            )
+            for record in result["records"]
+        ]
+        logger.info(
+            "Query result: query_mode=%s, total_records=%d, returned_records=%d",
+            plan.hint_source,
+            result["total"],
+            len(records),
+        )
         return RemoteQueryResponse(
-            records=limited_records,
-            total=len(all_records),
-            total_estimated_tokens=total_tokens,
+            records=records,
+            total=result["total"],
+            total_estimated_tokens=result["total_estimated_tokens"],
         )
 
     @staticmethod
@@ -134,107 +155,18 @@ class QueryExecutor:
         )
 
     @staticmethod
-    def _log_query_result(
-        plan: QueryPlan,
-        all_records: list[RemoteQueryRecord],
-        limited_records: list[RemoteQueryRecord],
-    ) -> None:
-        logger.info(
-            "Query complete: hint_source=%s, normalized_query='%s...', "
-            "total_results=%d, returned=%d",
-            plan.hint_source,
-            plan.normalized_query[:50],
-            len(all_records),
-            len(limited_records),
-        )
-
-    async def _query_knowledge_base(
-        self,
-        request: RemoteQueryRequest,
-        knowledge_base_id: int,
-        config: QueryConfig,
-        plan: QueryPlan,
-    ) -> list[RemoteQueryRecord]:
-        """Query a single knowledge base.
-
-        Args:
-            request: The original query request.
-            knowledge_base_id: ID of the knowledge base to query.
-
-        Returns:
-            List of records from this knowledge base.
-        """
-        # Create storage backend and embedding model
-        storage_backend = create_storage_backend_from_runtime_config(
-            config.retriever_config
-        )
-        embed_model = create_embedding_model_from_runtime_config(
+    def _build_query_target(knowledge_base_id: int, config: QueryConfig) -> QueryTarget:
+        """Supply execution dependencies after the config session has closed."""
+        storage = create_storage_backend_from_runtime_config(config.retriever_config)
+        embedding = create_embedding_model_from_runtime_config(
             config.embedding_model_config
         )
-        storage_type = config.retriever_config.storage_config.get("type", "unknown")
-
-        logger.info(
-            "Query KB config: knowledge_base_id=%d, config_source=%s, "
-            "storage_type=%s, retrieval_mode=%s, top_k=%s, "
-            "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
-            knowledge_base_id,
-            "module_resolved",
-            storage_type,
-            config.retrieval_config.retrieval_mode,
-            config.retrieval_config.top_k,
-            config.retrieval_config.score_threshold,
-            config.retrieval_config.vector_weight,
-            config.retrieval_config.keyword_weight,
+        return QueryTarget(
+            KnowledgeQueryExecutor(storage_backend=storage, embed_model=embedding),
+            str(knowledge_base_id),
+            config.retrieval_config,
+            config.index_owner_user_id,
         )
-
-        # Create query executor
-        executor = KnowledgeQueryExecutor(
-            storage_backend=storage_backend,
-            embed_model=embed_model,
-        )
-
-        # Execute query
-        knowledge_id = str(knowledge_base_id)
-        resolved_scope = request.scope
-        if resolved_scope is None and request.document_ids is not None:
-            resolved_scope = RetrievalScope(document_ids=request.document_ids)
-        result = await executor.execute(
-            knowledge_id=knowledge_id,
-            query=plan.normalized_query,
-            query_plan={
-                "dense_query": plan.dense_query,
-                "sparse_query": plan.sparse_query,
-                "keywords": plan.keywords,
-                "phrases": plan.phrases,
-                "hint_source": plan.hint_source,
-            },
-            retrieval_config=config.retrieval_config,
-            scope=resolved_scope,
-            metadata_condition=request.metadata_condition,
-            user_id=config.index_owner_user_id,
-        )
-
-        # Convert to RemoteQueryRecord format
-        records: list[RemoteQueryRecord] = []
-        for record in result.get("records", []):
-            records.append(
-                RemoteQueryRecord(
-                    content=record.get("content", ""),
-                    title=record.get("title", ""),
-                    score=record.get("score"),
-                    metadata=record.get("metadata"),
-                    knowledge_base_id=knowledge_base_id,
-                    document_id=self._extract_document_id(record),
-                )
-            )
-
-        logger.info(
-            "Queried KB: knowledge_base_id=%d, records=%d",
-            knowledge_base_id,
-            len(records),
-        )
-
-        return records
 
     def _build_retrieval_override_map(
         self,
@@ -282,20 +214,3 @@ class QueryExecutor:
                 f"bases {missing}"
             )
         return authorized_by_kb_id
-
-    def _extract_document_id(self, record: dict[str, Any]) -> int | None:
-        """Extract document ID from record metadata."""
-        metadata = record.get("metadata") or {}
-        doc_ref = metadata.get("doc_ref")
-        if doc_ref and isinstance(doc_ref, str):
-            try:
-                if doc_ref.startswith("doc_"):
-                    return int(doc_ref[4:])
-                return int(doc_ref)
-            except ValueError:
-                pass
-        return None
-
-    def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count (~4 characters per token)."""
-        return len(text) // 4

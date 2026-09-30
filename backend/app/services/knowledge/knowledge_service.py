@@ -2187,13 +2187,12 @@ class KnowledgeService:
                 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
                 try:
-                    delete_runtime_spec = (
-                        RagRuntimeResolver().build_delete_runtime_spec(
-                            db=db,
-                            knowledge_base_id=kind_id,
-                            document_ref=doc_ref,
-                            index_owner_user_id=kb_info.index_owner_user_id,
-                        )
+                    delete_runtime_spec = RagRuntimeResolver().build_delete_runtime_spec(
+                        db=db,
+                        knowledge_base_id=kind_id,
+                        document_ref=doc_ref,
+                        index_owner_user_id=kb_info.index_owner_user_id,
+                        resolve_execution_configs=rag_gateway.requires_resolved_configs,
                     )
                 except ValueError as exc:
                     # An unusable retrieval configuration is a server-side

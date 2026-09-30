@@ -37,6 +37,31 @@ def _authorized() -> AuthorizedRetrievalResources:
     )
 
 
+@pytest.mark.parametrize("slot", ["retriever", "embedding"])
+def test_rejects_same_name_in_a_different_namespace(slot: str) -> None:
+    stored = {
+        **_STORED_CONFIG,
+        "embedding_config": dict(_STORED_CONFIG["embedding_config"]),
+    }
+    if slot == "retriever":
+        stored["retriever_namespace"] = "other-team"
+    else:
+        stored["embedding_config"]["model_namespace"] = "other-team"
+    with pytest.raises(KnowledgeConfigError, match="authorized"):
+        resolve_execution_config(stored, _authorized())
+
+
+def test_management_only_requires_the_authorized_retriever() -> None:
+    from shared.knowledge_module import resolve_management_config
+
+    stored = {"retriever_name": "retriever-a", "retriever_namespace": "default"}
+    assert resolve_management_config(stored, _RETRIEVER) == _RETRIEVER
+    with pytest.raises(KnowledgeConfigError, match="authorized"):
+        resolve_management_config(
+            {**stored, "retriever_namespace": "other"}, _RETRIEVER
+        )
+
+
 def test_resolves_stored_retrieval_parameters() -> None:
     stored = {
         **_STORED_CONFIG,

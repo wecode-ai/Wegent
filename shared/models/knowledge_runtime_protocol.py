@@ -129,6 +129,15 @@ class RemoteAuthorizedRetrievalResources(KnowledgeRuntimeProtocolModel):
     explicit_selection: bool = False
 
 
+class RemoteAuthorizedIndexResources(KnowledgeRuntimeProtocolModel):
+    """Operation-bound storage reference; no embedding or query parameters."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    operation: Literal["delete", "purge", "drop", "list_chunks"]
+    retriever: RemoteRetrievalResourceRef
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     """Index request - reference mode. KR resolves configs from DB.
 
@@ -153,6 +162,7 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     document_ref: str
     extensions: dict[str, Any] | None = None
 
@@ -162,6 +172,7 @@ class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     extensions: dict[str, Any] | None = None
 
 
@@ -170,6 +181,7 @@ class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     extensions: dict[str, Any] | None = None
 
 
@@ -178,6 +190,7 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
     metadata_condition: dict[str, Any] | None = None

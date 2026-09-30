@@ -684,6 +684,7 @@ def test_delete_late_index_uses_deleted_document_ref():
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     gateway = MagicMock()
+    gateway.requires_resolved_configs = False
     gateway.delete_document_index = AsyncMock(return_value={"status": "deleted"})
     delete_spec = object()
 
@@ -714,5 +715,6 @@ def test_delete_late_index_uses_deleted_document_ref():
         knowledge_base_id=1,
         document_ref="4",
         index_owner_user_id=9,
+        resolve_execution_configs=False,
     )
     gateway.delete_document_index.assert_awaited_once_with(delete_spec, db=db)

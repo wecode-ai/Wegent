@@ -147,12 +147,14 @@ def test_resolve_admin_config_closes_session_after_success() -> None:
     resolver.resolve_admin_config.return_value = expected_config
     loader = RuntimeConfigLoader(session_factory=session_factory, resolver=resolver)
 
-    result = loader.resolve_admin_config(knowledge_base_id=1)
+    result = loader.resolve_admin_config(knowledge_base_id=1, operation="drop")
 
     assert result is expected_config
     resolver.resolve_admin_config.assert_called_once_with(
         db=session,
         knowledge_base_id=1,
+        operation="drop",
+        authorized=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()

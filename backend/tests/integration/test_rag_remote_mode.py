@@ -393,6 +393,7 @@ def test_delete_document_switches_delete_mode_independently(
         knowledge_base_id=kb.id,
         document_ref=str(document.id),
         index_owner_user_id=test_user.id,
+        resolve_execution_configs="LocalRagGateway" in patch_target,
     )
     mock_selected_gateway.assert_awaited_once_with(
         mock_build_delete_runtime_spec.return_value,

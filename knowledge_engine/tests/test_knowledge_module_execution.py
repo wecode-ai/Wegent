@@ -24,11 +24,14 @@ from shared.knowledge_module import (
     ConversionEngineResult,
     ConversionRequest,
     DocumentIndexRequest,
+    QueryTarget,
     RetrievalResource,
     build_document_delete_request,
     convert_content,
     delete_document,
     index_document,
+    manage_index,
+    query_documents,
     resolve_execution_config,
 )
 
@@ -110,6 +113,33 @@ class _InMemoryStorage:
             "deleted_chunks": deleted,
             "status": "deleted",
         }
+
+    def get_all_chunks(self, *, knowledge_id, **kwargs):
+        return [
+            {
+                "content": chunk["content"],
+                "metadata": chunk["metadata"],
+                "doc_ref": chunk["metadata"]["doc_ref"],
+            }
+            for chunk in self.chunks
+            if chunk["metadata"].get("knowledge_id") == knowledge_id
+        ]
+
+    def extract_chunk_text(self, content):
+        return content
+
+    def delete_knowledge(self, *, knowledge_id, **kwargs):
+        before = len(self.chunks)
+        self.chunks = [
+            chunk
+            for chunk in self.chunks
+            if chunk["metadata"].get("knowledge_id") != knowledge_id
+        ]
+        return {"deleted_chunks": before - len(self.chunks)}
+
+    def drop_knowledge_index(self, *, knowledge_id, **kwargs):
+        self.delete_knowledge(knowledge_id=knowledge_id)
+        return {"status": "dropped"}
 
     def get_supported_retrieval_methods(self) -> list[str]:
         return ["vector"]
@@ -253,12 +283,10 @@ async def _query_plain_document(
     from knowledge_engine.query import QueryExecutor
 
     executor = QueryExecutor(storage_backend=storage, embed_model=object())
-    result = await executor.execute(
-        knowledge_id=_KNOWLEDGE_ID,
+    result = await query_documents(
+        [QueryTarget(executor, _KNOWLEDGE_ID, config.retrieval_config, 7)],
         query="release checklist",
-        retrieval_config=config.retrieval_config,
-        scope=scope,
-        user_id=7,
+        document_ids=scope.document_ids if scope is not None else None,
     )
     return result["records"]
 
@@ -284,12 +312,10 @@ async def _run_query(scope: RetrievalScope | None) -> _RecordingStorage:
     config = resolve_execution_config(_STORED_CONFIG, adapter.authorized())
     storage = _RecordingStorage()
     executor = QueryExecutor(storage_backend=storage, embed_model=object())
-    await executor.execute(
-        knowledge_id="1",
+    await query_documents(
+        [QueryTarget(executor, "1", config.retrieval_config, 7)],
         query="policy",
-        retrieval_config=config.retrieval_config,
-        scope=scope,
-        user_id=7,
+        document_ids=scope.document_ids if scope is not None else None,
     )
     return storage
 
@@ -395,3 +421,25 @@ async def test_converted_document_reuses_the_module_index_and_query_path() -> No
     assert records
     assert {record["metadata"]["doc_ref"] for record in records} == {"51"}
     assert "converted body" in records[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_second_caller_manages_the_same_index_through_public_interface():
+    storage = _InMemoryStorage()
+    config = resolve_execution_config(_STORED_CONFIG, _FakeAdapter().authorized())
+    await _index_plain_document(storage, document_id=701)
+    listed = await manage_index(
+        storage, operation="list_chunks", knowledge_id=_KNOWLEDGE_ID, user_id=7
+    )
+    assert listed["total"] > 0
+    assert {chunk["doc_ref"] for chunk in listed["chunks"]} == {"701"}
+    purged = await manage_index(
+        storage, operation="purge", knowledge_id=_KNOWLEDGE_ID, user_id=7
+    )
+    assert purged["deleted_chunks"] == listed["total"]
+    assert await _query_plain_document(storage, config, scope=None) == []
+    await _index_plain_document(storage, document_id=702)
+    assert await manage_index(
+        storage, operation="drop", knowledge_id=_KNOWLEDGE_ID, user_id=7
+    ) == {"status": "dropped"}
+    assert await _query_plain_document(storage, config, scope=None) == []

@@ -25,8 +25,10 @@ from shared.knowledge_module import (
     RetrievalResource,
     RetrievalResourceSelection,
     resolve_execution_config,
+    resolve_management_config,
 )
 from shared.models import (
+    RemoteAuthorizedIndexResources,
     RemoteAuthorizedRetrievalResources,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -137,7 +139,7 @@ class ConfigResolver:
     def _require_authorized_target(
         kb: Kind,
         *,
-        authorized: RemoteAuthorizedRetrievalResources,
+        authorized: RemoteAuthorizedRetrievalResources | RemoteAuthorizedIndexResources,
     ) -> None:
         """Reject references that were not authorized for this knowledge base."""
         if authorized.knowledge_base_id != kb.id:
@@ -193,6 +195,7 @@ class ConfigResolver:
                 "retrieval resources",
             )
         kb = self._get_knowledge_base(db, knowledge_base_id)
+        self._require_authorized_target(kb, authorized=authorized)
         index_owner_user_id = authorized.index_owner_user_id
         user_name = self._get_user_name(db, user_id)
 
@@ -320,21 +323,36 @@ class ConfigResolver:
         db: Session,
         *,
         knowledge_base_id: int,
+        operation: str,
+        authorized: RemoteAuthorizedIndexResources | None = None,
     ) -> AdminResolvedConfig:
-        """Resolve config for admin operations (delete/purge/drop/list)."""
+        """Resolve only the operation-bound authorized storage resource."""
+        if authorized is None or authorized.operation != operation:
+            raise ConfigResolutionError(
+                "authorization_required",
+                "Management requires operation-bound authorized resources",
+            )
         kb = self._get_knowledge_base(db, knowledge_base_id)
-        retrieval_config = self._parse_kb_retrieval_config(kb)
-
-        retriever_config = self._build_resolved_retriever_config(
-            db=db,
-            user_id=kb.user_id,
-            name=retrieval_config["retriever_name"],
-            namespace=retrieval_config["retriever_namespace"],
-        )
-
+        self._require_authorized_target(kb, authorized=authorized)
+        try:
+            resource = resolve_management_config(
+                self._read_kb_retrieval_config(kb),
+                RetrievalResource(
+                    name=authorized.retriever.name,
+                    kind=authorized.retriever.kind,
+                    namespace=authorized.retriever.namespace,
+                ),
+            )
+        except KnowledgeConfigError as error:
+            raise ConfigResolutionError("config_invalid", str(error)) from error
         return AdminResolvedConfig(
-            index_owner_user_id=kb.user_id,
-            retriever_config=retriever_config,
+            index_owner_user_id=authorized.index_owner_user_id,
+            retriever_config=self._build_resolved_retriever_config(
+                db=db,
+                user_id=authorized.index_owner_user_id,
+                name=resource.name,
+                namespace=resource.namespace,
+            ),
         )
 
     # --- Private methods ---
@@ -356,37 +374,6 @@ class ConfigResolver:
                 f"Knowledge base {knowledge_base_id} not found",
             )
         return kb
-
-    def _parse_kb_retrieval_config(self, kb: Kind) -> dict[str, Any]:
-        """Parse KB's retrievalConfig from its JSON spec."""
-        retrieval_config = self._read_kb_retrieval_config(kb)
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-        embedding_config = retrieval_config.get("embedding_config") or {}
-        embedding_model_name = embedding_config.get("model_name")
-        embedding_model_namespace = embedding_config.get("model_namespace", "default")
-
-        if not retriever_name:
-            raise ConfigResolutionError(
-                "config_incomplete",
-                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)",
-            )
-        if not embedding_model_name:
-            raise ConfigResolutionError(
-                "config_incomplete",
-                f"Knowledge base {kb.id} has incomplete embedding config",
-            )
-
-        return {
-            "retriever_name": retriever_name,
-            "retriever_namespace": retriever_namespace,
-            "embedding_model_name": embedding_model_name,
-            "embedding_model_namespace": embedding_model_namespace,
-            "top_k": retrieval_config.get("top_k", 20),
-            "score_threshold": retrieval_config.get("score_threshold", 0.7),
-            "retrieval_mode": retrieval_config.get("retrieval_mode", "vector"),
-            "hybrid_weights": retrieval_config.get("hybrid_weights"),
-        }
 
     @staticmethod
     def _read_kb_retrieval_config(kb: Kind) -> dict[str, Any]:
@@ -441,34 +428,6 @@ class ConfigResolver:
                 ),
                 "ext": storage_config.get("ext", {}),
             },
-        )
-
-    def _build_resolved_embedding_model_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        model_name: str,
-        model_namespace: str,
-        user_name: str | None,
-    ) -> RuntimeEmbeddingModelConfig:
-        """Build resolved embedding model config with decrypted API key."""
-        model_kind = self._get_model_kind(
-            db=db,
-            user_id=user_id,
-            model_name=model_name,
-            model_namespace=model_namespace,
-        )
-        if model_kind is None:
-            raise ConfigResolutionError(
-                "config_not_found",
-                f"Embedding model '{model_name}' not found in namespace '{model_namespace}'",
-            )
-        return self._build_embedding_config_from_kind(
-            model_kind,
-            model_name=model_name,
-            model_namespace=model_namespace,
-            user_name=user_name,
         )
 
     def _build_embedding_config_from_kind(

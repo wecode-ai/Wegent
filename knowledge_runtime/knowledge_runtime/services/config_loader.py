@@ -19,7 +19,10 @@ from knowledge_runtime.services.config_resolver import (
     QueryConfig,
 )
 from shared.db.sync_session import get_session_factory
-from shared.models import RemoteAuthorizedRetrievalResources
+from shared.models import (
+    RemoteAuthorizedIndexResources,
+    RemoteAuthorizedRetrievalResources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +110,16 @@ class RuntimeConfigLoader:
         self,
         *,
         knowledge_base_id: int,
+        operation: str,
+        authorized: RemoteAuthorizedIndexResources | None = None,
     ) -> AdminResolvedConfig:
         """Resolve config for admin operations."""
         return self._resolve_with_session(
             lambda db: self._resolver.resolve_admin_config(
                 db=db,
                 knowledge_base_id=knowledge_base_id,
+                operation=operation,
+                authorized=authorized,
             )
         )
 

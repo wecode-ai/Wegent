@@ -27,7 +27,6 @@ from .config import (
     DEFAULT_RETRIEVAL_MODE,
     VALID_RETRIEVAL_MODES,
     KnowledgeConfigError,
-    _is_slot_match,
     _matches_embedding_slot,
     _matches_retriever_slot,
     _read_embedding_reference,
@@ -46,8 +45,10 @@ HISTORICAL_SCORE_THRESHOLD_FALLBACK = 0.7
 class AuthorizedRetrievalResources:
     """The retrieval resources the caller authorized for one execution.
 
-    ``retriever`` and ``embedding_model`` are the records the adapter resolved
-    for the references it allowed. ``None`` means the reference is not in the
+    Resource identities describe the logical references the adapter authorized,
+    even when a reference resolves to a public record in another namespace.
+    The adapter owns that resolution; the module cannot widen the reference.
+    ``None`` means the reference is not in the
     authorized set, which rejects the execution instead of widening the lookup.
     """
 
@@ -80,6 +81,24 @@ class ResolvedExecutionConfig:
     retrieval_config: dict[str, Any]
 
 
+def resolve_management_config(
+    stored_config: Mapping[str, Any] | None,
+    authorized_retriever: RetrievalResource | None,
+) -> RetrievalResource:
+    """Resolve only the authorized storage resource needed to manage an index."""
+    reference = _read_reference(
+        dict(stored_config or {}), "retriever_name", "retriever_namespace"
+    )
+    if reference is None:
+        raise KnowledgeConfigError("stored config requires a retriever_name")
+    return _authorized_slot(
+        reference,
+        authorized_retriever,
+        matches=_matches_retriever_slot,
+        label="retriever",
+    )
+
+
 def resolve_execution_config(
     stored_config: Mapping[str, Any] | None,
     authorized: AuthorizedRetrievalResources,
@@ -107,13 +126,13 @@ def resolve_execution_config(
     )
 
     retriever = _authorized_slot(
-        retriever_reference[0],
+        retriever_reference,
         authorized.retriever,
         matches=_matches_retriever_slot,
         label=RETRIEVER_RESOURCE_KIND.lower(),
     )
     embedding_model = _authorized_slot(
-        embedding_reference[0],
+        embedding_reference,
         authorized.embedding_model,
         matches=_matches_embedding_slot,
         label="embedding model",
@@ -152,16 +171,16 @@ def _resolve_resource_references(
 
 
 def _authorized_slot(
-    reference_name: str,
+    reference: tuple[str, str],
     record: RetrievalResource | None,
     *,
     matches,
     label: str,
 ) -> RetrievalResource:
     """Return the authorized record for a reference, or reject the execution."""
-    if not _is_slot_match(record, reference_name, matches):
+    if not matches(record) or (record.name, record.namespace or "default") != reference:
         raise KnowledgeConfigError(
-            f"{label} {reference_name!r} is not in the authorized retrieval resources"
+            f"{label} {reference!r} is not in the authorized retrieval resources"
         )
     assert record is not None
     return record

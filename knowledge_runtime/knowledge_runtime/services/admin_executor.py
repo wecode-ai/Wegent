@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -16,11 +15,14 @@ from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.document_index_adapter import (
     DocumentServiceIndexAdapter,
 )
-from shared.knowledge_module import build_document_delete_request, delete_document
+from shared.knowledge_module import (
+    build_document_delete_request,
+    delete_document,
+    manage_index,
+)
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
-    RemoteListChunkRecord,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
@@ -55,6 +57,8 @@ class AdminExecutor:
         """Delete a document's index from a knowledge base."""
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
+            operation="delete",
+            authorized=request.authorized_resources,
         )
 
         storage_backend = create_storage_backend_from_runtime_config(
@@ -92,6 +96,8 @@ class AdminExecutor:
         """Delete all chunks for a knowledge base."""
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
+            operation="purge",
+            authorized=request.authorized_resources,
         )
 
         storage_backend = create_storage_backend_from_runtime_config(
@@ -104,8 +110,9 @@ class AdminExecutor:
             request.knowledge_base_id,
         )
 
-        result = await asyncio.to_thread(
-            storage_backend.delete_knowledge,
+        result = await manage_index(
+            storage_backend,
+            operation="purge",
             knowledge_id=knowledge_id,
             user_id=config.index_owner_user_id,
         )
@@ -123,6 +130,8 @@ class AdminExecutor:
         """Physically drop the index/collection for a knowledge base."""
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
+            operation="drop",
+            authorized=request.authorized_resources,
         )
 
         storage_backend = create_storage_backend_from_runtime_config(
@@ -135,8 +144,9 @@ class AdminExecutor:
             request.knowledge_base_id,
         )
 
-        result = await asyncio.to_thread(
-            storage_backend.drop_knowledge_index,
+        result = await manage_index(
+            storage_backend,
+            operation="drop",
             knowledge_id=knowledge_id,
             user_id=config.index_owner_user_id,
         )
@@ -154,6 +164,8 @@ class AdminExecutor:
         """List all chunks in a knowledge base."""
         config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
+            operation="list_chunks",
+            authorized=request.authorized_resources,
         )
 
         storage_backend = create_storage_backend_from_runtime_config(
@@ -161,33 +173,12 @@ class AdminExecutor:
         )
         knowledge_id = str(request.knowledge_base_id)
 
-        chunks = await asyncio.to_thread(
-            storage_backend.get_all_chunks,
+        result = await manage_index(
+            storage_backend,
+            operation="list_chunks",
             knowledge_id=knowledge_id,
             max_chunks=request.max_chunks,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
         )
-
-        records = [
-            RemoteListChunkRecord(
-                content=storage_backend.extract_chunk_text(chunk.get("content", "")),
-                title=chunk.get("title", ""),
-                chunk_id=chunk.get("chunk_id"),
-                doc_ref=chunk.get("doc_ref"),
-                metadata=chunk.get("metadata"),
-            )
-            for chunk in chunks
-        ]
-
-        logger.info(
-            "Listed chunks: knowledge_base_id=%d, count=%d, max_chunks=%d",
-            request.knowledge_base_id,
-            len(records),
-            request.max_chunks,
-        )
-
-        return RemoteListChunksResponse(
-            chunks=records,
-            total=len(records),
-        )
+        return RemoteListChunksResponse.model_validate(result)

@@ -588,6 +588,7 @@ class TestKnowledgeServiceDeleteDocument:
         db.query.return_value = kb_query
         delete_runtime_spec = object()
         mock_gateway = MagicMock()
+        mock_gateway.requires_resolved_configs = False
         mock_gateway.delete_document_index = MagicMock()
 
         with (
@@ -643,6 +644,7 @@ class TestKnowledgeServiceDeleteDocument:
             knowledge_base_id=10,
             document_ref="8",
             index_owner_user_id=7,
+            resolve_execution_configs=False,
         )
         build_kb_index_info.assert_called_once_with(
             db=db,

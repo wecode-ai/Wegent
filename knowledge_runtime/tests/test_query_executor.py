@@ -659,32 +659,3 @@ class TestQueryExecutor:
         )
         assert result.records[0].knowledge_base_id == 1
         assert result.records[0].document_id == 100
-
-    @pytest.mark.asyncio
-    async def test_extract_document_id_from_doc_ref(self) -> None:
-        """Test document ID extraction from various doc_ref formats."""
-        executor = QueryExecutor(config_loader=MagicMock())
-
-        # Test "doc_XXX" format
-        assert (
-            executor._extract_document_id({"metadata": {"doc_ref": "doc_123"}}) == 123
-        )
-
-        # Test numeric string
-        assert executor._extract_document_id({"metadata": {"doc_ref": "456"}}) == 456
-
-        # Test invalid format
-        assert executor._extract_document_id({"metadata": {"doc_ref": "abc"}}) is None
-
-        # Test missing doc_ref
-        assert executor._extract_document_id({"metadata": {}}) is None
-        assert executor._extract_document_id({}) is None
-
-    def test_estimate_tokens(self) -> None:
-        """Test token estimation heuristic."""
-        executor = QueryExecutor(config_loader=MagicMock())
-
-        # ~4 characters per token
-        assert executor._estimate_tokens("test") == 1  # 4 chars
-        assert executor._estimate_tokens("test test test test") == 4  # 19 chars
-        assert executor._estimate_tokens("") == 0

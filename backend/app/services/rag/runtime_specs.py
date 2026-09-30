@@ -8,6 +8,7 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
 )
 from shared.models import (
+    RemoteAuthorizedIndexResources,
     RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
@@ -106,13 +107,15 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     document_ref: str
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
+    retriever_config: RuntimeRetrieverConfig | None = None
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
 
 
 class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     # The remote data plane resolves the retriever itself, so the resolved
     # storage configuration only travels with the deprecated local data plane.
     retriever_config: Optional[RuntimeRetrieverConfig] = None
@@ -121,12 +124,14 @@ class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
 class DropKnowledgeIndexRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     retriever_config: Optional[RuntimeRetrieverConfig] = None
 
 
 class ListChunksRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     retriever_config: Optional[RuntimeRetrieverConfig] = None
     max_chunks: int = 10000
     query: Optional[str] = None
