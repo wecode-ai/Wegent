@@ -18,11 +18,17 @@ from app.schemas.device_chat_task import (
     DeviceChatTaskResponse,
 )
 from app.services import device_chat_task_service
+from shared.metrics import ApiRouteMetrics, track_api
 
 router = APIRouter()
 
+_DEVICE_CHAT_TASKS_METRICS = ApiRouteMetrics(
+    "/device-chat/tasks", slow_threshold_ms=500
+)
+
 
 @router.post("/tasks", response_model=DeviceChatTaskResponse)
+@track_api(_DEVICE_CHAT_TASKS_METRICS)
 async def create_device_chat_task(
     payload: DeviceChatTaskRequest,
     authorization: Annotated[

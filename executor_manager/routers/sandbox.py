@@ -38,11 +38,31 @@ from executor_manager.schemas.sandbox import (
 )
 from executor_manager.services.sandbox import get_sandbox_manager
 from shared.logger import setup_logger
+from shared.metrics import ApiRouteMetrics, track_api
 
 logger = setup_logger(__name__)
 
 # Create router with prefix
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
+
+# Request metrics for the E2B-like sandbox lifecycle API.
+_SANDBOX_CREATE_METRICS = ApiRouteMetrics("/executor-manager/sandboxes")
+_SANDBOX_CLEANUP_STALE_METRICS = ApiRouteMetrics(
+    "/executor-manager/sandboxes/cleanup-stale"
+)
+_SANDBOX_CLEANUP_BY_TASK_METRICS = ApiRouteMetrics(
+    "/executor-manager/sandboxes/cleanup-by-task"
+)
+_SANDBOX_DETAIL_METRICS = ApiRouteMetrics("/executor-manager/sandboxes/:sandbox_id")
+_SANDBOX_EXECUTE_METRICS = ApiRouteMetrics(
+    "/executor-manager/sandboxes/:sandbox_id/execute"
+)
+_SANDBOX_EXECUTION_METRICS = ApiRouteMetrics(
+    "/executor-manager/sandboxes/:sandbox_id/executions/:subtask_id"
+)
+_SANDBOX_EXECUTIONS_METRICS = ApiRouteMetrics(
+    "/executor-manager/sandboxes/:sandbox_id/executions"
+)
 
 # Note: WebSocket router is registered separately in routers.py
 # to ensure correct route matching order (before dynamic {sandbox_id} routes)
@@ -70,6 +90,7 @@ class CleanupSandboxByTaskRequest(BaseModel):
 
 
 @router.post("", response_model=CreateSandboxResponse)
+@track_api(_SANDBOX_CREATE_METRICS)
 async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
     """Create a new sandbox.
 
@@ -137,6 +158,7 @@ async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
 
 
 @router.post("/cleanup-stale")
+@track_api(_SANDBOX_CLEANUP_STALE_METRICS)
 async def cleanup_stale_sandboxes(
     request: CleanupStaleSandboxesRequest,
     http_request: Request,
@@ -158,6 +180,7 @@ async def cleanup_stale_sandboxes(
 
 
 @router.post("/cleanup-by-task", response_model=Dict[str, Any])
+@track_api(_SANDBOX_CLEANUP_BY_TASK_METRICS)
 async def cleanup_sandbox_by_task_id(
     request: CleanupSandboxByTaskRequest,
     http_request: Request,
@@ -184,6 +207,7 @@ async def cleanup_sandbox_by_task_id(
 
 
 @router.get("/{sandbox_id}", response_model=SandboxStatusResponse)
+@track_api(_SANDBOX_DETAIL_METRICS)
 async def get_sandbox(sandbox_id: str, http_request: Request):
     """Get sandbox status.
 
@@ -229,6 +253,7 @@ async def get_sandbox(sandbox_id: str, http_request: Request):
 
 
 @router.delete("/{sandbox_id}", response_model=TerminateSandboxResponse)
+@track_api(_SANDBOX_DETAIL_METRICS)
 async def terminate_sandbox(sandbox_id: str, http_request: Request):
     """Terminate a sandbox.
 
@@ -309,6 +334,7 @@ async def keep_alive(
 
 
 @router.post("/{sandbox_id}/execute", response_model=ExecuteResponse)
+@track_api(_SANDBOX_EXECUTE_METRICS)
 async def execute(
     sandbox_id: str,
     request: ExecuteRequest,
@@ -368,6 +394,7 @@ async def execute(
     "/{sandbox_id}/executions/{subtask_id}",
     response_model=ExecutionStatusResponse,
 )
+@track_api(_SANDBOX_EXECUTION_METRICS)
 async def get_execution_status(
     sandbox_id: str,
     subtask_id: int,
@@ -427,6 +454,7 @@ async def get_execution_status(
     "/{sandbox_id}/executions",
     response_model=ListExecutionsResponse,
 )
+@track_api(_SANDBOX_EXECUTIONS_METRICS)
 async def list_executions(sandbox_id: str, http_request: Request):
     """List all executions in a sandbox.
 

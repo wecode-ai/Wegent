@@ -38,10 +38,17 @@ from app.services.chat.correction import (
     get_existing_correction,
 )
 from app.stores.tasks import subtask_store, task_access_store, task_store
+from shared.metrics import ApiRouteMetrics, track_api
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Request metrics for the chat correction surface.
+_CHAT_SEARCH_ENGINES_METRICS = ApiRouteMetrics(
+    "/chat/search-engines", slow_threshold_ms=500
+)
+_CHAT_CORRECT_METRICS = ApiRouteMetrics("/chat/correct", slow_threshold_ms=500)
 
 
 class StreamChatRequest(BaseModel):
@@ -141,6 +148,7 @@ async def check_direct_chat(
 
 
 @router.get("/search-engines")
+@track_api(_CHAT_SEARCH_ENGINES_METRICS)
 async def get_search_engines(
     current_user: User = Depends(security.get_current_user),
 ):
@@ -183,6 +191,7 @@ class CorrectionRequest(BaseModel):
 
 
 @router.post("/correct")
+@track_api(_CHAT_CORRECT_METRICS)
 async def correct_response(
     request: CorrectionRequest,
     db: Session = Depends(get_db),
