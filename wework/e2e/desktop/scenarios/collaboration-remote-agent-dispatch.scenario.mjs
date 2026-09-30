@@ -9,7 +9,13 @@ import {
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
-import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import {
+  REMOTE_DOCKER_DEVICE_ID,
+  join,
+  pathToFileURL,
+  readFile,
+  resultDir,
+} from '../modules/shared.mjs'
 import {
   initializeFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
@@ -24,6 +30,8 @@ const AGENT = `远程执行智能体-${process.pid}`
 const ISSUE = `远程执行闭环-${process.pid}`
 const MARKER = `REMOTE_AGENT_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_COMPLETED_BY_REMOTE_EXECUTOR`
+const ENVIRONMENT_MARKER = `${MARKER}_ENVIRONMENT_READY`
+const ENVIRONMENT_PREFIX = 'collaboration-project-execution-environment'
 const MANAGEMENT_TOOLS = [
   'get_assignment_candidates',
   'assign_board_item',
@@ -228,6 +236,105 @@ function findRuntimeTask(runtimeWork, taskId) {
   return workspaces.flatMap(workspace => workspace.tasks ?? []).find(task => task.taskId === taskId)
 }
 
+async function verifyConfiguredExecutionEnvironment(
+  control,
+  request,
+  projectId,
+  remoteDeviceId,
+  timeoutMs,
+  captureScreenshot
+) {
+  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await control.command(
+    'click',
+    scoped('[data-testid="collaboration-project-settings-environments"]')
+  )
+  const repositoryUrl = pathToFileURL(join(resultDir, 'workspace')).href
+  await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-add-repository"]`))
+  await control.command('fill', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-repository-url-0"]`), {
+    value: repositoryUrl,
+  })
+  await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-add-setup-step"]`))
+  const setupCommand = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-setup-command-0"]`)
+  await control.command('fill', setupCommand, { value: 'false' })
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-save-configuration"]`),
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-configuration-status"]`),
+    {
+      text: '配置已保存',
+      timeoutMs,
+    }
+  )
+  const initialize = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`)
+  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}`),
+    value =>
+      Object.values(value.execution_environment?.devices ?? {}).find(
+        device =>
+          device.status === 'error' && device.error?.includes('setup command 1 exited with code 1')
+      ),
+    'The failed setup step did not report an actionable initialization error',
+    timeoutMs
+  )
+  const failedProject = await request(`/api/v1/cloud-projects/${projectId}`)
+  assert.equal(failedProject.execution_environment.repositories[0].url, repositoryUrl)
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-environment-error"]`),
+    {
+      visible: true,
+      timeoutMs,
+    }
+  )
+  await captureScreenshot(control, 'remote-environment-01-setup-failed.png', CONTENT)
+
+  await control.command('fill', setupCommand, {
+    value: `test -f auth.ts && printf ${ENVIRONMENT_MARKER} > .remote-env-ready`,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-save-configuration"]`),
+    { timeoutMs }
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-configuration-status"]`),
+    {
+      text: '配置已保存',
+      timeoutMs,
+    }
+  )
+  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  const readyDevice = await waitForValue(
+    () => request(`/api/v1/cloud-projects/${projectId}`),
+    value =>
+      Object.values(value.execution_environment?.devices ?? {}).find(
+        device => device.status === 'ready' && device.workspace_path
+      ),
+    'The corrected repository and setup step did not initialize the remote environment',
+    timeoutMs
+  )
+  assert.equal(
+    await readFile(join(readyDevice.workspace_path, '.remote-env-ready'), 'utf8'),
+    ENVIRONMENT_MARKER
+  )
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-completion-status"]`),
+    {
+      text: '环境已初始化',
+      timeoutMs,
+    }
+  )
+  await captureScreenshot(control, 'remote-environment-02-retried-ready.png', CONTENT)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   modelResponseTimeoutMs,
@@ -428,6 +535,14 @@ export function createDesktopScenario({
         'Direct assignment entered a manager/group execution path'
       )
       assert.equal(modelRequests, 1, 'Direct agent assignment invoked the model more than once')
+      await verifyConfiguredExecutionEnvironment(
+        control,
+        request,
+        project.id,
+        remoteDevice.id,
+        modelResponseTimeoutMs,
+        captureScreenshot
+      )
     },
 
     diagnostics() {
