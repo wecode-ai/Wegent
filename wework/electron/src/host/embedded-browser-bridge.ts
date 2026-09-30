@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 
@@ -11,10 +11,14 @@ const DEFAULT_LABEL = 'workspace-browser'
 const OPEN_TIMEOUT_MS = 15_000
 const DEFAULT_EVAL_TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 1024 * 1024
+const EMBEDDED_BROWSER_DATA_KINDS = ['cookies', 'cache', 'storage', 'history'] as const
+type EmbeddedBrowserDataKind = (typeof EMBEDDED_BROWSER_DATA_KINDS)[number]
+const DEFAULT_CLEAR_DATA_KINDS: readonly EmbeddedBrowserDataKind[] = ['cookies', 'cache', 'storage']
 
 interface BrowserBridgeRequest {
   action: string
   url?: string
+  path?: string
   expression?: string
   selector?: string
   text?: string
@@ -28,6 +32,7 @@ interface BrowserBridgeRequest {
   inspectId?: string
   index?: number
   ref?: string
+  kinds?: string[]
 }
 
 interface BrowserBridgeResponse {
@@ -294,6 +299,10 @@ export class EmbeddedBrowserBridge {
         }
       case 'waitFor':
         return this.waitForCondition(label, request)
+      case 'uploadFile':
+        return this.uploadFile(label, request)
+      case 'clearData':
+        return this.clearData(request)
       case 'screenshot':
         if (!embeddedBrowserScreenshotAvailable()) {
           throw new Error('Embedded browser screenshots are currently supported on macOS only')
@@ -445,6 +454,56 @@ export class EmbeddedBrowserBridge {
     }
   }
 
+  private async uploadFile(
+    label: string,
+    request: BrowserBridgeRequest
+  ): Promise<Record<string, unknown>> {
+    const path = requiredString(request.path, 'path')
+    if (!isAbsolute(path)) {
+      throw new Error(`Embedded browser upload requires an absolute local file path: ${path}`)
+    }
+    const fileStat = await stat(path).catch(() => null)
+    if (!fileStat?.isFile()) {
+      throw new Error(`Embedded browser upload file does not exist or is not a file: ${path}`)
+    }
+    if (request.ref || request.inspectId !== undefined || request.index !== undefined) {
+      throw new Error(
+        'Embedded browser upload targets file inputs by CSS selector only; omit the target to use the first file input on the page.'
+      )
+    }
+    const selector = request.selector?.trim() || null
+    const result = await this.browser.uploadFiles(label, selector, [path])
+    return {
+      ok: true,
+      kind: 'browser.action',
+      action: 'uploadFile',
+      backend: 'electron-cdp-setFileInputFiles',
+      selector: result.selector,
+      fileCount: 1,
+    }
+  }
+
+  private async clearData(request: BrowserBridgeRequest): Promise<Record<string, unknown>> {
+    const optionKinds = request.options?.kinds
+    const rawKinds = request.kinds ?? (Array.isArray(optionKinds) ? optionKinds : null)
+    const kinds = rawKinds
+      ?.map(kind => String(kind).trim().toLowerCase())
+      .filter(kind => EMBEDDED_BROWSER_DATA_KINDS.includes(kind as EmbeddedBrowserDataKind))
+    if (rawKinds && kinds?.length !== rawKinds.length) {
+      throw new Error(
+        `Embedded browser clearData kinds must be a subset of: ${EMBEDDED_BROWSER_DATA_KINDS.join(', ')}`
+      )
+    }
+    const requestedKinds = kinds && kinds.length > 0 ? kinds : [...DEFAULT_CLEAR_DATA_KINDS]
+    await this.browser.clearData([...requestedKinds])
+    return {
+      ok: true,
+      kind: 'browser.action',
+      action: 'clearData',
+      cleared: requestedKinds,
+    }
+  }
+
   private async screenshot(label: string): Promise<Record<string, unknown>> {
     const screenshotId = `electron-screenshot-${randomBytes(8).toString('hex')}`
     const dataUrl = await this.browser.capture(label)
@@ -578,6 +637,14 @@ function browserCapabilities(): Record<string, unknown> {
       ],
       trustedNativeInput: 'poc_only',
       appKitNativeInputProbe: false,
+      fileUpload: {
+        backend: 'electron-cdp-setFileInputFiles',
+        multiple: false,
+      },
+      dataClearing: {
+        kinds: [...EMBEDDED_BROWSER_DATA_KINDS],
+        defaultKinds: [...DEFAULT_CLEAR_DATA_KINDS],
+      },
     },
     wait: {
       structured: true,
@@ -626,6 +693,8 @@ function isObservableAction(action: string): boolean {
     'press',
     'waitFor',
     'screenshot',
+    'uploadFile',
+    'clearData',
   ].includes(action)
 }
 
@@ -644,6 +713,8 @@ function isMutatingAction(action: string): boolean {
     'scroll',
     'scrollIntoView',
     'press',
+    'uploadFile',
+    'clearData',
   ].includes(action)
 }
 
