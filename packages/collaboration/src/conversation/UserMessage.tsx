@@ -286,7 +286,7 @@ export function UserMessage({
                   {replyQuestions.map((row, index) => (
                     <div key={index} className="flex flex-col gap-0.5">
                       <span className="text-xs text-text-muted">{row.question}</span>
-                      <span className="text-sm">{row.answer}</span>
+                      <span className="whitespace-pre-wrap text-sm">{row.answer}</span>
                     </div>
                   ))}
                 </div>
