@@ -70,6 +70,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
         value: ISSUE_NAME,
       })
+      await control.command('click', scoped('[data-testid="cloud-todo-create-assignee"]'))
+      const ownerSelector = '[data-testid^="cloud-todo-create-assignee-option-user:"]'
+      const ownerName = await control.command('getText', ownerSelector)
+      const ownerTarget = (
+        await control.command('getAttribute', ownerSelector, { value: 'data-testid' })
+      ).replace('cloud-todo-create-assignee-option-', '')
+      await control.command('click', ownerSelector)
       await capture(control, 'collaboration-first-use-05-issue.png')
       await control.command(
         'clickWhenEnabled',
@@ -88,6 +95,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-assignee"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
+        ownerTarget,
+        `The first Issue did not retain its human owner ${ownerName}`
+      )
       await capture(control, 'collaboration-first-use-06-issue-ready.png')
     },
 
