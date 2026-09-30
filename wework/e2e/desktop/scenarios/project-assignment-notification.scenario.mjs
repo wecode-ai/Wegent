@@ -422,6 +422,11 @@ export function createDesktopScenario({
       await selectCollaborationDomain(control, CONTENT, 'cloud')
 
       project = await createWorkspaceAndProject(control, ownerRequest, uiTimeoutMs)
+      assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)
+      issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
+      assert.equal(String(issue.assignee_user_id), String(owner.id))
+      await captureScreenshot(control, 'assignment-00-created-without-environment.png', CONTENT)
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
         REMOTE_DOCKER_DEVICE_ID,
         'remote'
@@ -433,8 +438,6 @@ export function createDesktopScenario({
         modelResponseTimeoutMs,
         remoteDevice.id
       )
-      issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
-      assert.equal(String(issue.assignee_user_id), String(owner.id))
       notification = await waitForValue(
         () => ownerRequest('/api/v1/wework-notifications?category=collaboration'),
         value =>

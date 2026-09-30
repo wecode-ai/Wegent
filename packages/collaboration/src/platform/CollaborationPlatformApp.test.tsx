@@ -2587,7 +2587,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(
       byTestId("issue-execution-environment-notice").textContent,
-    ).toContain("请先初始化环境，再创建 Issue");
+    ).toContain("不影响创建和人工处理 Issue");
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
@@ -2701,31 +2701,71 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.issues.update).not.toHaveBeenCalled();
   });
 
-  it("blocks the project Issue create dialog until the environment is ready", async () => {
-    const { api } = createApi();
-    await render(
-      <PlatformHarness
-        api={api}
-        start={{
-          ...initialLocation,
-          workspaceId: workspace.id,
-          workspaceView: "projects",
-          projectId: project.id,
-        }}
-      />,
-    );
+  it.each(["unassigned", "uninitialized", "offline"] as const)(
+    "creates a human Issue without redirecting when the environment is %s",
+    async (environmentState) => {
+      const selectedProject: CollaborationProject = {
+        ...project,
+        ...(environmentState === "offline"
+          ? {
+              execution_environment: {
+                repositories: [],
+                setup_steps: [],
+                devices: {
+                  "device-21": {
+                    status: "ready",
+                    workspace_path: "/workspace/project-1",
+                  },
+                },
+              },
+            }
+          : {}),
+      };
+      const { api } = createApi({ initialProjects: [selectedProject] });
+      api.projects.listExecutionEnvironments = emptyAsync(
+        environmentState === "unassigned"
+          ? []
+          : [
+              {
+                ...environment,
+                status: environmentState === "offline" ? "offline" : "online",
+              },
+            ],
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: "projects",
+            projectId: project.id,
+          }}
+        />,
+      );
 
-    await click(byTestId("collaboration-issue-create"));
+      await click(byTestId("collaboration-issue-create"));
 
-    expect(
-      document.querySelector(
-        '[data-testid="collaboration-issue-create-dialog"]',
-      ),
-    ).toBeNull();
-    expect(byTestId("test-location").textContent).toContain(
-      '"projectSettingsSection":"environments"',
-    );
-  });
+      expect(byTestId("collaboration-issue-create-dialog")).toBeTruthy();
+      expect(byTestId("test-location").textContent).not.toContain(
+        '"projectSettingsSection":"environments"',
+      );
+      await change(
+        byTestId("cloud-todo-title") as HTMLInputElement,
+        "人工处理事项",
+      );
+      await click(byTestId("cloud-todo-create-assignee"));
+      await click(portalByTestId("cloud-todo-create-assignee-option-user:7"));
+      expect(
+        (byTestId("cloud-todo-create-confirm") as HTMLButtonElement).disabled,
+      ).toBe(false);
+      await click(byTestId("cloud-todo-create-confirm"));
+      expect(api.issues.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ title: "人工处理事项", assigneeUserId: 7 }),
+      );
+    },
+  );
 
   it("saves a selected project team as the Issue owner, not as a numeric agent team", async () => {
     const { api } = createApi();
