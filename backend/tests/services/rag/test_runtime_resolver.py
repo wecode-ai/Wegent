@@ -621,6 +621,10 @@ def test_build_public_list_chunks_runtime_spec_skips_discarded_retriever_config(
             "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
             return_value=(kb, True),
         ),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            return_value=SimpleNamespace(spec=SimpleNamespace(storageConfig=object())),
+        ) as get_retriever,
         patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
     ):
         spec = resolver.build_public_list_chunks_runtime_spec(
@@ -633,6 +637,9 @@ def test_build_public_list_chunks_runtime_spec_skips_discarded_retriever_config(
             resolve_execution_configs=False,
         )
 
+    get_retriever.assert_called_once_with(
+        db=ANY, user_id=42, name="retriever-a", namespace="default"
+    )
     build_retriever.assert_not_called()
     assert spec.retriever_config is None
     assert spec.index_owner_user_id == 42
@@ -652,6 +659,10 @@ def test_build_public_admin_runtime_spec_skips_discarded_retriever_config(
             "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
             return_value=(kb, True),
         ),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            return_value=SimpleNamespace(spec=SimpleNamespace(storageConfig=object())),
+        ) as get_retriever,
         patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
     ):
         if spec_type == "purge":
@@ -671,9 +682,65 @@ def test_build_public_admin_runtime_spec_skips_discarded_retriever_config(
                 resolve_execution_configs=False,
             )
 
+    get_retriever.assert_called_once_with(
+        db=ANY, user_id=42, name="retriever-a", namespace="default"
+    )
     build_retriever.assert_not_called()
     assert spec.retriever_config is None
     assert spec.index_owner_user_id == 42
+
+
+def _build_public_admin_spec(
+    resolver: RagRuntimeResolver,
+    spec_type: str,
+    *,
+    resolve_execution_configs: bool,
+) -> object:
+    """Build one public admin spec through the entry the product uses."""
+
+    kwargs = {
+        "db": MagicMock(),
+        "knowledge_base_id": 7,
+        "user_id": 9,
+        "user_name": "alice",
+        "resolve_execution_configs": resolve_execution_configs,
+    }
+    if spec_type == "chunks":
+        return resolver.build_public_list_chunks_runtime_spec(
+            max_chunks=500, query="list_index_chunks", **kwargs
+        )
+    if spec_type == "purge":
+        return resolver.build_public_purge_index_runtime_spec(**kwargs)
+    return resolver.build_public_drop_index_runtime_spec(**kwargs)
+
+
+@pytest.mark.parametrize("spec_type", ["chunks", "purge", "drop"])
+def test_build_public_admin_runtime_spec_propagates_the_retriever_denial(
+    spec_type: str,
+) -> None:
+    """A denied retriever stops the remote request before it is built."""
+
+    resolver = RagRuntimeResolver()
+    kb = _list_chunks_knowledge_base()
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            side_effect=HTTPException(
+                status_code=403, detail="Access denied to this group"
+            ),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            _build_public_admin_spec(
+                resolver, spec_type, resolve_execution_configs=False
+            )
+
+    assert exc_info.value.status_code == 403
 
 
 def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> None:

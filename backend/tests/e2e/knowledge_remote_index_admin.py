@@ -11,9 +11,10 @@ after each operation match the operation, a runtime failure stays visible with
 its own status and detail instead of a local success, and the local data plane
 refuses every one of these operations while the deployment is configured remote.
 
-The runtime resolves the retriever itself, so a knowledge base whose retriever
-was removed fails with the runtime's bad-request mapping instead of the Backend's
-own retriever lookup; the failure scenario pins that mapping.
+The Backend keeps the retriever access verdict for the remote path while the
+runtime resolves the execution configuration itself, so a knowledge base whose
+retriever was removed is refused before any remote request, and the failure
+scenario pins both that refusal and the runtime failures the Backend cannot see.
 """
 
 from __future__ import annotations
@@ -405,23 +406,27 @@ def _run_admin_failure_scenario(
     retriever_deleted = False
     try:
         # Delete the retriever the stored config points at. The Backend keeps the
-        # knowledge base access check, but the remote path no longer resolves the
-        # retriever, so the runtime reports the missing resource itself. The
-        # runtime maps that to a bad request, while the Backend's own retriever
-        # lookup would have answered 404; a local fallback would have removed the
-        # chunks while reporting success.
+        # owner's retriever access verdict for the remote path, so every entry is
+        # refused before a request leaves the Backend and the runtime store keeps
+        # the chunks untouched.
         _delete_retriever(client, token, resource_name)
         retriever_deleted = True
         _assert_admin_calls_fail(
             _admin_calls(client, token, knowledge_base_id),
-            400,
-            "runtime failure",
+            404,
+            "missing retriever",
         )
-
-        # A store that cannot be reached surfaces too, for the operations that
-        # touch storage directly.
         _create_retriever_only(client, token, resource_name, QDRANT_URL)
         retriever_deleted = False
+        _assert_runtime_chunks(knowledge_base_id, owner_user_id, marker)
+        _log(
+            f"the refused entries left the runtime store of knowledge base "
+            f"{knowledge_base_id} untouched"
+        )
+
+        # A store that cannot be reached is a runtime failure the Backend cannot
+        # see: the retriever record is authorized, so the request reaches the
+        # runtime and its storage failure must surface for the mutating entries.
         _point_retriever_at(client, token, resource_name, UNREACHABLE_QDRANT_URL)
         _assert_admin_calls_fail(
             _admin_calls(client, token, knowledge_base_id)[1:],

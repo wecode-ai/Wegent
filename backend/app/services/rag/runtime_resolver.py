@@ -550,6 +550,12 @@ class RagRuntimeResolver:
         metadata_condition: dict | None = None,
         resolve_execution_configs: bool = True,
     ) -> ListChunksRuntimeSpec:
+        """Build the chunk-listing spec for one gateway.
+
+        ``resolve_execution_configs`` is set from the executing gateway. The
+        remote gateway resolves the retriever itself, so only the owner's access
+        verdict travels with the request.
+        """
         from app.services.knowledge.knowledge_service import KnowledgeService
 
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -603,6 +609,13 @@ class RagRuntimeResolver:
         retriever_config = None
         if resolve_execution_configs:
             retriever_config = self._build_resolved_retriever_config(
+                db=db,
+                user_id=owner_user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+            )
+        else:
+            self._require_retriever_access(
                 db=db,
                 user_id=owner_user_id,
                 name=retriever_name,
@@ -663,6 +676,8 @@ class RagRuntimeResolver:
         user_name: str | None,
         resolve_execution_configs: bool = True,
     ) -> PurgeKnowledgeRuntimeSpec:
+        """Build the purge spec, keeping the owner's retriever access verdict."""
+
         from app.services.knowledge.knowledge_service import KnowledgeService
 
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -693,6 +708,8 @@ class RagRuntimeResolver:
         user_name: str | None,
         resolve_execution_configs: bool = True,
     ) -> DropKnowledgeIndexRuntimeSpec:
+        """Build the drop spec, keeping the owner's retriever access verdict."""
+
         from app.services.knowledge.knowledge_service import KnowledgeService
 
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -865,6 +882,13 @@ class RagRuntimeResolver:
                 name=retriever_name,
                 namespace=retriever_namespace,
             )
+        else:
+            self._require_retriever_access(
+                db=db,
+                user_id=kb_info.index_owner_user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+            )
 
         if spec_type == "purge":
             return PurgeKnowledgeRuntimeSpec(
@@ -877,6 +901,29 @@ class RagRuntimeResolver:
             knowledge_base_id=kb.id,
             index_owner_user_id=kb_info.index_owner_user_id,
             retriever_config=resolved_retriever_config,
+        )
+
+    def _require_retriever_access(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        name: str,
+        namespace: str,
+    ) -> None:
+        """Refuse before the remote request when the owner may not use the retriever.
+
+        The remote data plane resolves the retriever itself, so Backend keeps the
+        existing access verdict -- group permission plus the personal, referenced
+        and public lookup -- without building the storage configuration and
+        decrypting the credentials the remote request would drop.
+        """
+
+        retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=user_id,
+            name=name,
+            namespace=namespace,
         )
 
     def _build_resolved_retriever_config(

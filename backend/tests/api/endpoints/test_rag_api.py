@@ -5,6 +5,7 @@
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
@@ -503,3 +504,61 @@ def test_public_rag_index_delete_keeps_conflict_for_remote_shared_strategy(
 
     assert response.status_code == 409
     assert "only allowed" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "patch_target", "builder", "gateway_method"),
+    [
+        (
+            "get",
+            "/api/rag/chunks?knowledge_id=7",
+            "app.api.endpoints.rag.get_list_chunks_gateway",
+            "build_public_list_chunks_runtime_spec",
+            "list_chunks",
+        ),
+        (
+            "delete",
+            "/api/rag/index-contents?knowledge_id=7",
+            "app.api.endpoints.rag.get_delete_gateway",
+            "build_public_purge_index_runtime_spec",
+            "purge_knowledge_index",
+        ),
+        (
+            "delete",
+            "/api/rag/index?knowledge_id=7",
+            "app.api.endpoints.rag.get_delete_gateway",
+            "build_public_drop_index_runtime_spec",
+            "drop_knowledge_index",
+        ),
+    ],
+)
+def test_public_rag_admin_entries_refuse_an_unauthorized_retriever(
+    test_client,
+    test_token: str,
+    method: str,
+    url: str,
+    patch_target: str,
+    builder: str,
+    gateway_method: str,
+):
+    """A denied retriever stops the admin entries before any remote request."""
+
+    gateway = AsyncMock()
+    gateway.requires_resolved_configs = False
+    gateway_method_mock = AsyncMock()
+    setattr(gateway, gateway_method, gateway_method_mock)
+
+    with (
+        patch(
+            f"app.api.endpoints.rag.runtime_resolver.{builder}",
+            side_effect=HTTPException(
+                status_code=403, detail="Access denied to this group"
+            ),
+        ),
+        patch(patch_target, return_value=gateway),
+    ):
+        response = getattr(test_client, method)(url, headers=_auth_header(test_token))
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Access denied to this group"
+    gateway_method_mock.assert_not_awaited()
