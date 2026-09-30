@@ -68,7 +68,7 @@ def _assert_marker_listed(items: list[dict], marker: str, context: str) -> None:
     )
 
 
-def _assert_no_queryable_result(
+def _assert_empty_query_result(
     client: httpx.Client,
     token: str,
     knowledge_base_id: int,
@@ -76,7 +76,32 @@ def _assert_no_queryable_result(
     owner_user_id: int,
     context: str,
 ) -> None:
-    """The knowledge base query must not return a stale hit after the operation."""
+    """The knowledge base query must answer with no record after the operation."""
+
+    query = _internal_retrieve_knowledge_base(
+        client, knowledge_base_id, marker, user_id=owner_user_id
+    )
+    _check(
+        query.status_code == 200,
+        f"{context} must still answer a query: {query.status_code} {query.text}",
+    )
+    records = query.json().get("records", [])
+    _check(
+        records == [],
+        f"{context} must leave nothing queryable: {query.text}",
+    )
+    _log(f"{context}: the knowledge base query returned no record")
+
+
+def _assert_dropped_query_result(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    marker: str,
+    owner_user_id: int,
+    context: str,
+) -> None:
+    """A dropped index either answers empty or fails visibly, never stale."""
 
     query = _internal_retrieve_knowledge_base(
         client, knowledge_base_id, marker, user_id=owner_user_id
@@ -93,7 +118,7 @@ def _assert_no_queryable_result(
     detail = _response_detail(query)
     _check(
         query.status_code >= 500 and detail,
-        f"{context} must either return no record or fail visibly: "
+        f"{context} must either answer empty or fail visibly: "
         f"{query.status_code} {query.text}",
     )
     _log(
@@ -323,7 +348,7 @@ def _run_list_and_purge_scenario(
             f"knowledge base {knowledge_base_id}"
         )
         _purge_and_assert_empty(client, token, knowledge_base_id, owner_user_id)
-        _assert_no_queryable_result(
+        _assert_empty_query_result(
             client,
             token,
             knowledge_base_id,
@@ -374,7 +399,7 @@ def _run_drop_scenario(client: httpx.Client, token: str, owner_user_id: int) -> 
         _assert_no_chunks(
             client, token, knowledge_base_id, owner_user_id, "the dropped index"
         )
-        _assert_no_queryable_result(
+        _assert_dropped_query_result(
             client,
             token,
             knowledge_base_id,
