@@ -1038,6 +1038,31 @@ async function createCheckpointTaskFixture(
   return waitForNewTaskRow(control, knownTaskRows, 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK')
 }
 
+async function verifyLocalWorktreeSettings(control, worktreeId, worktreePath) {
+  await control.command('navigate', 'body', { value: '/settings/worktrees' })
+  await control.command('waitFor', '[data-testid="worktrees-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  // A local Executor never projects Worktree capability onto its device record,
+  // so the settings page must resolve support from the Runtime itself.
+  await control.command('waitFor', '[data-testid="worktrees-root-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="delete-worktree-button-${worktreeId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.text.includes(worktreePath),
+    `Worktree settings did not list the managed Worktree at ${worktreePath}`
+  )
+  await captureVerificationScreenshot(control, 'worktree-status-07-local-worktree-settings.png')
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', `[data-testid="runtime-local-task-row-${worktreeId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
 async function verifyWorktreeCreationStatus({
   composerSelector,
   control,
@@ -1258,6 +1283,8 @@ async function verifyWorktreeCreationStatus({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'worktree-status-06-fork-follow-up-complete.png')
+
+  await verifyLocalWorktreeSettings(control, worktreeTaskId, worktreePath)
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
   await withTimeout(
