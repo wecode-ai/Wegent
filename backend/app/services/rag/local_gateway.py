@@ -20,6 +20,10 @@ from app.services.rag.runtime_specs import (
 
 
 class LocalRagGateway:
+    # The local data plane builds storage and embedding clients from the
+    # resolved configuration, so the spec must carry it.
+    requires_resolved_configs = True
+
     def __init__(self) -> None:
         self._index_executor = index_document_local
         self._delete_executor = delete_document_index_local

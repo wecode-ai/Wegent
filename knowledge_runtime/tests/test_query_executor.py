@@ -613,6 +613,54 @@ class TestQueryExecutor:
         )
 
     @pytest.mark.asyncio
+    async def test_execute_returns_knowledge_base_and_document_reference(
+        self, query_request
+    ) -> None:
+        """A scoped query returns its knowledge base and document reference."""
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "Release checklist",
+                        "title": "release-notes",
+                        "score": 0.9,
+                        "metadata": {"doc_ref": "100"},
+                    }
+                ]
+            }
+        )
+        config_loader = _make_config_loader(_make_query_config(1))
+        query_request.knowledge_base_ids = [1]
+        query_request.scope = RetrievalScope(document_ids=[100])
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            result = await QueryExecutor(config_loader=config_loader).execute(
+                query_request
+            )
+
+        assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[100]
+        )
+        assert result.records[0].knowledge_base_id == 1
+        assert result.records[0].document_id == 100
+
+    @pytest.mark.asyncio
     async def test_extract_document_id_from_doc_ref(self) -> None:
         """Test document ID extraction from various doc_ref formats."""
         executor = QueryExecutor(config_loader=MagicMock())

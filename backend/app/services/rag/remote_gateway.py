@@ -64,6 +64,10 @@ def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
 
 
 class RemoteRagGateway:
+    # The remote request carries only the authorized references; the runtime
+    # resolves the retriever and embedding configuration itself.
+    requires_resolved_configs = False
+
     def __init__(
         self,
         *,

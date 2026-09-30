@@ -24,11 +24,15 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
+from app.schemas.knowledge import KnowledgeDocumentCreate
+from app.services.knowledge import search_execution
 from app.services.knowledge.indexing import run_document_indexing
+from app.services.knowledge.orchestrator import knowledge_orchestrator
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
+from app.services.rag.retrieval_service import RetrievalService
 from app.tasks.knowledge_tasks import index_document_task
-from shared.models import PresignedUrlContentRef
+from shared.models import PresignedUrlContentRef, RemoteIndexRequest, RetrievalScope
 from tests.utils.retrieval_resources import embedding_model_kind
 from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
 
@@ -296,3 +300,180 @@ def test_stale_generation_task_never_reaches_the_index_gateway(
     test_db.refresh(document)
     assert document.index_generation == 2
     assert document.index_status == DocumentIndexStatus.SUCCESS
+
+
+def test_create_and_rebuild_entries_drive_the_remote_index_request(
+    test_db: Session, test_user: User, mocker
+) -> None:
+    """Create and rebuild entries enqueue generations the runtime consumes.
+
+    The chain is: product entry -> Celery task parameters -> the request the
+    task sends -> the runtime request model. ``knowledge_runtime`` consumes that
+    same model in its own handling test; the two services share the wire
+    contract, not a process.
+    """
+    kb, _ = _prepare_indexable_kb(test_db, test_user)
+    mocker.patch.object(settings, "RAG_RUNTIME_MODE", "remote")
+    dispatched: list[dict[str, Any]] = []
+
+    def _capture(**kwargs: Any) -> MagicMock:
+        dispatched.append(kwargs)
+        return MagicMock(id=f"task-{len(dispatched)}")
+
+    mocker.patch(
+        "app.tasks.knowledge_tasks.index_document_task.delay",
+        side_effect=_capture,
+    )
+
+    created = knowledge_orchestrator.create_document_from_attachment(
+        db=test_db,
+        user=test_user,
+        knowledge_base_id=kb.id,
+        data=KnowledgeDocumentCreate(
+            attachment_id=23,
+            name="release-notes",
+            file_extension="md",
+            file_size=128,
+        ),
+        trigger_indexing=True,
+        trigger_summary=False,
+    )
+    # The first index finished, so the rebuild entry advances the generation.
+    created_row = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == created.id)
+        .one()
+    )
+    created_row.index_status = DocumentIndexStatus.SUCCESS
+    test_db.commit()
+    rebuilt = knowledge_orchestrator.reindex_document(
+        db=test_db,
+        user=test_user,
+        document_id=created.id,
+        trigger_summary=False,
+    )
+
+    assert rebuilt["skipped"] is False
+    assert rebuilt["index_generation"] == 2
+    assert len(dispatched) == 2
+    create_task, rebuild_task = dispatched
+    assert create_task["index_generation"] == 1
+    assert rebuild_task["index_generation"] == 2
+    assert rebuild_task["document_id"] == created.id
+    assert rebuild_task["knowledge_base_id"] == str(kb.id)
+    assert rebuild_task["retriever_name"] == "retriever-a"
+    assert rebuild_task["embedding_model_name"] == "embedding-a"
+    assert rebuild_task["user_id"] == test_user.id
+
+    mocker.patch(
+        "app.services.rag.remote_gateway.SessionLocal", return_value=MagicMock()
+    )
+    mocker.patch(
+        "app.services.rag.remote_gateway.build_content_ref_for_attachment",
+        return_value=PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/release-notes.md",
+        ),
+    )
+    mocker.patch(
+        "app.services.rag.remote_gateway._get_attachment_source_metadata",
+        return_value=("release-notes.md", ".md"),
+    )
+    post = _patch_remote_request(mocker)
+    local_index = mocker.patch.object(
+        LocalRagGateway,
+        "index_document",
+        AsyncMock(side_effect=AssertionError("local index must not run")),
+    )
+
+    task_kwargs = {
+        key: value for key, value in rebuild_task.items() if key != "index_generation"
+    }
+    result = run_document_indexing(**task_kwargs, db=test_db)
+
+    assert result["status"] == "success"
+    index_calls = [
+        call
+        for call in post.await_args_list
+        if call.args[0].endswith("/internal/rag/index")
+    ]
+    assert len(index_calls) == 1
+    # The payload is the runtime's own request model, so the runtime processor
+    # consumes exactly what the task sent.
+    request = RemoteIndexRequest.model_validate(index_calls[0].kwargs["json"])
+    assert request.knowledge_base_id == kb.id
+    assert request.document_id == created.id
+    assert request.file_extension == ".md"
+    assert request.authorized_resources is not None
+    assert request.authorized_resources.knowledge_base_id == kb.id
+    assert request.authorized_resources.index_owner_user_id == test_user.id
+    assert request.authorized_resources.retriever.name == "retriever-a"
+    assert request.authorized_resources.embedding_model.name == "embedding-a"
+    local_index.assert_not_called()
+
+
+async def test_product_query_entry_returns_the_indexed_document_reference(
+    test_db: Session, test_user: User, mocker, monkeypatch
+) -> None:
+    """A scoped query from the product entry returns the document reference."""
+    kb, document = _prepare_indexable_kb(test_db, test_user)
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "remote")
+    monkeypatch.setattr(search_execution, "SessionLocal", lambda: nullcontext(test_db))
+    monkeypatch.setattr(
+        RetrievalService,
+        "decide_route_mode_for_chat_shell",
+        lambda *args, **kwargs: "rag_retrieval",
+    )
+    remote_query = mocker.patch.object(
+        RemoteRagGateway,
+        "query",
+        AsyncMock(
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "Release checklist",
+                        "title": "release-notes",
+                        "score": 0.9,
+                        "metadata": {"doc_ref": str(document.id)},
+                        "knowledge_base_id": kb.id,
+                        "document_id": document.id,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 12,
+            }
+        ),
+    )
+    local_query = mocker.patch.object(
+        LocalRagGateway,
+        "query",
+        AsyncMock(side_effect=AssertionError("local query must not run")),
+    )
+
+    result = await search_execution.knowledge_search_runner.retrieve(
+        user_id=test_user.id,
+        task_id=None,
+        knowledge_base_id=kb.id,
+        query="release checklist",
+        max_results=10,
+        document_ids=[document.id],
+        folder_ids=None,
+        include_subfolders=True,
+        route_mode="rag_retrieval",
+        context_window=128000,
+        used_context_tokens=0,
+        reserved_output_tokens=4096,
+        context_buffer_ratio=0.1,
+        max_direct_chunks=500,
+        search_hints=None,
+    )
+
+    spec = remote_query.await_args.args[0]
+    assert spec.scope == RetrievalScope(document_ids=[document.id])
+    assert spec.authorized_resources[0].knowledge_base_id == kb.id
+    assert spec.authorized_resources[0].index_owner_user_id == test_user.id
+    assert result["knowledge_base_id"] == kb.id
+    assert result["records"][0]["knowledge_base_id"] == kb.id
+    assert result["records"][0]["document_id"] == document.id
+    local_query.assert_not_called()

@@ -14,6 +14,12 @@ from app.services.rag.runtime_specs import (
 
 
 class RagGateway(Protocol):
+    # Whether this gateway consumes the fully resolved retriever and embedding
+    # configuration in the runtime spec. The remote gateway only sends the
+    # references it was given, so callers can skip resolving configuration that
+    # knowledge_runtime resolves again.
+    requires_resolved_configs: bool
+
     async def index_document(
         self,
         spec: IndexRuntimeSpec,

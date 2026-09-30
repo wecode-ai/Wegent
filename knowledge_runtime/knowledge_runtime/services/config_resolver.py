@@ -96,7 +96,10 @@ class ConfigResolver:
         resources Backend authorized for this call may be loaded. The shared
         module composes and validates the stored configuration inside that
         authorized set, so a knowledge base edited to a resource outside the set
-        fails instead of silently indexing with it.
+        fails instead of silently indexing with it. The authorized references
+        must also belong to the requested knowledge base and its owner; a
+        reference aimed at another target is rejected before any content is
+        fetched or indexed.
         """
         if authorized is None:
             raise ConfigResolutionError(
@@ -105,6 +108,7 @@ class ConfigResolver:
                 "retrieval resources",
             )
         kb = self._get_knowledge_base(db, knowledge_base_id)
+        self._require_authorized_target(kb, authorized=authorized)
         index_owner_user_id = authorized.index_owner_user_id
         user_name = self._get_user_name(db, user_id)
 
@@ -128,6 +132,27 @@ class ConfigResolver:
             splitter_config=splitter_config,
             user_name=user_name,
         )
+
+    @staticmethod
+    def _require_authorized_target(
+        kb: Kind,
+        *,
+        authorized: RemoteAuthorizedRetrievalResources,
+    ) -> None:
+        """Reject references that were not authorized for this knowledge base."""
+        if authorized.knowledge_base_id != kb.id:
+            raise ConfigResolutionError(
+                "authorization_mismatch",
+                f"Authorized resources target knowledge base "
+                f"{authorized.knowledge_base_id}, not {kb.id}",
+            )
+        if authorized.index_owner_user_id != kb.user_id:
+            raise ConfigResolutionError(
+                "authorization_mismatch",
+                f"Authorized resources belong to owner "
+                f"{authorized.index_owner_user_id}, but knowledge base "
+                f"{kb.id} is owned by {kb.user_id}",
+            )
 
     def _require_stored_config_in_authorized_set(
         self,

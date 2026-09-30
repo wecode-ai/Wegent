@@ -173,6 +173,52 @@ class TestResolveIndexConfig:
 
         assert exc_info.value.code == "config_invalid"
 
+    def test_rejects_authorized_resources_for_another_knowledge_base(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """References authorized for another knowledge base never index this one."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+        authorized = _authorized_entry(knowledge_base_id=2)
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_retriever_kind") as get_retriever,
+        ):
+            with pytest.raises(ConfigResolutionError) as exc_info:
+                resolver.resolve_index_config(
+                    mock_db,
+                    knowledge_base_id=1,
+                    user_id=42,
+                    document_id=100,
+                    authorized=authorized,
+                )
+
+        assert exc_info.value.code == "authorization_mismatch"
+        get_retriever.assert_not_called()
+
+    def test_rejects_authorized_owner_that_is_not_the_kb_owner(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """References authorized for another owner never index this knowledge base."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+        authorized = _authorized_entry(index_owner_user_id=99)
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_retriever_kind") as get_retriever,
+        ):
+            with pytest.raises(ConfigResolutionError) as exc_info:
+                resolver.resolve_index_config(
+                    mock_db,
+                    knowledge_base_id=1,
+                    user_id=42,
+                    document_id=100,
+                    authorized=authorized,
+                )
+
+        assert exc_info.value.code == "authorization_mismatch"
+        get_retriever.assert_not_called()
+
 
 class TestResolveQueryConfig:
     """Tests for ConfigResolver.resolve_query_config."""

@@ -289,6 +289,60 @@ def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
             kind="Model", name="embed-a", namespace="default"
         ),
     )
+    assert spec.retriever_config is not None
+    assert spec.embedding_model_config is not None
+
+
+def test_build_index_runtime_spec_skips_resolved_configs_for_remote():
+    """The remote request carries references, not configuration it will drop."""
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch(
+            "app.services.rag.runtime_resolver.get_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=True),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="retriever-a", kind="Retriever", namespace="default"
+            ),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource",
+            return_value=RetrievalResource(
+                name="embed-a",
+                kind="Model",
+                category="embedding",
+                namespace="default",
+            ),
+        ),
+        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
+        patch.object(
+            resolver, "_build_resolved_embedding_model_config"
+        ) as build_embedding,
+    ):
+        spec = resolver.build_index_runtime_spec(
+            db=db,
+            knowledge_base_id="7",
+            attachment_id=11,
+            retriever_name="retriever-a",
+            retriever_namespace="default",
+            embedding_model_name="embed-a",
+            embedding_model_namespace="default",
+            user_id=9,
+            user_name="alice",
+            document_id=99,
+            splitter_config_dict=None,
+            resolve_execution_configs=False,
+        )
+
+    build_retriever.assert_not_called()
+    build_embedding.assert_not_called()
+    assert spec.retriever_config is None
+    assert spec.embedding_model_config is None
+    assert spec.authorized_resources is not None
 
 
 def test_build_index_runtime_spec_rejects_owner_without_resource() -> None:

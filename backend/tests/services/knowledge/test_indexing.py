@@ -5,7 +5,16 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.config import settings
 from app.services.knowledge.indexing import run_document_indexing
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.remote_gateway import RemoteRagGateway
+
+
+def test_index_gateways_declare_whether_they_consume_resolved_configs() -> None:
+    """Only the local data plane consumes the resolved retrieval configuration."""
+    assert LocalRagGateway.requires_resolved_configs is True
+    assert RemoteRagGateway.requires_resolved_configs is False
 
 
 def test_run_document_indexing_closes_owned_session_before_gateway_call() -> None:

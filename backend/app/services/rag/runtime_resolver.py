@@ -111,7 +111,15 @@ class RagRuntimeResolver:
         document_id: int | None,
         splitter_config_dict: dict | None,
         kb_index_info: KnowledgeBaseIndexInfo | None = None,
+        resolve_execution_configs: bool = True,
     ) -> IndexRuntimeSpec:
+        """Build the index spec one gateway executes.
+
+        ``resolve_execution_configs`` is set from the gateway the caller will
+        execute through: the local data plane consumes the fully resolved
+        retriever and embedding configuration, while the remote gateway only
+        sends the authorized references and leaves configuration to the runtime.
+        """
         try:
             parsed_knowledge_base_id = int(knowledge_base_id)
         except ValueError as exc:
@@ -133,6 +141,22 @@ class RagRuntimeResolver:
             knowledge_base_id=parsed_knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
         )
+        retriever_config = None
+        embedding_model_config = None
+        if resolve_execution_configs:
+            retriever_config = self._build_resolved_retriever_config(
+                db=db,
+                user_id=kb_info.index_owner_user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+            )
+            embedding_model_config = self._build_resolved_embedding_model_config(
+                db=db,
+                user_id=kb_info.index_owner_user_id,
+                model_name=embedding_model_name,
+                model_namespace=embedding_model_namespace,
+                user_name=user_name,
+            )
         return IndexRuntimeSpec(
             knowledge_base_id=parsed_knowledge_base_id,
             document_id=document_id,
@@ -143,19 +167,8 @@ class RagRuntimeResolver:
             embedding_model_namespace=embedding_model_namespace,
             authorized_resources=authorized_resources,
             source=IndexSource(source_type="attachment", attachment_id=attachment_id),
-            retriever_config=self._build_resolved_retriever_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            ),
-            embedding_model_config=self._build_resolved_embedding_model_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                model_name=embedding_model_name,
-                model_namespace=embedding_model_namespace,
-                user_name=user_name,
-            ),
+            retriever_config=retriever_config,
+            embedding_model_config=embedding_model_config,
             splitter_config=splitter_config_dict,
             user_name=user_name,
         )

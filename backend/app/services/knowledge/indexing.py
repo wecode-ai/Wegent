@@ -79,6 +79,7 @@ class _IndexingPreparation:
     delete_spec: Any | None
     kb_info: KnowledgeBaseIndexInfo | None
     skip_result: dict | None
+    gateway: Any | None = None
 
 
 def normalize_document_extension(file_extension: Optional[str]) -> str:
@@ -299,6 +300,7 @@ def _prepare_indexing_runtime(
         },
     )
 
+    index_gateway = get_index_gateway()
     runtime_spec = runtime_resolver.build_index_runtime_spec(
         db=db,
         knowledge_base_id=knowledge_base_id,
@@ -315,6 +317,7 @@ def _prepare_indexing_runtime(
             splitter_config_dict=splitter_config_dict,
         ),
         kb_index_info=kb_info,
+        resolve_execution_configs=index_gateway.requires_resolved_configs,
     )
 
     delete_spec = None
@@ -358,11 +361,13 @@ def _prepare_indexing_runtime(
         delete_spec=delete_spec,
         kb_info=kb_info,
         skip_result=None,
+        gateway=index_gateway,
     )
 
 
 def _run_indexing_gateway_calls(
     *,
+    gateway: Any,
     runtime_spec: Any,
     delete_spec: Any | None,
     document_id: Optional[int],
@@ -376,12 +381,11 @@ def _run_indexing_gateway_calls(
     # loop with one we are about to close, breaking any subsequent async work on
     # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
-        rag_gateway = get_index_gateway()
 
         if delete_spec is not None:
             try:
                 delete_result = loop.run_until_complete(
-                    rag_gateway.delete_document_index(delete_spec, db=None)
+                    gateway.delete_document_index(delete_spec, db=None)
                 )
                 deleted_chunks = delete_result.get("deleted_chunks", 0)
                 if deleted_chunks > 0:
@@ -435,9 +439,7 @@ def _run_indexing_gateway_calls(
                 "embedding_model_namespace": embedding_model_namespace,
             },
         )
-        result = loop.run_until_complete(
-            rag_gateway.index_document(runtime_spec, db=None)
-        )
+        result = loop.run_until_complete(gateway.index_document(runtime_spec, db=None))
         logger.info(
             "[Indexing] gateway index_document returned: status=%s indexed_count=%s index_name=%s",
             result.get("status"),
@@ -556,6 +558,7 @@ def run_document_indexing(
 
     try:
         result = _run_indexing_gateway_calls(
+            gateway=preparation.gateway,
             runtime_spec=preparation.runtime_spec,
             delete_spec=preparation.delete_spec,
             document_id=document_id,
