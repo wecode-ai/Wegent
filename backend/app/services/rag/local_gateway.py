@@ -75,7 +75,7 @@ class LocalRagGateway:
     ) -> dict:
         # Only standard retrieval runs remote; auto and direct injection keep
         # their existing local routing.
-        if getattr(spec, "route_mode", "auto") == "rag_retrieval":
+        if spec.route_mode == "rag_retrieval":
             self._reject_remote_operation("query")
         if db is None:
             raise ValueError("db is required for LocalRagGateway.query")
