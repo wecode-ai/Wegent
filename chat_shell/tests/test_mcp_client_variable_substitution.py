@@ -79,6 +79,24 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["server"]
         assert conn["url"] == "https://gitlab.example.com/mcp/sse"
 
+    def test_empty_backend_url_uses_task_api_domain(self, monkeypatch) -> None:
+        """${{backend_url}} should resolve to the runtime task API domain."""
+        monkeypatch.delenv("EXECUTOR_MODE", raising=False)
+        monkeypatch.delenv("WEGENT_BACKEND_URL", raising=False)
+        monkeypatch.setenv("TASK_API_DOMAIN", "http://backend:8000")
+        config = {
+            "wegent-knowledge": {
+                "type": "streamable-http",
+                "url": "${{backend_url}}/mcp/knowledge/sse",
+            }
+        }
+        task_data = ExecutionRequest(backend_url="")
+
+        connections = build_connections(config, task_data)
+
+        conn = connections["wegent-knowledge"]
+        assert conn["url"] == "http://backend:8000/mcp/knowledge/sse"
+
     def test_no_task_data_preserves_placeholders(self) -> None:
         """When task_data is None, placeholders should remain in the config."""
         config = {
