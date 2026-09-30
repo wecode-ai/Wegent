@@ -29,6 +29,12 @@ its own status and detail instead of being masked by a local success. A runtime
 or conversion failure must stay visible with its own status and detail rather
 than by a local success.
 
+The management entries share the same data plane: listing the indexed chunks,
+clearing a knowledge base's chunks, and dropping its physical index run in the
+runtime, the chunk and query results after each operation match the operation,
+and a runtime failure for any of them stays visible instead of being masked by a
+local success.
+
 Run from ``backend/`` after the CI services are up:
 
     uv run --no-sync python tests/e2e/knowledge_remote_index.py
@@ -39,6 +45,7 @@ import asyncio
 import uuid
 
 import httpx
+from knowledge_remote_index_admin import run_admin_scenarios
 from knowledge_remote_index_delete import (
     run_delete_failure_scenario,
     run_document_delete_scenario,
@@ -754,6 +761,7 @@ def run() -> None:
         _run_plain_document_scenario(client, token, owner_user_id)
         _run_converted_document_scenario(client, token, owner_user_id)
         _run_conversion_failure_scenario(client, token, owner_user_id)
+        run_admin_scenarios(client, token, owner_user_id)
         run_document_delete_scenario(client, token, owner_user_id)
         run_delete_failure_scenario(client, token, owner_user_id)
         _run_failure_scenario(client, token, owner_user_id)

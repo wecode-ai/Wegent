@@ -1220,11 +1220,13 @@ class KnowledgeService:
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
         try:
+            gateway = _get_delete_gateway()
             return RagRuntimeResolver().build_public_purge_index_runtime_spec(
                 db=db,
                 knowledge_base_id=knowledge_base.id,
                 user_id=user_id,
                 user_name=None,
+                resolve_execution_configs=gateway.requires_resolved_configs,
             )
         except Exception as exc:
             batch_logger.warning(

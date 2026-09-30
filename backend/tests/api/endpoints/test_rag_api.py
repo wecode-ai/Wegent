@@ -4,6 +4,8 @@
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     DropKnowledgeIndexRuntimeSpec,
@@ -129,6 +131,7 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
 ):
     runtime_spec = MagicMock()
     gateway = AsyncMock()
+    gateway.requires_resolved_configs = True
     gateway.list_chunks.return_value = {
         "chunks": [
             {
@@ -162,7 +165,7 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
-            "app.api.endpoints.rag.get_query_gateway",
+            "app.api.endpoints.rag.get_list_chunks_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
     ):
@@ -193,6 +196,7 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
         user_name=ANY,
         max_chunks=10000,
         query="list_index_chunks",
+        resolve_execution_configs=True,
     )
     mock_get_gateway.assert_called_once()
     gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
@@ -212,6 +216,7 @@ def test_public_rag_index_contents_delete_routes_runtime_spec(
         },
     )
     gateway = AsyncMock()
+    gateway.requires_resolved_configs = False
     gateway.purge_knowledge_index.return_value = {
         "status": "deleted",
         "knowledge_id": "7",
@@ -244,6 +249,7 @@ def test_public_rag_index_contents_delete_routes_runtime_spec(
         knowledge_base_id=7,
         user_id=ANY,
         user_name=ANY,
+        resolve_execution_configs=False,
     )
     mock_get_gateway.assert_called_once()
     gateway.purge_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
@@ -263,6 +269,7 @@ def test_public_rag_index_delete_routes_runtime_spec(
         },
     )
     gateway = AsyncMock()
+    gateway.requires_resolved_configs = False
     gateway.drop_knowledge_index.return_value = {
         "status": "dropped",
         "knowledge_id": "7",
@@ -295,6 +302,7 @@ def test_public_rag_index_delete_routes_runtime_spec(
         knowledge_base_id=7,
         user_id=ANY,
         user_name=ANY,
+        resolve_execution_configs=False,
     )
     mock_get_gateway.assert_called_once()
     gateway.drop_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
@@ -346,7 +354,7 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
             return_value=gateway,
         ),
         patch(
-            "app.api.endpoints.rag.LocalRagGateway.query",
+            "app.services.rag.local_gateway.LocalRagGateway.query",
             new_callable=AsyncMock,
         ) as mock_local_query,
     ):
@@ -396,3 +404,102 @@ def test_public_rag_chunks_rejects_page_ranges_crossing_scan_limit(
 
     assert response.status_code == 400
     assert "chunk scan limit" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "patch_target", "builder", "local_method"),
+    [
+        (
+            "get",
+            "/api/rag/chunks?knowledge_id=7",
+            "app.api.endpoints.rag.get_list_chunks_gateway",
+            "build_public_list_chunks_runtime_spec",
+            "list_chunks",
+        ),
+        (
+            "delete",
+            "/api/rag/index-contents?knowledge_id=7",
+            "app.api.endpoints.rag.get_delete_gateway",
+            "build_public_purge_index_runtime_spec",
+            "purge_knowledge_index",
+        ),
+        (
+            "delete",
+            "/api/rag/index?knowledge_id=7",
+            "app.api.endpoints.rag.get_delete_gateway",
+            "build_public_drop_index_runtime_spec",
+            "drop_knowledge_index",
+        ),
+    ],
+)
+def test_public_rag_admin_entries_surface_remote_failure_without_local_fallback(
+    test_client,
+    test_token: str,
+    method: str,
+    url: str,
+    patch_target: str,
+    builder: str,
+    local_method: str,
+):
+    """A retryable runtime failure must reach the caller, not the local plane."""
+
+    gateway = AsyncMock()
+    gateway.requires_resolved_configs = False
+    setattr(
+        gateway,
+        local_method,
+        AsyncMock(
+            side_effect=RemoteRagGatewayError(
+                "knowledge runtime unavailable",
+                code="runtime_unavailable",
+                retryable=True,
+                status_code=503,
+            )
+        ),
+    )
+
+    with (
+        patch(
+            f"app.api.endpoints.rag.runtime_resolver.{builder}",
+            return_value=MagicMock(),
+        ),
+        patch(patch_target, return_value=gateway),
+        patch(
+            f"app.services.rag.local_gateway.LocalRagGateway.{local_method}",
+            new_callable=AsyncMock,
+        ) as mock_local,
+    ):
+        response = getattr(test_client, method)(url, headers=_auth_header(test_token))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "knowledge runtime unavailable"
+    mock_local.assert_not_called()
+
+
+def test_public_rag_index_delete_keeps_conflict_for_remote_shared_strategy(
+    test_client,
+    test_token: str,
+):
+    """The runtime's shared-strategy refusal still surfaces as a conflict."""
+
+    gateway = AsyncMock()
+    gateway.requires_resolved_configs = False
+    gateway.drop_knowledge_index.side_effect = RemoteRagGatewayError(
+        "Physical index drop is only allowed for 'per_dataset' index strategy",
+        code="invalid_request",
+        status_code=400,
+    )
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_drop_index_runtime_spec",
+            return_value=MagicMock(),
+        ),
+        patch("app.api.endpoints.rag.get_delete_gateway", return_value=gateway),
+    ):
+        response = test_client.delete(
+            "/api/rag/index?knowledge_id=7", headers=_auth_header(test_token)
+        )
+
+    assert response.status_code == 409
+    assert "only allowed" in response.json()["detail"]

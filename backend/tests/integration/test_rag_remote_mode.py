@@ -399,3 +399,71 @@ def test_delete_document_switches_delete_mode_independently(
         db=test_db,
     )
     mock_other_gateway.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "runtime_mode", "builder", "gateway_method", "payload"),
+    [
+        (
+            "get",
+            "/api/rag/chunks?knowledge_id=7",
+            {"default": "local", "list_chunks": "remote"},
+            "build_public_list_chunks_runtime_spec",
+            "list_chunks",
+            {"chunks": [], "total": 0},
+        ),
+        (
+            "delete",
+            "/api/rag/index-contents?knowledge_id=7",
+            {"default": "local", "delete": "remote"},
+            "build_public_purge_index_runtime_spec",
+            "purge_knowledge_index",
+            {"status": "deleted", "knowledge_id": "7", "deleted_chunks": 2},
+        ),
+        (
+            "delete",
+            "/api/rag/index?knowledge_id=7",
+            {"default": "local", "delete": "remote"},
+            "build_public_drop_index_runtime_spec",
+            "drop_knowledge_index",
+            {"status": "dropped", "knowledge_id": "7", "index_name": "kb_7"},
+        ),
+    ],
+)
+def test_public_rag_admin_entries_switch_runtime_mode_independently(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch,
+    method: str,
+    url: str,
+    runtime_mode,
+    builder: str,
+    gateway_method: str,
+    payload: dict,
+) -> None:
+    """Each public admin entry executes on the data plane its mode selects."""
+
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
+
+    with (
+        patch(
+            f"app.api.endpoints.rag.runtime_resolver.{builder}",
+            return_value=MagicMock(),
+        ),
+        patch(
+            f"app.services.rag.remote_gateway.RemoteRagGateway.{gateway_method}",
+            new_callable=AsyncMock,
+            return_value=payload,
+        ) as mock_remote,
+        patch(
+            f"app.services.rag.local_gateway.LocalRagGateway.{gateway_method}",
+            new_callable=AsyncMock,
+        ) as mock_local,
+    ):
+        response = getattr(test_client, method)(
+            url, headers={"Authorization": f"Bearer {test_token}"}
+        )
+
+    assert response.status_code == 200
+    mock_remote.assert_awaited_once()
+    mock_local.assert_not_called()

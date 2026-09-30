@@ -96,6 +96,7 @@ class LocalRagGateway:
         *,
         db: Session,
     ) -> dict:
+        self._reject_remote_operation("delete")
         return await self._purge_executor(spec, db=db)
 
     async def drop_knowledge_index(
@@ -104,6 +105,7 @@ class LocalRagGateway:
         *,
         db: Session,
     ) -> dict:
+        self._reject_remote_operation("delete")
         return await self._drop_executor(spec, db=db)
 
     async def list_chunks(
@@ -112,6 +114,7 @@ class LocalRagGateway:
         *,
         db: Session | None = None,
     ) -> dict:
+        self._reject_remote_operation("list_chunks")
         if db is None:
             raise ValueError("db is required for LocalRagGateway.list_chunks")
         return await self._list_chunks_executor(spec, db=db)

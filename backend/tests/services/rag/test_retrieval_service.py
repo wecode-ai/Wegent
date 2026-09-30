@@ -347,6 +347,7 @@ class TestGetAllChunksFromKnowledgeBase:
         )
 
         mock_gateway = MagicMock()
+        mock_gateway.requires_resolved_configs = True
         mock_gateway.list_chunks = AsyncMock(
             return_value={
                 "chunks": [{"content": "chunk", "title": "doc-1", "doc_ref": "1"}],
@@ -391,6 +392,7 @@ class TestGetAllChunksFromKnowledgeBase:
             max_chunks=50,
             query="debug query",
             metadata_condition=None,
+            resolve_execution_configs=True,
         )
         mock_get_gateway.assert_called_once()
         mock_gateway.list_chunks.assert_awaited_once_with(spec, db=db_session)

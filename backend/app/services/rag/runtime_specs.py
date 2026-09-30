@@ -113,19 +113,21 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
 class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    # The remote data plane resolves the retriever itself, so the resolved
+    # storage configuration only travels with the deprecated local data plane.
+    retriever_config: Optional[RuntimeRetrieverConfig] = None
 
 
 class DropKnowledgeIndexRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    retriever_config: Optional[RuntimeRetrieverConfig] = None
 
 
 class ListChunksRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    retriever_config: Optional[RuntimeRetrieverConfig] = None
     max_chunks: int = 10000
     query: Optional[str] = None
     metadata_condition: Optional[dict] = None

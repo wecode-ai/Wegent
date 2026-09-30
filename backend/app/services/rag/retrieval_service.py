@@ -1040,7 +1040,11 @@ class RetrievalService:
         from app.services.rag.gateway_factory import get_list_chunks_gateway
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
-        # Build runtime spec via resolver
+        # Use gateway to get chunks (supports local and remote modes)
+        rag_gateway = get_list_chunks_gateway()
+
+        # Build runtime spec via resolver. The remote gateway resolves the
+        # retriever itself, so only the deprecated local plane gets the config.
         runtime_resolver = RagRuntimeResolver()
         spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
@@ -1050,6 +1054,7 @@ class RetrievalService:
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
+            resolve_execution_configs=rag_gateway.requires_resolved_configs,
         )
 
         query_log = f", query={query[:50]}..." if query else ""
@@ -1060,8 +1065,6 @@ class RetrievalService:
             query_log,
         )
 
-        # Use gateway to get chunks (supports local and remote modes)
-        rag_gateway = get_list_chunks_gateway()
         result = await rag_gateway.list_chunks(spec, db=db)
 
         chunks = result.get("chunks", [])

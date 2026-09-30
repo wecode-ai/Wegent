@@ -311,3 +311,66 @@ async def test_local_gateway_query_still_serves_non_retrieval_routes(monkeypatch
 
     assert result["mode"] == "direct_injection"
     gateway._retrieval_executor.assert_awaited_once_with(spec, db=db)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_purge_knowledge_index_refuses_remote_configured_operation(
+    monkeypatch,
+):
+    """A remote-configured purge must fail before any local storage work."""
+
+    monkeypatch.setattr(
+        settings, "RAG_RUNTIME_MODE", {"default": "local", "delete": "remote"}
+    )
+    gateway = LocalRagGateway()
+    gateway._purge_executor = AsyncMock(
+        side_effect=AssertionError("local purge must not run")
+    )
+    spec = PurgeKnowledgeRuntimeSpec(knowledge_base_id=1, index_owner_user_id=7)
+
+    with pytest.raises(LocalDataPlaneDisabledError, match="delete"):
+        await gateway.purge_knowledge_index(spec, db=MagicMock())
+
+    gateway._purge_executor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_drop_knowledge_index_refuses_remote_configured_operation(
+    monkeypatch,
+):
+    """A remote-configured drop must fail before any local storage work."""
+
+    monkeypatch.setattr(
+        settings, "RAG_RUNTIME_MODE", {"default": "local", "delete": "remote"}
+    )
+    gateway = LocalRagGateway()
+    gateway._drop_executor = AsyncMock(
+        side_effect=AssertionError("local drop must not run")
+    )
+    spec = DropKnowledgeIndexRuntimeSpec(knowledge_base_id=1, index_owner_user_id=7)
+
+    with pytest.raises(LocalDataPlaneDisabledError, match="delete"):
+        await gateway.drop_knowledge_index(spec, db=MagicMock())
+
+    gateway._drop_executor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_list_chunks_refuses_remote_configured_operation(
+    monkeypatch,
+):
+    """A remote-configured chunk listing must fail before local storage work."""
+
+    monkeypatch.setattr(
+        settings, "RAG_RUNTIME_MODE", {"default": "local", "list_chunks": "remote"}
+    )
+    gateway = LocalRagGateway()
+    gateway._list_chunks_executor = AsyncMock(
+        side_effect=AssertionError("local chunk listing must not run")
+    )
+    spec = ListChunksRuntimeSpec(knowledge_base_id=1, index_owner_user_id=7)
+
+    with pytest.raises(LocalDataPlaneDisabledError, match="list_chunks"):
+        await gateway.list_chunks(spec, db=MagicMock())
+
+    gateway._list_chunks_executor.assert_not_called()

@@ -592,6 +592,90 @@ def test_build_public_list_chunks_runtime_spec_carries_metadata_condition() -> N
     }
 
 
+def _list_chunks_knowledge_base() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=7,
+        user_id=42,
+        namespace="default",
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                }
+            }
+        },
+    )
+
+
+def test_build_public_list_chunks_runtime_spec_skips_discarded_retriever_config() -> (
+    None
+):
+    """The remote chunk listing must not build the config the request drops."""
+
+    resolver = RagRuntimeResolver()
+    kb = _list_chunks_knowledge_base()
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
+    ):
+        spec = resolver.build_public_list_chunks_runtime_spec(
+            db=MagicMock(),
+            knowledge_base_id=7,
+            user_id=9,
+            user_name="alice",
+            max_chunks=500,
+            query="list_index_chunks",
+            resolve_execution_configs=False,
+        )
+
+    build_retriever.assert_not_called()
+    assert spec.retriever_config is None
+    assert spec.index_owner_user_id == 42
+
+
+@pytest.mark.parametrize("spec_type", ["purge", "drop"])
+def test_build_public_admin_runtime_spec_skips_discarded_retriever_config(
+    spec_type: str,
+) -> None:
+    """The remote admin operations must not build the config they drop."""
+
+    resolver = RagRuntimeResolver()
+    kb = _list_chunks_knowledge_base()
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
+    ):
+        if spec_type == "purge":
+            spec = resolver.build_public_purge_index_runtime_spec(
+                db=MagicMock(),
+                knowledge_base_id=7,
+                user_id=9,
+                user_name="alice",
+                resolve_execution_configs=False,
+            )
+        else:
+            spec = resolver.build_public_drop_index_runtime_spec(
+                db=MagicMock(),
+                knowledge_base_id=7,
+                user_id=9,
+                user_name="alice",
+                resolve_execution_configs=False,
+            )
+
+    build_retriever.assert_not_called()
+    assert spec.retriever_config is None
+    assert spec.index_owner_user_id == 42
+
+
 def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> None:
     resolver = RagRuntimeResolver()
     retriever = SimpleNamespace(

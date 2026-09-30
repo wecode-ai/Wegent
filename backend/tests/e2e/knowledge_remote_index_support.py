@@ -204,6 +204,22 @@ def _point_retriever_at(client: httpx.Client, token: str, name: str, url: str) -
     )
 
 
+def _create_retriever_only(
+    client: httpx.Client, token: str, name: str, url: str
+) -> None:
+    """Recreate one retriever without touching the model of the same name."""
+
+    response = client.post(
+        "/api/retrievers",
+        headers=_auth_headers(token),
+        json=_retriever_payload(name, url),
+    )
+    _check(
+        response.status_code < 300,
+        f"recreating the retriever failed: {response.text}",
+    )
+
+
 def _create_knowledge_base(
     client: httpx.Client, token: str, name: str, resource_name: str
 ) -> dict[str, Any]:
@@ -788,3 +804,147 @@ def _delete_scenario_fixtures(
     _delete_document(client, token, document_id)
     _delete_knowledge_base(client, token, knowledge_base_id)
     _delete_retrieval_resources(client, token, resource_name)
+
+
+def _public_list_chunks(
+    client: httpx.Client,
+    token: str,
+    knowledge_base_id: int,
+    *,
+    page: int = 1,
+    page_size: int = 100,
+) -> httpx.Response:
+    """List a knowledge base's chunks through the public management entry."""
+
+    return client.get(
+        "/api/rag/chunks",
+        headers=_auth_headers(token),
+        params={
+            "knowledge_id": knowledge_base_id,
+            "page": page,
+            "page_size": page_size,
+        },
+    )
+
+
+def _public_purge_index(
+    client: httpx.Client, token: str, knowledge_base_id: int
+) -> httpx.Response:
+    """Clear every indexed chunk through the public management entry."""
+
+    return client.delete(
+        "/api/rag/index-contents",
+        headers=_auth_headers(token),
+        params={"knowledge_id": knowledge_base_id},
+    )
+
+
+def _public_drop_index(
+    client: httpx.Client, token: str, knowledge_base_id: int
+) -> httpx.Response:
+    """Drop the physical index through the public management entry."""
+
+    return client.delete(
+        "/api/rag/index",
+        headers=_auth_headers(token),
+        params={"knowledge_id": knowledge_base_id},
+    )
+
+
+def _runtime_list_chunks(
+    knowledge_base_id: int,
+    owner_user_id: int,
+    *,
+    max_chunks: int = 1000,
+) -> httpx.Response:
+    """Read the runtime store's chunks directly, bypassing the Backend plane."""
+
+    _check(INTERNAL_SERVICE_TOKEN, "the internal service token is required")
+    return httpx.post(
+        f"{KNOWLEDGE_RUNTIME_URL}/internal/rag/all-chunks",
+        headers={"Authorization": f"Bearer {INTERNAL_SERVICE_TOKEN}"},
+        timeout=60.0,
+        json={
+            "knowledge_base_id": knowledge_base_id,
+            "user_id": owner_user_id,
+            "max_chunks": max_chunks,
+            "query": "list_index_chunks",
+        },
+    )
+
+
+def _response_detail(response: httpx.Response) -> str:
+    """Read the error detail of a JSON error response, or an empty string."""
+
+    if "json" not in response.headers.get("content-type", ""):
+        return ""
+    detail = response.json().get("detail")
+    return detail if isinstance(detail, str) else ""
+
+
+def _assert_admin_remote_gateways() -> None:
+    """Chunk listing and the index admin operations must run in the runtime."""
+
+    from app.core.config import settings
+    from app.services.rag.gateway_factory import (
+        get_delete_gateway,
+        get_list_chunks_gateway,
+    )
+    from app.services.rag.remote_gateway import RemoteRagGateway
+
+    for operation in ("delete", "list_chunks"):
+        _check(
+            settings.get_rag_runtime_mode(operation) == "remote",
+            f"the Backend must run '{operation}' through the remote runtime",
+        )
+    for operation, gateway in (
+        ("delete", get_delete_gateway()),
+        ("list_chunks", get_list_chunks_gateway()),
+    ):
+        _check(
+            isinstance(gateway, RemoteRagGateway),
+            f"the {operation} gateway must be the remote gateway",
+        )
+
+
+def _assert_local_admin_operations_are_refused(
+    knowledge_base_id: int, owner_user_id: int
+) -> None:
+    """Local purge, drop, and chunk listing must fail immediately.
+
+    The guard lives in ``LocalRagGateway``, so the Backend process refuses a
+    local data-plane call for these operations exactly like this process does.
+    """
+
+    from app.services.rag.local_gateway import LocalRagGateway
+    from app.services.rag.runtime_specs import (
+        DropKnowledgeIndexRuntimeSpec,
+        ListChunksRuntimeSpec,
+        PurgeKnowledgeRuntimeSpec,
+    )
+
+    local = LocalRagGateway()
+    purge_spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+    )
+    drop_spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+    )
+    list_spec = ListChunksRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=owner_user_id,
+        query="list_index_chunks",
+    )
+
+    _expect_local_operation_refused(
+        "delete", lambda: local.purge_knowledge_index(purge_spec, db=None)
+    )
+    _expect_local_operation_refused(
+        "delete", lambda: local.drop_knowledge_index(drop_spec, db=None)
+    )
+    _expect_local_operation_refused(
+        "list_chunks", lambda: local.list_chunks(list_spec, db=None)
+    )
+    _log("local purge, drop, and chunk listing calls are refused by the gateway")

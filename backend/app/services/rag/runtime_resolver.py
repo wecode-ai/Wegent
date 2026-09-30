@@ -548,6 +548,7 @@ class RagRuntimeResolver:
         max_chunks: int,
         query: str | None = None,
         metadata_condition: dict | None = None,
+        resolve_execution_configs: bool = True,
     ) -> ListChunksRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -574,6 +575,7 @@ class RagRuntimeResolver:
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
+            resolve_execution_configs=resolve_execution_configs,
         )
 
     def _build_list_chunks_runtime_spec(
@@ -585,6 +587,7 @@ class RagRuntimeResolver:
         max_chunks: int,
         query: str | None,
         metadata_condition: dict | None,
+        resolve_execution_configs: bool,
     ) -> ListChunksRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")
@@ -597,15 +600,18 @@ class RagRuntimeResolver:
         owner_user_id = (
             kb.user_id if index_owner_user_id is None else index_owner_user_id
         )
-        return ListChunksRuntimeSpec(
-            knowledge_base_id=kb.id,
-            index_owner_user_id=owner_user_id,
-            retriever_config=self._build_resolved_retriever_config(
+        retriever_config = None
+        if resolve_execution_configs:
+            retriever_config = self._build_resolved_retriever_config(
                 db=db,
                 user_id=owner_user_id,
                 name=retriever_name,
                 namespace=retriever_namespace,
-            ),
+            )
+        return ListChunksRuntimeSpec(
+            knowledge_base_id=kb.id,
+            index_owner_user_id=owner_user_id,
+            retriever_config=retriever_config,
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
@@ -655,6 +661,7 @@ class RagRuntimeResolver:
         knowledge_base_id: int,
         user_id: int,
         user_name: str | None,
+        resolve_execution_configs: bool = True,
     ) -> PurgeKnowledgeRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -674,6 +681,7 @@ class RagRuntimeResolver:
             current_user_id=user_id,
             user_name=user_name,
             spec_type="purge",
+            resolve_execution_configs=resolve_execution_configs,
         )
 
     def build_public_drop_index_runtime_spec(
@@ -683,6 +691,7 @@ class RagRuntimeResolver:
         knowledge_base_id: int,
         user_id: int,
         user_name: str | None,
+        resolve_execution_configs: bool = True,
     ) -> DropKnowledgeIndexRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -702,6 +711,7 @@ class RagRuntimeResolver:
             current_user_id=user_id,
             user_name=user_name,
             spec_type="drop",
+            resolve_execution_configs=resolve_execution_configs,
         )
 
     def _build_query_knowledge_base_configs(
@@ -832,6 +842,7 @@ class RagRuntimeResolver:
         current_user_id: int,
         user_name: str | None,
         spec_type: Literal["purge", "drop"],
+        resolve_execution_configs: bool = True,
     ) -> PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")
@@ -846,12 +857,14 @@ class RagRuntimeResolver:
             knowledge_base=kb,
             current_user_id=current_user_id,
         )
-        resolved_retriever_config = self._build_resolved_retriever_config(
-            db=db,
-            user_id=kb_info.index_owner_user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
-        )
+        resolved_retriever_config = None
+        if resolve_execution_configs:
+            resolved_retriever_config = self._build_resolved_retriever_config(
+                db=db,
+                user_id=kb_info.index_owner_user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+            )
 
         if spec_type == "purge":
             return PurgeKnowledgeRuntimeSpec(

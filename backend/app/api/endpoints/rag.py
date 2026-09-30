@@ -16,12 +16,12 @@ from app.schemas.rag import (
     RetrieveRequest,
     RetrieveResponse,
 )
-from app.services.rag.gateway_factory import get_delete_gateway, get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGatewayError,
-    should_fallback_to_local,
+from app.services.rag.gateway_factory import (
+    get_delete_gateway,
+    get_list_chunks_gateway,
+    get_query_gateway,
 )
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 router = APIRouter()
@@ -34,6 +34,15 @@ def _map_public_admin_value_error(error: ValueError) -> HTTPException:
     if "Physical index drop is only allowed" in detail:
         return HTTPException(status_code=409, detail=detail)
     return HTTPException(status_code=400, detail=detail)
+
+
+def _map_public_admin_remote_error(error: RemoteRagGatewayError) -> HTTPException:
+    """Surface a runtime failure, keeping the drop-strategy conflict contract."""
+
+    detail = str(error)
+    if "Physical index drop is only allowed" in detail:
+        return HTTPException(status_code=409, detail=detail)
+    return HTTPException(status_code=error.status_code or 502, detail=detail)
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
@@ -148,6 +157,7 @@ async def list_index_chunks(
                 f"{INDEX_CHUNK_LIST_MAX_CHUNKS}"
             )
 
+        gateway = get_list_chunks_gateway()
         runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
@@ -155,14 +165,11 @@ async def list_index_chunks(
             user_name=current_user.user_name,
             max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
             query="list_index_chunks",
+            resolve_execution_configs=gateway.requires_resolved_configs,
         )
-        gateway = get_query_gateway()
-        try:
-            result = await gateway.list_chunks(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            result = await LocalRagGateway().list_chunks(runtime_spec, db=db)
+        # Remote failures are surfaced instead of falling back to the deprecated
+        # local data plane; local is not a rollback path.
+        result = await gateway.list_chunks(runtime_spec, db=db)
 
         chunks = result.get("chunks", [])
         page_items = chunks[start : start + page_size]
@@ -200,23 +207,19 @@ async def purge_index_contents(
 ):
     """Delete all indexed chunks stored for a knowledge base while keeping documents."""
     try:
+        gateway = get_delete_gateway()
         runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
             user_name=current_user.user_name,
+            resolve_execution_configs=gateway.requires_resolved_configs,
         )
-        gateway = get_delete_gateway()
-        try:
-            return await gateway.purge_knowledge_index(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+        return await gateway.purge_knowledge_index(runtime_spec, db=db)
     except HTTPException:
         raise
     except RemoteRagGatewayError as e:
-        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
+        raise _map_public_admin_remote_error(e) from e
     except ValueError as e:
         raise _map_public_admin_value_error(e) from e
     except Exception as e:
@@ -231,23 +234,19 @@ async def drop_index(
 ):
     """Physically drop the dedicated index/collection for a knowledge base."""
     try:
+        gateway = get_delete_gateway()
         runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
             user_name=current_user.user_name,
+            resolve_execution_configs=gateway.requires_resolved_configs,
         )
-        gateway = get_delete_gateway()
-        try:
-            return await gateway.drop_knowledge_index(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+        return await gateway.drop_knowledge_index(runtime_spec, db=db)
     except HTTPException:
         raise
     except RemoteRagGatewayError as e:
-        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
+        raise _map_public_admin_remote_error(e) from e
     except ValueError as e:
         raise _map_public_admin_value_error(e) from e
     except Exception as e:
