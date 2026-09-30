@@ -25,6 +25,7 @@
 - [MCP 工具重构指南](./mcp-refactoring-guide.md) - Knowledge MCP 工具重构架构
 - [外部知识库 MCP](./external-knowledge-mcp.md) - 受信任外部系统的知识库 MCP 集成
 - [外部 OAuth 2.0 接入](./external-oauth-integration.md) - Authorization Code、PKCE、userinfo、刷新与撤销
+- [MCP 访问令牌](./mcp-token.md) - 简化版 OAuth：换取、校验与用户信息
 
 ### 💬 Chat Shell
 

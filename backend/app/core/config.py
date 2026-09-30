@@ -174,6 +174,7 @@ class Settings(BaseSettings):
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
+    MCP_TOKEN_EXPIRE_MINUTES: int = 60  # 1 hour in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
@@ -320,6 +321,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
     RATE_LIMIT_MCP_IDENTITY: str = (
         "60/minute"  # GET /api/external/mcp-identity/userinfo
+    )
+    RATE_LIMIT_MCP_TOKEN: str = (
+        "60/minute"  # GET /api/external/mcp/userinfo, POST /api/external/mcp/*
     )
 
     # External knowledge MCP configuration

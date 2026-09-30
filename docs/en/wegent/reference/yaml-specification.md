@@ -100,6 +100,20 @@ business side can resolve the current user by calling
 basic information (`id`, `user_name`, `email`) and never exposes git
 credentials.
 
+A business MCP server can use the MCP access token (simplified OAuth) instead
+by switching the placeholder to `${{mcp_token}}`:
+
+```yaml
+      headers:
+        Authorization: "Bearer ${{mcp_token}}"
+```
+
+The MCP token lives for 60 minutes, targets the `wegent-mcp` audience, and
+carries only the `mcp:userinfo.read` scope. Servers validate it with
+`POST /api/external/mcp/introspect` and resolve the caller with
+`GET /api/external/mcp/userinfo`; see
+[MCP Access Tokens](../developer-guide/mcp-token.md).
+
 ---
 
 ## ✨ Skill

@@ -280,6 +280,10 @@ class Metadata(BaseModel):
         None,
         description="JWT token for skill identity verification",
     )
+    mcp_token: Optional[str] = Field(
+        None,
+        description="MCP access token for business MCP server identity",
+    )
     # Subscription task flag - when True, SilentExitTool will be added
     is_subscription: Optional[bool] = Field(
         False,
