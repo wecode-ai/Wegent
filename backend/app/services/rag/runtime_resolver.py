@@ -606,25 +606,16 @@ class RagRuntimeResolver:
         owner_user_id = (
             kb.user_id if index_owner_user_id is None else index_owner_user_id
         )
-        retriever_config = None
-        if resolve_execution_configs:
-            retriever_config = self._build_resolved_retriever_config(
-                db=db,
-                user_id=owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            )
-        else:
-            self._require_retriever_access(
-                db=db,
-                user_id=owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            )
         return ListChunksRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=owner_user_id,
-            retriever_config=retriever_config,
+            retriever_config=self._owner_retriever_config(
+                db=db,
+                user_id=owner_user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+                resolve_execution_configs=resolve_execution_configs,
+            ),
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
@@ -874,21 +865,13 @@ class RagRuntimeResolver:
             knowledge_base=kb,
             current_user_id=current_user_id,
         )
-        resolved_retriever_config = None
-        if resolve_execution_configs:
-            resolved_retriever_config = self._build_resolved_retriever_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            )
-        else:
-            self._require_retriever_access(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            )
+        resolved_retriever_config = self._owner_retriever_config(
+            db=db,
+            user_id=kb_info.index_owner_user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+            resolve_execution_configs=resolve_execution_configs,
+        )
 
         if spec_type == "purge":
             return PurgeKnowledgeRuntimeSpec(
@@ -903,21 +886,31 @@ class RagRuntimeResolver:
             retriever_config=resolved_retriever_config,
         )
 
-    def _require_retriever_access(
+    def _owner_retriever_config(
         self,
         *,
         db: Session,
         user_id: int,
         name: str,
         namespace: str,
-    ) -> None:
-        """Refuse before the remote request when the owner may not use the retriever.
+        resolve_execution_configs: bool,
+    ) -> RuntimeRetrieverConfig | None:
+        """Resolve the owner's retriever for one executing gateway.
 
-        The remote data plane resolves the retriever itself, so Backend keeps the
-        existing access verdict -- group permission plus the personal, referenced
-        and public lookup -- without building the storage configuration and
-        decrypting the credentials the remote request would drop.
+        The owner's access verdict is always checked through the retriever
+        service, which owns the group permission plus the personal, referenced
+        and public lookup. Only the local data plane also consumes the resolved
+        storage configuration, so a remote gateway skips building it and
+        decrypting the credentials its request would drop.
         """
+
+        if resolve_execution_configs:
+            return self._build_resolved_retriever_config(
+                db=db,
+                user_id=user_id,
+                name=name,
+                namespace=namespace,
+            )
 
         retriever_kinds_service.get_retriever(
             db=db,
@@ -925,6 +918,7 @@ class RagRuntimeResolver:
             name=name,
             namespace=namespace,
         )
+        return None
 
     def _build_resolved_retriever_config(
         self,
