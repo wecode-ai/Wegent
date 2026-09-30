@@ -284,14 +284,10 @@ async function verifyConfiguredExecutionEnvironment(
   )
   const failedProject = await request(`/api/v1/cloud-projects/${projectId}`)
   assert.equal(failedProject.execution_environment.repositories[0].url, repositoryUrl)
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-environment-error"]`),
-    {
-      visible: true,
-      timeoutMs,
-    }
-  )
+  const environmentError = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-environment-error"]`)
+  await control.command('waitFor', environmentError, { timeoutMs })
+  await control.command('scrollIntoView', environmentError)
+  await control.command('waitFor', environmentError, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-environment-01-setup-failed.png', CONTENT)
 
   await control.command('fill', setupCommand, {
