@@ -50,6 +50,7 @@ from knowledge_remote_index_delete import (
     run_delete_failure_scenario,
     run_document_delete_scenario,
 )
+from knowledge_remote_index_public import run_public_retrieval_scenario
 from knowledge_remote_index_support import (
     ADMIN_USER_NAME,
     BACKEND_URL,
@@ -758,6 +759,7 @@ def run() -> None:
     _require_remote_services()
     with _create_client() as client:
         token, owner_user_id = _login(client)
+        run_public_retrieval_scenario(client, token, owner_user_id)
         _run_plain_document_scenario(client, token, owner_user_id)
         _run_converted_document_scenario(client, token, owner_user_id)
         _run_conversion_failure_scenario(client, token, owner_user_id)

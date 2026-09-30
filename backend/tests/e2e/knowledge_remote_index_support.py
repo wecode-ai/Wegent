@@ -121,7 +121,12 @@ def _require_remote_services() -> None:
 
 
 def _create_retrieval_resources(
-    client: httpx.Client, token: str, name: str, *, embedding_url: str
+    client: httpx.Client,
+    token: str,
+    name: str,
+    *,
+    embedding_url: str,
+    on_created: Callable[[str], None] | None = None,
 ) -> None:
     """Create the real Retriever and Model records the knowledge base references."""
 
@@ -162,6 +167,8 @@ def _create_retrieval_resources(
     _check(
         model.status_code < 300, f"creating the embedding model failed: {model.text}"
     )
+    if on_created is not None:
+        on_created(f"/api/v1/namespaces/default/models/{name}")
     retriever = client.post(
         "/api/retrievers",
         headers=headers,
@@ -170,6 +177,8 @@ def _create_retrieval_resources(
     _check(
         retriever.status_code < 300, f"creating the retriever failed: {retriever.text}"
     )
+    if on_created is not None:
+        on_created(f"/api/retrievers/{name}")
 
 
 def _retriever_payload(name: str, storage_url: str) -> dict[str, Any]:
