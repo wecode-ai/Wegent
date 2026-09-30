@@ -287,6 +287,10 @@ def test_run_document_indexing_switches_index_mode_independently(
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=None,
+        ),
+        patch(
             patch_target,
             new_callable=AsyncMock,
             return_value={

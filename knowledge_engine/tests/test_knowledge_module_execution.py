@@ -25,7 +25,9 @@ from shared.knowledge_module import (
     ConversionRequest,
     DocumentIndexRequest,
     RetrievalResource,
+    build_document_delete_request,
     convert_content,
+    delete_document,
     index_document,
     resolve_execution_config,
 )
@@ -90,6 +92,25 @@ class _InMemoryStorage:
             "status": "success",
         }
 
+    def delete_document(self, *, knowledge_id: str, doc_ref: str, **kwargs) -> dict:
+        """Drop every chunk this caller indexed under one document reference."""
+        kept = [
+            chunk
+            for chunk in self.chunks
+            if not (
+                chunk["metadata"].get("knowledge_id") == knowledge_id
+                and chunk["metadata"].get("doc_ref") == doc_ref
+            )
+        ]
+        deleted = len(self.chunks) - len(kept)
+        self.chunks = kept
+        return {
+            "knowledge_id": knowledge_id,
+            "doc_ref": doc_ref,
+            "deleted_chunks": deleted,
+            "status": "deleted",
+        }
+
     def get_supported_retrieval_methods(self) -> list[str]:
         return ["vector"]
 
@@ -150,6 +171,13 @@ class _EngineDocumentIndexAdapter:
             embed_model=object(),
             user_id=request.user_id,
             splitter_config=request.splitter_config,
+        )
+
+    async def delete_document(self, *, request):
+        return await self._service.delete_document(
+            knowledge_id=request.knowledge_id,
+            doc_ref=request.doc_ref,
+            user_id=request.user_id,
         )
 
 
@@ -235,6 +263,20 @@ async def _query_plain_document(
     return result["records"]
 
 
+async def _delete_indexed_document(
+    storage: _InMemoryStorage,
+    *,
+    document_id: int,
+) -> dict[str, Any]:
+    """Remove an indexed document through the module public interface."""
+    return await delete_document(
+        _EngineDocumentIndexAdapter(storage),
+        build_document_delete_request(
+            knowledge_id=_KNOWLEDGE_ID, doc_ref=document_id, user_id=7
+        ),
+    )
+
+
 async def _run_query(scope: RetrievalScope | None) -> _RecordingStorage:
     from knowledge_engine.query import QueryExecutor
 
@@ -309,6 +351,28 @@ async def test_scoped_query_returns_only_the_requested_document() -> None:
     assert records
     assert {record["metadata"]["doc_ref"] for record in records} == {"43"}
     assert {record["metadata"]["knowledge_id"] for record in records} == {_KNOWLEDGE_ID}
+
+
+@pytest.mark.asyncio
+async def test_deleted_document_disappears_from_the_query() -> None:
+    """Deleting through the module drops only that document's references."""
+    adapter = _FakeAdapter()
+    config = resolve_execution_config(_STORED_CONFIG, adapter.authorized())
+    storage = _InMemoryStorage()
+    await _index_plain_document(storage, document_id=42)
+    await _index_plain_document(storage, document_id=43)
+
+    deleted = await _delete_indexed_document(storage, document_id=42)
+
+    assert deleted["doc_ref"] == "42"
+    assert deleted["knowledge_id"] == _KNOWLEDGE_ID
+    assert deleted["deleted_chunks"] >= 1
+    remaining = await _query_plain_document(storage, config)
+    assert {record["metadata"]["doc_ref"] for record in remaining} == {"43"}
+
+    repeated = await _delete_indexed_document(storage, document_id=42)
+    assert repeated["deleted_chunks"] == 0
+    assert repeated["status"] == "deleted"
 
 
 @pytest.mark.asyncio

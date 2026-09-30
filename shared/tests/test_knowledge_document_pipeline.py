@@ -24,14 +24,17 @@ from shared.knowledge_module import (
     ConversionRequest,
     ConvertedContent,
     DocumentChunkMetadata,
+    DocumentDeleteRequest,
     DocumentIndexRequest,
     KnowledgeDocumentError,
     build_document_chunk_metadata,
+    build_document_delete_request,
     conversion_output_name,
     conversion_storage_prefix,
     convert_content,
     decide_conversion_completed,
     decide_conversion_started,
+    delete_document,
     finalize_index_result,
     index_document,
     normalize_document_extension,
@@ -78,12 +81,24 @@ class _RecordingIndexAdapter:
     def __init__(self, *, chunk_count: int = 2):
         self._chunk_count = chunk_count
         self.calls: list[dict[str, Any]] = []
+        self.delete_calls: list[DocumentDeleteRequest] = []
 
     async def index_chunks(
         self, *, metadata: DocumentChunkMetadata, request: DocumentIndexRequest
     ) -> dict[str, Any]:
         self.calls.append({"metadata": metadata, "request": request})
         return {"indexed_count": self._chunk_count, "status": "success"}
+
+    async def delete_document(
+        self, *, request: DocumentDeleteRequest
+    ) -> dict[str, Any]:
+        self.delete_calls.append(request)
+        return {
+            "status": "deleted",
+            "doc_ref": request.doc_ref,
+            "knowledge_id": request.knowledge_id,
+            "deleted_chunks": 2,
+        }
 
 
 class _FailingIndexAdapter(_RecordingIndexAdapter):
@@ -92,6 +107,22 @@ class _FailingIndexAdapter(_RecordingIndexAdapter):
     async def index_chunks(self, *, metadata: DocumentChunkMetadata, request):
         self.calls.append({"metadata": metadata, "request": request})
         raise RuntimeError("vector store unavailable")
+
+
+class _FailingDeleteAdapter(_RecordingIndexAdapter):
+    """Adapter whose removal fails the same way a store outage does."""
+
+    async def delete_document(self, *, request: DocumentDeleteRequest):
+        self.delete_calls.append(request)
+        raise RuntimeError("vector store unavailable")
+
+
+class _EmptyStoreDeleteAdapter(_RecordingIndexAdapter):
+    """Adapter for a store that already holds no chunks for the reference."""
+
+    async def delete_document(self, *, request: DocumentDeleteRequest):
+        self.delete_calls.append(request)
+        return {"status": "deleted"}
 
 
 def _conversion_request(**overrides: Any) -> ConversionRequest:
@@ -274,6 +305,86 @@ async def test_index_document_propagates_failures_without_a_result() -> None:
         await index_document(adapter, request)
 
     assert adapter.calls[0]["metadata"].doc_ref == "42"
+
+
+def test_build_document_delete_request_normalizes_and_validates_identity() -> None:
+    request = build_document_delete_request(knowledge_id=7, doc_ref=42, user_id=None)
+
+    assert request == DocumentDeleteRequest(
+        knowledge_id="7", doc_ref="42", user_id=None
+    )
+
+    with pytest.raises(KnowledgeDocumentError):
+        build_document_delete_request(knowledge_id="  ", doc_ref="42")
+    with pytest.raises(KnowledgeDocumentError):
+        build_document_delete_request(knowledge_id="7", doc_ref="")
+
+
+async def test_delete_document_removes_the_reference_the_index_wrote() -> None:
+    adapter = _RecordingIndexAdapter()
+    index_request = DocumentIndexRequest(
+        knowledge_id="7",
+        binary_data=b"# Converted body\n",
+        source_file="quarterly-report.pdf.md",
+        file_extension=".md",
+        user_id=7,
+        document_id=42,
+    )
+
+    indexed = await index_document(adapter, index_request)
+    deleted = await delete_document(
+        adapter,
+        build_document_delete_request(
+            knowledge_id=indexed["knowledge_id"],
+            doc_ref=indexed["doc_ref"],
+            user_id=index_request.user_id,
+        ),
+    )
+
+    assert [call.doc_ref for call in adapter.delete_calls] == ["42"]
+    assert adapter.delete_calls[0].knowledge_id == "7"
+    assert adapter.delete_calls[0].user_id == 7
+    assert deleted == {
+        "status": "deleted",
+        "doc_ref": "42",
+        "knowledge_id": "7",
+        "deleted_chunks": 2,
+    }
+
+
+async def test_delete_document_repeats_without_failing_on_an_empty_store() -> None:
+    adapter = _RecordingIndexAdapter()
+    request = build_document_delete_request(knowledge_id=7, doc_ref="42")
+
+    first = await delete_document(adapter, request)
+    second = await delete_document(adapter, request)
+
+    assert first == second
+    assert [call.doc_ref for call in adapter.delete_calls] == ["42", "42"]
+
+
+async def test_delete_document_defaults_an_empty_result_to_zero_deletions() -> None:
+    adapter = _EmptyStoreDeleteAdapter()
+
+    result = await delete_document(
+        adapter, build_document_delete_request(knowledge_id=7, doc_ref="42")
+    )
+
+    assert result == {
+        "status": "deleted",
+        "doc_ref": "42",
+        "knowledge_id": "7",
+        "deleted_chunks": 0,
+    }
+
+
+async def test_delete_document_propagates_store_failures() -> None:
+    adapter = _FailingDeleteAdapter()
+
+    with pytest.raises(RuntimeError, match="vector store unavailable"):
+        await delete_document(
+            adapter, build_document_delete_request(knowledge_id=7, doc_ref="42")
+        )
 
 
 def test_conversion_started_accepts_only_the_current_waiting_generation() -> None:

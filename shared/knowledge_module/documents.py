@@ -12,8 +12,9 @@ way without loading Wegent product ORM models, database sessions or task
 workers.
 
 Adapters supply the conversion engine, the content, the storage connection and
-the embedding executor. The module never talks to a converter service or a
-vector store itself.
+the embedding executor. Deleting a document uses the identical reference, so a
+removed document leaves no chunk its own index call created. The module never
+talks to a converter service or a vector store itself.
 """
 
 from __future__ import annotations
@@ -105,6 +106,15 @@ class DocumentChunkMetadata:
 
 
 @dataclass(frozen=True)
+class DocumentDeleteRequest:
+    """One indexed document about to leave a knowledge base's index."""
+
+    knowledge_id: str
+    doc_ref: str
+    user_id: int | None = None
+
+
+@dataclass(frozen=True)
 class DocumentStateDecision:
     """Whether a conversion event may mutate the current attempt."""
 
@@ -120,6 +130,11 @@ class DocumentIndexAdapter(Protocol):
         self, *, metadata: DocumentChunkMetadata, request: DocumentIndexRequest
     ) -> Mapping[str, Any]:
         """Split, embed and store one document's chunks under ``metadata``."""
+
+    async def delete_document(
+        self, *, request: DocumentDeleteRequest
+    ) -> Mapping[str, Any]:
+        """Remove every chunk stored under ``request.doc_ref``."""
 
 
 def normalize_document_extension(file_extension: str) -> str:
@@ -297,6 +312,47 @@ async def index_document(
     )
     result = await adapter.index_chunks(metadata=metadata, request=request)
     return finalize_index_result(result, metadata)
+
+
+def build_document_delete_request(
+    *,
+    knowledge_id: str | int,
+    doc_ref: str | int,
+    user_id: int | None = None,
+) -> DocumentDeleteRequest:
+    """Build the delete identity for one stored document.
+
+    ``doc_ref`` is the reference :func:`build_document_chunk_metadata` wrote for
+    the document, so deleting it removes exactly the chunks its index call
+    created and never another document's.
+    """
+    knowledge_id_value = str(knowledge_id).strip()
+    if not knowledge_id_value:
+        raise KnowledgeDocumentError("knowledge_id is required")
+    doc_ref_value = str(doc_ref).strip()
+    if not doc_ref_value:
+        raise KnowledgeDocumentError("doc_ref is required")
+    return DocumentDeleteRequest(
+        knowledge_id=knowledge_id_value, doc_ref=doc_ref_value, user_id=user_id
+    )
+
+
+async def delete_document(
+    adapter: DocumentIndexAdapter, request: DocumentDeleteRequest
+) -> dict[str, Any]:
+    """Delete one document's chunks under the shared identity.
+
+    The rule is idempotent: a reference that currently holds no chunks reports
+    zero deletions instead of failing, so a repeated delete is a no-op and a
+    retry after a partial cleanup cannot turn into an error.
+    """
+    result = await adapter.delete_document(request=request)
+    finalized = dict(result or {})
+    finalized.setdefault("knowledge_id", request.knowledge_id)
+    finalized.setdefault("doc_ref", request.doc_ref)
+    finalized.setdefault("deleted_chunks", 0)
+    finalized.setdefault("status", "deleted")
+    return finalized
 
 
 def _decide_conversion_event(

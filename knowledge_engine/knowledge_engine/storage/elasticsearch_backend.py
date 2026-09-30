@@ -542,6 +542,21 @@ class ElasticsearchBackend(BaseStorageBackend):
             Deletion result dict
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # A knowledge base that was never written has no index yet, and a
+        # repeated delete finds nothing left. Both mean "no chunks to remove",
+        # so report the idempotent result instead of a missing-index error.
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        if not es_client.indices.exists(index=index_name):
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "index_name": index_name,
+                "deleted_chunks": 0,
+                "deleted_parent_nodes": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(index_name)
 
         # Build filters to match the document

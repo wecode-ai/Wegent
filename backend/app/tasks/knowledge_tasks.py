@@ -477,10 +477,28 @@ def index_document_task(
                 )
 
             if not finalized:
+                try:
+                    with SessionLocal() as cleanup_db:
+                        deleted = _delete_late_index_if_document_was_deleted(
+                            db=cleanup_db,
+                            document_id=document_id,
+                            knowledge_base_id=knowledge_base_id,
+                            user_id=user_id,
+                        )
+                except Exception as cleanup_error:  # noqa: BLE001
+                    # Keep the indexing failure visible even when the late-index
+                    # compensation itself fails.
+                    logger.error(
+                        f"[Celery RAG Indexing] Failed to compensate a late index for "
+                        f"document {document_id}: {cleanup_error}",
+                        exc_info=True,
+                    )
+                    deleted = False
                 logger.warning(
                     f"[Celery RAG Indexing] Task failed after being superseded: "
                     f"task_id={task_id}, document_id={document_id}, "
-                    f"index_generation={index_generation}, error={exc}",
+                    f"index_generation={index_generation}, error={exc}, "
+                    f"deleted_late_index={deleted}",
                     exc_info=True,
                 )
                 return {

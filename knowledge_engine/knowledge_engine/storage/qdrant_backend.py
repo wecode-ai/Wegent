@@ -341,6 +341,18 @@ class QdrantBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # A knowledge base that was never written has no collection yet, and a
+        # repeated delete finds nothing left. Both mean "no chunks to remove",
+        # so report the idempotent result instead of a missing-collection error.
+        if not self.client.collection_exists(collection_name):
+            return {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "deleted_chunks": 0,
+                "status": "deleted",
+            }
+
         vector_store = self.create_vector_store(collection_name)
 
         # Build filters to match the document

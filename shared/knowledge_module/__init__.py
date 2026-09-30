@@ -5,10 +5,10 @@
 """Reusable knowledge module shared by Wegent and a second service.
 
 The module owns the knowledge business rules for composing and validating
-retrieval configuration, and for converting and indexing documents. It stays
-free of Wegent product ORM models, database sessions and task workers, so a
-service can reuse it without loading the product persistence layer. Each side
-implements :class:`KnowledgeConfigAdapter` for configuration, plus the
+retrieval configuration, and for converting, indexing and deleting documents.
+It stays free of Wegent product ORM models, database sessions and task workers,
+so a service can reuse it without loading the product persistence layer. Each
+side implements :class:`KnowledgeConfigAdapter` for configuration, plus the
 conversion and index adapters it executes with.
 """
 
@@ -43,16 +43,19 @@ from .documents import (
     ConversionRequest,
     ConvertedContent,
     DocumentChunkMetadata,
+    DocumentDeleteRequest,
     DocumentIndexAdapter,
     DocumentIndexRequest,
     DocumentStateDecision,
     KnowledgeDocumentError,
     build_document_chunk_metadata,
+    build_document_delete_request,
     conversion_output_name,
     conversion_storage_prefix,
     convert_content,
     decide_conversion_completed,
     decide_conversion_started,
+    delete_document,
     finalize_index_result,
     index_document,
     normalize_document_extension,
@@ -109,11 +112,14 @@ __all__ = [
     "CONVERSION_COMPLETE_STATUSES",
     "DocumentIndexAdapter",
     "DocumentIndexRequest",
+    "DocumentDeleteRequest",
+    "build_document_delete_request",
     "DocumentChunkMetadata",
     "DocumentStateDecision",
     "build_document_chunk_metadata",
     "finalize_index_result",
     "index_document",
+    "delete_document",
     "decide_conversion_started",
     "decide_conversion_completed",
 ]

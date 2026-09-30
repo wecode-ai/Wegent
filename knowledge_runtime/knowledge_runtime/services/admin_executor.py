@@ -10,8 +10,13 @@ import asyncio
 import logging
 from typing import Any
 
+from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.document_index_adapter import (
+    DocumentServiceIndexAdapter,
+)
+from shared.knowledge_module import build_document_delete_request, delete_document
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -63,14 +68,18 @@ class AdminExecutor:
             request.document_ref,
         )
 
-        result = await asyncio.to_thread(
-            storage_backend.delete_document,
-            knowledge_id=knowledge_id,
-            doc_ref=request.document_ref,
-            user_id=config.index_owner_user_id,
+        # The shared module owns the delete identity and the normalized result,
+        # so a document leaves exactly the chunks its index call created.
+        return await delete_document(
+            DocumentServiceIndexAdapter(
+                document_service=DocumentService(storage_backend=storage_backend)
+            ),
+            build_document_delete_request(
+                knowledge_id=knowledge_id,
+                doc_ref=request.document_ref,
+                user_id=config.index_owner_user_id,
+            ),
         )
-
-        return result
 
     @trace_async(
         span_name="purge_knowledge_index",

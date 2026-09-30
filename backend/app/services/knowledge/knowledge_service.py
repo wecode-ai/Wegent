@@ -2091,6 +2091,8 @@ class KnowledgeService:
 
         Raises:
             ValueError: If permission denied
+            RemoteRagGatewayError: If the remote index removal fails; the
+                document is kept so the caller can retry.
         """
         logger = logging.getLogger(__name__)
 
@@ -2133,15 +2135,11 @@ class KnowledgeService:
         # manager) would cause the deletion to silently fail and leave orphaned records.
         context_owner_user_id = doc.user_id
 
-        # Physically delete document from database
-        db.delete(doc)
-
-        # Update cached document count in knowledge base spec
-        KnowledgeService._update_document_count_cache(db, kind_id)
-
-        db.commit()
-
-        # Delete RAG index if knowledge base has retrieval_config
+        # Delete the RAG index first, while the document still identifies the
+        # reference to remove. The row is the only thing that says which chunks
+        # belonged to this document, so deleting it first and then swallowing a
+        # remote failure would orphan the old references. A remote failure
+        # propagates: the document survives and the caller can retry.
         if kb:
             spec = kb.json.get("spec", {})
             retrieval_config = spec.get("retrievalConfig")
@@ -2150,15 +2148,15 @@ class KnowledgeService:
                 retriever_name = retrieval_config.get("retriever_name")
 
                 if retriever_name:
+                    kb_info = get_kb_index_info_by_record(
+                        db=db,
+                        knowledge_base=kb,
+                        current_user_id=user_id,
+                    )
+
+                    from app.services.rag.runtime_resolver import RagRuntimeResolver
+
                     try:
-                        kb_info = get_kb_index_info_by_record(
-                            db=db,
-                            knowledge_base=kb,
-                            current_user_id=user_id,
-                        )
-
-                        from app.services.rag.runtime_resolver import RagRuntimeResolver
-
                         delete_runtime_spec = (
                             RagRuntimeResolver().build_delete_runtime_spec(
                                 db=db,
@@ -2167,38 +2165,48 @@ class KnowledgeService:
                                 index_owner_user_id=kb_info.index_owner_user_id,
                             )
                         )
-                        result = _run_async_in_new_loop(
-                            rag_gateway.delete_document_index(
-                                delete_runtime_spec, db=db
-                            )
+                    except ValueError as exc:
+                        # An unusable retrieval configuration is a server-side
+                        # failure, not an access problem: keep the document and
+                        # do not let it read as a permission error.
+                        raise RuntimeError(
+                            f"Cannot resolve the index removal for document "
+                            f"{doc_ref}: {exc}"
+                        ) from exc
+                    result = _run_async_in_new_loop(
+                        rag_gateway.delete_document_index(delete_runtime_spec, db=db)
+                    )
+                    delete_status = result.get("status")
+                    if delete_status in {"success", "deleted"}:
+                        logger.info(
+                            "Deleted RAG index for doc_ref '%s' in knowledge base %s "
+                            "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
+                            "deleted_parent_nodes=%s, index_name=%s)",
+                            doc_ref,
+                            kind_id,
+                            kb_info.index_owner_user_id,
+                            delete_status,
+                            result.get("deleted_chunks"),
+                            result.get("deleted_parent_nodes"),
+                            result.get("index_name"),
                         )
-                        delete_status = result.get("status")
-                        if delete_status in {"success", "deleted"}:
-                            logger.info(
-                                "Deleted RAG index for doc_ref '%s' in knowledge base %s "
-                                "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
-                                "deleted_parent_nodes=%s, index_name=%s)",
-                                doc_ref,
-                                kind_id,
-                                kb_info.index_owner_user_id,
-                                delete_status,
-                                result.get("deleted_chunks"),
-                                result.get("deleted_parent_nodes"),
-                                result.get("index_name"),
-                            )
-                        else:
-                            logger.warning(
-                                "Skipped RAG index deletion for doc_ref '%s' in knowledge base %s: %s",
-                                doc_ref,
-                                kind_id,
-                                result.get("reason", delete_status or "unknown"),
-                            )
-                    except Exception as e:
-                        # Log error but don't fail the document deletion
-                        logger.error(
-                            f"Failed to delete RAG index for doc_ref '{doc_ref}': {e!s}",
-                            exc_info=True,
+                    else:
+                        # A concrete data plane either removes the chunks or
+                        # raises. Anything else must not read as a successful
+                        # removal, so keep the document and surface it.
+                        raise RuntimeError(
+                            f"RAG index removal for doc_ref '{doc_ref}' in "
+                            f"knowledge base {kind_id} reported "
+                            f"{result.get('reason', delete_status or 'unknown')}"
                         )
+
+        # Physically delete document from database
+        db.delete(doc)
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, kind_id)
+
+        db.commit()
 
         # Delete associated attachment (context) if exists
         if attachment_id:

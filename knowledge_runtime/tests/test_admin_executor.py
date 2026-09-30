@@ -79,6 +79,39 @@ class TestAdminExecutor:
         )
 
     @pytest.mark.asyncio
+    async def test_delete_document_index_normalizes_an_empty_store_result(
+        self, admin_executor, mock_retriever_config
+    ) -> None:
+        """A repeated delete reports zero removals instead of an empty result."""
+        request = RemoteDeleteDocumentIndexRequest(
+            knowledge_base_id=1,
+            user_id=42,
+            document_ref="doc_123",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.delete_document.return_value = {"status": "deleted"}
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
+            return_value=mock_storage_backend,
+        ):
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
+                )
+            )
+
+            result = await admin_executor.delete_document_index(request)
+
+        assert result == {
+            "status": "deleted",
+            "knowledge_id": "1",
+            "doc_ref": "doc_123",
+            "deleted_chunks": 0,
+        }
+
+    @pytest.mark.asyncio
     async def test_purge_knowledge_index_success(
         self, admin_executor, mock_retriever_config
     ) -> None:

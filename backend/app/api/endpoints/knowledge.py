@@ -1207,6 +1207,8 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """Delete a document from the knowledge base."""
+    from app.services.rag.remote_gateway import RemoteRagGatewayError
+
     try:
         result = KnowledgeService.delete_document(
             db=db,
@@ -1243,6 +1245,13 @@ def delete_document(
             )
 
         return None
+    except RemoteRagGatewayError as e:
+        # The remote index removal failed, so the document was kept. Surface the
+        # runtime failure instead of reporting a successful delete.
+        raise HTTPException(
+            status_code=e.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

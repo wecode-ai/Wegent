@@ -58,6 +58,9 @@ EMBEDDING_DIMENSIONS = 32
 INDEX_TIMEOUT_SECONDS = float(os.environ.get("E2E_INDEX_TIMEOUT_SECONDS", "120"))
 TASK_RESULT_TIMEOUT_SECONDS = float(os.environ.get("E2E_INDEX_TIMEOUT_SECONDS", "120"))
 UNREACHABLE_EMBEDDING_URL = "http://127.0.0.1:1/v1/embeddings"
+# A retriever pointed here keeps the Backend call real but makes the runtime's
+# storage operation fail, which is how the delete-failure scenario is produced.
+UNREACHABLE_QDRANT_URL = "http://127.0.0.1:1"
 
 
 class KnowledgeRemoteIndexE2EError(AssertionError):
@@ -162,22 +165,42 @@ def _create_retrieval_resources(
     retriever = client.post(
         "/api/retrievers",
         headers=headers,
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Retriever",
-            "metadata": {"name": name, "namespace": "default"},
-            "spec": {
-                "storageConfig": {
-                    "type": "qdrant",
-                    "url": QDRANT_URL,
-                    "indexStrategy": {"mode": "per_dataset"},
-                },
-                "retrievalMethods": {"vector": {"enabled": True}},
-            },
-        },
+        json=_retriever_payload(name, QDRANT_URL),
     )
     _check(
         retriever.status_code < 300, f"creating the retriever failed: {retriever.text}"
+    )
+
+
+def _retriever_payload(name: str, storage_url: str) -> dict[str, Any]:
+    """Build the Retriever CRD whose storage the runtime executes against."""
+
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Retriever",
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {
+            "storageConfig": {
+                "type": "qdrant",
+                "url": storage_url,
+                "indexStrategy": {"mode": "per_dataset"},
+            },
+            "retrievalMethods": {"vector": {"enabled": True}},
+        },
+    }
+
+
+def _point_retriever_at(client: httpx.Client, token: str, name: str, url: str) -> None:
+    """Repoint one retriever's storage, so the next runtime call fails there."""
+
+    response = client.put(
+        f"/api/retrievers/{name}",
+        headers=_auth_headers(token),
+        json=_retriever_payload(name, url),
+    )
+    _check(
+        response.status_code < 300,
+        f"updating the retriever storage failed: {response.text}",
     )
 
 
@@ -467,6 +490,49 @@ def _internal_retrieve(
     )
 
 
+def _internal_retrieve_knowledge_base(
+    client: httpx.Client,
+    knowledge_base_id: int,
+    query: str,
+    *,
+    user_id: int,
+    max_results: int = 10,
+) -> httpx.Response:
+    """Query the authorized whole knowledge base, without a document scope."""
+
+    _check(INTERNAL_SERVICE_TOKEN, "the internal service token is required")
+    return client.post(
+        "/api/internal/rag/retrieve",
+        headers={"Authorization": f"Bearer {INTERNAL_SERVICE_TOKEN}"},
+        json={
+            "query": query,
+            "user_id": user_id,
+            "knowledge_base_ids": [knowledge_base_id],
+            "route_mode": "rag_retrieval",
+            "max_results": max_results,
+        },
+    )
+
+
+def _record_document_ids(records: list[dict[str, Any]]) -> list[int]:
+    return sorted(
+        {int(record["document_id"]) for record in records if record.get("document_id")}
+    )
+
+
+def _assert_no_record_for_document(
+    records: list[dict[str, Any]], document_id: int
+) -> None:
+    offenders = [
+        record for record in records if record.get("document_id") == document_id
+    ]
+    _check(
+        not offenders,
+        f"document {document_id} must not be hit any more: "
+        f"{json.dumps(offenders, ensure_ascii=False)}",
+    )
+
+
 def _assert_records_reference_document(
     records: list[dict[str, Any]],
     knowledge_base_id: int,
@@ -532,11 +598,27 @@ def _runtime_query(
     )
 
 
-def _delete_document(client: httpx.Client, token: str, document_id: int) -> None:
-    response = client.delete(
+def _delete_document_response(
+    client: httpx.Client, token: str, document_id: int
+) -> httpx.Response:
+    return client.delete(
         f"/api/knowledge-documents/{document_id}", headers=_auth_headers(token)
     )
+
+
+def _delete_document(client: httpx.Client, token: str, document_id: int) -> None:
+    response = _delete_document_response(client, token, document_id)
     _check(response.status_code < 300, f"deleting the document failed: {response.text}")
+
+
+def _document_row_exists(document_id: int) -> bool:
+    """Read the raw row so a failed delete can be told apart from a partial one."""
+
+    from app.db.session import SessionLocal
+    from app.models.knowledge import KnowledgeDocument
+
+    with SessionLocal() as db:
+        return db.get(KnowledgeDocument, document_id) is not None
 
 
 def _delete_knowledge_base(

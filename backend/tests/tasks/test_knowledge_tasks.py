@@ -231,6 +231,9 @@ def test_index_document_task_routes_indexing_through_gateway():
             )
         )
         mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = AsyncMock(
+            return_value={"deleted_chunks": 0}
+        )
         mock_gateway.index_document = AsyncMock(
             return_value={
                 "status": "success",
@@ -238,6 +241,12 @@ def test_index_document_task_routes_indexing_through_gateway():
                 "knowledge_base_id": "1",
                 "chunks_data": {"total_count": 8},
             }
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            )
         )
         mock_get_index_gateway = stack.enter_context(
             patch(
@@ -383,6 +392,54 @@ def test_index_document_task_deletes_late_index_after_document_deletion():
 
     cleanup_mock.assert_called_once()
     assert result["reason"] == "stale_or_already_finalized"
+
+
+def test_index_document_task_compensates_a_late_index_after_a_failed_write():
+    """An indexing failure that arrives after the document is gone cleans up."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(return_value=True)
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_failed",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                side_effect=RuntimeError("runtime unavailable"),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        result = index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    assert result["reason"] == "stale_failure"
 
 
 def test_delete_late_index_uses_deleted_document_ref():

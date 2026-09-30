@@ -26,6 +26,7 @@ from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
 )
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 
 
 @pytest.mark.unit
@@ -646,6 +647,201 @@ class TestKnowledgeServiceDeleteDocument:
         # Original attachment must be deleted with the document owner's user_id,
         # not the requester's, because delete_context enforces ownership filtering.
         mock_delete_context.assert_called_once_with(db=db, context_id=20, user_id=42)
+
+    def test_delete_document_surfaces_a_remote_index_failure(self) -> None:
+        """A failed remote removal keeps the document so the caller can retry."""
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=8,
+            kind_id=10,
+            attachment_id=20,
+            user_id=42,
+            converted_attachment_id=None,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ) as mock_update_count,
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
+                side_effect=RemoteRagGatewayError(
+                    "knowledge_runtime request failed", status_code=500
+                ),
+            ),
+        ):
+            with pytest.raises(RemoteRagGatewayError):
+                KnowledgeService.delete_document(db=db, document_id=8, user_id=7)
+
+        # The document row and its cached count must survive a failed removal.
+        db.delete.assert_not_called()
+        db.commit.assert_not_called()
+        mock_update_count.assert_not_called()
+
+    def test_delete_document_reports_an_unresolvable_index_removal(self) -> None:
+        """A broken retrieval config is a server failure, not access denial."""
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=8,
+            kind_id=10,
+            attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                side_effect=ValueError("Retriever retriever-a not found"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Cannot resolve the index removal"):
+                KnowledgeService.delete_document(db=db, document_id=8, user_id=7)
+
+        db.delete.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_delete_document_rejects_an_unconfirmed_index_removal(self) -> None:
+        """A removal the runtime did not confirm must not read as success."""
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=8,
+            kind_id=10,
+            attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
+                return_value={"status": "skipped", "reason": "index_not_found"},
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="index_not_found"):
+                KnowledgeService.delete_document(db=db, document_id=8, user_id=7)
+
+        db.delete.assert_not_called()
+        db.commit.assert_not_called()
 
     def test_delete_document_uses_owner_id_for_both_attachments(self) -> None:
         """Both original and converted attachments must be deleted with the

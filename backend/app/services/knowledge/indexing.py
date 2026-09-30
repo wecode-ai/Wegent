@@ -56,6 +56,14 @@ EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024  # 2MB in bytes
 EXCEL_EXTENSIONS = frozenset({".xls", ".xlsx"})
 
 
+class OldIndexCleanupError(RuntimeError):
+    """Raised when a rebuild cannot remove the previous generation's chunks.
+
+    Writing the new generation on top of an index that still holds the old one
+    would leave both queryable, so the rebuild stops instead of continuing.
+    """
+
+
 @dataclass
 class RAGIndexingParams:
     """Parameters for scheduling RAG document indexing."""
@@ -329,18 +337,6 @@ def _prepare_indexing_runtime(
                 document_ref=str(document_id),
                 index_owner_user_id=kb_info.index_owner_user_id,
             )
-        except ValueError as e:
-            logger.warning(
-                f"[Indexing] Cannot delete old index for document {document_id}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_skipped",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "reason": str(e),
-                },
-            )
         except Exception as e:
             logger.error(
                 f"[Indexing] Error preparing old index delete for document {document_id}: "
@@ -355,6 +351,12 @@ def _prepare_indexing_runtime(
                     "error": str(e),
                 },
             )
+            # The old generation cannot be addressed any more, so the new
+            # generation must not be written on top of it.
+            raise OldIndexCleanupError(
+                f"Cannot prepare the deletion of the old index for document "
+                f"{document_id}: {e}"
+            ) from e
 
     return _IndexingPreparation(
         runtime_spec=runtime_spec,
@@ -425,6 +427,11 @@ def _run_indexing_gateway_calls(
                         "error": str(e),
                     },
                 )
+                # A rebuild that cannot drop the previous generation would leave
+                # both generations queryable, so fail instead of continuing.
+                raise OldIndexCleanupError(
+                    f"Cannot delete the old index for document {document_id}: {e}"
+                ) from e
 
         logger.info(
             f"[Indexing] Starting gateway index_document: kb_id={knowledge_base_id}, "
