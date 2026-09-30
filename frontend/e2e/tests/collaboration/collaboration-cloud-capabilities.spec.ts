@@ -457,8 +457,30 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(projectGroup.members).toContainEqual(projectGroup.leader)
 
       await page.getByTestId('collaboration-issue-create').click()
-      await expect(page.getByTestId('collaboration-project-settings-environments')).toBeVisible()
-      await expect(page.getByTestId('collaboration-issue-create-dialog')).toHaveCount(0)
+      await expect(page.getByTestId('collaboration-issue-create-dialog')).toBeAttached()
+      await expect(page.getByTestId('cloud-todo-title')).toBeVisible()
+      await page.getByTestId('cloud-todo-title').fill(`Human Issue ${suffix}`)
+      await expect(page.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
+      await page.getByTestId('cloud-todo-create-assignee').click()
+      await page.getByTestId(`cloud-todo-create-assignee-option-group:${projectGroup.id}`).click()
+      await expect(page.getByTestId('cloud-todo-create-confirm')).toBeDisabled()
+      await expect(page.getByTestId('issue-execution-environment-notice')).toBeVisible()
+      await page.getByTestId('cloud-todo-create-assignee').click()
+      await page.getByTestId('cloud-todo-create-assignee-option-empty').click()
+      await page.getByTestId('cloud-todo-create-confirm').click()
+      await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
+      const owner = await webApi<{ id: number }>(page, '/api/users/me')
+      const createdIssues = await webApi<{ items: CloudIssue[] }>(
+        page,
+        `/api/v1/cloud-projects/${encodeURIComponent(project.id)}/loop-items`
+      )
+      expect(createdIssues.items).toContainEqual(
+        expect.objectContaining({
+          title: `Human Issue ${suffix}`,
+          assignee_user_id: owner.id,
+          assignee_group_id: null,
+        })
+      )
       await captureEvidence(page, 'web-00-cloud-collaboration-group')
     } finally {
       if (projectId) await archiveProject(page, projectId)

@@ -651,7 +651,11 @@ async function flush() {
 
 async function waitForUi(milliseconds: number) {
   await act(async () => {
-    await new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(milliseconds);
+    } else {
+      await new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    }
   });
   await flush();
 }
@@ -874,6 +878,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root.unmount());
+  vi.useRealTimers();
   container.remove();
   vi.unstubAllGlobals();
   if (originalGetAnimations)
@@ -2112,6 +2117,7 @@ describe("CollaborationPlatformApp real component flow", () => {
   });
 
   it("recommends a group for two Agents and shows the working lead after applying AI division", async () => {
+    vi.useFakeTimers();
     const agents = [
       agent,
       { ...agent, id: "agent-2", team_id: 12, name: "设计智能体" },
