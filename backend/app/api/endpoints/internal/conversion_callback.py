@@ -216,8 +216,14 @@ def conversion_completed_callback(
     # The module owns the decision; mark_document_conversion_succeeded accepts
     # the same module status set, so the pre-check and the transition agree on
     # what "current" means.
-    current = (
-        db.query(KnowledgeDocument)
+    # Read the two columns instead of the entity: this Session may already hold
+    # a cached document from the validation above, and an identity-mapped object
+    # would hand its old generation and status to the decision.
+    stored_attempt = (
+        db.query(
+            KnowledgeDocument.index_generation,
+            KnowledgeDocument.index_status,
+        )
         .filter(
             KnowledgeDocument.id == request.document_id,
         )
@@ -225,8 +231,8 @@ def conversion_completed_callback(
     )
     decision = decide_conversion_completed(
         generation=request.generation,
-        current_generation=getattr(current, "index_generation", None),
-        status=getattr(current, "index_status", None),
+        current_generation=stored_attempt[0] if stored_attempt else None,
+        status=stored_attempt[1] if stored_attempt else None,
     )
     if not decision.should_execute:
         logger.info(
