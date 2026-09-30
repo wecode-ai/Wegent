@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -29,6 +29,7 @@ from app.services.knowledge.index_state_machine import (
     prepare_document_index_enqueue,
     prepare_external_refresh_enqueue,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
 
 
@@ -400,6 +401,41 @@ def test_mark_document_index_succeeded_refuses_a_deleted_document(
     )
 
     assert finalized is False
+
+
+def test_lock_document_row_refreshes_the_row_before_deletion(
+    test_db: Session, test_user: User
+):
+    """The delete re-reads the row under a lock instead of trusting cached state.
+
+    This is the read half of the deletion race: a row another writer advanced
+    must reach the removal with its stored values, not the values an
+    already-loaded instance still holds, and the same locking query is what
+    blocks a concurrent indexing update until the delete commits.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.SUCCESS,
+        index_generation=3,
+    )
+    document_id = document.id
+
+    # Another writer advances the row while this Session keeps the old value.
+    test_db.execute(
+        update(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .values(index_generation=7)
+        .execution_options(synchronize_session=False)
+    )
+    assert document.index_generation == 3
+
+    locked = KnowledgeService._lock_document_row(test_db, document_id)
+
+    assert locked is document
+    assert locked.index_generation == 7
 
 
 def test_mark_document_index_failed_persists_error_and_preserves_source_config(

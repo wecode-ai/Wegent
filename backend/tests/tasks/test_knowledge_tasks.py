@@ -135,6 +135,41 @@ def test_index_document_task_skips_after_lock_retry_exhaustion(
     assert result["reason"] == "lock_retry_exhausted"
 
 
+def test_index_document_task_cleans_up_after_lock_retry_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An exhausted lock retry still removes a late reference for a deleted document."""
+    retry_mock = MagicMock()
+    cleanup_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(index_document_task, "retry", retry_mock)
+
+    with _task_request_context(retries=index_document_task.max_retries):
+        with (
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(False),
+            ),
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            ),
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_failed",
+            ),
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            ),
+        ):
+            result = index_document_task.run(**_task_kwargs())
+
+    retry_mock.assert_not_called()
+    cleanup_mock.assert_called_once()
+    assert result["status"] == "skipped"
+    assert result["reason"] == "lock_retry_exhausted"
+    assert result["deleted_late_index"] is True
+
+
 def test_index_document_task_marks_skip_result_as_failed():
     start_decision = MagicMock(should_execute=True, reason="started")
     success_finalize_mock = MagicMock()
@@ -495,6 +530,54 @@ def test_index_document_task_retries_a_failed_late_index_cleanup():
     cleanup_mock.assert_called_once()
     retry_mock.assert_called_once()
     assert retry_mock.call_args.kwargs["countdown"] > 0
+
+
+def test_index_document_task_owns_a_failed_cleanup_outside_a_worker():
+    """A direct call cannot retry, so the cleanup failure is its own failure."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        with pytest.raises(LateIndexCleanupError, match="vector store down"):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
 
 
 def test_index_document_task_reports_an_exhausted_late_index_cleanup():

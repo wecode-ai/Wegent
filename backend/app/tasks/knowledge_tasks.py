@@ -17,6 +17,7 @@ import asyncio
 import logging
 from typing import Optional
 
+from celery import Task
 from celery.exceptions import Retry
 
 from app.core.celery_app import celery_app
@@ -78,7 +79,7 @@ def _delete_late_index_if_document_was_deleted(
 
 
 def _cleanup_late_index_or_retry(
-    task,
+    task: Task,
     *,
     document_id: int,
     knowledge_base_id: str,
@@ -118,7 +119,18 @@ def _cleanup_late_index_or_retry(
             f"document_id={document_id}, retry={retries + 1}/{max_retries}, "
             f"countdown={KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS}s, error={exc}"
         )
-        raise task.retry(exc=exc, countdown=KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS)
+        try:
+            task.retry(exc=exc, countdown=KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS)
+        except Retry:
+            raise
+        except Exception as retry_error:
+            # Outside a worker Celery re-raises the original error instead of
+            # Retry. The removal still owns its failure, so it must not fall
+            # through to the indexing failure path and run again.
+            raise LateIndexCleanupError(
+                f"Late index cleanup failed for document {document_id}: "
+                f"{retry_error}"
+            ) from retry_error
 
 
 def _build_stale_processing_error(
@@ -377,12 +389,22 @@ def index_document_task(
                         generation=index_generation,
                     ),
                 )
+            # A task that only ever waited cannot leave a write behind, but a
+            # retried cleanup may have lost the lock race: when its document is
+            # already gone, still remove the late reference instead of skipping.
+            deleted = _cleanup_late_index_or_retry(
+                self,
+                document_id=document_id,
+                knowledge_base_id=knowledge_base_id,
+                user_id=user_id,
+            )
             return {
                 "status": "skipped",
                 "reason": "lock_retry_exhausted",
                 "document_id": document_id,
                 "knowledge_base_id": knowledge_base_id,
                 "index_generation": index_generation,
+                "deleted_late_index": deleted,
             }
 
         with SessionLocal() as state_db:
@@ -461,6 +483,8 @@ def index_document_task(
                     )
 
                 if not finalized:
+                    # The skip left no chunks behind (the preparation stopped
+                    # before any write), so only supersession is reported here.
                     logger.info(
                         f"[Celery RAG Indexing] Task skip result was ignored after supersession: "
                         f"task_id={task_id}, document_id={document_id}, "
