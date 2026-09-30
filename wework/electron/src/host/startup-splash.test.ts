@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupReadyHandler,
   createStartupSplash,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   startupSplashBlocksMainWindowActivation,
   type StartupSplashSnapshot,
@@ -79,7 +80,7 @@ class FakeSplashWindow implements StartupSplashWindow {
   }
 }
 
-function createFixture(theme: StartupSplashTheme = 'light') {
+function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () => void) {
   const target = new FakeSplashWindow()
   const writePng = vi.fn(async () => undefined)
   let timestamp = 100
@@ -88,6 +89,7 @@ function createFixture(theme: StartupSplashTheme = 'light') {
     theme,
     now: () => timestamp++,
     writePng,
+    onCloseRequest,
   })
   const show = () => splash.show()
   return { show, splash, target, writePng }
@@ -291,6 +293,19 @@ describe('StartupSplash', () => {
     expect(resolveStartupSplashTheme(undefined, true)).toBe('dark')
   })
 
+  test('holds the splash only for the desktop E2E harness', () => {
+    const hold = (environment: NodeJS.ProcessEnv) =>
+      resolveStartupSplashHoldMs({ VITE_WEWORK_E2E: 'true', ...environment })
+
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(5000)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '0' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '-1' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: 'not-a-number' })).toBe(0)
+    expect(hold({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '999999' })).toBe(120_000)
+    expect(resolveStartupSplashHoldMs({ WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '5000' })).toBe(0)
+  })
+
   test('blocks main-window activation until the startup splash closes', () => {
     const snapshot = (state: StartupSplashSnapshot['state']): StartupSplashSnapshot => ({
       state,
@@ -339,6 +354,22 @@ describe('StartupSplash', () => {
     await splash.close()
 
     expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
+  })
+
+  test('reports refused native close requests so the host can decide what closing means', async () => {
+    const onCloseRequest = vi.fn()
+    const { show, splash, target } = createFixture('light', onCloseRequest)
+    await show()
+
+    expect(target.requestNativeClose()).toBe(false)
+    expect(onCloseRequest).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('visible')
+
+    await splash.close()
+
+    expect(onCloseRequest).toHaveBeenCalledOnce()
     expect(splash.snapshot().state).toBe('closed')
     expect(target.isDestroyed()).toBe(true)
   })

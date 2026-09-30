@@ -79,6 +79,7 @@ import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
   createStartupReadyHandler,
+  resolveStartupSplashHoldMs,
   resolveStartupSplashTheme,
   StartupSplash,
   startupSplashBlocksMainWindowActivation,
@@ -1101,6 +1102,13 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       },
     },
     theme: startupTheme,
+    // The splash is the only visible window until the workbench reports
+    // readiness, so a user closing it through the native close button means
+    // quitting the application instead of dismissing the window.
+    onCloseRequest: () => {
+      if (quitting) return
+      requestApplicationShutdown(() => app.quit())
+    },
   })
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
@@ -1152,6 +1160,16 @@ async function setDockVisible(visible: boolean): Promise<void> {
   if (visible) await app.dock.show()
   else await app.dock.hide()
   dockVisible = visible
+}
+
+async function holdStartupSplashForDesktopE2e(): Promise<void> {
+  const holdMs = resolveStartupSplashHoldMs(process.env)
+  if (holdMs <= 0) return
+  logStartupStep('startup-splash-hold', 'started', { holdMs })
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, holdMs)
+  })
+  logStartupStep('startup-splash-hold', 'completed')
 }
 
 async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
@@ -1379,6 +1397,11 @@ async function shutdown(): Promise<void> {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
+  // The startup splash refuses native close requests until the workbench is
+  // ready. When the app quits within that window, an open splash cancels
+  // app.quit() and strands the app on the splash, so close it through the
+  // controlled-close path as part of every shutdown.
+  await startupSplash?.close()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1657,6 +1680,10 @@ async function configureDesktopRuntime(): Promise<void> {
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
+            await holdStartupSplashForDesktopE2e()
+            // A quit request during startup owns the exit: never present the
+            // workbench while shutdown is already tearing the app down.
+            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
@@ -1674,6 +1701,12 @@ async function configureDesktopRuntime(): Promise<void> {
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
+          closeStartupSplash: () => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) return false
+            target.close()
+            return true
+          },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)

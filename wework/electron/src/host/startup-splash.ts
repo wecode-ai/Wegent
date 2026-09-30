@@ -49,6 +49,11 @@ export interface StartupSplashOptions {
   theme: StartupSplashTheme
   now?: () => number
   writePng?: (path: string, bytes: Buffer) => Promise<void>
+  /**
+   * Notified after a user-initiated close request is refused. The splash is the
+   * only visible window during startup, so the host decides what closing it means.
+   */
+  onCloseRequest?: () => void
 }
 
 export interface CloseStartupSplashOptions {
@@ -74,6 +79,21 @@ export function resolveStartupSplashTheme(
 ): StartupSplashTheme {
   if (appearanceMode === 'light' || appearanceMode === 'dark') return appearanceMode
   return systemUsesDarkColors ? 'dark' : 'light'
+}
+
+const MAX_STARTUP_SPLASH_HOLD_MS = 120_000
+export const STARTUP_SPLASH_HOLD_ENV = 'WEWORK_E2E_STARTUP_SPLASH_HOLD_MS'
+
+/**
+ * The desktop E2E harness can hold the splash on screen after the workbench
+ * reports readiness, so window-lifecycle checks can act on splash-only behavior
+ * instead of racing the splash teardown. Outside the harness this is always 0.
+ */
+export function resolveStartupSplashHoldMs(environment: NodeJS.ProcessEnv): number {
+  if (environment.VITE_WEWORK_E2E !== 'true') return 0
+  const holdMs = Number(environment[STARTUP_SPLASH_HOLD_ENV])
+  if (!Number.isFinite(holdMs) || holdMs <= 0) return 0
+  return Math.min(Math.trunc(holdMs), MAX_STARTUP_SPLASH_HOLD_MS)
 }
 
 export function startupSplashBlocksMainWindowActivation(
@@ -116,7 +136,9 @@ export class StartupSplash {
     this.now = options.now ?? Date.now
     this.persistPng = options.writePng ?? writePng
     options.window.on('close', event => {
-      if (!this.controlledClose) event.preventDefault()
+      if (this.controlledClose) return
+      event.preventDefault()
+      options.onCloseRequest?.()
     })
     this.record('created')
   }
