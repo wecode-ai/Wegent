@@ -713,6 +713,24 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
 
+      - name: Run knowledge remote index E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_QDRANT_URL: http://qdrant:6333
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_BOOTSTRAP_ADMIN_USER: admin
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/knowledge_remote_index.py
+
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)

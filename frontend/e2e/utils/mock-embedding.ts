@@ -28,9 +28,11 @@ export function handleEmbeddingRequest(
     return true
   }
   const data = inputs.map((input: string, index: number) => {
-    const values = [...createHash('sha256').update(input).digest()].map(
-      value => (value - 127.5) / 127.5
-    )
+    // Keep every component positive: index text carries metadata while a query
+    // text does not, so a signed distribution makes any retrieval assertion a
+    // coin flip against a score threshold. Positive components keep the vector
+    // text-dependent while guaranteeing a positive similarity for real queries.
+    const values = [...createHash('sha256').update(input).digest()].map(value => (value + 1) / 256)
     const norm = Math.hypot(...values)
     return { object: 'embedding', index, embedding: values.map(value => value / norm) }
   })
