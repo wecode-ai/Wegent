@@ -70,6 +70,17 @@ def test_resolves_declared_provider_specific_model_alias() -> None:
     )
 
 
+def test_resolves_deepseek_flash_without_version_prefix() -> None:
+    assert (
+        codex_catalog_model_id_for_upstream("deepseek-flash", "openai-responses")
+        == "wework-deepseek-v4-flash"
+    )
+    assert (
+        codex_catalog_model_id_for_upstream(" DeepSeek-Flash ", "openai-responses")
+        == "wework-deepseek-v4-flash"
+    )
+
+
 def test_returns_none_for_unregistered_upstream_model() -> None:
     assert (
         codex_catalog_model_id_for_upstream("unregistered-model", "openai-responses")
