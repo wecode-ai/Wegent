@@ -599,6 +599,11 @@ class TestKnowledgeServiceDeleteDocument:
             ),
             patch.object(
                 KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
+            ),
+            patch.object(
+                KnowledgeService,
                 "_update_document_count_cache",
                 return_value=None,
             ),
@@ -648,6 +653,97 @@ class TestKnowledgeServiceDeleteDocument:
         # not the requester's, because delete_context enforces ownership filtering.
         mock_delete_context.assert_called_once_with(db=db, context_id=20, user_id=42)
 
+    def test_delete_document_holds_the_row_until_the_removal_commits(self) -> None:
+        """The row lock spans the remote removal and the row deletion.
+
+        Indexing reads and updates this same row, so a finalize that lands in
+        the window between the removal and the commit has to wait for the lock
+        and then find no row, which routes it into the late-index compensation
+        instead of letting it report a successful write.
+        """
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=8,
+            kind_id=10,
+            attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+        order: list[str] = []
+
+        def _lock_row(_db, _document_id):
+            order.append("lock")
+            return document
+
+        def _run_remote_removal(_coro):
+            order.append("remote_removal")
+            return {"status": "deleted", "deleted_chunks": 2}
+
+        def _delete_row(_target):
+            order.append("row_delete")
+
+        db.delete.side_effect = _delete_row
+        db.commit.side_effect = lambda: order.append("commit")
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_lock_document_row",
+                side_effect=_lock_row,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
+                side_effect=_run_remote_removal,
+            ),
+        ):
+            result = KnowledgeService.delete_document(db=db, document_id=8, user_id=7)
+
+        assert result.success is True
+        assert order == ["lock", "remote_removal", "row_delete", "commit"]
+        db.delete.assert_called_once_with(document)
+
     def test_delete_document_surfaces_a_remote_index_failure(self) -> None:
         """A failed remote removal keeps the document so the caller can retry."""
         db = MagicMock()
@@ -682,6 +778,11 @@ class TestKnowledgeServiceDeleteDocument:
                 KnowledgeService,
                 "_assert_can_manage_document",
                 return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
             ),
             patch.object(
                 KnowledgeService,
@@ -754,6 +855,11 @@ class TestKnowledgeServiceDeleteDocument:
             ),
             patch.object(
                 KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
+            ),
+            patch.object(
+                KnowledgeService,
                 "_update_document_count_cache",
                 return_value=None,
             ),
@@ -812,6 +918,11 @@ class TestKnowledgeServiceDeleteDocument:
                 KnowledgeService,
                 "_assert_can_manage_document",
                 return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
             ),
             patch.object(
                 KnowledgeService,
@@ -883,6 +994,11 @@ class TestKnowledgeServiceDeleteDocument:
                 KnowledgeService,
                 "_assert_can_manage_document",
                 return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
             ),
             patch.object(
                 KnowledgeService,
@@ -960,6 +1076,11 @@ class TestKnowledgeServiceDeleteDocument:
                 KnowledgeService,
                 "_assert_can_manage_document",
                 return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_lock_document_row",
+                return_value=document,
             ),
             patch.object(
                 KnowledgeService,

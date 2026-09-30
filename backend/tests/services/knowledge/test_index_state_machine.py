@@ -368,6 +368,40 @@ def test_mark_document_index_succeeded_only_updates_active_generation(
     assert document.index_generation == 2
 
 
+def test_mark_document_index_succeeded_refuses_a_deleted_document(
+    test_db: Session, test_user: User
+):
+    """A write that finishes after the delete cannot finalize.
+
+    This is the end state of the deletion race: the delete holds the document
+    row until it commits, so an in-flight index completion arrives after the row
+    is gone. The guarded update then matches nothing, which is what routes the
+    task into the late-index compensation instead of a successful write, and the
+    removed reference stays unqueryable.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=3,
+    )
+    document_id = document.id
+    test_db.delete(document)
+    test_db.commit()
+
+    finalized = mark_document_index_succeeded(
+        test_db,
+        document_id=document_id,
+        generation=3,
+        chunks={"total_count": 4},
+        chunk_storage_enabled=True,
+    )
+
+    assert finalized is False
+
+
 def test_mark_document_index_failed_persists_error_and_preserves_source_config(
     test_db: Session, test_user: User
 ):

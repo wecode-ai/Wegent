@@ -17,6 +17,8 @@ import asyncio
 import logging
 from typing import Optional
 
+from celery.exceptions import Retry
+
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
@@ -29,6 +31,14 @@ from app.services.knowledge.processing_errors import (
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
+
+
+class LateIndexCleanupError(RuntimeError):
+    """Raised when a late-index cleanup failed on its last allowed attempt.
+
+    The document row is already gone, so this failure cannot be retried through
+    any product entry: it has to surface as the task's own failure.
+    """
 
 
 def _delete_late_index_if_document_was_deleted(
@@ -65,6 +75,50 @@ def _delete_late_index_if_document_was_deleted(
     )
     asyncio.run(get_delete_gateway().delete_document_index(delete_spec, db=db))
     return True
+
+
+def _cleanup_late_index_or_retry(
+    task,
+    *,
+    document_id: int,
+    knowledge_base_id: str,
+    user_id: int,
+) -> bool:
+    """Remove chunks a late write left for a deleted document.
+
+    The document row is already gone, so no product entry can trigger this
+    removal again: a failed cleanup retries the task, and the retried task comes
+    back here - a task whose document no longer exists only cleans up - until the
+    removal succeeds. Exhausted retries re-raise, so the failure stays visible
+    instead of ending as a clean skip.
+    """
+    try:
+        with SessionLocal() as cleanup_db:
+            return _delete_late_index_if_document_was_deleted(
+                db=cleanup_db,
+                document_id=document_id,
+                knowledge_base_id=knowledge_base_id,
+                user_id=user_id,
+            )
+    except Exception as exc:
+        retries = getattr(task.request, "retries", 0)
+        max_retries = getattr(task, "max_retries", 0) or 0
+        if retries >= max_retries:
+            logger.error(
+                f"[Celery RAG Indexing] Late index cleanup retries exhausted: "
+                f"document_id={document_id}, retries={retries}, error={exc}",
+                exc_info=True,
+            )
+            raise LateIndexCleanupError(
+                f"Late index cleanup failed after {retries} retries for document "
+                f"{document_id}: {exc}"
+            ) from exc
+        logger.warning(
+            f"[Celery RAG Indexing] Late index cleanup failed, scheduling retry: "
+            f"document_id={document_id}, retry={retries + 1}/{max_retries}, "
+            f"countdown={KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS}s, error={exc}"
+        )
+        raise task.retry(exc=exc, countdown=KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS)
 
 
 def _build_stale_processing_error(
@@ -339,6 +393,30 @@ def index_document_task(
             )
 
         if not start_decision.should_execute:
+            if start_decision.reason == "document_not_found":
+                # The document was deleted while this task waited for the index
+                # lock, so nothing may stay under its reference. Clean the
+                # reference up here as well, which is also the retry entry for a
+                # compensation that failed.
+                deleted = _cleanup_late_index_or_retry(
+                    self,
+                    document_id=document_id,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user_id,
+                )
+                logger.info(
+                    f"[Celery RAG Indexing] Task skipped for a deleted document and "
+                    f"cleaned its late index: task_id={task_id}, "
+                    f"document_id={document_id}, deleted_late_index={deleted}"
+                )
+                return {
+                    "status": "skipped",
+                    "reason": "document_not_found",
+                    "document_id": document_id,
+                    "knowledge_base_id": knowledge_base_id,
+                    "index_generation": index_generation,
+                    "deleted_late_index": deleted,
+                }
             logger.info(
                 f"[Celery RAG Indexing] Task skipped: task_id={task_id}, "
                 f"document_id={document_id}, attachment_id={attachment_id}, "
@@ -414,13 +492,12 @@ def index_document_task(
                 )
 
             if not finalized:
-                with SessionLocal() as cleanup_db:
-                    deleted = _delete_late_index_if_document_was_deleted(
-                        db=cleanup_db,
-                        document_id=document_id,
-                        knowledge_base_id=knowledge_base_id,
-                        user_id=user_id,
-                    )
+                deleted = _cleanup_late_index_or_retry(
+                    self,
+                    document_id=document_id,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user_id,
+                )
                 logger.info(
                     f"[Celery RAG Indexing] Task completed but finalization was skipped: "
                     f"task_id={task_id}, document_id={document_id}, "
@@ -464,6 +541,11 @@ def index_document_task(
             result["index_generation"] = index_generation
             return result
 
+        except (Retry, LateIndexCleanupError):
+            # A late-index cleanup owns its own retry and failure handling: it
+            # must reach Celery instead of being read as an indexing failure and
+            # running the removal a second time.
+            raise
         except Exception as exc:
             with SessionLocal() as finalize_db:
                 finalized = mark_document_index_failed(
@@ -477,23 +559,14 @@ def index_document_task(
                 )
 
             if not finalized:
-                try:
-                    with SessionLocal() as cleanup_db:
-                        deleted = _delete_late_index_if_document_was_deleted(
-                            db=cleanup_db,
-                            document_id=document_id,
-                            knowledge_base_id=knowledge_base_id,
-                            user_id=user_id,
-                        )
-                except Exception as cleanup_error:  # noqa: BLE001
-                    # Keep the indexing failure visible even when the late-index
-                    # compensation itself fails.
-                    logger.error(
-                        f"[Celery RAG Indexing] Failed to compensate a late index for "
-                        f"document {document_id}: {cleanup_error}",
-                        exc_info=True,
-                    )
-                    deleted = False
+                # The write failed after the document was deleted; the failed
+                # removal must retry rather than end as a clean skip.
+                deleted = _cleanup_late_index_or_retry(
+                    self,
+                    document_id=document_id,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user_id,
+                )
                 logger.warning(
                     f"[Celery RAG Indexing] Task failed after being superseded: "
                     f"task_id={task_id}, document_id={document_id}, "

@@ -2073,6 +2073,24 @@ class KnowledgeService:
         return doc
 
     @staticmethod
+    def _lock_document_row(
+        db: Session, document_id: int
+    ) -> Optional[KnowledgeDocument]:
+        """Re-read one document under a row lock.
+
+        ``populate_existing`` refreshes any already cached instance, so the
+        caller never keeps working with a stale generation or status while the
+        lock is meant to serialize it with indexing.
+        """
+        return (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+
+    @staticmethod
     def delete_document(
         db: Session,
         document_id: int,
@@ -2120,6 +2138,17 @@ class KnowledgeService:
                 success=False, kb_id=None, error="Knowledge base not found for document"
             )
         KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+
+        # Hold the document row until the removal is committed. Indexing reads and
+        # updates this same row, so the lock closes the window where an in-flight
+        # write could still finalize successfully between the index removal and
+        # the row deletion: a starting task blocks and then finds no row, and a
+        # finishing task blocks and then matches nothing, which routes it into the
+        # existing late-index compensation.
+        locked_doc = KnowledgeService._lock_document_row(db, document_id)
+        if locked_doc is None:
+            return DocumentDeleteResult(success=False, kb_id=None)
+        doc = locked_doc
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing

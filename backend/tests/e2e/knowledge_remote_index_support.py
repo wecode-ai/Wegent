@@ -449,6 +449,26 @@ def _wait_for_index_status(
     )
 
 
+def _await_task_decision(async_result: Any) -> dict[str, Any]:
+    """Wait for the embedded Celery worker to finish one task and read its result."""
+
+    deadline = time.monotonic() + TASK_RESULT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if async_result.ready():
+            break
+        time.sleep(0.5)
+    _check(
+        async_result.ready(),
+        f"the queued indexing task {async_result.id} never finished",
+    )
+    decision = async_result.get(timeout=10)
+    _check(
+        isinstance(decision, dict),
+        f"the queued indexing task returned an unexpected result: {decision!r}",
+    )
+    return decision
+
+
 def _document_chunks(
     client: httpx.Client, token: str, document_id: int
 ) -> list[dict[str, Any]]:

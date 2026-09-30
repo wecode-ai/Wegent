@@ -13,6 +13,7 @@ import pytest
 from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus
 from app.tasks.knowledge_tasks import (
+    LateIndexCleanupError,
     _build_stale_processing_error,
     _delete_late_index_if_document_was_deleted,
     index_document_task,
@@ -440,6 +441,160 @@ def test_index_document_task_compensates_a_late_index_after_a_failed_write():
 
     cleanup_mock.assert_called_once()
     assert result["reason"] == "stale_failure"
+
+
+def test_index_document_task_retries_a_failed_late_index_cleanup():
+    """A failed compensation retries instead of ending as a clean skip."""
+    from celery.exceptions import Retry
+
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+    retry_mock = MagicMock(side_effect=Retry("retry requested"))
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        stack.enter_context(patch.object(index_document_task, "retry", retry_mock))
+        with pytest.raises(Retry):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    retry_mock.assert_called_once()
+    assert retry_mock.call_args.kwargs["countdown"] > 0
+
+
+def test_index_document_task_reports_an_exhausted_late_index_cleanup():
+    """The last allowed attempt re-raises, so the cleanup failure stays visible."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+    retry_mock = MagicMock()
+
+    with (
+        _task_request_context(retries=settings.KNOWLEDGE_INDEX_LOCK_MAX_RETRIES),
+        ExitStack() as stack,
+    ):
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        stack.enter_context(patch.object(index_document_task, "retry", retry_mock))
+        with pytest.raises(LateIndexCleanupError, match="vector store down"):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    retry_mock.assert_not_called()
+
+
+def test_index_document_task_retry_only_cleans_a_deleted_document():
+    """A retried task for a deleted document cleans up instead of indexing again."""
+    start_decision = MagicMock(should_execute=False, reason="document_not_found")
+    cleanup_mock = MagicMock(return_value=True)
+    indexing_mock = MagicMock()
+
+    with _task_request_context(retries=1), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                indexing_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        result = index_document_task.run(**_task_kwargs())
+
+    indexing_mock.assert_not_called()
+    cleanup_mock.assert_called_once()
+    assert result["status"] == "skipped"
+    assert result["reason"] == "document_not_found"
+    assert result["deleted_late_index"] is True
 
 
 def test_delete_late_index_uses_deleted_document_ref():
