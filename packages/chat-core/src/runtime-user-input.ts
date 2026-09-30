@@ -131,6 +131,71 @@ export function resolveAsyncRequestUserInputAnswers<TAttachment, TFileChanges>(
   return changed ? resolved : messages
 }
 
+export interface AsyncRequestUserInputReply {
+  question: string
+  answer: string
+}
+
+/**
+ * What each non-blocking answer said, keyed by the reply message id.
+ *
+ * An async question is answered by the next user message (that delivery is what
+ * keeps the model moving), so the transcript recovers the question/answer pairs
+ * from the conversation instead of from a runtime response. A reply that cannot
+ * be attributed to its questions is left out, and the message renders as typed.
+ */
+export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[]
+): Map<string, AsyncRequestUserInputReply[]> {
+  const replies = new Map<string, AsyncRequestUserInputReply[]>()
+  messages.forEach((message, index) => {
+    const questions = asyncQuestionPrompts(message)
+    if (questions.length === 0) return
+    const reply = messages.slice(index + 1).find(isUserReply)
+    if (!reply) return
+    const rows = pairQuestionsWithReply(questions, reply.content)
+    if (rows.length > 0) replies.set(reply.id, rows)
+  })
+  return replies
+}
+
+function asyncQuestionPrompts<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): string[] {
+  return (message.blocks ?? []).flatMap(block => {
+    if (block.type !== 'tool') return []
+    const payload = block.renderPayload
+    if (!isRequestUserInputPayload(payload) || !isAsyncRequestUserInputPayload(payload)) {
+      return []
+    }
+    return (payload.questions ?? []).map(
+      (question, index) =>
+        question.question?.trim() || question.id?.trim() || `question_${index + 1}`
+    )
+  })
+}
+
+/**
+ * Answers are composed one per line in question order, so a reply with as many
+ * lines as questions maps line to question. A single question answers with its
+ * whole reply; anything else is left unattributed.
+ */
+function pairQuestionsWithReply(
+  questions: string[],
+  reply: string
+): AsyncRequestUserInputReply[] {
+  if (questions.length === 1) {
+    const answer = reply.trim()
+    return answer ? [{ question: questions[0], answer }] : []
+  }
+  const lines = reply
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (lines.length !== questions.length) return []
+  return questions.map((question, index) => ({ question, answer: lines[index] }))
+}
+
 function resolveAsyncBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   reply: string
@@ -156,10 +221,14 @@ function asyncReplyByMessageIndex(messages: WorkbenchMessage[]): (string | null)
   let reply: string | null = null
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     replies[index] = reply
-    const message = messages[index]
-    if (message.role === 'user' && message.content.trim()) reply = message.content
+    if (isUserReply(messages[index])) reply = messages[index].content
   }
   return replies
+}
+
+/** The user message that answers a preceding question, whenever the composer sent it. */
+function isUserReply(message: WorkbenchMessage): boolean {
+  return message.role === 'user' && Boolean(message.content.trim())
 }
 
 /** A single free-form reply answers every question the async card asked. */
