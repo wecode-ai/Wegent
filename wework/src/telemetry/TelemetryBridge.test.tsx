@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TelemetryBridge } from './TelemetryBridge'
 
 const mocks = vi.hoisted(() => ({
+  applyTelemetryIdentity: vi.fn(),
+  clientEnabled: true,
+  identity: null as { distinctId: string; properties: Record<string, string> } | null,
   installTelemetry: vi.fn().mockResolvedValue(undefined),
   preferences: {
     loaded: true,
@@ -14,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   officialRelease: true,
   distribution: 'public' as 'public' | 'internal',
   electronRuntime: false,
+  user: null as { id: number; user_name: string; email: string } | null,
 }))
 
 vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
@@ -26,10 +30,24 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('./client', () => ({
+  applyTelemetryIdentity: mocks.applyTelemetryIdentity,
   installTelemetry: mocks.installTelemetry,
   isTelemetryEnabled: () => mocks.preferences.preferences.telemetryEnabled,
   setTelemetryEnabled: mocks.setTelemetryEnabled,
   track: mocks.track,
+  useTelemetryEnabled: () => mocks.clientEnabled,
+}))
+
+vi.mock('@/features/auth/useAuth', () => ({
+  useAuth: () => ({ user: mocks.user }),
+}))
+
+vi.mock('@extensions/telemetry-policy', () => ({
+  telemetryPolicy: {
+    identityFor: () => mocks.identity,
+    personProfiles: 'never',
+    sendClientIp: false,
+  },
 }))
 
 vi.mock('./config', () => ({
@@ -43,6 +61,9 @@ vi.mock('@/desktop/appPreferences', () => ({
 
 describe('TelemetryBridge', () => {
   beforeEach(() => {
+    mocks.applyTelemetryIdentity.mockClear()
+    mocks.clientEnabled = true
+    mocks.identity = null
     mocks.installTelemetry.mockClear()
     mocks.setTelemetryEnabled.mockClear()
     mocks.track.mockClear()
@@ -53,6 +74,22 @@ describe('TelemetryBridge', () => {
     mocks.officialRelease = true
     mocks.distribution = 'public'
     mocks.electronRuntime = false
+    mocks.user = null
+  })
+
+  it('attaches the account identity only while the client is capturing', async () => {
+    mocks.identity = { distinctId: 'jiaqi62', properties: { username: 'jiaqi62' } }
+    mocks.user = { id: 42, user_name: 'jiaqi62', email: 'jiaqi62@example.com' }
+
+    const view = render(<TelemetryBridge />)
+
+    await waitFor(() => expect(mocks.applyTelemetryIdentity).toHaveBeenCalledWith(mocks.identity))
+
+    mocks.clientEnabled = false
+    mocks.applyTelemetryIdentity.mockClear()
+    view.rerender(<TelemetryBridge />)
+
+    expect(mocks.applyTelemetryIdentity).not.toHaveBeenCalled()
   })
 
   it('initializes once and starts telemetry again after it is re-enabled', async () => {

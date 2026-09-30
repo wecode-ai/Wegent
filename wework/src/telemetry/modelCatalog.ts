@@ -1,14 +1,12 @@
-// Bounded enums for AI generation telemetry.
+// Model reporting for AI generation telemetry.
+//
+// `$ai_model` carries the model name from the app's model catalog, which is the
+// value the user picked and what the app itself calls the model. Names are free
+// text (cloud models are labelled like `ali-deepseek-v3.1(国内)`), so the only
+// bound is a single-line string of a fixed maximum length.
 //
 // `$ai_provider` is a genuinely finite set of known model providers; anything
 // else collapses to 'other'.
-//
-// `$ai_model` is deliberately DYNAMIC: the known set is whatever the runtime
-// model catalog exposes at a given moment. The bound comes from the source —
-// the catalog is fed exclusively by the three model channels Wework exposes
-// (official Codex models, self-configured provider profiles, and cloud models)
-// — so any id that appears there is a legitimate enum value, and anything that
-// does not is 'other'. There is no static model-id list to go stale.
 export const KNOWN_AI_PROVIDERS = [
   'openai',
   'anthropic',
@@ -83,16 +81,14 @@ export function toKnownAiProvider(
   return PROVIDER_ALIASES[normalized] ?? 'other'
 }
 
-export function normalizeAiModelId(value: string | null | undefined): string | null {
-  if (!value) return null
-  const normalized = value.trim().toLowerCase()
-  return normalized || null
-}
+const MAX_MODEL_NAME_LENGTH = 128
+const CONTROL_CHARACTER_PATTERN = /\p{Cc}/gu
 
-export function toKnownAiModelId(
-  value: string | null | undefined,
-  knownModelIds: ReadonlySet<string>
-): string {
-  const normalized = normalizeAiModelId(value)
-  return normalized && knownModelIds.has(normalized) ? normalized : 'other'
+export function toTelemetryModelName(value: string | null | undefined): string {
+  const normalized = value
+    ?.replace(CONTROL_CHARACTER_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_MODEL_NAME_LENGTH)
+  return normalized ? normalized : 'other'
 }
