@@ -226,6 +226,30 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       return
     }
     await this.connect(undefined, this.hasConnectionHistory)
+    if (this.rawSocket?.connected) {
+      return
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onState = (state: SocketClientState) => {
+        if (state.isConnected) {
+          finish()
+          resolve()
+        } else if (state.connectionError) {
+          finish()
+          reject(state.connectionError)
+        }
+      }
+      const finish = () => {
+        globalThis.clearTimeout(timeout)
+        this.stateListeners.delete(onState)
+      }
+      const timeout = globalThis.setTimeout(() => {
+        finish()
+        reject(new Error(`Socket.IO connection timed out after ${this.options.timeout}ms`))
+      }, this.options.timeout)
+      this.stateListeners.add(onState)
+      onState(this.state)
+    })
   }
 
   disconnect(): void {

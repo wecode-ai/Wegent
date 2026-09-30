@@ -651,7 +651,11 @@ async function flush() {
 
 async function waitForUi(milliseconds: number) {
   await act(async () => {
-    await new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(milliseconds);
+    } else {
+      await new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+    }
   });
   await flush();
 }
@@ -874,6 +878,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root.unmount());
+  vi.useRealTimers();
   container.remove();
   vi.unstubAllGlobals();
   if (originalGetAnimations)
@@ -1764,6 +1769,58 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("filters My Work to human tasks and groups them by the next human action", async () => {
+    const { api } = createApi();
+    const humanIssue = {
+      ...issue,
+      id: "human-work-1",
+      project_key: project.project_key,
+      project_name: project.name,
+      human_work: {
+        assignment_id: "assignment-1",
+        assignee_user_id: 7,
+        reviewer_user_id: 1,
+        submission_message_id: null,
+        submitted_by_user_id: null,
+        state: "none" as const,
+        result: "",
+        return_reason: "",
+        ai_draft_delivery_id: null,
+        can_start: true,
+        can_submit: false,
+        can_review: false,
+      },
+    };
+    api.myWork = {
+      list: emptyAsync([
+        humanIssue,
+        {
+          ...issue,
+          id: "ordinary-work-1",
+          project_key: project.project_key,
+          project_name: project.name,
+        },
+      ]),
+    };
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, rootView: "my-work" }}
+      />,
+    );
+    expect(byTestId("collaboration-home-work-human-work-1")).toBeTruthy();
+    expect(byTestId("collaboration-home-work-ordinary-work-1")).toBeTruthy();
+    await click(byTestId("collaboration-my-work-human-filter"));
+    expect(byTestId("collaboration-work-group-human-action")).toBeTruthy();
+    expect(byTestId("collaboration-home-work-human-work-1")).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-home-work-ordinary-work-1"]',
+      ),
+    ).toBeNull();
+  });
+
   it("reports readiness only after the initial platform data is loaded", async () => {
     const { api } = createApi();
     const onReady = vi.fn();
@@ -2060,6 +2117,7 @@ describe("CollaborationPlatformApp real component flow", () => {
   });
 
   it("recommends a group for two Agents and shows the working lead after applying AI division", async () => {
+    vi.useFakeTimers();
     const agents = [
       agent,
       { ...agent, id: "agent-2", team_id: 12, name: "设计智能体" },
@@ -2535,7 +2593,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-issue-home")).toBeTruthy();
     expect(
       byTestId("issue-execution-environment-notice").textContent,
-    ).toContain("请先初始化环境，再创建 Issue");
+    ).toContain("不影响创建和人工处理 Issue");
     expect(byTestId("collaboration-issue-guide-1").textContent).toContain(
       "拆解一个新需求",
     );
@@ -2649,31 +2707,71 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.issues.update).not.toHaveBeenCalled();
   });
 
-  it("blocks the project Issue create dialog until the environment is ready", async () => {
-    const { api } = createApi();
-    await render(
-      <PlatformHarness
-        api={api}
-        start={{
-          ...initialLocation,
-          workspaceId: workspace.id,
-          workspaceView: "projects",
-          projectId: project.id,
-        }}
-      />,
-    );
+  it.each(["unassigned", "uninitialized", "offline"] as const)(
+    "creates a human Issue without redirecting when the environment is %s",
+    async (environmentState) => {
+      const selectedProject: CollaborationProject = {
+        ...project,
+        ...(environmentState === "offline"
+          ? {
+              execution_environment: {
+                repositories: [],
+                setup_steps: [],
+                devices: {
+                  "device-21": {
+                    status: "ready",
+                    workspace_path: "/workspace/project-1",
+                  },
+                },
+              },
+            }
+          : {}),
+      };
+      const { api } = createApi({ initialProjects: [selectedProject] });
+      api.projects.listExecutionEnvironments = emptyAsync(
+        environmentState === "unassigned"
+          ? []
+          : [
+              {
+                ...environment,
+                status: environmentState === "offline" ? "offline" : "online",
+              },
+            ],
+      );
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: "projects",
+            projectId: project.id,
+          }}
+        />,
+      );
 
-    await click(byTestId("collaboration-issue-create"));
+      await click(byTestId("collaboration-issue-create"));
 
-    expect(
-      document.querySelector(
-        '[data-testid="collaboration-issue-create-dialog"]',
-      ),
-    ).toBeNull();
-    expect(byTestId("test-location").textContent).toContain(
-      '"projectSettingsSection":"environments"',
-    );
-  });
+      expect(byTestId("collaboration-issue-create-dialog")).toBeTruthy();
+      expect(byTestId("test-location").textContent).not.toContain(
+        '"projectSettingsSection":"environments"',
+      );
+      await change(
+        byTestId("cloud-todo-title") as HTMLInputElement,
+        "人工处理事项",
+      );
+      await click(byTestId("cloud-todo-create-assignee"));
+      await click(portalByTestId("cloud-todo-create-assignee-option-user:7"));
+      expect(
+        (byTestId("cloud-todo-create-confirm") as HTMLButtonElement).disabled,
+      ).toBe(false);
+      await click(byTestId("cloud-todo-create-confirm"));
+      expect(api.issues.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ title: "人工处理事项", assigneeUserId: 7 }),
+      );
+    },
+  );
 
   it("saves a selected project team as the Issue owner, not as a numeric agent team", async () => {
     const { api } = createApi();

@@ -186,28 +186,8 @@ export function CollaborationApp({
     api,
     project,
   });
-  const requestIssueCreate = async () => {
+  const requestIssueCreate = () => {
     if (!project) return;
-    const readiness =
-      environmentReadiness.kind === "ready"
-        ? environmentReadiness
-        : await environmentReadiness.refresh();
-    if (readiness.kind !== "ready") {
-      host.notify?.(
-        translate(
-          "todo.issue_environment_create_blocked",
-          "请先完成项目执行环境初始化，再创建 Issue。",
-        ),
-        "error",
-      );
-      host.navigate({
-        projectId: project.id,
-        issueId: null,
-        view: "manage",
-        projectSettingsSection: "environments",
-      });
-      return;
-    }
     setCreateIssueOpen(true);
   };
   useEffect(() => {

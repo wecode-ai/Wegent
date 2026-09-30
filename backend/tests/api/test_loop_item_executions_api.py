@@ -165,6 +165,24 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     )
     test_db.add_all([manager, worker, parent, manager_execution])
     test_db.commit()
+    runtime_activity = ProjectChatMessage(
+        message_id=str(uuid4()),
+        client_message_id=str(uuid4()),
+        project_id=str(project.id),
+        task_id=parent.id,
+        sender_type="agent",
+        sender_id=manager.id,
+        sender_name=manager.name,
+        message_type="agent_chunk",
+        content="",
+        metadata_json={"execution_id": manager_execution.id, "run_status": "running"},
+        agent_id=manager.id,
+        runtime_device_id=manager_execution.runtime_device_id,
+        runtime_task_id=manager_execution.runtime_task_id,
+        status="streaming",
+    )
+    test_db.add(runtime_activity)
+    test_db.commit()
 
     values = LoopItemExecutionBatchCreate(
         loop_item_id=parent.id,
@@ -254,14 +272,23 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
         )
         .all()
     )
-    assert len(activities) == 1
-    assignments = activities[0].metadata_json["dispatch_assignments"]
+    assert len(activities) == 2
+    assignment_activity = next(
+        activity
+        for activity in activities
+        if activity.metadata_json.get("activity_type") == "manager_assignment"
+    )
+    assert assignment_activity.id != runtime_activity.id
+    assignments = assignment_activity.metadata_json["dispatch_assignments"]
     assert assignments[0]["agent_name"] == "Worker"
     assert assignments[1]["human_user_name"] == test_user.user_name
     push.assert_called_once()
     assert push.call_args.args[0]["metadata"]["dispatch_assignments"] == assignments
     test_db.refresh(manager_execution)
     assert manager_execution.status == "running"
+
+    runtime_activity.metadata_json = {"run_status": "completed"}
+    test_db.commit()
 
     push.reset_mock()
     running = loop_item_executions.report_collaboration_assignment_status(

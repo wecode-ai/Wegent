@@ -57,7 +57,7 @@ async function waitForAssignmentNotification(
         message: `Issue ${issueId} should produce a Wework human assignment notification`,
       }
     )
-    .toBe('create_personal_task')
+    .toBe('open_issue')
   return notification!
 }
 
@@ -82,11 +82,11 @@ test.describe('Issue Dispatch human assignment', () => {
       'data-value',
       `user:${memberId}`
     )
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveText(/^(收集箱|Inbox)$/)
 
     const notification = await waitForAssignmentNotification(request, fixture.issueId)
     expect(notification.payload).toMatchObject({
-      action: 'create_personal_task',
+      action: 'open_issue',
       projectId: fixture.projectId,
       itemId: fixture.issueId,
       issueId: fixture.issueId,

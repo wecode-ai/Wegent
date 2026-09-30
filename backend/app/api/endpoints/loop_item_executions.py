@@ -544,9 +544,8 @@ def enqueue_execution_batch(
             activity = dict(human_assignment)
         assignment_activity.append(activity)
 
-    manager_activity = loop_item_execution_service._linked_activity(
-        db, manager_execution
-    )
+    # Runtime updates may replace the manager card while member status is reported.
+    # Keep the round assignment on its own durable activity record.
     existing_activity = (
         db.query(ProjectChatMessage)
         .filter(
@@ -567,26 +566,7 @@ def enqueue_execution_batch(
         None,
     )
     should_push_assignment = False
-    if assignment_message is None and manager_activity is not None:
-        assignment_message = manager_activity
-        assignment_message.sender_type = "agent"
-        assignment_message.sender_id = manager.id
-        assignment_message.sender_name = manager.title or manager.name or "AI manager"
-        assignment_message.agent_id = manager.id
-        assignment_message.message_type = "text"
-        assignment_message.content = ""
-        assignment_message.status = "completed"
-        assignment_message.metadata_json = {
-            **dict(assignment_message.metadata_json or {}),
-            "dispatch_role": "manager",
-            "activity_type": "manager_assignment",
-            "dispatch_id": values.dispatch_id,
-            "coordination_round_id": values.round_id,
-            "dispatch_assignments": assignment_activity,
-            "run_status": "completed",
-        }
-        should_push_assignment = True
-    elif assignment_message is None:
+    if assignment_message is None:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
             message_id=message_id,

@@ -121,6 +121,12 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Execution environment in Project settings
+
+In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
+
+The **Human processing** settings page only explains the direct-assignment and review workflow; project administrators do not need to fill in another form. Actions happen in the Issue detail. See [Work on an Issue assigned to me](../wegent/user-guide/coding/collaboration-issue-home.md).
+
 ## Message AI
 
 Use **Message AI** in the project-space header for project exploration and temporary questions. It opens the project conversation sidebar, where you can start or switch conversations and select an execution project. For work that needs formal execution, create a board task and assign a robot so its owner, status, and deliverables remain trackable.
