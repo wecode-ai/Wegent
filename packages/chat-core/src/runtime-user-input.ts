@@ -141,8 +141,11 @@ export interface AsyncRequestUserInputReply {
  *
  * An async question is answered by the next user message (that delivery is what
  * keeps the model moving), so the transcript recovers the question/answer pairs
- * from the conversation instead of from a runtime response. A reply that cannot
- * be attributed to its questions is left out, and the message renders as typed.
+ * from the conversation instead of from a runtime response. That stays true once
+ * the question has been answered: sending it only echoes the answer back onto the
+ * block, so the next user message is still the source of truth. A reply that
+ * cannot be attributed to its questions is left out, and the message renders as
+ * typed.
  */
 export function resolveAsyncRequestUserInputReplies<TAttachment, TFileChanges>(
   messages: WorkbenchMessage<TAttachment, TFileChanges>[]
