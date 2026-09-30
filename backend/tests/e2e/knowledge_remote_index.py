@@ -31,8 +31,7 @@ import json
 import os
 import time
 import uuid
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -50,6 +49,10 @@ EMBEDDING_MODEL_URL = (
 INTERNAL_SERVICE_TOKEN = os.environ.get("E2E_INTERNAL_SERVICE_TOKEN") or os.environ.get(
     "INTERNAL_SERVICE_TOKEN", ""
 )
+# The in-process remote calls use the Backend's own settings, so align the
+# Backend variable with the E2E one when only the latter is provided.
+if INTERNAL_SERVICE_TOKEN and not os.environ.get("INTERNAL_SERVICE_TOKEN"):
+    os.environ["INTERNAL_SERVICE_TOKEN"] = INTERNAL_SERVICE_TOKEN
 ADMIN_USER_NAME = (
     os.environ.get("E2E_ADMIN_USER")
     or os.environ.get("E2E_BOOTSTRAP_ADMIN_USER")
@@ -440,49 +443,118 @@ def _delete_retrieval_resources(client: httpx.Client, token: str, name: str) -> 
     _check(model.status_code < 300, f"deleting the model failed: {model.text}")
 
 
-@contextmanager
-def _local_data_plane_raises() -> Iterator[None]:
-    """Any local index or query call performed inside this block fails."""
-
-    from app.services.rag.local_gateway import LocalRagGateway
-
-    originals: dict[str, Any] = {}
-    for method in ("index_document", "query", "delete_document_index"):
-        original = getattr(LocalRagGateway, method)
-        originals[method] = original
-
-        def _fail(*_args: Any, _method: str = method, **_kwargs: Any) -> Any:
-            raise KnowledgeRemoteIndexE2EError(
-                f"local data plane method {_method} must not run"
-            )
-
-        setattr(LocalRagGateway, method, _fail)
-    try:
-        yield
-    finally:
-        for method, original in originals.items():
-            setattr(LocalRagGateway, method, original)
-
-
-def _assert_remote_data_plane() -> None:
-    """Index and query must resolve to the remote runtime, never the local plane."""
+def _assert_remote_gateways() -> None:
+    """Index, delete, and query must resolve to the remote runtime."""
 
     from app.core.config import settings
-    from app.services.rag.gateway_factory import get_query_gateway
+    from app.services.rag.gateway_factory import (
+        get_delete_gateway,
+        get_index_gateway,
+        get_query_gateway,
+    )
     from app.services.rag.remote_gateway import RemoteRagGateway
 
-    _check(
-        settings.get_rag_runtime_mode("index") == "remote",
-        "the Backend must index through the remote runtime in this environment",
+    for operation in ("index", "delete", "query"):
+        _check(
+            settings.get_rag_runtime_mode(operation) == "remote",
+            f"the Backend must run '{operation}' through the remote runtime",
+        )
+    for operation, gateway in (
+        ("index", get_index_gateway()),
+        ("delete", get_delete_gateway()),
+        ("query", get_query_gateway()),
+    ):
+        _check(
+            isinstance(gateway, RemoteRagGateway),
+            f"the {operation} gateway must be the remote gateway",
+        )
+
+
+def _expect_local_operation_refused(
+    operation: str,
+    call: Callable[[], Awaitable[Any]],
+) -> None:
+    """The local gateway itself must refuse an operation configured remote."""
+
+    from app.services.rag.local_gateway import LocalDataPlaneDisabledError
+
+    try:
+        asyncio.run(call())
+    except LocalDataPlaneDisabledError as error:
+        _check(
+            error.operation == operation,
+            f"the local refusal named {error.operation}, expected {operation}",
+        )
+        return
+    raise KnowledgeRemoteIndexE2EError(
+        f"local {operation} must fail while '{operation}' is configured remote"
     )
-    _check(
-        settings.get_rag_runtime_mode("query") == "remote",
-        "the Backend must query through the remote runtime in this environment",
+
+
+def _assert_local_operations_are_refused(
+    knowledge_base_id: int,
+    document_id: int,
+    resource_name: str,
+    owner_user_id: int,
+) -> None:
+    """Local indexing, index deletion, and retrieval must fail immediately.
+
+    The guard lives in ``LocalRagGateway``, so the Backend process and the
+    embedded Celery worker refuse a local fallback exactly like this process.
+    """
+
+    from app.db.session import SessionLocal
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.rag.local_gateway import LocalRagGateway
+    from app.services.rag.runtime_specs import (
+        DeleteRuntimeSpec,
+        IndexRuntimeSpec,
+        IndexSource,
+        QueryRuntimeSpec,
     )
-    _check(
-        isinstance(get_query_gateway(), RemoteRagGateway),
-        "the query gateway must be the remote gateway",
+    from shared.knowledge_contracts.runtime_config import RuntimeRetrieverConfig
+
+    with SessionLocal() as db:
+        document = db.get(KnowledgeDocument, document_id)
+        _check(document is not None, "the indexed document disappeared")
+        attachment_id = int(document.attachment_id)
+
+    local = LocalRagGateway()
+    index_spec = IndexRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+        index_owner_user_id=owner_user_id,
+        retriever_name=resource_name,
+        retriever_namespace="default",
+        embedding_model_name=resource_name,
+        embedding_model_namespace="default",
+        source=IndexSource(source_type="attachment", attachment_id=attachment_id),
     )
+    delete_spec = DeleteRuntimeSpec(
+        knowledge_base_id=knowledge_base_id,
+        document_ref=str(document_id),
+        index_owner_user_id=owner_user_id,
+        retriever_config=RuntimeRetrieverConfig(
+            name=resource_name,
+            namespace="default",
+            storage_config={"type": "qdrant", "url": QDRANT_URL},
+        ),
+    )
+    query_spec = QueryRuntimeSpec(
+        knowledge_base_ids=[knowledge_base_id],
+        query="WEGENT-E2E-LOCAL-GUARD",
+        route_mode="rag_retrieval",
+    )
+
+    _expect_local_operation_refused(
+        "index", lambda: local.index_document(index_spec, db=None)
+    )
+    _expect_local_operation_refused(
+        "delete", lambda: local.delete_document_index(delete_spec, db=None)
+    )
+    with SessionLocal() as db:
+        _expect_local_operation_refused("query", lambda: local.query(query_spec, db=db))
+    _log("local index, delete, and retrieval calls are refused by the gateway")
 
 
 def _delete_scenario_fixtures(
@@ -590,21 +662,20 @@ def _assert_stale_generation_stands_down(
     )
 
 
-def _assert_in_process_query_uses_the_remote_plane(
+def _assert_in_process_scoped_query(
     knowledge_base_id: int,
     document_id: int,
     owner_user_id: int,
     query: str,
 ) -> None:
-    """The same scoped query fails if any local data plane method runs."""
+    """A non-HTTP caller resolves and executes the scoped query remotely."""
 
     from app.db.session import SessionLocal
     from app.services.rag.gateway_factory import get_query_gateway
     from app.services.rag.runtime_resolver import RagRuntimeResolver
     from shared.knowledge_contracts.retrieval_scope import RetrievalScope
 
-    _assert_remote_data_plane()
-    with _local_data_plane_raises(), SessionLocal() as db:
+    with SessionLocal() as db:
         spec = RagRuntimeResolver().build_query_runtime_spec(
             db=db,
             knowledge_base_ids=[knowledge_base_id],
@@ -762,7 +833,11 @@ def _run_plain_document_scenario(
             expected_generation=generation,
             marker=marker_b,
         )
-        _assert_in_process_query_uses_the_remote_plane(
+        _assert_remote_gateways()
+        _assert_local_operations_are_refused(
+            knowledge_base_id, document_id, resource_name, owner_user_id
+        )
+        _assert_in_process_scoped_query(
             knowledge_base_id, document_id, owner_user_id, rebuilt_content
         )
         _check(
