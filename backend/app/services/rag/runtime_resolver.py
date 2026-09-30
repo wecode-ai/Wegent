@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -17,6 +16,7 @@ from app.services.knowledge.retrieval_resource_resolver import (
     resolve_embedding_model_resource,
     resolve_retriever_resource,
 )
+from app.services.rag import retrieval_resource_configs
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
@@ -28,14 +28,8 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
-    RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
 )
-from knowledge_engine.embedding.capabilities import (
-    normalize_additional_input_modalities,
-)
-from shared.db.capability_reference import resolve_model_kind
 from shared.knowledge_module import (
     EMBEDDING_RESOURCE_CATEGORY,
     MODEL_RESOURCE_KIND,
@@ -47,8 +41,6 @@ from shared.models import (
     RetrievalScope,
     SearchHints,
 )
-from shared.utils.crypto import decrypt_api_key
-from shared.utils.placeholder import process_custom_headers_placeholders
 
 
 @dataclass(frozen=True)
@@ -144,18 +136,20 @@ class RagRuntimeResolver:
         retriever_config = None
         embedding_model_config = None
         if resolve_execution_configs:
-            retriever_config = self._build_resolved_retriever_config(
+            retriever_config = retrieval_resource_configs.build_retriever_config(
                 db=db,
                 user_id=kb_info.index_owner_user_id,
                 name=retriever_name,
                 namespace=retriever_namespace,
             )
-            embedding_model_config = self._build_resolved_embedding_model_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                model_name=embedding_model_name,
-                model_namespace=embedding_model_namespace,
-                user_name=user_name,
+            embedding_model_config = (
+                retrieval_resource_configs.build_embedding_model_config(
+                    db=db,
+                    user_id=kb_info.index_owner_user_id,
+                    model_name=embedding_model_name,
+                    model_namespace=embedding_model_namespace,
+                    user_name=user_name,
+                )
             )
         return IndexRuntimeSpec(
             knowledge_base_id=parsed_knowledge_base_id,
@@ -609,7 +603,7 @@ class RagRuntimeResolver:
         return ListChunksRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=owner_user_id,
-            retriever_config=self._owner_retriever_config(
+            retriever_config=retrieval_resource_configs.owner_retriever_config(
                 db=db,
                 user_id=owner_user_id,
                 name=retriever_name,
@@ -649,7 +643,7 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             document_ref=document_ref,
             index_owner_user_id=runtime_user_id,
-            retriever_config=self._build_resolved_retriever_config(
+            retriever_config=retrieval_resource_configs.build_retriever_config(
                 db=db,
                 user_id=runtime_user_id,
                 name=retriever_name,
@@ -794,13 +788,13 @@ class RagRuntimeResolver:
                 QueryKnowledgeBaseRuntimeConfig(
                     knowledge_base_id=knowledge_base_id,
                     index_owner_user_id=owner_user_id,
-                    retriever_config=self._build_resolved_retriever_config(
+                    retriever_config=retrieval_resource_configs.build_retriever_config(
                         db=db,
                         user_id=owner_user_id,
                         name=retriever_name,
                         namespace=retriever_namespace,
                     ),
-                    embedding_model_config=self._build_resolved_embedding_model_config(
+                    embedding_model_config=retrieval_resource_configs.build_embedding_model_config(
                         db=db,
                         user_id=owner_user_id,
                         model_name=embedding_model_name,
@@ -865,7 +859,7 @@ class RagRuntimeResolver:
             knowledge_base=kb,
             current_user_id=current_user_id,
         )
-        resolved_retriever_config = self._owner_retriever_config(
+        resolved_retriever_config = retrieval_resource_configs.owner_retriever_config(
             db=db,
             user_id=kb_info.index_owner_user_id,
             name=retriever_name,
@@ -885,155 +879,3 @@ class RagRuntimeResolver:
             index_owner_user_id=kb_info.index_owner_user_id,
             retriever_config=resolved_retriever_config,
         )
-
-    def _owner_retriever_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        name: str,
-        namespace: str,
-        resolve_execution_configs: bool,
-    ) -> RuntimeRetrieverConfig | None:
-        """Resolve the owner's retriever for one executing gateway.
-
-        The owner's access verdict is always checked through the retriever
-        service, which owns the group permission plus the personal, referenced
-        and public lookup. Only the local data plane also consumes the resolved
-        storage configuration, so a remote gateway skips building it and
-        decrypting the credentials its request would drop.
-        """
-
-        if resolve_execution_configs:
-            return self._build_resolved_retriever_config(
-                db=db,
-                user_id=user_id,
-                name=name,
-                namespace=namespace,
-            )
-
-        retriever_kinds_service.get_retriever(
-            db=db,
-            user_id=user_id,
-            name=name,
-            namespace=namespace,
-        )
-        return None
-
-    def _build_resolved_retriever_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        name: str,
-        namespace: str,
-    ) -> RuntimeRetrieverConfig:
-        retriever = retriever_kinds_service.get_retriever(
-            db=db,
-            user_id=user_id,
-            name=name,
-            namespace=namespace,
-        )
-        if retriever is None:
-            raise ValueError(f"Retriever {name} (namespace: {namespace}) not found")
-
-        storage_config = retriever.spec.storageConfig
-        return RuntimeRetrieverConfig(
-            name=name,
-            namespace=namespace,
-            storage_config={
-                "type": storage_config.type,
-                "url": storage_config.url,
-                "username": storage_config.username,
-                "password": self._decrypt_optional_secret(storage_config.password),
-                "apiKey": self._decrypt_optional_secret(storage_config.apiKey),
-                "indexStrategy": (
-                    storage_config.indexStrategy.model_dump(exclude_none=True)
-                    if storage_config.indexStrategy is not None
-                    else {"mode": "per_dataset"}
-                ),
-                "ext": storage_config.ext or {},
-            },
-        )
-
-    def _build_resolved_embedding_model_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        model_name: str,
-        model_namespace: str,
-        user_name: str | None,
-    ) -> RuntimeEmbeddingModelConfig:
-        model_kind = self._get_model_kind(
-            db=db,
-            user_id=user_id,
-            model_name=model_name,
-            model_namespace=model_namespace,
-        )
-        if model_kind is None:
-            raise ValueError(
-                f"Embedding model '{model_name}' not found in namespace '{model_namespace}'"
-            )
-
-        spec = (model_kind.json or {}).get("spec", {})
-        model_config = spec.get("modelConfig", {})
-        env = model_config.get("env", {})
-        protocol = spec.get("protocol") or env.get("model")
-        custom_headers = env.get("custom_headers", {})
-        if custom_headers and isinstance(custom_headers, dict):
-            custom_headers = process_custom_headers_placeholders(
-                custom_headers,
-                user_name,
-            )
-
-        embedding_config = spec.get("embeddingConfig", {})
-        dimensions = embedding_config.get("dimensions") if embedding_config else None
-        encoding_format = (
-            embedding_config.get("encoding_format") if embedding_config else None
-        )
-        additional_input_modalities = normalize_additional_input_modalities(
-            embedding_config.get("additional_input_modalities")
-            if embedding_config
-            else None
-        )
-
-        return RuntimeEmbeddingModelConfig(
-            model_name=model_name,
-            model_namespace=model_namespace,
-            resolved_config={
-                "protocol": protocol,
-                "api_key": self._decrypt_optional_secret(env.get("api_key")),
-                "base_url": env.get("base_url"),
-                "model_id": env.get("model_id"),
-                "custom_headers": (
-                    custom_headers if isinstance(custom_headers, dict) else {}
-                ),
-                "dimensions": dimensions,
-                "encoding_format": encoding_format,
-                "additional_input_modalities": additional_input_modalities,
-            },
-        )
-
-    def _get_model_kind(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        model_name: str,
-        model_namespace: str,
-    ) -> Kind | None:
-        return resolve_model_kind(
-            db,
-            name=model_name,
-            namespace=model_namespace,
-            user_id=user_id,
-        )
-
-    def _decrypt_optional_secret(self, value: Any) -> Any:
-        if not value:
-            return value
-        try:
-            return decrypt_api_key(value)
-        except Exception:
-            return value

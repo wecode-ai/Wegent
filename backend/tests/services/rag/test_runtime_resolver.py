@@ -4,6 +4,10 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.services.rag.retrieval_resource_configs import (
+    build_embedding_model_config,
+    build_retriever_config,
+)
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.knowledge_module import RetrievalResource
 from shared.models import (
@@ -221,18 +225,16 @@ def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
             "app.services.rag.runtime_resolver.get_kb_index_info",
             return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=True),
         ) as get_kb_index_info_mock,
-        patch.object(
-            resolver,
-            "_build_resolved_retriever_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config",
             return_value=RuntimeRetrieverConfig(
                 name="retriever-a",
                 namespace="default",
                 storage_config={"type": "qdrant"},
             ),
         ),
-        patch.object(
-            resolver,
-            "_build_resolved_embedding_model_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_embedding_model_config",
             return_value=RuntimeEmbeddingModelConfig(
                 model_name="embed-a",
                 model_namespace="default",
@@ -318,9 +320,11 @@ def test_build_index_runtime_spec_skips_resolved_configs_for_remote():
                 namespace="default",
             ),
         ),
-        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
-        patch.object(
-            resolver, "_build_resolved_embedding_model_config"
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config"
+        ) as build_retriever,
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_embedding_model_config"
         ) as build_embedding,
     ):
         spec = resolver.build_index_runtime_spec(
@@ -556,9 +560,8 @@ def test_build_public_list_chunks_runtime_spec_carries_metadata_condition() -> N
             "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
             return_value=(kb, True),
         ),
-        patch.object(
-            resolver,
-            "_build_resolved_retriever_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config",
             return_value=RuntimeRetrieverConfig(
                 name="retriever-a",
                 namespace="default",
@@ -622,10 +625,12 @@ def test_build_public_list_chunks_runtime_spec_skips_discarded_retriever_config(
             return_value=(kb, True),
         ),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            "app.services.rag.retrieval_resource_configs.retriever_kinds_service.get_retriever",
             return_value=SimpleNamespace(spec=SimpleNamespace(storageConfig=object())),
         ) as get_retriever,
-        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config"
+        ) as build_retriever,
     ):
         spec = resolver.build_public_list_chunks_runtime_spec(
             db=MagicMock(),
@@ -660,10 +665,12 @@ def test_build_public_admin_runtime_spec_skips_discarded_retriever_config(
             return_value=(kb, True),
         ),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            "app.services.rag.retrieval_resource_configs.retriever_kinds_service.get_retriever",
             return_value=SimpleNamespace(spec=SimpleNamespace(storageConfig=object())),
         ) as get_retriever,
-        patch.object(resolver, "_build_resolved_retriever_config") as build_retriever,
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config"
+        ) as build_retriever,
     ):
         if spec_type == "purge":
             spec = resolver.build_public_purge_index_runtime_spec(
@@ -729,7 +736,7 @@ def test_build_public_admin_runtime_spec_propagates_the_retriever_denial(
             return_value=(kb, True),
         ),
         patch(
-            "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+            "app.services.rag.retrieval_resource_configs.retriever_kinds_service.get_retriever",
             side_effect=HTTPException(
                 status_code=403, detail="Access denied to this group"
             ),
@@ -744,7 +751,6 @@ def test_build_public_admin_runtime_spec_propagates_the_retriever_denial(
 
 
 def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> None:
-    resolver = RagRuntimeResolver()
     retriever = SimpleNamespace(
         spec=SimpleNamespace(
             storageConfig=SimpleNamespace(
@@ -760,10 +766,10 @@ def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> No
     )
 
     with patch(
-        "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+        "app.services.rag.retrieval_resource_configs.retriever_kinds_service.get_retriever",
         return_value=retriever,
     ):
-        config = resolver._build_resolved_retriever_config(
+        config = build_retriever_config(
             db=MagicMock(),
             user_id=7,
             name="retriever-a",
@@ -841,9 +847,8 @@ def test_build_delete_runtime_spec_resolves_retriever_config():
                 },
             ),
         ),
-        patch.object(
-            resolver,
-            "_build_resolved_retriever_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config",
             return_value=RuntimeRetrieverConfig(
                 name="retriever-a",
                 namespace="default",
@@ -885,9 +890,8 @@ def test_build_delete_runtime_spec_preserves_explicit_public_owner_scope():
                 },
             ),
         ),
-        patch.object(
-            resolver,
-            "_build_resolved_retriever_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config",
             return_value=RuntimeRetrieverConfig(
                 name="retriever-a",
                 namespace="default",
@@ -1179,9 +1183,8 @@ def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> No
             "app.services.knowledge.index_runtime.build_kb_index_info",
             return_value=SimpleNamespace(index_owner_user_id=7, summary_enabled=False),
         ) as build_kb_index_info,
-        patch.object(
-            resolver,
-            "_build_resolved_retriever_config",
+        patch(
+            "app.services.rag.retrieval_resource_configs.build_retriever_config",
             return_value=RuntimeRetrieverConfig(
                 name="retriever-a",
                 namespace="default",
@@ -1210,7 +1213,6 @@ def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> No
 def test_build_resolved_embedding_model_config_preserves_additional_modalities() -> (
     None
 ):
-    resolver = RagRuntimeResolver()
     db = MagicMock()
     model_kind = SimpleNamespace(
         json={
@@ -1231,8 +1233,11 @@ def test_build_resolved_embedding_model_config_preserves_additional_modalities()
         }
     )
 
-    with patch.object(resolver, "_get_model_kind", return_value=model_kind):
-        config = resolver._build_resolved_embedding_model_config(
+    with patch(
+        "app.services.rag.retrieval_resource_configs.resolve_model_kind",
+        return_value=model_kind,
+    ):
+        config = build_embedding_model_config(
             db=db,
             user_id=7,
             model_name="embed-a",
