@@ -7,8 +7,8 @@ from fastapi import HTTPException
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.knowledge_module import RetrievalResource
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseQueryConfig,
-    RemoteQueryAuthorizedResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -239,6 +239,21 @@ def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
                 resolved_config={"protocol": "openai"},
             ),
         ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=RetrievalResource(
+                name="retriever-a", kind="Retriever", namespace="default"
+            ),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource",
+            return_value=RetrievalResource(
+                name="embed-a",
+                kind="Model",
+                category="embedding",
+                namespace="default",
+            ),
+        ),
     ):
         spec = resolver.build_index_runtime_spec(
             db=db,
@@ -264,6 +279,53 @@ def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
     assert spec.source.attachment_id == 11
     assert spec.retriever_config.storage_config["type"] == "qdrant"
     assert spec.embedding_model_config.resolved_config["protocol"] == "openai"
+    assert spec.authorized_resources == RemoteAuthorizedRetrievalResources(
+        knowledge_base_id=7,
+        index_owner_user_id=42,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="retriever-a", namespace="default"
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model", name="embed-a", namespace="default"
+        ),
+    )
+
+
+def test_build_index_runtime_spec_rejects_owner_without_resource() -> None:
+    """Indexing fails before any remote request when the owner lost a resource."""
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch(
+            "app.services.rag.runtime_resolver.get_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_retriever_resource",
+            return_value=None,
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.resolve_embedding_model_resource"
+        ) as resolve_embedding,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            resolver.build_index_runtime_spec(
+                db=db,
+                knowledge_base_id="7",
+                attachment_id=11,
+                retriever_name="retriever-a",
+                retriever_namespace="default",
+                embedding_model_name="embed-a",
+                embedding_model_namespace="default",
+                user_id=9,
+                user_name="alice",
+                document_id=99,
+                splitter_config_dict=None,
+            )
+
+    assert exc_info.value.status_code == 403
+    resolve_embedding.assert_not_called()
 
 
 def test_build_query_runtime_spec_maps_runtime_budget():
@@ -352,7 +414,7 @@ def test_build_query_runtime_spec_omits_budget_without_context_window():
 def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
     resolver = RagRuntimeResolver()
     authorized = [
-        RemoteQueryAuthorizedResources(
+        RemoteAuthorizedRetrievalResources(
             knowledge_base_id=1,
             index_owner_user_id=5,
             retriever=RemoteRetrievalResourceRef(
@@ -392,7 +454,7 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
 def test_build_query_runtime_spec_reuses_provided_rag_configs():
     resolver = RagRuntimeResolver()
     authorized = [
-        RemoteQueryAuthorizedResources(
+        RemoteAuthorizedRetrievalResources(
             knowledge_base_id=1,
             index_owner_user_id=5,
             retriever=RemoteRetrievalResourceRef(
@@ -687,7 +749,7 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
         ) as build_kb_index_info,
         patch.object(
             resolver,
-            "_authorize_query_resources",
+            "_authorize_owner_resources",
         ) as authorize_resources,
     ):
         spec = resolver.build_public_query_runtime_spec(
@@ -712,7 +774,7 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
     )
     authorize_resources.assert_called_once_with(
         db=db,
-        entry=RemoteQueryAuthorizedResources(
+        entry=RemoteAuthorizedRetrievalResources(
             knowledge_base_id=7,
             index_owner_user_id=7,
             retriever=RemoteRetrievalResourceRef(
@@ -753,7 +815,7 @@ def test_build_public_query_runtime_spec_selects_caller_resources():
             "app.services.knowledge.index_runtime.build_kb_index_info",
             return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
         ),
-        patch.object(resolver, "_authorize_query_resources") as authorize_resources,
+        patch.object(resolver, "_authorize_owner_resources") as authorize_resources,
     ):
         spec = resolver.build_public_query_runtime_spec(
             db=db,
@@ -771,7 +833,7 @@ def test_build_public_query_runtime_spec_selects_caller_resources():
         )
 
     authorize_resources.assert_called_once()
-    assert spec.authorized_resources[0] == RemoteQueryAuthorizedResources(
+    assert spec.authorized_resources[0] == RemoteAuthorizedRetrievalResources(
         knowledge_base_id=7,
         index_owner_user_id=42,
         retriever=RemoteRetrievalResourceRef(
@@ -851,7 +913,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
         patch.object(resolver, "_require_knowledge_read_access") as require_read,
         patch.object(
             resolver,
-            "_authorize_query_resources",
+            "_authorize_owner_resources",
         ) as authorize_resources,
     ):
         spec = resolver.build_query_runtime_spec(
@@ -870,7 +932,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
     )
     authorize_resources.assert_called_once_with(
         db=db,
-        entry=RemoteQueryAuthorizedResources(
+        entry=RemoteAuthorizedRetrievalResources(
             knowledge_base_id=7,
             index_owner_user_id=42,
             retriever=RemoteRetrievalResourceRef(

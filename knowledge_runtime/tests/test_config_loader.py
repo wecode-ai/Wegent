@@ -74,6 +74,7 @@ def test_resolve_index_config_closes_session_after_success() -> None:
         knowledge_base_id=1,
         user_id=42,
         document_id=100,
+        authorized=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()

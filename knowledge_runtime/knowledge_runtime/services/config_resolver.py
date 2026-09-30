@@ -27,7 +27,7 @@ from shared.knowledge_module import (
     resolve_execution_config,
 )
 from shared.models import (
-    RemoteQueryAuthorizedResources,
+    RemoteAuthorizedRetrievalResources,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -88,26 +88,33 @@ class ConfigResolver:
         knowledge_base_id: int,
         user_id: int,
         document_id: int | None = None,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
     ) -> IndexConfig:
-        """Resolve all configs needed for document indexing."""
+        """Resolve all configs needed for document indexing.
+
+        Indexing executes under the knowledge base owner and only the retrieval
+        resources Backend authorized for this call may be loaded. The shared
+        module composes and validates the stored configuration inside that
+        authorized set, so a knowledge base edited to a resource outside the set
+        fails instead of silently indexing with it.
+        """
+        if authorized is None:
+            raise ConfigResolutionError(
+                "authorization_required",
+                f"Knowledge base {knowledge_base_id} indexing requires authorized "
+                "retrieval resources",
+            )
         kb = self._get_knowledge_base(db, knowledge_base_id)
-        index_owner_user_id = kb.user_id
+        index_owner_user_id = authorized.index_owner_user_id
         user_name = self._get_user_name(db, user_id)
 
-        retrieval_config = self._parse_kb_retrieval_config(kb)
+        self._require_stored_config_in_authorized_set(kb, authorized)
 
-        retriever_config = self._build_resolved_retriever_config(
-            db=db,
-            user_id=index_owner_user_id,
-            name=retrieval_config["retriever_name"],
-            namespace=retrieval_config["retriever_namespace"],
+        retriever_config = self._authorized_retriever_config(
+            db, authorized, index_owner_user_id
         )
-        embedding_model_config = self._build_resolved_embedding_model_config(
-            db=db,
-            user_id=index_owner_user_id,
-            model_name=retrieval_config["embedding_model_name"],
-            model_namespace=retrieval_config["embedding_model_namespace"],
-            user_name=user_name,
+        embedding_model_config = self._authorized_embedding_config(
+            db, authorized, index_owner_user_id, user_name
         )
 
         splitter_config: dict[str, Any] = {}
@@ -122,13 +129,27 @@ class ConfigResolver:
             user_name=user_name,
         )
 
+    def _require_stored_config_in_authorized_set(
+        self,
+        kb: Kind,
+        authorized: RemoteAuthorizedRetrievalResources,
+    ) -> None:
+        """Reject indexing unless the module accepts the stored configuration."""
+        try:
+            resolve_execution_config(
+                self._read_kb_retrieval_config(kb),
+                self._authorized_module_resources(authorized),
+            )
+        except KnowledgeConfigError as exc:
+            raise ConfigResolutionError("config_invalid", str(exc)) from exc
+
     def resolve_query_config(
         self,
         db: Session,
         *,
         knowledge_base_id: int,
         user_id: int,
-        authorized: RemoteQueryAuthorizedResources | None = None,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base.
@@ -168,7 +189,7 @@ class ConfigResolver:
     def _authorized_retriever_config(
         self,
         db: Session,
-        authorized: RemoteQueryAuthorizedResources,
+        authorized: RemoteAuthorizedRetrievalResources,
         index_owner_user_id: int,
     ) -> RuntimeRetrieverConfig:
         """Load the runner's retriever Kind inside the authorized reference."""
@@ -193,7 +214,7 @@ class ConfigResolver:
     def _authorized_embedding_config(
         self,
         db: Session,
-        authorized: RemoteQueryAuthorizedResources,
+        authorized: RemoteAuthorizedRetrievalResources,
         index_owner_user_id: int,
         user_name: str | None,
     ) -> RuntimeEmbeddingModelConfig:
@@ -220,7 +241,7 @@ class ConfigResolver:
     def _authorized_retrieval_settings(
         self,
         kb: Kind,
-        authorized: RemoteQueryAuthorizedResources,
+        authorized: RemoteAuthorizedRetrievalResources,
         retrieval_override: Mapping[str, Any] | None = None,
     ) -> RuntimeRetrievalConfig:
         """Resolve stored retrieval parameters inside the authorized set.
@@ -242,25 +263,32 @@ class ConfigResolver:
         try:
             resolved = resolve_execution_config(
                 self._read_kb_retrieval_config(kb),
-                AuthorizedRetrievalResources(
-                    retriever=RetrievalResource(
-                        name=authorized.retriever.name,
-                        kind=authorized.retriever.kind,
-                        namespace=authorized.retriever.namespace,
-                    ),
-                    embedding_model=RetrievalResource(
-                        name=authorized.embedding_model.name,
-                        kind=authorized.embedding_model.kind,
-                        category=EMBEDDING_RESOURCE_CATEGORY,
-                        namespace=authorized.embedding_model.namespace,
-                    ),
-                ),
+                self._authorized_module_resources(authorized),
                 retrieval_override=retrieval_override,
                 resource_selection=resource_selection,
             )
         except KnowledgeConfigError as exc:
             raise ConfigResolutionError("config_invalid", str(exc)) from exc
         return RuntimeRetrievalConfig(**resolved.retrieval_config)
+
+    @staticmethod
+    def _authorized_module_resources(
+        authorized: RemoteAuthorizedRetrievalResources,
+    ) -> AuthorizedRetrievalResources:
+        """Translate the protocol references into module resource records."""
+        return AuthorizedRetrievalResources(
+            retriever=RetrievalResource(
+                name=authorized.retriever.name,
+                kind=authorized.retriever.kind,
+                namespace=authorized.retriever.namespace,
+            ),
+            embedding_model=RetrievalResource(
+                name=authorized.embedding_model.name,
+                kind=authorized.embedding_model.kind,
+                category=EMBEDDING_RESOURCE_CATEGORY,
+                namespace=authorized.embedding_model.namespace,
+            ),
+        )
 
     def resolve_admin_config(
         self,

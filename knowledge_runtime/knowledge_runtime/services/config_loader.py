@@ -19,7 +19,7 @@ from knowledge_runtime.services.config_resolver import (
     QueryConfig,
 )
 from shared.db.sync_session import get_session_factory
-from shared.models import RemoteQueryAuthorizedResources
+from shared.models import RemoteAuthorizedRetrievalResources
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class RuntimeConfigLoader:
         knowledge_base_id: int,
         user_id: int,
         document_id: int | None = None,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
     ) -> IndexConfig:
         """Resolve all configs needed for document indexing."""
         return self._resolve_with_session(
@@ -51,6 +52,7 @@ class RuntimeConfigLoader:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user_id,
                 document_id=document_id,
+                authorized=authorized,
             )
         )
 
@@ -59,7 +61,7 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_id: int,
         user_id: int,
-        authorized: RemoteQueryAuthorizedResources | None = None,
+        authorized: RemoteAuthorizedRetrievalResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
@@ -78,7 +80,7 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_ids: list[int],
         user_id: int,
-        authorized: dict[int, RemoteQueryAuthorizedResources] | None = None,
+        authorized: dict[int, RemoteAuthorizedRetrievalResources] | None = None,
         retrieval_overrides: Mapping[int, Mapping[str, Any]] | None = None,
     ) -> dict[int, QueryConfig]:
         """Resolve query configs for multiple knowledge bases in one session.

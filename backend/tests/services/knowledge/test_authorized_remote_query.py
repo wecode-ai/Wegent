@@ -29,7 +29,7 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 from shared.knowledge_module import RetrievalResource
 from shared.models import (
-    RemoteQueryAuthorizedResources,
+    RemoteAuthorizedRetrievalResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
 )
@@ -330,7 +330,7 @@ async def test_explicit_selection_reaches_the_runtime_request(mocker) -> None:
         user_id=3,
         user_name="alice",
         authorized_resources=[
-            RemoteQueryAuthorizedResources(
+            RemoteAuthorizedRetrievalResources(
                 knowledge_base_id=7,
                 index_owner_user_id=42,
                 retriever=RemoteRetrievalResourceRef(

@@ -11,8 +11,8 @@ import pytest
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
-    RemoteQueryAuthorizedResources,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRetrievalResourceRef,
@@ -23,9 +23,9 @@ from shared.models import (
 )
 
 
-def _authorized(knowledge_base_id: int) -> RemoteQueryAuthorizedResources:
+def _authorized(knowledge_base_id: int) -> RemoteAuthorizedRetrievalResources:
     """Authorize one knowledge base's stored retrieval resources."""
-    return RemoteQueryAuthorizedResources(
+    return RemoteAuthorizedRetrievalResources(
         knowledge_base_id=knowledge_base_id,
         index_owner_user_id=7,
         retriever=RemoteRetrievalResourceRef(

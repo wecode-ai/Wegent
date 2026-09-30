@@ -18,8 +18,8 @@ from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
-    RemoteQueryAuthorizedResources,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -260,10 +260,10 @@ class QueryExecutor:
     @staticmethod
     def _build_authorized_resources_map(
         knowledge_base_ids: list[int],
-        authorized_resources: list[RemoteQueryAuthorizedResources] | None,
-    ) -> dict[int, RemoteQueryAuthorizedResources]:
+        authorized_resources: list[RemoteAuthorizedRetrievalResources] | None,
+    ) -> dict[int, RemoteAuthorizedRetrievalResources]:
         """Index the authorized retrieval resources by knowledge base ID."""
-        authorized_by_kb_id: dict[int, RemoteQueryAuthorizedResources] = {}
+        authorized_by_kb_id: dict[int, RemoteAuthorizedRetrievalResources] = {}
         for entry in authorized_resources or []:
             if entry.knowledge_base_id in authorized_by_kb_id:
                 raise ValueError(

@@ -102,8 +102,8 @@ class RemoteRetrievalResourceRef(KnowledgeRuntimeProtocolModel):
     namespace: str = "default"
 
 
-class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
-    """Per-knowledge-base resources Backend authorized for this query.
+class RemoteAuthorizedRetrievalResources(KnowledgeRuntimeProtocolModel):
+    """Per-knowledge-base resources Backend authorized for one remote operation.
 
     Backend verifies the caller may read the knowledge base and that the
     knowledge base owner may use these retriever and embedding model records,
@@ -111,9 +111,11 @@ class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
     of widening the lookup with a bare Kind query.
 
     ``explicit_selection`` marks the entry as the resources the caller
-    explicitly selected for this query, so they supersede the stored
+    explicitly selected for a public query, so they supersede the stored
     configuration. Without it the stored configuration must name these same
     resources, keeping the previous "edited outside the authorized set" failure.
+    Index requests never set it: indexing always executes the stored
+    configuration, restricted to the authorized records.
 
     MVP trust boundary: the shared internal service token only proves the caller
     holds it. It cannot prove Backend generated these references, and it is not
@@ -128,7 +130,12 @@ class RemoteQueryAuthorizedResources(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Index request - reference mode. KR resolves configs from DB."""
+    """Index request - reference mode. KR resolves configs from DB.
+
+    ``authorized_resources`` carries the retrieval resources Backend authorized
+    for this knowledge base owner. The runtime loads only those records and
+    resolves the index configuration through the shared module.
+    """
 
     knowledge_base_id: int
     user_id: int
@@ -136,6 +143,7 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     source_file: str | None = None
     file_extension: str | None = None
     content_ref: ContentRef
+    authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     trace_context: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None
 
@@ -184,7 +192,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
-    authorized_resources: list[RemoteQueryAuthorizedResources] | None = None
+    authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None

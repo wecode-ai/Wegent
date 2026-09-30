@@ -9,14 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.content_fetcher import ContentFetcher
-
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.content_fetcher import ContentFetcher
 from shared.models import RemoteIndexRequest
 
 logger = logging.getLogger(__name__)
@@ -49,11 +48,13 @@ class IndexExecutor:
             ValueError: If required configuration is missing.
             ContentFetchError: If content fetching fails.
         """
-        # Resolve configs from database
+        # Resolve configs from database, restricted to the resources Backend
+        # authorized for this indexing call.
         config = self._config_loader.resolve_index_config(
             knowledge_base_id=request.knowledge_base_id,
             user_id=request.user_id,
             document_id=request.document_id,
+            authorized=request.authorized_resources,
         )
 
         # Fetch content from the content reference

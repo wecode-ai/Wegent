@@ -42,7 +42,7 @@ from shared.knowledge_module import (
     RETRIEVER_RESOURCE_KIND,
 )
 from shared.models import (
-    RemoteQueryAuthorizedResources,
+    RemoteAuthorizedRetrievalResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     SearchHints,
@@ -66,10 +66,10 @@ class _QueryResourceReferences:
         knowledge_base_id: int,
         index_owner_user_id: int,
         explicit_selection: bool = False,
-    ) -> RemoteQueryAuthorizedResources:
+    ) -> RemoteAuthorizedRetrievalResources:
         """Bundle the references into the authorized-resources protocol entry."""
         retriever, embedding_model = self._resource_refs()
-        return RemoteQueryAuthorizedResources(
+        return RemoteAuthorizedRetrievalResources(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
             retriever=retriever,
@@ -122,6 +122,17 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             current_user_id=user_id,
         )
+        authorized_resources = self._authorized_entry(
+            db=db,
+            references=_QueryResourceReferences(
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+            ),
+            knowledge_base_id=parsed_knowledge_base_id,
+            index_owner_user_id=kb_info.index_owner_user_id,
+        )
         return IndexRuntimeSpec(
             knowledge_base_id=parsed_knowledge_base_id,
             document_id=document_id,
@@ -130,6 +141,7 @@ class RagRuntimeResolver:
             retriever_namespace=retriever_namespace,
             embedding_model_name=embedding_model_name,
             embedding_model_namespace=embedding_model_namespace,
+            authorized_resources=authorized_resources,
             source=IndexSource(source_type="attachment", attachment_id=attachment_id),
             retriever_config=self._build_resolved_retriever_config(
                 db=db,
@@ -172,7 +184,7 @@ class RagRuntimeResolver:
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
         knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
-        authorized_resources: list[RemoteQueryAuthorizedResources] | None = None,
+        authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -265,12 +277,13 @@ class RagRuntimeResolver:
             embedding_model_name=embedding_model_name,
             embedding_model_namespace=embedding_model_namespace,
         )
-        authorized_entry = references.authorized_entry(
+        authorized_entry = self._authorized_entry(
+            db=db,
+            references=references,
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
             explicit_selection=True,
         )
-        self._authorize_query_resources(db=db, entry=authorized_entry)
 
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],
@@ -318,7 +331,7 @@ class RagRuntimeResolver:
         knowledge_base_ids: list[int],
         read_user_id: int | None = None,
         task_id: int | None = None,
-    ) -> list[RemoteQueryAuthorizedResources]:
+    ) -> list[RemoteAuthorizedRetrievalResources]:
         """Authorize the retrieval resources each knowledge base would execute.
 
         Two separate subjects are checked before anything leaves Backend: the
@@ -351,8 +364,8 @@ class RagRuntimeResolver:
         knowledge_base_records: list[Kind],
         read_user_id: int | None = None,
         task_id: int | None = None,
-    ) -> list[RemoteQueryAuthorizedResources]:
-        authorized: list[RemoteQueryAuthorizedResources] = []
+    ) -> list[RemoteAuthorizedRetrievalResources]:
+        authorized: list[RemoteAuthorizedRetrievalResources] = []
         for kb in knowledge_base_records:
             self._require_knowledge_read_access(
                 db=db,
@@ -364,11 +377,12 @@ class RagRuntimeResolver:
                 knowledge_base_id=kb.id,
                 retrieval_config=self._read_retrieval_config(kb),
             )
-            entry = references.authorized_entry(
+            entry = self._authorized_entry(
+                db=db,
+                references=references,
                 knowledge_base_id=kb.id,
                 index_owner_user_id=kb.user_id,
             )
-            self._authorize_query_resources(db=db, entry=entry)
             authorized.append(entry)
         return authorized
 
@@ -441,13 +455,39 @@ class RagRuntimeResolver:
             ),
         )
 
-    def _authorize_query_resources(
+    def _authorized_entry(
         self,
         *,
         db: Session,
-        entry: RemoteQueryAuthorizedResources,
+        references: _QueryResourceReferences,
+        knowledge_base_id: int,
+        index_owner_user_id: int,
+        explicit_selection: bool = False,
+    ) -> RemoteAuthorizedRetrievalResources:
+        """Bundle one operation's references, rejecting ones the owner cannot use.
+
+        Indexing and querying both run retrieval under the knowledge base owner,
+        so one owner-scope rule decides which retriever and embedding model may
+        leave Backend. Only these references travel in the remote request; the
+        runtime loads just them instead of resolving a configuration Backend
+        never checked. Indexing never marks an explicit selection, so the stored
+        configuration must still name the records.
+        """
+        entry = references.authorized_entry(
+            knowledge_base_id=knowledge_base_id,
+            index_owner_user_id=index_owner_user_id,
+            explicit_selection=explicit_selection,
+        )
+        self._authorize_owner_resources(db=db, entry=entry)
+        return entry
+
+    def _authorize_owner_resources(
+        self,
+        *,
+        db: Session,
+        entry: RemoteAuthorizedRetrievalResources,
     ) -> None:
-        """Reject the query when the owner may not use a configured resource.
+        """Reject the operation when the owner may not use a configured resource.
 
         The knowledge base owner -- not the caller -- owns the retriever and
         embedding model, so resolution runs as the owner through the same

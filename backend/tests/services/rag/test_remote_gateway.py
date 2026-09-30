@@ -28,8 +28,8 @@ from app.services.rag.runtime_specs import (
 )
 from shared.models import (
     PresignedUrlContentRef,
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseQueryConfig,
-    RemoteQueryAuthorizedResources,
     RemoteRetrievalResourceRef,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -104,6 +104,74 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
             "url": "https://storage.example.com/release-notes.md",
             "is_encrypted": False,
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_index_document_sends_authorized_resources(
+    mocker,
+) -> None:
+    """Indexing sends the resources Backend authorized for the KB owner."""
+    db = MagicMock()
+    mocker.patch(
+        "app.services.rag.remote_gateway.build_content_ref_for_attachment",
+        return_value=PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/release-notes.md",
+        ),
+    )
+    mocker.patch(
+        "app.services.rag.remote_gateway._get_attachment_source_metadata",
+        return_value=("release-notes.md", ".md"),
+        create=True,
+    )
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/index",
+            status_code=200,
+            json_body={"status": "accepted", "knowledge_id": "1"},
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embedding-a",
+        embedding_model_namespace="default",
+        authorized_resources=RemoteAuthorizedRetrievalResources(
+            knowledge_base_id=1,
+            index_owner_user_id=3,
+            retriever=RemoteRetrievalResourceRef(
+                kind="Retriever", name="retriever-a", namespace="default"
+            ),
+            embedding_model=RemoteRetrievalResourceRef(
+                kind="Model", name="embedding-a", namespace="default"
+            ),
+        ),
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    await gateway.index_document(spec, db=db)
+
+    _, kwargs = post_mock.await_args
+    assert kwargs["json"]["authorized_resources"] == {
+        "knowledge_base_id": 1,
+        "index_owner_user_id": 3,
+        "retriever": {
+            "kind": "Retriever",
+            "name": "retriever-a",
+            "namespace": "default",
+        },
+        "embedding_model": {
+            "kind": "Model",
+            "name": "embedding-a",
+            "namespace": "default",
+        },
+        "explicit_selection": False,
     }
 
 
@@ -320,7 +388,7 @@ async def test_remote_gateway_query_posts_authorized_resource_references(
         query="release checklist",
         user_id=8,
         authorized_resources=[
-            RemoteQueryAuthorizedResources(
+            RemoteAuthorizedRetrievalResources(
                 knowledge_base_id=1,
                 index_owner_user_id=8,
                 retriever=RemoteRetrievalResourceRef(

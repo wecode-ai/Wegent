@@ -251,6 +251,7 @@ def _build_remote_index_request(
                 db=db,
                 attachment_id=spec.source.attachment_id,
             ),
+            authorized_resources=spec.authorized_resources,
         )
     finally:
         if own_session:

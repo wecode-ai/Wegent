@@ -7,15 +7,31 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.config_resolver import IndexConfig
 from knowledge_runtime.services.index_executor import IndexExecutor
-
 from shared.models import (
     PresignedUrlContentRef,
+    RemoteAuthorizedRetrievalResources,
     RemoteIndexRequest,
+    RemoteRetrievalResourceRef,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrieverConfig,
 )
+
+
+def _authorized_resources() -> RemoteAuthorizedRetrievalResources:
+    """Build the references Backend authorizes for this indexing call."""
+    return RemoteAuthorizedRetrievalResources(
+        knowledge_base_id=1,
+        index_owner_user_id=42,
+        retriever=RemoteRetrievalResourceRef(
+            kind="Retriever", name="test-retriever", namespace="default"
+        ),
+        embedding_model=RemoteRetrievalResourceRef(
+            kind="Model", name="text-embedding-3-small", namespace="default"
+        ),
+    )
 
 
 @pytest.fixture
@@ -56,6 +72,7 @@ def index_request():
         ),
         source_file="test.pdf",
         file_extension=".pdf",
+        authorized_resources=_authorized_resources(),
     )
 
 
@@ -118,6 +135,7 @@ class TestIndexExecutor:
             knowledge_base_id=1,
             user_id=42,
             document_id=100,
+            authorized=index_request.authorized_resources,
         )
 
     @pytest.mark.asyncio

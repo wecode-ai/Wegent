@@ -16,7 +16,7 @@ from knowledge_runtime.services.config_resolver import (
     QueryConfig,
 )
 from shared.models import (
-    RemoteQueryAuthorizedResources,
+    RemoteAuthorizedRetrievalResources,
     RemoteRetrievalResourceRef,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -39,9 +39,9 @@ def _authorized_entry(
     embedding_model_name: str = "text-embedding-3-small",
     embedding_model_namespace: str = "default",
     explicit_selection: bool = False,
-) -> RemoteQueryAuthorizedResources:
+) -> RemoteAuthorizedRetrievalResources:
     """Build the resources Backend authorized for one query."""
-    return RemoteQueryAuthorizedResources(
+    return RemoteAuthorizedRetrievalResources(
         knowledge_base_id=knowledge_base_id,
         index_owner_user_id=index_owner_user_id,
         retriever=RemoteRetrievalResourceRef(
@@ -64,41 +64,15 @@ class TestResolveIndexConfig:
     ) -> None:
         """Test successful index config resolution with document_id."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        retriever = _make_retriever_kind()
-        model = _make_model_kind()
-        user = MagicMock()
-        user.id = 42
-        user.user_name = "testuser"
-
-        mock_db.query.return_value.filter.return_value.filter.return_value.order_by.return_value.first.return_value = (
-            retriever
-        )
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            kb,
-            user,
-        ]
+        authorized = _authorized_entry()
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
             patch.object(resolver, "_get_user_name", return_value="testuser"),
             patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={"type": "qdrant", "url": "http://localhost:6333"},
-                ),
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
             ),
-            patch.object(
-                resolver,
-                "_build_resolved_embedding_model_config",
-                return_value=RuntimeEmbeddingModelConfig(
-                    model_name="text-embedding-3-small",
-                    model_namespace="default",
-                    resolved_config={"protocol": "openai"},
-                ),
-            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
             patch.object(
                 resolver,
                 "_get_splitter_config",
@@ -110,6 +84,7 @@ class TestResolveIndexConfig:
                 knowledge_base_id=1,
                 user_id=42,
                 document_id=100,
+                authorized=authorized,
             )
 
         assert isinstance(result, IndexConfig)
@@ -124,34 +99,22 @@ class TestResolveIndexConfig:
     ) -> None:
         """Test index config resolution without document_id yields empty splitter_config."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+        authorized = _authorized_entry()
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
             patch.object(resolver, "_get_user_name", return_value="testuser"),
             patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={},
-                ),
+                resolver, "_get_retriever_kind", return_value=_make_retriever_kind()
             ),
-            patch.object(
-                resolver,
-                "_build_resolved_embedding_model_config",
-                return_value=RuntimeEmbeddingModelConfig(
-                    model_name="text-embedding-3-small",
-                    model_namespace="default",
-                    resolved_config={},
-                ),
-            ),
+            patch.object(resolver, "_get_model_kind", return_value=_make_model_kind()),
         ):
             result = resolver.resolve_index_config(
                 mock_db,
                 knowledge_base_id=1,
                 user_id=42,
                 document_id=None,
+                authorized=authorized,
             )
 
         assert result.splitter_config == {}
@@ -170,8 +133,45 @@ class TestResolveIndexConfig:
                     mock_db,
                     knowledge_base_id=999,
                     user_id=42,
+                    authorized=_authorized_entry(knowledge_base_id=999),
                 )
             assert exc_info.value.code == "config_not_found"
+
+    def test_requires_authorized_resources(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """Indexing without authorized resources fails before loading records."""
+        with pytest.raises(ConfigResolutionError) as exc_info:
+            resolver.resolve_index_config(
+                mock_db,
+                knowledge_base_id=1,
+                user_id=42,
+                document_id=100,
+            )
+
+        assert exc_info.value.code == "authorization_required"
+
+    def test_rejects_stored_config_outside_authorized_set(
+        self, resolver: ConfigResolver, mock_db: MagicMock
+    ) -> None:
+        """A stored resource replaced outside the authorized set cannot index."""
+        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+        authorized = _authorized_entry(retriever_name="other-retriever")
+
+        with (
+            patch.object(resolver, "_get_knowledge_base", return_value=kb),
+            patch.object(resolver, "_get_user_name", return_value="testuser"),
+        ):
+            with pytest.raises(ConfigResolutionError) as exc_info:
+                resolver.resolve_index_config(
+                    mock_db,
+                    knowledge_base_id=1,
+                    user_id=42,
+                    document_id=100,
+                    authorized=authorized,
+                )
+
+        assert exc_info.value.code == "config_invalid"
 
 
 class TestResolveQueryConfig:
@@ -228,6 +228,7 @@ class TestResolveQueryConfig:
             shared_model_db,
             knowledge_base_id=1,
             user_id=42,
+            authorized=authorized,
         )
 
         assert query_config.embedding_model_config.model_name == "shared-embedding"

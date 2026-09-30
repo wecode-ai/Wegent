@@ -8,9 +8,9 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
 )
 from shared.models import (
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
-    RemoteQueryAuthorizedResources,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -51,6 +51,10 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     retriever_namespace: str
     embedding_model_name: str
     embedding_model_namespace: str
+    # Retrieval resources Backend authorized for the knowledge base owner. The
+    # remote index request sends only these references, so the runtime loads just
+    # them and resolves the index configuration through the shared module.
+    authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     source: IndexSource
     retriever_config: RuntimeRetrieverConfig | None = None
     embedding_model_config: RuntimeEmbeddingModelConfig | None = None
@@ -85,7 +89,7 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
-    authorized_resources: list[RemoteQueryAuthorizedResources] = Field(
+    authorized_resources: list[RemoteAuthorizedRetrievalResources] = Field(
         default_factory=list
     )
     knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
