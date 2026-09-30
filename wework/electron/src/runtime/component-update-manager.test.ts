@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -7,6 +17,7 @@ import * as tar from 'tar'
 import {
   ComponentUpdateManager,
   hashComponentPath,
+  hashComponentIdentity,
   MANAGED_COMPONENT_IDS,
   type ManagedComponentId,
 } from './component-update-manager.js'
@@ -732,4 +743,186 @@ test('shares a staging task and bounds component downloads to three while report
   expect(reports.at(-1)).toBe([...assets.values()].reduce((sum, bytes) => sum + bytes.length, 0))
   await manager.stageUpdateForApp(appVersion, 'beta')
   expect(requests).toBe(4)
+})
+
+async function createActivatedExecutorFixture(): Promise<{
+  fixture: Fixture
+  archiveSha256: string
+  managedEntry: string
+  contentSha256: string
+}> {
+  const fixture = await createFixture()
+  if (process.platform === 'win32') {
+    // resolveCodexBinary reads the code-mode host name of the target platform.
+    await writeFile(
+      join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin', 'codex-code-mode-host.exe'),
+      'code-mode-host'
+    )
+  }
+  const archiveSha256 = 'a'.repeat(64)
+  const directory = join(fixture.data, 'managed-components', 'blobs', 'executor', archiveSha256)
+  const managedEntry = join(directory, 'wegent-executor')
+  await mkdir(directory, { recursive: true })
+  await writeFile(managedEntry, 'executor-v2')
+  const contentSha256 = await hashComponentPath(managedEntry)
+  const components = Object.fromEntries(
+    MANAGED_COMPONENT_IDS.map(id => [
+      id,
+      id === 'executor'
+        ? {
+            version: 'executor-v2',
+            contentSha256,
+            archiveSha256,
+            archiveBytes: 1,
+            downloadUrl: 'local://packaged-component',
+            entryPath: 'wegent-executor',
+          }
+        : {
+            version: fixture.components[id].version,
+            contentSha256: fixture.components[id].sha256,
+            archiveSha256: '0'.repeat(64),
+            archiveBytes: 1,
+            downloadUrl: 'local://packaged-component',
+            entryPath: '.',
+          },
+    ])
+  )
+  await mkdir(join(fixture.data, 'managed-components'), { recursive: true })
+  await writeFile(
+    join(fixture.data, 'managed-components', 'state.json'),
+    JSON.stringify({ schemaVersion: 1, current: { appVersion, components } })
+  )
+  return { fixture, archiveSha256, managedEntry, contentSha256 }
+}
+
+// Startup resolves the managed component entry and composes plugin directories
+// with links, so the platform under test decides the link type: Windows can only
+// create directory links without elevation as junctions, which is what the
+// packaged application uses as well.
+function createPlatformManager(fixture: Fixture): ComponentUpdateManager {
+  return new ComponentUpdateManager({
+    resourcesRoot: fixture.resources,
+    dataDirectory: fixture.data,
+    updateBaseUrl,
+    currentAppVersion: appVersion,
+    platform: process.platform === 'win32' ? 'win32' : 'darwin',
+    arch: 'arm64',
+    fetch: async () => new Response(null, { status: 404 }),
+  })
+}
+
+function verificationRecordPath(fixture: Fixture, id: ManagedComponentId): string {
+  return join(fixture.data, 'managed-components', 'verification', `${id}.json`)
+}
+
+// The record directory normally holds one small JSON file per component. A
+// regular file at that path makes both creating the directory and writing the
+// record fail without touching anything that verification itself depends on.
+async function blockVerificationRecordDirectory(fixture: Fixture): Promise<void> {
+  await mkdir(join(fixture.data, 'managed-components'), { recursive: true })
+  await writeFile(join(fixture.data, 'managed-components', 'verification'), 'blocked')
+}
+
+test('trusts an activated component from its verification record without reading content again', async () => {
+  const { fixture, archiveSha256, managedEntry, contentSha256 } =
+    await createActivatedExecutorFixture()
+
+  const activated = await createPlatformManager(fixture).prepareStartup()
+  expect(activated.executor).toBe(managedEntry)
+  expect(activated.contentSha256.executor).toBe(contentSha256)
+
+  const record = JSON.parse(
+    await readFile(verificationRecordPath(fixture, 'executor'), 'utf8')
+  ) as Record<string, unknown>
+  expect(record).toEqual({
+    schemaVersion: 1,
+    archiveSha256,
+    entryPath: 'wegent-executor',
+    contentSha256,
+    signature: await hashComponentIdentity(managedEntry),
+  })
+
+  // The restarted component keeps the path, size, and modification time the
+  // record was written for, so startup answers from the record. Reading the
+  // content back would reject it, which is what makes this case observable.
+  const metadata = await stat(managedEntry)
+  await writeFile(managedEntry, 'executor-x2')
+  await utimes(managedEntry, metadata.atime, metadata.mtime)
+  expect(await hashComponentIdentity(managedEntry)).toBe(record.signature)
+
+  const restarted = await createPlatformManager(fixture).prepareStartup()
+  expect(restarted.executor).toBe(managedEntry)
+})
+
+test('verifies a component again when its files changed after verification', async () => {
+  const { fixture, managedEntry } = await createActivatedExecutorFixture()
+  await createPlatformManager(fixture).prepareStartup()
+
+  await writeFile(managedEntry, 'executor-v2-replaced')
+
+  const restarted = await createPlatformManager(fixture).prepareStartup()
+  expect(restarted.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+})
+
+test('refreshes the verification record when identity changed but content still verifies', async () => {
+  const { fixture, managedEntry } = await createActivatedExecutorFixture()
+  await createPlatformManager(fixture).prepareStartup()
+  const recordPath = verificationRecordPath(fixture, 'executor')
+  const record = JSON.parse(await readFile(recordPath, 'utf8')) as { signature: string }
+
+  const earlier = new Date(Date.now() - 3_600_000)
+  await utimes(managedEntry, earlier, earlier)
+
+  const restarted = await createPlatformManager(fixture).prepareStartup()
+  expect(restarted.executor).toBe(managedEntry)
+  const refreshed = JSON.parse(await readFile(recordPath, 'utf8')) as { signature: string }
+  expect(refreshed.signature).not.toBe(record.signature)
+  expect(refreshed.signature).toBe(await hashComponentIdentity(managedEntry))
+})
+
+test('keeps the activated component set when the verification record cannot be written', async () => {
+  const { fixture, managedEntry } = await createActivatedExecutorFixture()
+  await blockVerificationRecordDirectory(fixture)
+
+  const activated = await createPlatformManager(fixture).prepareStartup()
+
+  // Persisting the record is an optimization, so failing it must not drop the
+  // active component set or resolve the packaged copy instead.
+  expect(activated.executor).toBe(managedEntry)
+  const state = JSON.parse(
+    await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+  ) as { current?: unknown }
+  expect(state.current).toBeDefined()
+})
+
+test('keeps a downloaded component staged when the verification record cannot be written', async () => {
+  const fixture = await createFixture()
+  const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+  await blockVerificationRecordDirectory(fixture)
+  const manager = createManager(
+    fixture,
+    componentFetch(update.manifest, update.assetName, update.archive)
+  )
+
+  expect(await manager.stageAvailableUpdate()).toBe(true)
+
+  const state = JSON.parse(
+    await readFile(join(fixture.data, 'managed-components', 'state.json'), 'utf8')
+  ) as { pending?: { components: Record<string, { contentSha256: string }> } }
+  expect(state.pending?.components.executor?.contentSha256).toBe(
+    update.manifest.components.executor.contentSha256
+  )
+  await expect(
+    readFile(
+      join(
+        fixture.data,
+        'managed-components',
+        'blobs',
+        'executor',
+        update.manifest.components.executor.archiveSha256,
+        'wegent-executor'
+      ),
+      'utf8'
+    )
+  ).resolves.toBe('executor-v2')
 })
