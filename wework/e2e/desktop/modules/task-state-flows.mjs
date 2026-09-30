@@ -300,6 +300,14 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  // The answer travels as a normal user message, so the reply has to show the
+  // question it answered instead of reading like an unprompted message.
+  await control.command('waitFor', '[data-testid="user-message-question-reply"]', {
+    text: REQUEST_USER_INPUT_ASYNC_QUESTION,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
     visible: true,
@@ -342,6 +350,12 @@ export async function verifyAsyncRequestUserInput({ composerSelector, control, e
   // covers delivery while the model is still working rather than after it stops.
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: REQUEST_USER_INPUT_ASYNC_BUSY_ANSWER,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="user-message-question-reply"]', {
+    text: REQUEST_USER_INPUT_ASYNC_BUSY_QUESTION,
     visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

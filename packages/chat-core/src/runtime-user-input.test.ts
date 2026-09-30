@@ -9,6 +9,7 @@ import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   resolveAsyncRequestUserInputAnswers,
+  resolveAsyncRequestUserInputReplies,
 } from './runtime-user-input'
 
 const ASYNC_PAYLOAD: RequestUserInputPayload = {
@@ -111,5 +112,64 @@ describe('async request user input', () => {
     expect(findRequestUserInputPayload(messages, 'item:call-question')).toBe(ASYNC_PAYLOAD)
     expect(findRequestUserInputPayload(messages, 'item:missing')).toBeNull()
     expect(findRequestUserInputPayload(messages, null)).toBeNull()
+  })
+
+  describe('replies attributed to the questions they answered', () => {
+    test('shows the question above a single answer', () => {
+      const messages = [assistantMessage(ASYNC_PAYLOAD), userMessage('Reading')]
+
+      const replies = resolveAsyncRequestUserInputReplies(messages)
+
+      expect(replies.get('user-1')).toEqual([
+        { question: 'Which state jitters?', answer: 'Reading' },
+      ])
+    })
+
+    test('pairs each line of a multi-question reply with its question', () => {
+      const payload: RequestUserInputPayload = {
+        ...ASYNC_PAYLOAD,
+        questions: [
+          { id: 'q1', question: '晴天还是雨天?' },
+          { id: 'q2', question: '早上还是晚上?' },
+          { id: 'q3', question: '猫还是狗?' },
+        ],
+      }
+      const messages = [assistantMessage(payload), userMessage('晴天\n早上\n猫')]
+
+      const replies = resolveAsyncRequestUserInputReplies(messages)
+
+      expect(replies.get('user-1')).toEqual([
+        { question: '晴天还是雨天?', answer: '晴天' },
+        { question: '早上还是晚上?', answer: '早上' },
+        { question: '猫还是狗?', answer: '猫' },
+      ])
+    })
+
+    test('leaves a reply whose lines do not match the questions unattributed', () => {
+      const payload: RequestUserInputPayload = {
+        ...ASYNC_PAYLOAD,
+        questions: [
+          { id: 'q1', question: '晴天还是雨天?' },
+          { id: 'q2', question: '早上还是晚上?' },
+        ],
+      }
+      const messages = [assistantMessage(payload), userMessage('晴天')]
+
+      expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+    })
+
+    test('ignores unanswered and blocking questions', () => {
+      const blocking: RequestUserInputPayload = { kind: 'request_user_input', requestId: 42 }
+
+      expect(
+        resolveAsyncRequestUserInputReplies([assistantMessage(ASYNC_PAYLOAD)]).size
+      ).toBe(0)
+      expect(
+        resolveAsyncRequestUserInputReplies([
+          assistantMessage(blocking),
+          userMessage('Reading'),
+        ]).size
+      ).toBe(0)
+    })
   })
 })
