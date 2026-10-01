@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from typing import Any
 
+import httpx
 import pytest
 
 from chat_shell.history.loader import (
@@ -263,6 +265,127 @@ async def test_get_history_sends_from_latest_compaction(monkeypatch):
 
     await store.get_history(session_id="task-1", from_latest_compaction=True)
     assert captured["params"].get("from_latest_compaction") == "true"
+
+
+@pytest.mark.asyncio
+async def test_remote_history_retries_transport_failure_then_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_history(self, **kwargs: Any) -> list[Any]:
+            del kwargs
+            self.calls += 1
+            raise httpx.ReadTimeout("Backend did not respond")
+
+    store = _FailingStore()
+    delays: list[float] = []
+
+    async def _sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+    monkeypatch.setattr(loader.asyncio, "sleep", _sleep)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 2
+    assert delays == [0.2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("Backend connection failed"),
+        httpx.HTTPStatusError(
+            "Backend unavailable",
+            request=httpx.Request("GET", "http://backend/chat/history/task-1"),
+            response=httpx.Response(503),
+        ),
+    ],
+)
+async def test_remote_history_retries_other_retryable_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_history(self, **kwargs: Any) -> list[Any]:
+            del kwargs
+            self.calls += 1
+            raise error
+
+    store = _FailingStore()
+    delays: list[float] = []
+
+    async def _sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+    monkeypatch.setattr(loader.asyncio, "sleep", _sleep)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 2
+    assert delays == [0.2]
+
+
+@pytest.mark.asyncio
+async def test_remote_history_wraps_store_initialization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chat_shell.history import loader
+
+    def _raise_initialization_error() -> Any:
+        raise ValueError("remote history is not configured")
+
+    monkeypatch.setattr(
+        loader, "_get_remote_history_store", _raise_initialization_error
+    )
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history") as exc:
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert isinstance(exc.value.__cause__, ValueError)
+    assert exc.value.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_history_does_not_retry_non_transport_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_history(self, **kwargs: Any) -> list[Any]:
+            del kwargs
+            self.calls += 1
+            raise ValueError("invalid remote response")
+
+    store = _FailingStore()
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 1
 
 
 @pytest.mark.asyncio
