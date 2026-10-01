@@ -234,6 +234,54 @@ async fn sandbox_skill_sync_rejects_missing_required_skill() {
 }
 
 #[tokio::test]
+async fn sandbox_skill_sync_rejects_required_skill_outside_the_deployment_plan() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("sandbox-skill-sync-outside-plan-home");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = json!({
+        "task_id": 37520834448496_i64,
+        "subtask_id": 1,
+        "type": "sandbox",
+        "auth_token": "task-jwt",
+        "bot": [{
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"],
+            "skill_refs": {
+                "abtest-file-analyzer": {
+                    "skill_id": 237510,
+                    "namespace": "default"
+                }
+            }
+        }],
+        "required_skills": ["missing-skill"]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/skills/sync")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body["detail"].as_str().unwrap(),
+        concat!(
+            "required Skills are outside the deployment plan: missing-skill ",
+            "(required_skills must also be listed in bot.skills, skill_names or preload_skills)"
+        )
+    );
+}
+
+#[tokio::test]
 async fn responses_endpoint_accepts_openai_background_requests() {
     let runner = RecordingRunner::default();
     let app = create_router(AppState::new(runner.clone()));
