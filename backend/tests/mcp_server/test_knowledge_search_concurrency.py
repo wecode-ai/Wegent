@@ -21,7 +21,6 @@ from app.services.knowledge import search_execution
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
-from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 
@@ -96,7 +95,7 @@ async def test_search_keeps_event_loop_responsive(
         at_stage("config", []),
     )
     monkeypatch.setattr(
-        search_execution.RetrievalService,
+        search_execution.direct_injection,
         "decide_route_mode_for_chat_shell",
         at_stage("route", "rag_retrieval"),
     )
@@ -169,7 +168,7 @@ async def test_openapi_search_resolves_scope_in_worker(
         lambda *args, **kwargs: runtime,
     )
     monkeypatch.setattr(
-        search_execution.RetrievalService,
+        search_execution.direct_injection,
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )

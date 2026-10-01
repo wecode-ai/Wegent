@@ -446,6 +446,13 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
             "restricted_mode": False,
         },
     }
+    injected_records = [
+        {
+            "content": "full document",
+            "title": "Internal doc",
+            "knowledge_base_id": 1,
+        }
+    ]
 
     with (
         patch(
@@ -460,15 +467,20 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
             "app.api.endpoints.internal.rag.get_query_gateway"
         ) as mock_get_query_gateway,
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag.direct_injection."
+            "try_direct_injection_with_budget",
             new_callable=AsyncMock,
             return_value={
                 "mode": "direct_injection",
-                "records": [],
-                "total": 0,
-                "total_estimated_tokens": 0,
+                "records": injected_records,
+                "total": 1,
+                "total_estimated_tokens": 10,
             },
-        ) as mock_query,
+        ) as mock_direct_injection,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+        ) as mock_local_query,
         patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
@@ -481,8 +493,13 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
 
     assert response.status_code == 200
     assert "source_summaries" not in response.json()
+    assert response.json()["mode"] == "direct_injection"
+    assert response.json()["records"][0]["content"] == "full document"
+    # Direct injection stays in the Backend and never reaches the knowledge runtime.
+    assert mock_direct_injection.await_args.kwargs["knowledge_base_ids"] == [1]
+    assert mock_direct_injection.await_args.kwargs["route_mode"] == "direct_injection"
     mock_get_query_gateway.assert_not_called()
-    mock_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_local_query.assert_not_called()
     mock_persist.assert_called_once()
 
 
@@ -538,7 +555,8 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag.direct_injection."
+            "try_direct_injection_with_budget",
             new_callable=AsyncMock,
             return_value={
                 "mode": "direct_injection",
@@ -702,7 +720,7 @@ def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="rag_retrieval",
         ),
         patch(
@@ -755,7 +773,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="rag_retrieval",
         ) as mock_decide_route_mode,
         patch(
@@ -794,7 +812,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
     )
 
 
-def test_internal_retrieve_auto_route_keeps_local_direct_injection(
+def test_internal_retrieve_auto_route_injects_documents_in_backend(
     test_client, monkeypatch
 ):
     monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
@@ -811,6 +829,13 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
             "max_direct_chunks": 500,
         },
     }
+    injected_records = [
+        {
+            "content": "complete document",
+            "title": "Internal doc",
+            "knowledge_base_id": 1,
+        }
+    ]
 
     with (
         patch(
@@ -822,21 +847,26 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="direct_injection",
         ),
         patch(
             "app.api.endpoints.internal.rag.get_query_gateway"
         ) as mock_get_query_gateway,
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag.direct_injection."
+            "try_direct_injection_with_budget",
             new_callable=AsyncMock,
             return_value={
                 "mode": "direct_injection",
-                "records": [],
-                "total": 0,
-                "total_estimated_tokens": 0,
+                "records": injected_records,
+                "total": 1,
+                "total_estimated_tokens": 10,
             },
+        ) as mock_direct_injection,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
         ) as mock_local_query,
     ):
         response = test_client.post(
@@ -846,9 +876,11 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
         )
 
     assert response.status_code == 200
+    assert response.json()["mode"] == "direct_injection"
+    assert response.json()["records"][0]["content"] == "complete document"
+    assert mock_direct_injection.await_args.kwargs["route_mode"] == "direct_injection"
     mock_get_query_gateway.assert_not_called()
-    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
-    assert mock_local_query.await_args.args[0].route_mode == "direct_injection"
+    mock_local_query.assert_not_called()
 
 
 def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
@@ -892,7 +924,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="rag_retrieval",
         ),
         patch(
@@ -972,7 +1004,7 @@ def test_internal_retrieve_returns_remote_error_without_local_fallback(
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="rag_retrieval",
         ),
         patch(

@@ -30,6 +30,7 @@ from app.services.knowledge.protected_mediation import (
 from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
+from app.services.rag import direct_injection
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
@@ -37,7 +38,6 @@ from app.services.rag.remote_gateway import (
     RemoteRagGatewayError,
     should_fallback_to_local,
 )
-from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.sources import (
     RetrievalContext,
@@ -586,6 +586,28 @@ def _resolve_query_gateway(runtime_spec):
     return LocalRagGateway()
 
 
+async def _run_direct_injection(runtime_spec, db: Session) -> dict:
+    """Run Backend-side direct injection, else continue as plain retrieval.
+
+    The rejected-injection fallback is the pre-existing Backend-local retrieval
+    and moves to the remote gateway in a follow-up change.
+    """
+    injection_result = await direct_injection.try_direct_injection_with_budget(
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        scope=runtime_spec.scope,
+        db=db,
+        route_mode=runtime_spec.route_mode,
+        budget=runtime_spec.direct_injection_budget,
+        metadata_condition=runtime_spec.metadata_condition,
+    )
+    if injection_result is not None:
+        return injection_result
+    return await LocalRagGateway().query(
+        runtime_spec.model_copy(update={"route_mode": "rag_retrieval"}),
+        db=db,
+    )
+
+
 def _finalize_query_runtime_spec(
     runtime_spec,
     db: Session,
@@ -603,9 +625,8 @@ def _finalize_query_runtime_spec(
     if not all(hasattr(runtime_spec, attr) for attr in required_attributes):
         return runtime_spec
 
-    retrieval_service = RetrievalService()
     budget = runtime_context or getattr(runtime_spec, "direct_injection_budget", None)
-    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+    resolved_route_mode = direct_injection.decide_route_mode_for_chat_shell(
         query=runtime_spec.query,
         knowledge_base_ids=runtime_spec.knowledge_base_ids,
         db=db,
@@ -622,6 +643,9 @@ def _finalize_query_runtime_spec(
 
 
 async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+    if getattr(runtime_spec, "route_mode", None) == "direct_injection":
+        return await _run_direct_injection(runtime_spec, db)
+
     rag_gateway = _resolve_query_gateway(runtime_spec)
     if (
         isinstance(rag_gateway, RemoteRagGateway)
@@ -793,12 +817,12 @@ async def internal_retrieve(
         ) + sum(len(record.content) for record in external_records)
         total_content_kb = total_content_chars / 1024
         available_for_kb = (
-            RetrievalService._calculate_ratio_based_direct_injection_budget(
+            direct_injection.calculate_ratio_based_direct_injection_budget(
                 runtime_context.context_window if runtime_context else None
             )
         )
         available_injection_tokens = (
-            RetrievalService._calculate_available_injection_tokens(
+            direct_injection.calculate_available_injection_tokens(
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),

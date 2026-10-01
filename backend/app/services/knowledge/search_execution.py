@@ -16,17 +16,37 @@ from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.db.session import SessionLocal
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.rag import direct_injection
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
     RemoteRagGatewayError,
     should_fallback_to_local,
 )
-from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import RetrievalScope, SearchHints
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_local_query(runtime_spec: Any, *, db: Any) -> dict[str, Any]:
+    """Run the Backend-side local query path inside a worker-owned Session."""
+    if getattr(runtime_spec, "route_mode", None) == "direct_injection":
+        injection_result = await direct_injection.try_direct_injection_with_budget(
+            knowledge_base_ids=runtime_spec.knowledge_base_ids,
+            scope=runtime_spec.scope,
+            db=db,
+            route_mode=runtime_spec.route_mode,
+            budget=runtime_spec.direct_injection_budget,
+            metadata_condition=getattr(runtime_spec, "metadata_condition", None),
+        )
+        if injection_result is not None:
+            return injection_result
+        # A rejected direct injection continues as the pre-existing
+        # Backend-local retrieval, which moves to the remote gateway in a
+        # follow-up change.
+        runtime_spec = runtime_spec.model_copy(update={"route_mode": "rag_retrieval"})
+    return await LocalRagGateway().query(runtime_spec, db=db)
 
 
 class KnowledgeSearchRunner:
@@ -198,7 +218,7 @@ class KnowledgeSearchRunner:
                 search_hints=search_hints,
                 restricted_mode=False,
             )
-            resolved_route_mode = RetrievalService().decide_route_mode_for_chat_shell(
+            resolved_route_mode = direct_injection.decide_route_mode_for_chat_shell(
                 query=query,
                 knowledge_base_ids=[knowledge_base_id],
                 db=db,
@@ -230,7 +250,7 @@ class KnowledgeSearchRunner:
     def _query_local_sync(runtime_spec: Any) -> dict[str, Any]:
         """Execute local RAG and close its Session in the same worker thread."""
         with SessionLocal() as db:
-            return anyio.run(partial(LocalRagGateway().query, runtime_spec, db=db))
+            return anyio.run(partial(_run_local_query, runtime_spec, db=db))
 
     async def _query_local(self, runtime_spec: Any) -> dict[str, Any]:
         return await run_in_threadpool_with_cleanup(

@@ -306,22 +306,6 @@ async def test_retrieve_with_routing_treats_empty_scope_as_unfiltered():
     )
 
 
-@pytest.mark.asyncio
-async def test_get_original_documents_treats_empty_document_ids_as_empty_scope():
-    from app.services.rag.retrieval_service import RetrievalService
-
-    db = MagicMock()
-
-    result = await RetrievalService().get_original_documents_from_knowledge_base(
-        knowledge_base_ids=[1],
-        db=db,
-        document_ids=[],
-    )
-
-    assert result == []
-    db.query.assert_not_called()
-
-
 @pytest.mark.unit
 class TestGetAllChunksFromKnowledgeBase:
     @pytest.mark.asyncio
@@ -447,364 +431,6 @@ class TestRetrieveForChatShell:
         mock_query.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_auto_route_returns_direct_injection_records(self):
-        """Backend should route to original documents when KB estimate fits context."""
-        from app.services.rag.retrieval_service import RetrievalService
-
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ) as mock_estimate:
-            service = RetrievalService()
-            service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=[
-                    {
-                        "content": "full document content",
-                        "score": 1.0,
-                        "title": "doc-1",
-                        "metadata": {"document_id": 1, "total_length": 100},
-                        "knowledge_base_id": 123,
-                    }
-                ]
-            )
-
-            result = await service.retrieve_with_routing(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                max_results=5,
-                context_window=10000,
-                user_id=7,
-            )
-
-        mock_estimate.assert_called_once_with(
-            db=db,
-            knowledge_base_ids=[123],
-            document_ids=None,
-        )
-        assert result["mode"] == "direct_injection"
-        assert result["total"] == 1
-        assert result["records"][0]["score"] == 1.0
-        assert result["records"][0]["knowledge_base_id"] == 123
-
-    @pytest.mark.asyncio
-    async def test_auto_route_falls_back_to_rag_when_runtime_budget_is_insufficient(
-        self,
-    ):
-        """Backend should own the final fit check when runtime budget is provided."""
-        from app.services.rag.retrieval_service import RetrievalService
-
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ):
-            service = RetrievalService()
-            service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=[
-                    {
-                        "content": "This is a full document with enough text to exceed the runtime budget.",
-                        "score": 1.0,
-                        "title": "doc-1",
-                        "metadata": {"document_id": 1, "total_length": 100},
-                        "knowledge_base_id": 123,
-                    }
-                ]
-            )
-            service.retrieve_from_knowledge_base_internal = AsyncMock(
-                return_value={
-                    "records": [
-                        {
-                            "content": "retrieved",
-                            "score": 0.9,
-                            "title": "doc-1",
-                            "metadata": {"page": 2},
-                        }
-                    ]
-                }
-            )
-
-            result = await service.retrieve_with_routing(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                max_results=5,
-                context_window=10000,
-                used_context_tokens=9990,
-                reserved_output_tokens=0,
-                context_buffer_ratio=0.0,
-                user_id=7,
-            )
-
-        assert result["mode"] == "rag_retrieval"
-        assert result["records"][0]["score"] == 0.9
-        assert result["records"][0]["knowledge_base_id"] == 123
-
-    @pytest.mark.asyncio
-    async def test_force_direct_route_respects_max_direct_chunks(self):
-        """Forced direct route should still fallback when document cap is exceeded."""
-        from app.services.rag.retrieval_service import RetrievalService
-
-        db = MagicMock()
-        service = RetrievalService()
-        service.get_original_documents_from_knowledge_base = AsyncMock(
-            return_value=[
-                {
-                    "content": "document-1",
-                    "score": 1.0,
-                    "title": "doc-1",
-                    "metadata": {"document_id": 1, "total_length": 100},
-                    "knowledge_base_id": 123,
-                },
-                {
-                    "content": "document-2",
-                    "score": 1.0,
-                    "title": "doc-2",
-                    "metadata": {"document_id": 2, "total_length": 100},
-                    "knowledge_base_id": 123,
-                },
-            ]
-        )
-        service.retrieve_from_knowledge_base_internal = AsyncMock(
-            return_value={
-                "records": [
-                    {
-                        "content": "retrieved",
-                        "score": 0.9,
-                        "title": "doc-1",
-                        "metadata": {"page": 2},
-                    }
-                ]
-            }
-        )
-
-        result = await service.retrieve_with_routing(
-            query="test",
-            knowledge_base_ids=[123],
-            db=db,
-            max_results=5,
-            route_mode="direct_injection",
-            max_direct_chunks=1,
-        )
-
-        assert result["mode"] == "rag_retrieval"
-        service.retrieve_from_knowledge_base_internal.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_auto_route_estimates_only_filtered_documents(self):
-        """Document-scoped requests should pass document_ids into the estimate path."""
-        from app.services.rag.retrieval_service import RetrievalService
-
-        db = MagicMock()
-        service = RetrievalService()
-        service.get_original_documents_from_knowledge_base = AsyncMock(
-            return_value=[
-                {
-                    "content": "full document content",
-                    "score": 1.0,
-                    "title": "doc-1",
-                    "metadata": {"document_id": 1, "total_length": 100},
-                    "knowledge_base_id": 123,
-                }
-            ]
-        )
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ) as mock_estimate:
-            result = await service.retrieve_with_routing(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                max_results=5,
-                context_window=10000,
-                scope=RetrievalScope(document_ids=[1]),
-                user_id=7,
-            )
-
-        mock_estimate.assert_called_once_with(
-            db=db,
-            knowledge_base_ids=[123],
-            document_ids=[1],
-        )
-        assert result["mode"] == "direct_injection"
-        assert result["records"][0]["knowledge_base_id"] == 123
-
-    def test_decide_route_mode_for_chat_shell_returns_rag_retrieval_without_budget(
-        self,
-    ):
-        from app.services.rag.retrieval_service import RetrievalService
-
-        service = RetrievalService()
-        db = MagicMock()
-
-        result = service.decide_route_mode_for_chat_shell(
-            query="test",
-            knowledge_base_ids=[123],
-            db=db,
-            route_mode="auto",
-            context_window=None,
-        )
-
-        assert result == "rag_retrieval"
-
-    def test_decide_route_mode_for_chat_shell_returns_direct_injection_when_auto_fits(
-        self,
-    ):
-        from app.services.rag.retrieval_service import RetrievalService
-
-        service = RetrievalService()
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ) as mock_estimate:
-            result = service.decide_route_mode_for_chat_shell(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                route_mode="auto",
-                context_window=10000,
-                metadata_condition=None,
-            )
-
-        mock_estimate.assert_called_once_with(
-            db=db,
-            knowledge_base_ids=[123],
-            document_ids=None,
-        )
-        assert result == "direct_injection"
-
-    def test_decide_route_mode_for_chat_shell_skips_direct_injection_when_auto_disabled(
-        self, monkeypatch
-    ):
-        from app.core.config import settings
-        from app.services.rag.retrieval_service import RetrievalService
-
-        monkeypatch.setattr(
-            settings,
-            "RAG_AUTO_DISABLE_DIRECT_INJECTION",
-            True,
-            raising=False,
-        )
-
-        service = RetrievalService()
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ) as mock_estimate:
-            result = service.decide_route_mode_for_chat_shell(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                route_mode="auto",
-                context_window=10000,
-            )
-
-        mock_estimate.assert_not_called()
-        assert result == "rag_retrieval"
-
-    def test_decide_route_mode_for_chat_shell_uses_live_runtime_budget(self):
-        from app.services.rag.retrieval_service import RetrievalService
-
-        service = RetrievalService()
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=100,
-        ):
-            result = service.decide_route_mode_for_chat_shell(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                route_mode="auto",
-                context_window=10000,
-                used_context_tokens=9990,
-                reserved_output_tokens=0,
-                context_buffer_ratio=0.0,
-            )
-
-        assert result == "rag_retrieval"
-
-    def test_decide_route_mode_for_chat_shell_uses_available_budget_ratio(self):
-        from app.services.rag.retrieval_service import RetrievalService
-
-        service = RetrievalService()
-        db = MagicMock()
-
-        with patch.object(
-            RetrievalService,
-            "_estimate_total_tokens_for_knowledge_bases",
-            return_value=1000,
-        ):
-            result = service.decide_route_mode_for_chat_shell(
-                query="test",
-                knowledge_base_ids=[123],
-                db=db,
-                route_mode="auto",
-                context_window=10000,
-                used_context_tokens=0,
-                reserved_output_tokens=8000,
-                context_buffer_ratio=0.0,
-            )
-
-        assert result == "rag_retrieval"
-
-    def test_decide_route_mode_for_chat_shell_forces_rag_when_metadata_filter_exists(
-        self,
-    ):
-        from app.services.rag.retrieval_service import RetrievalService
-
-        service = RetrievalService()
-
-        result = service.decide_route_mode_for_chat_shell(
-            query="test",
-            knowledge_base_ids=[123],
-            db=MagicMock(),
-            route_mode="direct_injection",
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "source", "operator": "eq", "value": "kb"}],
-            },
-        )
-
-        assert result == "rag_retrieval"
-
-    def test_estimate_total_tokens_supports_decimal_aggregate_result(self):
-        """Aggregate text-length queries may return Decimal depending on the driver."""
-        from app.services.rag.retrieval_service import RetrievalService
-
-        db = MagicMock()
-        query = MagicMock()
-        query.select_from.return_value = query
-        query.join.return_value = query
-        query.filter.return_value = query
-        query.scalar.return_value = Decimal("100")
-        db.query.return_value = query
-
-        estimated_tokens = RetrievalService._estimate_total_tokens_for_knowledge_bases(
-            db=db,
-            knowledge_base_ids=[123],
-            document_ids=None,
-        )
-
-        assert estimated_tokens == 150
-
-    @pytest.mark.asyncio
     async def test_force_rag_route_uses_standard_retrieval(self):
         """Forced rag route should bypass direct injection candidate path."""
         from app.services.rag.retrieval_service import RetrievalService
@@ -838,11 +464,11 @@ class TestRetrieveForChatShell:
 
     @pytest.mark.asyncio
     async def test_metadata_filter_disables_direct_injection_and_uses_rag_path(self):
+        from app.services.rag import direct_injection
         from app.services.rag.retrieval_service import RetrievalService
 
         db = MagicMock()
         service = RetrievalService()
-        service.get_all_chunks_from_knowledge_base = AsyncMock()
         service.retrieve_from_knowledge_base_internal = AsyncMock(
             return_value={
                 "records": [
@@ -856,20 +482,25 @@ class TestRetrieveForChatShell:
             }
         )
 
-        result = await service.retrieve_with_routing(
-            query="test",
-            knowledge_base_ids=[123],
-            db=db,
-            max_results=5,
-            route_mode="direct_injection",
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "source", "operator": "eq", "value": "kb"}],
-            },
-        )
+        with patch.object(
+            direct_injection,
+            "get_original_documents_from_knowledge_base",
+            AsyncMock(),
+        ) as mock_read_original_documents:
+            result = await service.retrieve_with_routing(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                max_results=5,
+                route_mode="direct_injection",
+                metadata_condition={
+                    "operator": "and",
+                    "conditions": [{"key": "source", "operator": "eq", "value": "kb"}],
+                },
+            )
 
         assert result["mode"] == "rag_retrieval"
-        service.get_all_chunks_from_knowledge_base.assert_not_called()
+        mock_read_original_documents.assert_not_awaited()
         service.retrieve_from_knowledge_base_internal.assert_awaited_once()
 
     @pytest.mark.asyncio

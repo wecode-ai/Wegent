@@ -7,14 +7,13 @@ Retrieval service for RAG functionality.
 Refactored to use modular architecture with pluggable storage backends.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.kind import Kind
+from app.services.rag import direct_injection
 from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
@@ -24,12 +23,6 @@ from shared.models import RemoteKnowledgeBaseQueryConfig, RetrievalScope, Search
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
-
-CHAT_SHELL_DIRECT_INJECTION_RATIO = 0.3
-CHAT_SHELL_MAX_ALL_CHUNKS = 10000
-CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS = 500
-CHAT_SHELL_DIRECT_INJECTION_FORMATTING_OVERHEAD = 50
-CHAT_SHELL_DIRECT_INJECTION_CHARS_PER_TOKEN = 4
 
 
 class RetrievalService:
@@ -41,242 +34,6 @@ class RetrievalService:
     def __init__(self):
         """Initialize retrieval service."""
         self.runtime_resolver = RagRuntimeResolver()
-
-    @staticmethod
-    def _estimate_total_tokens_for_knowledge_bases(
-        db: Session,
-        knowledge_base_ids: list[int],
-        document_ids: Optional[list[int]] = None,
-    ) -> int:
-        """Estimate aggregate KB token usage using the existing text-length heuristic.
-
-        This estimate is intentionally coarse. It is only used for the first-pass
-        auto-routing decision, while the final direct-injection decision is still
-        protected by `_get_direct_injection_rejection_reason()` with runtime chunk-count
-        and context-budget checks.
-
-        We keep the long-standing `text_length * 1.5` heuristic here to stay
-        aligned with `/kb-size` and avoid introducing a heavier tokenizer-based
-        preflight path on every retrieve request.
-        """
-        from sqlalchemy import func
-
-        from app.models.knowledge import KnowledgeDocument
-        from app.models.subtask_context import SubtaskContext
-
-        if not knowledge_base_ids:
-            return 0
-
-        document_query = db.query(
-            func.coalesce(func.sum(SubtaskContext.text_length), 0)
-        )
-        document_query = document_query.select_from(KnowledgeDocument).join(
-            SubtaskContext,
-            KnowledgeDocument.attachment_id == SubtaskContext.id,
-        )
-        document_query = document_query.filter(
-            KnowledgeDocument.kind_id.in_(knowledge_base_ids),
-            KnowledgeDocument.is_active.is_(True),
-        )
-        if document_ids:
-            document_query = document_query.filter(
-                KnowledgeDocument.id.in_(document_ids)
-            )
-
-        total_text_length = document_query.scalar()
-        normalized_text_length = int(total_text_length or 0)
-        # Keep the same heuristic for both whole-KB and document-scoped
-        # estimation so routing behavior stays stable and predictable.
-        #
-        # Aggregate functions may still return Decimal on some database/driver
-        # combinations, so normalize to int before applying the heuristic.
-        return int(normalized_text_length * 1.5)
-
-    @staticmethod
-    def _should_disable_auto_direct_injection() -> bool:
-        """Return whether automatic direct injection routing is globally disabled."""
-        return bool(settings.RAG_AUTO_DISABLE_DIRECT_INJECTION)
-
-    @staticmethod
-    def _should_use_direct_injection(
-        available_injection_tokens: Optional[int],
-        total_estimated_tokens: int,
-        route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
-    ) -> bool:
-        """Decide whether chat_shell should receive all chunks for direct injection."""
-        if route_mode == "direct_injection":
-            return True
-        if route_mode == "rag_retrieval":
-            return False
-        available_for_kb = (
-            RetrievalService._calculate_ratio_based_direct_injection_budget(
-                available_injection_tokens
-            )
-        )
-        if available_for_kb is None:
-            return False
-        return total_estimated_tokens <= available_for_kb
-
-    @staticmethod
-    def _calculate_ratio_based_direct_injection_budget(
-        available_injection_tokens: Optional[int],
-    ) -> Optional[int]:
-        """Calculate the direct-injection ratio threshold from live available budget."""
-        if not available_injection_tokens or available_injection_tokens <= 0:
-            return None
-        return int(available_injection_tokens * CHAT_SHELL_DIRECT_INJECTION_RATIO)
-
-    @staticmethod
-    def _estimate_direct_injection_tokens(
-        records: list[Dict[str, Any]],
-    ) -> int:
-        """Estimate tokens for direct injection using a stable chars/token heuristic."""
-        if not records:
-            return 0
-
-        total_tokens = 0
-        for record in records:
-            content = record.get("content", "") or ""
-            total_tokens += int(
-                len(content) / CHAT_SHELL_DIRECT_INJECTION_CHARS_PER_TOKEN
-            )
-
-        return total_tokens + (
-            len(records) * CHAT_SHELL_DIRECT_INJECTION_FORMATTING_OVERHEAD
-        )
-
-    @staticmethod
-    def _calculate_available_injection_tokens(
-        context_window: Optional[int],
-        used_context_tokens: int,
-        reserved_output_tokens: int,
-        context_buffer_ratio: float,
-    ) -> Optional[int]:
-        """Calculate runtime token budget available for direct injection."""
-        if not context_window or context_window <= 0:
-            return None
-
-        total_available = context_window - used_context_tokens - reserved_output_tokens
-        buffer_space = int(total_available * context_buffer_ratio)
-        return max(0, total_available - buffer_space)
-
-    @staticmethod
-    def _get_direct_injection_rejection_reason(
-        route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
-        direct_records: list[Dict[str, Any]],
-        direct_injection_estimated_tokens: int,
-        available_injection_tokens: Optional[int],
-        max_direct_chunks: int,
-    ) -> Optional[str]:
-        """Return the reason direct injection cannot be finalized."""
-        if route_mode == "rag_retrieval":
-            return "route_mode_forced_rag"
-        if len(direct_records) > max_direct_chunks:
-            return "max_direct_chunks_exceeded"
-        available_for_kb = (
-            RetrievalService._calculate_ratio_based_direct_injection_budget(
-                available_injection_tokens
-            )
-        )
-        if (
-            available_for_kb is not None
-            and direct_injection_estimated_tokens > available_for_kb
-        ):
-            return "context_ratio_exceeded"
-        if available_injection_tokens is not None:
-            if direct_injection_estimated_tokens > available_injection_tokens:
-                return "runtime_budget_exceeded"
-        return None
-
-    async def _try_direct_injection(
-        self,
-        knowledge_base_ids: list[int],
-        scope: RetrievalScope | None,
-        db: Session,
-        route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
-        available_injection_tokens: Optional[int],
-        max_direct_chunks: int,
-    ) -> Optional[Dict[str, Any]]:
-        """Try direct injection, return None if should fallback to RAG.
-
-        This method encapsulates the direct injection logic including:
-        - Fetching original documents
-        - Checking for truncated documents
-        - Validating against token/chunk limits
-        """
-        # Fetch original documents - returns None if truncated, [] if no docs, [records] if success
-        direct_records = await self.get_original_documents_from_knowledge_base(
-            knowledge_base_ids=knowledge_base_ids,
-            db=db,
-            document_ids=scope.document_ids if scope else None,
-        )
-
-        # None means truncated documents detected, fallback to RAG
-        if direct_records is None:
-            return None
-
-        # Validate against token/chunk limits
-        direct_injection_estimated_tokens = self._estimate_direct_injection_tokens(
-            direct_records
-        )
-        rejection_reason = self._get_direct_injection_rejection_reason(
-            route_mode=route_mode,
-            direct_records=direct_records,
-            direct_injection_estimated_tokens=direct_injection_estimated_tokens,
-            available_injection_tokens=available_injection_tokens,
-            max_direct_chunks=max_direct_chunks,
-        )
-
-        if rejection_reason:
-            logger.info(
-                "[RAG] direct injection finalize: document_count=%d (original documents), "
-                "estimated_tokens=%d, available_injection_tokens=%s, max_direct_chunks=%d, "
-                "rejected=True",
-                len(direct_records),
-                direct_injection_estimated_tokens,
-                available_injection_tokens,
-                max_direct_chunks,
-            )
-            logger.info(
-                "[RAG] Falling back to rag_retrieval after direct injection fit check: %s",
-                rejection_reason,
-            )
-            add_span_event(
-                "rag.routing.direct_injection_fallback",
-                {
-                    "attempted_document_count": len(direct_records),
-                    "estimated_tokens": direct_injection_estimated_tokens,
-                    "fallback_reason": rejection_reason,
-                    "source": "original_documents",
-                },
-            )
-            return None
-
-        # Direct injection succeeded
-        logger.info(
-            "[RAG] direct injection finalize: document_count=%d (original documents), "
-            "estimated_tokens=%d, available_injection_tokens=%s, max_direct_chunks=%d, "
-            "accepted=True",
-            len(direct_records),
-            direct_injection_estimated_tokens,
-            available_injection_tokens,
-            max_direct_chunks,
-        )
-        set_span_attribute("rag.final_mode", "direct_injection")
-        add_span_event(
-            "rag.routing.direct_injection_selected",
-            {
-                "record_count": len(direct_records),
-                "estimated_tokens": direct_injection_estimated_tokens,
-                "source": "original_documents",
-            },
-        )
-        return {
-            "mode": "direct_injection",
-            "records": direct_records,
-            "total": len(direct_records),
-            "total_estimated_tokens": direct_injection_estimated_tokens,
-        }
 
     async def _do_rag_retrieval(
         self,
@@ -331,67 +88,6 @@ class RetrievalService:
             "total_estimated_tokens": 0,
         }
 
-    def decide_route_mode_for_chat_shell(
-        self,
-        *,
-        query: str,
-        knowledge_base_ids: list[int],
-        db: Session,
-        route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
-        scope: RetrievalScope | None = None,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-        context_window: Optional[int] = None,
-        used_context_tokens: int = 0,
-        reserved_output_tokens: int = 4096,
-        context_buffer_ratio: float = 0.1,
-        max_direct_chunks: int = CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
-    ) -> Literal["direct_injection", "rag_retrieval"]:
-        """Resolve the coarse query route while keeping final direct-fit local."""
-        del query, max_direct_chunks
-        if not knowledge_base_ids:
-            return "rag_retrieval"
-        if metadata_condition is not None:
-            return "rag_retrieval"
-
-        if route_mode == "auto" and self._should_disable_auto_direct_injection():
-            logger.info(
-                "[RAG] auto direct injection disabled by config; forcing rag_retrieval"
-            )
-            return "rag_retrieval"
-
-        total_estimated_tokens = 0
-        if route_mode == "auto":
-            total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
-                db=db,
-                knowledge_base_ids=knowledge_base_ids,
-                document_ids=scope.document_ids if scope else None,
-            )
-
-        available_injection_tokens = self._calculate_available_injection_tokens(
-            context_window=context_window,
-            used_context_tokens=used_context_tokens,
-            reserved_output_tokens=reserved_output_tokens,
-            context_buffer_ratio=context_buffer_ratio,
-        )
-
-        use_direct_injection = self._should_use_direct_injection(
-            available_injection_tokens=available_injection_tokens,
-            total_estimated_tokens=total_estimated_tokens,
-            route_mode=route_mode,
-        )
-        if not use_direct_injection:
-            return "rag_retrieval"
-        if (
-            route_mode == "auto"
-            and available_injection_tokens is not None
-            and total_estimated_tokens > available_injection_tokens
-        ):
-            return "rag_retrieval"
-
-        if use_direct_injection:
-            return "direct_injection"
-        return "rag_retrieval"
-
     @trace_async(
         span_name="rag.retrieve_with_routing",
         tracer_name="backend.services.rag",
@@ -413,7 +109,7 @@ class RetrievalService:
         used_context_tokens: int = 0,
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
-        max_direct_chunks: int = CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
+        max_direct_chunks: int = direct_injection.CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
         restricted_mode: bool = False,
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing between direct injection and RAG.
@@ -487,33 +183,38 @@ class RetrievalService:
 
         # === Check if auto direct injection is disabled ===
         auto_direct_injection_disabled = (
-            route_mode == "auto" and self._should_disable_auto_direct_injection()
+            route_mode == "auto"
+            and direct_injection.should_disable_auto_direct_injection()
         )
         if auto_direct_injection_disabled:
             logger.info(
                 "[RAG] auto direct injection disabled by config; using rag_retrieval"
             )
 
-        available_injection_tokens = self._calculate_available_injection_tokens(
-            context_window=context_window,
-            used_context_tokens=used_context_tokens,
-            reserved_output_tokens=reserved_output_tokens,
-            context_buffer_ratio=context_buffer_ratio,
+        available_injection_tokens = (
+            direct_injection.calculate_available_injection_tokens(
+                context_window=context_window,
+                used_context_tokens=used_context_tokens,
+                reserved_output_tokens=reserved_output_tokens,
+                context_buffer_ratio=context_buffer_ratio,
+            )
         )
 
         # === Estimate tokens and decide if direct injection should be attempted ===
         total_estimated_tokens = 0
         if route_mode == "auto" and not auto_direct_injection_disabled:
-            total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
-                db=db,
-                knowledge_base_ids=knowledge_base_ids,
-                document_ids=scope.document_ids if scope else None,
+            total_estimated_tokens = (
+                direct_injection.estimate_total_tokens_for_knowledge_bases(
+                    db=db,
+                    knowledge_base_ids=knowledge_base_ids,
+                    document_ids=scope.document_ids if scope else None,
+                )
             )
 
         use_direct_injection = (
             False
             if auto_direct_injection_disabled
-            else self._should_use_direct_injection(
+            else direct_injection.should_use_direct_injection(
                 available_injection_tokens=available_injection_tokens,
                 total_estimated_tokens=total_estimated_tokens,
                 route_mode=route_mode,
@@ -546,7 +247,7 @@ class RetrievalService:
 
         # === Try direct injection ===
         if use_direct_injection:
-            result = await self._try_direct_injection(
+            result = await direct_injection.try_direct_injection(
                 knowledge_base_ids=knowledge_base_ids,
                 scope=scope,
                 db=db,
@@ -822,189 +523,6 @@ class RetrievalService:
             "retrieval_profile": "qa_pair",
             "qa_pair_count": qa_pair_count,
         }
-
-    async def get_original_documents_from_knowledge_base(
-        self,
-        knowledge_base_ids: list[int],
-        db: Session,
-        document_ids: Optional[list[int]] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Get original documents from knowledge bases for direct injection.
-
-        Returns complete original document content from MySQL instead of
-        chunked content from Elasticsearch. This preserves document structure
-        (especially tables) and reduces network overhead.
-
-        IMPORTANT: This method implements truncation detection to prevent
-        injecting incomplete content. If any document's text_length is >=
-        MAX_EXTRACTED_TEXT_LENGTH, the method returns None to trigger fallback
-        to RAG retrieval.
-
-        Args:
-            knowledge_base_ids: List of knowledge base IDs to search.
-            db: Database session
-            document_ids: Optional list of document IDs to filter. If provided,
-                queries directly by document IDs within the knowledge_base_ids scope.
-
-        Returns:
-            - None: Documents are truncated, should fallback to RAG
-            - []: No documents found
-            - [records]: List of document dicts with content, score, title, metadata
-        """
-        from app.models.knowledge import KnowledgeDocument
-        from app.models.subtask_context import SubtaskContext
-        from app.services.knowledge.document_read_service import document_read_service
-
-        if not knowledge_base_ids:
-            logger.warning(
-                "[RAG] get_original_documents: no knowledge base IDs provided"
-            )
-            return []
-
-        max_text_length = settings.MAX_EXTRACTED_TEXT_LENGTH
-        records: List[Dict[str, Any]] = []
-
-        # Case 1: Query by document IDs with KB scope filter
-        if document_ids is not None:
-            if not document_ids:
-                return []
-
-            query = (
-                db.query(
-                    KnowledgeDocument.id,
-                    KnowledgeDocument.kind_id,
-                    SubtaskContext.text_length,
-                )
-                .select_from(KnowledgeDocument)
-                .join(
-                    SubtaskContext,
-                    KnowledgeDocument.attachment_id == SubtaskContext.id,
-                )
-                .filter(KnowledgeDocument.is_active.is_(True))
-                .filter(KnowledgeDocument.id.in_(document_ids))
-                .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
-            )
-            doc_rows = query.all()
-
-            if not doc_rows:
-                logger.info(
-                    "[RAG] get_original_documents: no documents found for doc_ids=%s in kb_ids=%s",
-                    document_ids,
-                    knowledge_base_ids,
-                )
-                return []
-
-            has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
-            if has_truncated:
-                truncated_ids = [
-                    row[0] for row in doc_rows if (row[2] or 0) >= max_text_length
-                ]
-                logger.warning(
-                    "[RAG] Documents truncated, rejecting direct_injection: "
-                    "kb_ids=%s, truncated_doc_ids=%s",
-                    knowledge_base_ids,
-                    truncated_ids,
-                )
-                return None
-
-            all_document_ids = [row[0] for row in doc_rows]
-            results = document_read_service.read_documents(
-                db=db,
-                document_ids=all_document_ids,
-                offset=0,
-                limit=10_000_000,
-                knowledge_base_ids=knowledge_base_ids,
-            )
-            records = self._build_document_records(results, knowledge_base_ids)
-            logger.info(
-                "[RAG] get_original_documents completed: doc_ids=%s, document_count=%d",
-                document_ids,
-                len(records),
-            )
-            return records
-
-        # Case 2: Query each KB sequentially, stop on first truncation
-        for kb_id in knowledge_base_ids:
-            query = (
-                db.query(
-                    KnowledgeDocument.id,
-                    KnowledgeDocument.kind_id,
-                    SubtaskContext.text_length,
-                )
-                .select_from(KnowledgeDocument)
-                .join(
-                    SubtaskContext,
-                    KnowledgeDocument.attachment_id == SubtaskContext.id,
-                )
-                .filter(KnowledgeDocument.is_active.is_(True))
-                .filter(KnowledgeDocument.kind_id == kb_id)
-            )
-            doc_rows = query.all()
-
-            if not doc_rows:
-                continue
-
-            has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
-            if has_truncated:
-                truncated_ids = [
-                    row[0] for row in doc_rows if (row[2] or 0) >= max_text_length
-                ]
-                logger.warning(
-                    "[RAG] Documents truncated, rejecting direct_injection: "
-                    "kb_id=%s, truncated_doc_ids=%s",
-                    kb_id,
-                    truncated_ids,
-                )
-                return None
-
-            all_document_ids = [row[0] for row in doc_rows]
-            results = document_read_service.read_documents(
-                db=db,
-                document_ids=all_document_ids,
-                offset=0,
-                limit=10_000_000,
-                knowledge_base_ids=[kb_id],
-            )
-            records.extend(self._build_document_records(results, [kb_id]))
-
-        logger.info(
-            "[RAG] get_original_documents completed: kb_ids=%s, document_count=%d",
-            knowledge_base_ids,
-            len(records),
-        )
-        return records
-
-    @staticmethod
-    def _build_document_records(
-        results: List[Dict[str, Any]],
-        knowledge_base_ids: list[int],
-    ) -> List[Dict[str, Any]]:
-        """Build document records from read results."""
-        records = []
-        kb_id = knowledge_base_ids[0] if len(knowledge_base_ids) == 1 else None
-
-        for result in results:
-            if result.get("error"):
-                logger.warning(
-                    "[RAG] get_original_documents: skip document %s due to error: %s",
-                    result.get("id"),
-                    result.get("error"),
-                )
-                continue
-            records.append(
-                {
-                    "content": result.get("content", ""),
-                    "score": 1.0,
-                    "title": result.get("name", "Unknown"),
-                    "metadata": {
-                        "document_id": result.get("id"),
-                        "total_length": result.get("total_length", 0),
-                    },
-                    "knowledge_base_id": kb_id or result.get("kb_id"),
-                }
-            )
-
-        return records
 
     async def get_all_chunks_from_knowledge_base(
         self,

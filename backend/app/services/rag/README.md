@@ -38,6 +38,7 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 - `local_gateway.py`: local execution path
 - `remote_gateway.py`: remote execution path through `knowledge_runtime`
 - `gateway_factory.py`: chooses local / remote by `RAG_RUNTIME_MODE`
+- `direct_injection.py`: direct-injection routing and original-document reading, with no execution-kernel dependency
 
 ### Execution kernel
 
