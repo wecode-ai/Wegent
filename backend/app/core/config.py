@@ -318,9 +318,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
-    RATE_LIMIT_MCP_IDENTITY: str = (
-        "60/minute"  # GET /api/external/mcp-identity/userinfo
-    )
+    # Avoid repeated synchronous Redis connection attempts when a custom
+    # rate-limit backend is unavailable.
+    RATE_LIMIT_REDIS_UNAVAILABLE_COOLDOWN_SECONDS: float = 5.0
+
+    # GET /api/external/mcp-identity/userinfo. Business MCP servers validate
+    # their inbound task token through this endpoint on every tool call, so it
+    # uses a fail-open Redis check scoped by token and caller IP instead of the
+    # shared slowapi limiter.
+    MCP_IDENTITY_RATE_LIMIT_ENABLED: bool = True
+    MCP_IDENTITY_RATE_LIMIT_REQUESTS: int = 600
+    MCP_IDENTITY_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    # Emit a warning when a token lookup exceeds this budget so latency
+    # regressions are visible without tracing every request.
+    MCP_IDENTITY_SLOW_LOG_MS: float = 500.0
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.
