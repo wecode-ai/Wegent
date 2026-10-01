@@ -407,7 +407,15 @@ class StatusUpdatingEmitter(ResultEmitter):
         message_id: Optional[int] = None,
         **kwargs,
     ) -> None:
-        """Forward start event to wrapped emitter."""
+        """Record stream activity before forwarding the start event."""
+        from app.services.chat.storage import session_manager
+
+        await session_manager.set_task_streaming_status(
+            task_id=self._task_id,
+            subtask_id=self._subtask_id,
+            user_id=0,
+            username="",
+        )
         await self._wrapped.emit_start(task_id, subtask_id, message_id, **kwargs)
 
     async def emit_chunk(
