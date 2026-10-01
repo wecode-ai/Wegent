@@ -285,6 +285,7 @@ function MessagesArea({
     selectTask,
     cleanupMessagesAfterEdit,
     taskState,
+    recoverCurrentTask,
   } = useTaskSession()
   const { theme } = useTheme()
   const { user } = useUser()
@@ -1218,10 +1219,10 @@ function MessagesArea({
       taskState?.phase === 'joining' ||
       taskState?.phase === 'syncing')
 
+  const hasTaskLoadError = taskState?.phase === 'error'
+
   const showRuntimeWatermark =
-    taskState !== null &&
-    !isSyncingMessages &&
-    (messages.length === 0 || taskState.phase === 'error')
+    taskState !== null && !isSyncingMessages && messages.length === 0 && !hasTaskLoadError
 
   return (
     <div
@@ -1230,6 +1231,27 @@ function MessagesArea({
       translate="no"
     >
       <TaskRuntimeGlyph taskState={taskState} visible={showRuntimeWatermark} />
+
+      {hasTaskLoadError && (
+        <div
+          className="relative z-10 mx-auto mt-12 flex max-w-md flex-col items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-6 py-5 text-center"
+          data-testid="task-history-load-error"
+          role="alert"
+        >
+          <p className="font-medium">{t('task_history_load_error_title')}</p>
+          <p className="text-sm text-muted-foreground">
+            {taskState?.error || t('task_history_load_error_description')}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="retry-task-history-load"
+            onClick={() => void recoverCurrentTask()}
+          >
+            {t('task_history_load_error_retry')}
+          </Button>
+        </div>
+      )}
 
       {/* Messages Area */}
       {(messages.length > 0 ||

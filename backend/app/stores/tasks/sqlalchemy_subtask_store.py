@@ -827,7 +827,7 @@ class SqlAlchemySubtaskStore:
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(Subtask.task_id == task_id)
+        query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         if message_ids is not None:
             if not message_ids:
@@ -843,7 +843,19 @@ class SqlAlchemySubtaskStore:
             query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
         else:
             query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-        subtasks = query.all()
+        ordered_ids = [row.id for row in query.all()]
+        if not ordered_ids:
+            return []
+
+        subtasks_by_id = {
+            subtask.id: subtask
+            for subtask in db.query(Subtask).filter(Subtask.id.in_(ordered_ids)).all()
+        }
+        subtasks = [
+            subtasks_by_id[subtask_id]
+            for subtask_id in ordered_ids
+            if subtask_id in subtasks_by_id
+        ]
         self._attach_sender_user_names(db, subtasks)
         return subtasks
 

@@ -4,6 +4,7 @@
 
 from datetime import datetime, timedelta
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -128,6 +129,37 @@ def test_list_by_task_ordered_excludes_subtasks(test_db: Session) -> None:
     )
 
     assert [subtask.id for subtask in subtasks] == [61, 63]
+
+
+def test_list_by_task_ordered_selects_ids_before_loading_large_results(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(9, owner_id=10))
+    first = _subtask(subtask_id=91, task_id=9, user_id=10, message_id=2)
+    first.result = {"value": "x" * 200_000}
+    second = _subtask(subtask_id=92, task_id=9, user_id=10, message_id=1)
+    second.result = {"value": "y" * 200_000}
+    test_db.add_all([first, second])
+    test_db.commit()
+
+    statements: list[str] = []
+
+    def capture_sql(_, __, statement, ___, ____, _____) -> None:
+        statements.append(statement)
+
+    sa.event.listen(test_db.bind, "before_cursor_execute", capture_sql)
+    try:
+        subtasks = store.list_by_task_ordered(test_db, task_id=9)
+    finally:
+        sa.event.remove(test_db.bind, "before_cursor_execute", capture_sql)
+
+    subtask_selects = [
+        statement for statement in statements if "FROM subtasks" in statement
+    ]
+    assert "subtasks.id" in subtask_selects[0]
+    assert "subtasks.result" not in subtask_selects[0]
+    assert [subtask.id for subtask in subtasks] == [92, 91]
 
 
 def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:

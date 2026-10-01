@@ -2,6 +2,9 @@
   "access_denied_title": "无访问权限",
   "access_denied_description": "您没有权限访问此任务。该任务可能已被删除或您没有必要的权限。",
   "access_denied_go_home": "返回首页",
+  "task_history_load_error_title": "无法加载任务消息",
+  "task_history_load_error_description": "任务历史记录加载失败，请重试。",
+  "task_history_load_error_retry": "重新加载消息",
   "attachment": {
     "characters": "字符"
   },
