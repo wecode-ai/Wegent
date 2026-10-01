@@ -125,16 +125,13 @@ def find_skill_by_ref(
 ) -> Kind | None:
     """Find a skill by explicit name/namespace/public metadata."""
     if skill_id is not None:
-        skill = (
-            db.query(Kind)
-            .filter(
-                Kind.id == skill_id,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
+        from app.services.readers.kinds import KindType, kindReader
+
+        # Reuse the Kind reader cache for the row; the access checks below stay
+        # uncached so a removed binding still revokes access on the next call.
+        skill = kindReader.get_by_id(db, KindType.SKILL, skill_id)
+        if skill is not None and skill.name != skill_name:
+            skill = None
         if not skill:
             return None
 
