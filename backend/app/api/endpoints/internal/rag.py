@@ -531,7 +531,6 @@ async def _execute_scoped_retrieve(
             else None
         )
         runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
             knowledge_base_ids=kb_ids,
             query=request.query,
             search_hints=request.search_hints,
@@ -573,11 +572,12 @@ async def _execute_scoped_retrieve(
 
 
 async def _retrieve_remotely(runtime_spec: QueryRuntimeSpec, db: Session) -> dict:
-    """Execute retrieval in knowledge_runtime with the resolved runtime config."""
-    retrieval_spec = runtime_resolver.with_query_knowledge_base_configs(
-        runtime_spec.model_copy(update={"route_mode": "rag_retrieval"}),
-        db=db,
-    )
+    """Execute retrieval in knowledge_runtime by reference.
+
+    The request carries the knowledge base IDs, not the resolved execution
+    config: knowledge_runtime resolves the config for each knowledge base itself.
+    """
+    retrieval_spec = runtime_spec.model_copy(update={"route_mode": "rag_retrieval"})
     return await RemoteRagGateway().query(retrieval_spec, db=db)
 
 
@@ -732,7 +732,6 @@ async def internal_retrieve(
             )
         else:
             runtime_spec = runtime_resolver.build_query_runtime_spec(
-                db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
                 search_hints=request.search_hints,

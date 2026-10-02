@@ -20,12 +20,6 @@ from app.services.knowledge.indexing import run_document_indexing
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import DirectInjectionBudget, QueryRuntimeSpec
-from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
-)
 
 COMMON_QUERY_RESULT = {
     "mode": "rag_retrieval",
@@ -74,39 +68,13 @@ def _make_runtime_spec(
     knowledge_base_ids: list[int] | None = None,
     query: str = "release checklist",
     with_budget: bool = False,
-    with_remote_configs: bool = False,
 ) -> QueryRuntimeSpec:
     knowledge_base_ids = knowledge_base_ids or [1]
-    knowledge_base_configs = [
-        RemoteKnowledgeBaseQueryConfig(
-            knowledge_base_id=knowledge_base_ids[0],
-            index_owner_user_id=8,
-            retriever_config=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={
-                    "type": "qdrant",
-                    "url": "http://qdrant:6333",
-                },
-            ),
-            embedding_model_config=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
-            ),
-            retrieval_config=RuntimeRetrievalConfig(
-                top_k=20,
-                score_threshold=0.7,
-                retrieval_mode="vector",
-            ),
-        )
-    ]
 
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids,
         query=query,
         route_mode=route_mode,
-        knowledge_base_configs=knowledge_base_configs,
         direct_injection_budget=(
             DirectInjectionBudget(context_window=10000) if with_budget else None
         ),
@@ -158,7 +126,7 @@ def test_internal_retrieve_executes_in_knowledge_runtime(
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
-            return_value=_make_runtime_spec(with_remote_configs=True),
+            return_value=_make_runtime_spec(),
         ),
         patch(
             "app.services.rag.remote_gateway.RemoteRagGateway.query",
@@ -187,7 +155,7 @@ def test_internal_retrieve_reports_remote_failure(
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
-            return_value=_make_runtime_spec(with_remote_configs=True),
+            return_value=_make_runtime_spec(),
         ),
         patch(
             "app.services.rag.remote_gateway.RemoteRagGateway.query",

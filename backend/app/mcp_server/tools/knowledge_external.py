@@ -563,12 +563,6 @@ def _prepare_search_content_sync(
             return _json_error("No accessible knowledge bases found", "not_found")
 
         runtime_resolver = RagRuntimeResolver()
-        knowledge_base_configs = runtime_resolver.build_query_knowledge_base_configs(
-            db=db,
-            knowledge_base_ids=target_ids,
-            current_user_id=user_id,
-            user_name=user_name,
-        )
         runtime_spec = runtime_resolver.build_query_runtime_spec(
             knowledge_base_ids=target_ids,
             query=query,
@@ -576,7 +570,6 @@ def _prepare_search_content_sync(
             route_mode="rag_retrieval",
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=knowledge_base_configs,
         )
         return SearchPreparation(
             runtime_spec=runtime_spec,

@@ -20,11 +20,7 @@ from app.services.rag.sources import (
     retrieval_source_registry,
 )
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
     RetrievalScope,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
 )
 
 
@@ -47,24 +43,6 @@ def _build_remote_response(
     return httpx.Response(status_code, json=json_body or {}, request=request)
 
 
-def _make_remote_query_config(knowledge_base_id: int) -> RemoteKnowledgeBaseQueryConfig:
-    return RemoteKnowledgeBaseQueryConfig(
-        knowledge_base_id=knowledge_base_id,
-        index_owner_user_id=7,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "qdrant"},
-        ),
-        embedding_model_config=RuntimeEmbeddingModelConfig(
-            model_name="embed-a",
-            model_namespace="default",
-            resolved_config={"protocol": "openai"},
-        ),
-        retrieval_config=RuntimeRetrievalConfig(top_k=20),
-    )
-
-
 def _make_runtime_spec(
     *,
     route_mode: str = "auto",
@@ -72,7 +50,6 @@ def _make_runtime_spec(
     document_ids: list[int] | None = None,
     query: str = "test",
     with_budget: bool = False,
-    with_remote_configs: bool = True,
     user_id: int | None = None,
 ) -> QueryRuntimeSpec:
     return QueryRuntimeSpec(
@@ -85,14 +62,6 @@ def _make_runtime_spec(
         query=query,
         route_mode=route_mode,
         user_id=user_id,
-        knowledge_base_configs=(
-            [
-                _make_remote_query_config(knowledge_base_id)
-                for knowledge_base_id in (knowledge_base_ids or [1])
-            ]
-            if with_remote_configs
-            else []
-        ),
         direct_injection_budget=(
             DirectInjectionBudget(context_window=10000) if with_budget else None
         ),
@@ -339,13 +308,7 @@ def test_internal_retrieve_direct_injection_hit_never_queries_knowledge_runtime(
                 knowledge_base_ids=[1],
                 query=payload["query"],
                 route_mode="direct_injection",
-                with_remote_configs=False,
             ),
-        ),
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver."
-            "build_query_knowledge_base_configs",
-            side_effect=AssertionError("direct injection must not resolve configs"),
         ),
         patch(
             "app.api.endpoints.internal.rag.direct_injection."
@@ -416,15 +379,9 @@ def test_internal_retrieve_rejected_direct_injection_queries_knowledge_runtime(
                 knowledge_base_ids=[1],
                 query=payload["query"],
                 route_mode="direct_injection",
-                with_remote_configs=False,
                 user_id=7,
             ),
         ),
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver."
-            "build_query_knowledge_base_configs",
-            return_value=[_make_remote_query_config(1)],
-        ) as mock_build_configs,
         patch(
             "app.api.endpoints.internal.rag.direct_injection."
             "try_direct_injection_with_budget",
@@ -450,23 +407,14 @@ def test_internal_retrieve_rejected_direct_injection_queries_knowledge_runtime(
     assert body["mode"] == "rag_retrieval"
     assert [record["content"] for record in body["records"]] == ["retrieved chunk"]
     mock_direct_injection.assert_awaited_once()
-    # The rejected injection is executed by the knowledge runtime, carrying the
-    # resolved runtime config of the knowledge base.
+    # The rejected injection is executed by the knowledge runtime by reference:
+    # the request carries the knowledge base ID, never the execution config.
     mock_remote_post.assert_awaited_once()
     assert mock_remote_post.await_args.args[0].endswith("/internal/rag/query")
     posted_body = mock_remote_post.await_args.kwargs["json"]
     assert posted_body["knowledge_base_ids"] == [1]
     assert posted_body["query"] == payload["query"]
-    posted_configs = posted_body["knowledge_base_configs"]
-    assert [config["knowledge_base_id"] for config in posted_configs] == [1]
-    assert posted_configs[0]["retriever_config"]["name"] == "retriever-a"
-    assert posted_configs[0]["embedding_model_config"]["model_name"] == "embed-a"
-    mock_build_configs.assert_called_once_with(
-        db=ANY,
-        knowledge_base_ids=[1],
-        current_user_id=7,
-        user_name=None,
-    )
+    assert "knowledge_base_configs" not in posted_body
     mock_persist.assert_called_once()
 
 
@@ -670,18 +618,12 @@ def test_internal_retrieve_auto_route_queries_knowledge_runtime(test_client):
                 knowledge_base_ids=[1],
                 query=payload["query"],
                 with_budget=True,
-                with_remote_configs=False,
             ),
         ),
         patch(
             "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
             return_value="rag_retrieval",
         ),
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver."
-            "build_query_knowledge_base_configs",
-            return_value=[_make_remote_query_config(1)],
-        ) as mock_build_configs,
         patch(
             "httpx.AsyncClient.post",
             return_value=_build_remote_response(
@@ -699,10 +641,8 @@ def test_internal_retrieve_auto_route_queries_knowledge_runtime(test_client):
     mock_remote_post.assert_awaited_once()
     assert mock_remote_post.await_args.args[0].endswith("/internal/rag/query")
     posted_body = mock_remote_post.await_args.kwargs["json"]
-    assert [
-        config["knowledge_base_id"] for config in posted_body["knowledge_base_configs"]
-    ] == [1]
-    mock_build_configs.assert_called_once()
+    assert posted_body["knowledge_base_ids"] == [1]
+    assert "knowledge_base_configs" not in posted_body
 
 
 def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(

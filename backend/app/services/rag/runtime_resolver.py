@@ -19,7 +19,6 @@ from app.services.rag.runtime_specs import (
     IndexSource,
     ListChunksRuntimeSpec,
     PurgeKnowledgeRuntimeSpec,
-    QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -90,7 +89,6 @@ class RagRuntimeResolver:
     def build_query_runtime_spec(
         self,
         *,
-        db: Session | None = None,
         knowledge_base_ids: list[int],
         query: str,
         max_results: int,
@@ -109,7 +107,6 @@ class RagRuntimeResolver:
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
-        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -119,21 +116,6 @@ class RagRuntimeResolver:
                 reserved_output_tokens=reserved_output_tokens,
                 context_buffer_ratio=context_buffer_ratio,
                 max_direct_chunks=max_direct_chunks,
-            )
-
-        resolved_knowledge_base_configs = (
-            [] if knowledge_base_configs is None else knowledge_base_configs
-        )
-        if (
-            db is not None
-            and route_mode == "rag_retrieval"
-            and knowledge_base_configs is None
-        ):
-            resolved_knowledge_base_configs = self.build_query_knowledge_base_configs(
-                db=db,
-                knowledge_base_ids=knowledge_base_ids,
-                current_user_id=user_id,
-                user_name=user_name,
             )
 
         return QueryRuntimeSpec(
@@ -148,7 +130,6 @@ class RagRuntimeResolver:
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=resolved_knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,
@@ -161,10 +142,6 @@ class RagRuntimeResolver:
         knowledge_base_id: int,
         query: str,
         max_results: int,
-        retriever_name: str,
-        retriever_namespace: str,
-        embedding_model_name: str,
-        embedding_model_namespace: str,
         user_id: int,
         user_name: str | None,
         score_threshold: float,
@@ -185,12 +162,6 @@ class RagRuntimeResolver:
             raise ValueError(
                 f"Knowledge base {knowledge_base_id} not found or access denied"
             )
-
-        kb_info = get_kb_index_info_by_record(
-            db=db,
-            knowledge_base=kb,
-            current_user_id=user_id,
-        )
 
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],
@@ -213,71 +184,6 @@ class RagRuntimeResolver:
                     ),
                 }
             ],
-            knowledge_base_configs=[
-                QueryKnowledgeBaseRuntimeConfig(
-                    knowledge_base_id=knowledge_base_id,
-                    index_owner_user_id=kb_info.index_owner_user_id,
-                    retriever_config=self._build_resolved_retriever_config(
-                        db=db,
-                        user_id=kb_info.index_owner_user_id,
-                        name=retriever_name,
-                        namespace=retriever_namespace,
-                    ),
-                    embedding_model_config=self._build_resolved_embedding_model_config(
-                        db=db,
-                        user_id=kb_info.index_owner_user_id,
-                        model_name=embedding_model_name,
-                        model_namespace=embedding_model_namespace,
-                        user_name=user_name,
-                    ),
-                    retrieval_config=RuntimeRetrievalConfig(
-                        top_k=max_results,
-                        score_threshold=score_threshold,
-                        retrieval_mode=retrieval_mode,
-                        vector_weight=vector_weight,
-                        keyword_weight=keyword_weight,
-                    ),
-                )
-            ],
-        )
-
-    def build_query_knowledge_base_configs(
-        self,
-        *,
-        db: Session,
-        knowledge_base_ids: list[int],
-        current_user_id: int | None = None,
-        user_name: str | None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        return self._build_query_knowledge_base_configs(
-            db=db,
-            knowledge_base_ids=knowledge_base_ids,
-            current_user_id=current_user_id,
-            user_name=user_name,
-        )
-
-    def with_query_knowledge_base_configs(
-        self,
-        runtime_spec: QueryRuntimeSpec,
-        *,
-        db: Session,
-    ) -> QueryRuntimeSpec:
-        """Return the spec carrying resolved configs for a remote query.
-
-        knowledge_runtime executes the query with these configs, so it never has
-        to resolve them from the Backend database itself.
-        """
-        if runtime_spec.knowledge_base_configs:
-            return runtime_spec
-        return runtime_spec.model_copy(
-            update={
-                "knowledge_base_configs": self.build_query_knowledge_base_configs(
-                    db=db,
-                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
-                    current_user_id=runtime_spec.user_id,
-                    user_name=runtime_spec.user_name,
-                )
-            }
         )
 
     def build_public_list_chunks_runtime_spec(
@@ -445,110 +351,6 @@ class RagRuntimeResolver:
             user_name=user_name,
             spec_type="drop",
         )
-
-    def _build_query_knowledge_base_configs(
-        self,
-        *,
-        db: Session,
-        knowledge_base_ids: list[int],
-        current_user_id: int | None = None,
-        user_name: str | None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        knowledge_base_records = []
-        for knowledge_base_id in knowledge_base_ids:
-            kb = self._get_knowledge_base_record(
-                db=db, knowledge_base_id=knowledge_base_id
-            )
-            if kb is None:
-                raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-            knowledge_base_records.append(kb)
-
-        return self.build_query_knowledge_base_configs_from_records(
-            db=db,
-            knowledge_base_records=knowledge_base_records,
-            current_user_id=current_user_id,
-            user_name=user_name,
-        )
-
-    def build_query_knowledge_base_configs_from_records(
-        self,
-        *,
-        db: Session,
-        knowledge_base_records: list[Kind],
-        current_user_id: int | None = None,
-        user_name: str | None = None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
-        for kb in knowledge_base_records:
-            knowledge_base_id = kb.id
-
-            retrieval_config = (kb.json or {}).get("spec", {}).get(
-                "retrievalConfig"
-            ) or {}
-            retriever_name = retrieval_config.get("retriever_name")
-            retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-            embedding_config = retrieval_config.get("embedding_config") or {}
-            embedding_model_name = embedding_config.get("model_name")
-            embedding_model_namespace = embedding_config.get(
-                "model_namespace",
-                "default",
-            )
-
-            if not retriever_name:
-                raise ValueError(
-                    f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
-                )
-            if not embedding_model_name:
-                raise ValueError(
-                    f"Knowledge base {knowledge_base_id} has incomplete embedding config"
-                )
-
-            owner_user_id = kb.user_id
-            if current_user_id is not None:
-                kb_info = get_kb_index_info_by_record(
-                    db=db,
-                    knowledge_base=kb,
-                    current_user_id=current_user_id,
-                )
-                owner_user_id = kb_info.index_owner_user_id
-
-            retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
-            hybrid_weights = retrieval_config.get("hybrid_weights") or {}
-            configs.append(
-                QueryKnowledgeBaseRuntimeConfig(
-                    knowledge_base_id=knowledge_base_id,
-                    index_owner_user_id=owner_user_id,
-                    retriever_config=self._build_resolved_retriever_config(
-                        db=db,
-                        user_id=owner_user_id,
-                        name=retriever_name,
-                        namespace=retriever_namespace,
-                    ),
-                    embedding_model_config=self._build_resolved_embedding_model_config(
-                        db=db,
-                        user_id=owner_user_id,
-                        model_name=embedding_model_name,
-                        model_namespace=embedding_model_namespace,
-                        user_name=user_name,
-                    ),
-                    retrieval_config=RuntimeRetrievalConfig(
-                        top_k=retrieval_config.get("top_k", 20),
-                        score_threshold=retrieval_config.get("score_threshold", 0.5),
-                        retrieval_mode=retrieval_mode,
-                        vector_weight=(
-                            hybrid_weights.get("vector_weight")
-                            if retrieval_mode == "hybrid"
-                            else None
-                        ),
-                        keyword_weight=(
-                            hybrid_weights.get("keyword_weight")
-                            if retrieval_mode == "hybrid"
-                            else None
-                        ),
-                    ),
-                )
-            )
-        return configs
 
     def _get_knowledge_base_record(
         self,

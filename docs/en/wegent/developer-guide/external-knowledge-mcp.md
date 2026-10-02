@@ -262,7 +262,10 @@ Behavior:
 - Inaccessible `knowledge_base_ids` are ignored and returned in `ignored_knowledge_base_ids` with `warnings`. If no requested knowledge base is accessible, the tool returns `not_found`.
 - Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`, top-level `doc_ref`, or `metadata.doc_ref`.
 
-Search has exactly one execution path: retrieval always runs in Knowledge Runtime. The external search tool sends the runtime retrieval configuration (`knowledge_base_configs`) of the target knowledge bases with the request, so on the normal path Knowledge Runtime does not read the Backend database:
+Search has exactly one execution path: retrieval always runs in Knowledge Runtime. The external search tool
+sends only the knowledge base IDs and the retrieval scope allowed for the call, never connection credentials
+or a full execution config; Knowledge Runtime resolves the runtime configuration of each knowledge base by
+reference:
 
 ```mermaid
 flowchart TD
@@ -272,7 +275,7 @@ flowchart TD
     dedupe --> access[Check each knowledge base permission]
     access --> found{Any accessible knowledge base?}
     found -->|No| not_found[Return not_found]
-    found -->|Yes| spec[Build QueryRuntimeSpec with runtime retrieval configs]
+    found -->|Yes| spec[Build QueryRuntimeSpec with knowledge base IDs and scope]
     spec --> remote_query[RemoteRagGateway query]
     remote_query --> ok{Remote query succeeded?}
     ok -->|Yes| response[Build search response]

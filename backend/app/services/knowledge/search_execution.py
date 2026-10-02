@@ -21,18 +21,6 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import RetrievalScope, SearchHints
 
 
-def _with_query_knowledge_base_configs(runtime_spec: Any) -> Any:
-    """Attach the KB runtime config so knowledge_runtime needs no DB lookup."""
-    if getattr(runtime_spec, "knowledge_base_configs", None):
-        return runtime_spec
-
-    with SessionLocal() as db:
-        return RagRuntimeResolver().with_query_knowledge_base_configs(
-            runtime_spec,
-            db=db,
-        )
-
-
 def _run_direct_injection_in_worker(runtime_spec: Any) -> dict[str, Any] | None:
     """Try direct injection inside a worker-owned Session."""
 
@@ -117,7 +105,7 @@ class KnowledgeSearchRunner:
 
         Direct injection only reads the original documents from MySQL. Rejected
         injections and plain retrieval are executed by knowledge_runtime, which
-        receives the KB runtime config and needs no Backend database lookup.
+        resolves the execution config of each knowledge base itself.
         """
         if getattr(runtime_spec, "route_mode", None) == "direct_injection":
             injection_result = await run_in_threadpool_with_cleanup(
@@ -129,10 +117,7 @@ class KnowledgeSearchRunner:
                 update={"route_mode": "rag_retrieval"}
             )
 
-        retrieval_spec = await run_in_threadpool_with_cleanup(
-            _with_query_knowledge_base_configs, runtime_spec
-        )
-        return await RemoteRagGateway().query(retrieval_spec)
+        return await RemoteRagGateway().query(runtime_spec)
 
     @staticmethod
     def _prepare(
@@ -211,7 +196,6 @@ class KnowledgeSearchRunner:
             )
             resolver = RagRuntimeResolver()
             runtime_spec = resolver.build_query_runtime_spec(
-                db=db,
                 knowledge_base_ids=[knowledge_base_id],
                 query=query,
                 max_results=max_results,
@@ -243,16 +227,6 @@ class KnowledgeSearchRunner:
             runtime_spec = runtime_spec.model_copy(
                 update={"route_mode": resolved_route_mode}
             )
-            if resolved_route_mode == "rag_retrieval":
-                runtime_spec = runtime_spec.model_copy(
-                    update={
-                        "knowledge_base_configs": resolver.build_query_knowledge_base_configs(
-                            db=db,
-                            knowledge_base_ids=[knowledge_base_id],
-                            user_name=user.user_name,
-                        )
-                    }
-                )
             return runtime_spec
 
 

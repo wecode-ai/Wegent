@@ -7,10 +7,8 @@ from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     IndexRuntimeSpec,
     IndexSource,
-    QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
     RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
 from shared.models import RetrievalScope
@@ -158,30 +156,6 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
         restricted_mode=False,
         user_id=3,
         user_name="alice",
-        knowledge_base_configs=[
-            QueryKnowledgeBaseRuntimeConfig(
-                knowledge_base_id=1,
-                index_owner_user_id=3,
-                retriever_config=RuntimeRetrieverConfig(
-                    name="retriever-a",
-                    namespace="default",
-                    storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
-                ),
-                embedding_model_config=RuntimeEmbeddingModelConfig(
-                    model_name="embed-a",
-                    model_namespace="default",
-                    resolved_config={
-                        "protocol": "openai",
-                        "model_id": "text-embedding-3-small",
-                    },
-                ),
-                retrieval_config=RuntimeRetrievalConfig(
-                    top_k=20,
-                    score_threshold=0.7,
-                    retrieval_mode="vector",
-                ),
-            )
-        ],
         enabled_index_families=["chunk_vector", "summary_vector"],
         retrieval_policy="summary_first",
     )
@@ -193,7 +167,6 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
         "value": "kb",
     }
     assert spec.direct_injection_budget.max_direct_chunks == 500
-    assert spec.knowledge_base_configs[0].retrieval_config.top_k == 20
     assert spec.enabled_index_families == ["chunk_vector", "summary_vector"]
     assert spec.retrieval_policy == "summary_first"
 
@@ -210,7 +183,6 @@ def test_query_runtime_spec_forbids_control_plane_only_fields():
 def test_query_runtime_spec_defaults_remote_compatible_fields():
     spec = QueryRuntimeSpec(knowledge_base_ids=[1], query="how to ship")
 
-    assert spec.knowledge_base_configs == []
     assert spec.enabled_index_families == ["chunk_vector"]
     assert spec.retrieval_policy == "chunk_only"
 

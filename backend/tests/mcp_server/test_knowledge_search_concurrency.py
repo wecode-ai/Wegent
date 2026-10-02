@@ -21,14 +21,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.services.knowledge import search_execution
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from app.services.rag.remote_gateway import RemoteRagGatewayError
-from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
-from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
-)
 
 
 def _build_remote_response(
@@ -38,24 +31,6 @@ def _build_remote_response(
 ) -> httpx.Response:
     request = httpx.Request("POST", "http://knowledge-runtime/internal/rag/query")
     return httpx.Response(status_code, json=json_body or {}, request=request)
-
-
-def _remote_query_config(knowledge_base_id: int) -> RemoteKnowledgeBaseQueryConfig:
-    return RemoteKnowledgeBaseQueryConfig(
-        knowledge_base_id=knowledge_base_id,
-        index_owner_user_id=3,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "qdrant"},
-        ),
-        embedding_model_config=RuntimeEmbeddingModelConfig(
-            model_name="embed-a",
-            model_namespace="default",
-            resolved_config={"protocol": "openai"},
-        ),
-        retrieval_config=RuntimeRetrievalConfig(top_k=20),
-    )
 
 
 async def _retrieve(runtime_spec: QueryRuntimeSpec) -> dict:
@@ -78,9 +53,7 @@ async def _retrieve(runtime_spec: QueryRuntimeSpec) -> dict:
     )
 
 
-@pytest.mark.parametrize(
-    "stage", ["reader", "scope", "permission", "runtime", "route", "config"]
-)
+@pytest.mark.parametrize("stage", ["reader", "scope", "permission", "runtime", "route"])
 async def test_search_keeps_event_loop_responsive(
     monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -118,7 +91,7 @@ async def test_search_keeps_event_loop_responsive(
 
     def at_stage(name: str, result: Any) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if name in {"permission", "runtime", "route", "config"}:
+            if name in {"permission", "runtime", "route"}:
                 preparation_threads.append(get_ident())
             if stage == name:
                 blocking_io()
@@ -146,11 +119,6 @@ async def test_search_keeps_event_loop_responsive(
         search_execution.RagRuntimeResolver,
         "build_query_runtime_spec",
         at_stage("runtime", runtime),
-    )
-    monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        at_stage("config", [_remote_query_config(7)]),
     )
     monkeypatch.setattr(
         search_execution.direct_injection,
@@ -238,11 +206,6 @@ async def test_openapi_search_resolves_scope_in_worker(
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )
-    monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        lambda *args, **kwargs: [_remote_query_config(7)],
-    )
     remote_post = AsyncMock(
         return_value=_build_remote_response(
             json_body={"records": [], "total": 0, "total_estimated_tokens": 0}
@@ -328,7 +291,6 @@ async def test_remote_failure_is_reported_without_local_execution(
         query="policy",
         route_mode="rag_retrieval",
         user_id=3,
-        knowledge_base_configs=[_remote_query_config(7)],
     )
     remote_error = RemoteRagGatewayError("runtime unavailable", retryable=True)
 
@@ -399,10 +361,10 @@ async def test_direct_injection_hit_never_queries_knowledge_runtime(
     remote_post.assert_not_called()
 
 
-async def test_rejected_direct_injection_queries_knowledge_runtime_with_config(
+async def test_rejected_direct_injection_queries_knowledge_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A rejected injection is executed remotely with the KB runtime config."""
+    """A rejected injection is executed remotely by reference, without configs."""
     runtime_spec = QueryRuntimeSpec(
         knowledge_base_ids=[7],
         query="policy",
@@ -440,11 +402,6 @@ async def test_rejected_direct_injection_queries_knowledge_runtime_with_config(
         "get_original_documents_from_knowledge_base",
         AsyncMock(return_value=None),
     )
-    monkeypatch.setattr(
-        RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        lambda *args, **kwargs: [_remote_query_config(7)],
-    )
     monkeypatch.setattr("httpx.AsyncClient.post", remote_post)
 
     result = await _retrieve(runtime_spec)
@@ -455,12 +412,7 @@ async def test_rejected_direct_injection_queries_knowledge_runtime_with_config(
     assert remote_post.await_args.args[0].endswith("/internal/rag/query")
     posted_body = remote_post.await_args.kwargs["json"]
     assert posted_body["knowledge_base_ids"] == [7]
-    assert [
-        config["knowledge_base_id"] for config in posted_body["knowledge_base_configs"]
-    ] == [7]
-    assert posted_body["knowledge_base_configs"][0]["retriever_config"]["name"] == (
-        "retriever-a"
-    )
+    assert "knowledge_base_configs" not in posted_body
 
 
 async def test_retrieve_knowledge_restores_default_for_non_positive_max_results(

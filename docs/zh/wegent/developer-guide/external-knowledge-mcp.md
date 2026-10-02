@@ -262,7 +262,8 @@ flowchart TD
 - 不可访问的 `knowledge_base_ids` 会被忽略，并通过 `ignored_knowledge_base_ids` 和 `warnings` 返回；如果没有任何可访问知识库，返回 `not_found`。
 - 搜索结果优先读取顶层 `document_id`，如果不存在则兼容读取 `metadata.document_id`、顶层 `doc_ref` 或 `metadata.doc_ref`。
 
-搜索只有一条执行路径：检索始终由 Knowledge Runtime 执行。外部搜索工具会把该知识库的运行时检索配置（`knowledge_base_configs`）随请求一起发送，因此正常路径上 Knowledge Runtime 无需回查 Backend 数据库：
+搜索只有一条执行路径：检索始终由 Knowledge Runtime 执行。外部搜索工具只发送知识库 ID 与本次获准使用的检索范围，
+不发送连接密钥或完整执行配置；Knowledge Runtime 按引用自行解析每个知识库的运行时配置：
 
 ```mermaid
 flowchart TD
@@ -272,7 +273,7 @@ flowchart TD
     dedupe --> access[逐个校验知识库权限]
     access --> found{有可访问知识库？}
     found -->|否| not_found[返回 not_found]
-    found -->|是| spec[构建携带运行时检索 configs 的 QueryRuntimeSpec]
+    found -->|是| spec[构建只带知识库 ID 与检索范围的 QueryRuntimeSpec]
     spec --> remote_query[RemoteRagGateway query]
     remote_query --> ok{remote 成功？}
     ok -->|是| response[组装搜索响应]

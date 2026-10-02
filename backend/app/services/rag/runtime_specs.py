@@ -8,7 +8,6 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
 )
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
@@ -68,7 +67,6 @@ class IndexRuntimeSpec(RuntimeSpecModel):
         return normalize_runtime_splitter_config(value)
 
 
-QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
 QueryKnowledgeBaseRetrievalOverride = RemoteKnowledgeBaseRetrievalOverride
 
 
@@ -84,9 +82,6 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
-    knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
-        default_factory=list
-    )
     knowledge_base_retrieval_overrides: list[QueryKnowledgeBaseRetrievalOverride] = (
         Field(default_factory=list)
     )

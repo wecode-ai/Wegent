@@ -50,8 +50,7 @@ class QueryExecutor:
         """Execute the query operation.
 
         Args:
-            request: The query request. Carried runtime configs are used as is;
-                requests without them resolve their configs from the database.
+            request: The query request (reference mode - configs resolved from DB).
 
         Returns:
             Query response with ranked records.
@@ -62,7 +61,10 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
         )
-        configs_by_kb_id = self._resolve_query_configs(request)
+        configs_by_kb_id = self._config_loader.resolve_query_configs(
+            knowledge_base_ids=request.knowledge_base_ids,
+            user_id=request.user_id,
+        )
 
         if request.search_hints is None:
             search_hints: dict[str, Any] = {}
@@ -160,7 +162,7 @@ class QueryExecutor:
             "storage_type=%s, retrieval_mode=%s, top_k=%s, "
             "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
             knowledge_base_id,
-            self._describe_config_source(request, retrieval_override),
+            "request_override" if retrieval_override is not None else "database",
             storage_type,
             config.retrieval_config.retrieval_mode,
             config.retrieval_config.top_k,
@@ -238,37 +240,6 @@ class QueryExecutor:
                 )
             overrides_by_kb_id[override.knowledge_base_id] = override
         return overrides_by_kb_id
-
-    def _resolve_query_configs(
-        self,
-        request: RemoteQueryRequest,
-    ) -> dict[int, QueryConfig]:
-        """Use the configs carried by the request, else resolve them from the DB."""
-        if request.knowledge_base_configs:
-            return {
-                config.knowledge_base_id: QueryConfig(
-                    knowledge_base_id=config.knowledge_base_id,
-                    index_owner_user_id=config.index_owner_user_id,
-                    retriever_config=config.retriever_config,
-                    embedding_model_config=config.embedding_model_config,
-                    retrieval_config=config.retrieval_config,
-                )
-                for config in request.knowledge_base_configs
-            }
-
-        return self._config_loader.resolve_query_configs(
-            knowledge_base_ids=request.knowledge_base_ids,
-            user_id=request.user_id,
-        )
-
-    @staticmethod
-    def _describe_config_source(
-        request: RemoteQueryRequest,
-        retrieval_override: RemoteKnowledgeBaseRetrievalOverride | None,
-    ) -> str:
-        if retrieval_override is not None:
-            return "request_override"
-        return "request" if request.knowledge_base_configs else "database"
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
         """Extract document ID from record metadata."""

@@ -55,11 +55,6 @@ def allow_external_search_rate_limit():
         ),
         patch.object(
             knowledge_external.RagRuntimeResolver,
-            "build_query_knowledge_base_configs_from_records",
-            return_value=["resolved-config"],
-        ),
-        patch.object(
-            knowledge_external.RagRuntimeResolver,
             "build_query_runtime_spec",
             return_value=runtime_spec,
         ),
@@ -2408,7 +2403,7 @@ async def test_search_content_ignores_non_numeric_doc_ref(test_user):
 
 
 @pytest.mark.asyncio
-async def test_search_content_carries_runtime_configs_to_the_query_gateway(
+async def test_search_content_queries_the_gateway_by_reference(
     test_user,
 ):
     kb = _make_kb(1, test_user.id, "Payments", datetime(2026, 1, 6, 8, 0, 0))
@@ -2434,11 +2429,6 @@ async def test_search_content_carries_runtime_configs_to_the_query_gateway(
             patch.object(knowledge_external, "get_rag_gateway", return_value=gateway),
             patch.object(
                 knowledge_external.RagRuntimeResolver,
-                "build_query_knowledge_base_configs",
-                return_value=["resolved-config"],
-            ) as build_configs,
-            patch.object(
-                knowledge_external.RagRuntimeResolver,
                 "build_query_runtime_spec",
                 return_value=runtime_spec,
             ) as build_spec,
@@ -2453,16 +2443,10 @@ async def test_search_content_carries_runtime_configs_to_the_query_gateway(
 
     payload = json.loads(result)
     assert payload["searched_knowledge_base_ids"] == [1]
-    build_configs.assert_called_once_with(
-        db=session_local.return_value,
-        knowledge_base_ids=[1],
-        current_user_id=test_user.id,
-        user_name=test_user.user_name,
-    )
     build_spec.assert_called_once()
     assert "db" not in build_spec.call_args.kwargs
     assert build_spec.call_args.kwargs["route_mode"] == "rag_retrieval"
-    assert build_spec.call_args.kwargs["knowledge_base_configs"] == ["resolved-config"]
+    assert "knowledge_base_configs" not in build_spec.call_args.kwargs
     gateway.query.assert_awaited_once_with(runtime_spec, db=None)
 
 
