@@ -284,8 +284,8 @@ Standalone 镜像包含内嵌 Redis：
 
 ### 知识库检索能力
 
-知识库的索引、检索与删除由独立的 Knowledge Runtime 服务执行，该服务是 Backend 的必需依赖。
-Standalone 单容器镜像不包含该服务，因此 standalone 部署不提供知识库检索能力；需要知识库功能时请使用标准模式部署。
+Standalone 模式不提供知识库功能：RAG 相关接口在该模式下不会注册，单容器镜像也不包含执行检索的
+Knowledge Runtime 服务与向量库。需要知识库时请使用标准模式部署。
 
 ### Standalone Executor 限制
 

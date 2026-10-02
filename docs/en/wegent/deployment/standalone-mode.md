@@ -284,10 +284,9 @@ The standalone image includes embedded Redis:
 
 ### Knowledge Retrieval Capability
 
-Knowledge base index, query, and delete run in the separate Knowledge Runtime service, which is a
-required Backend dependency. The standalone single-container image does not include that service, so
-standalone deployments do not provide knowledge retrieval. Use standard deployment when you need
-knowledge features.
+Standalone mode does not provide knowledge base features: the RAG endpoints are not registered in
+this mode, and the single-container image also does not include the Knowledge Runtime service or the
+vector stores that execute retrieval. Use standard deployment when you need knowledge features.
 
 ### Standalone Executor Limitations
 
