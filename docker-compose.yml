@@ -172,6 +172,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # RAG execution only runs in knowledge_runtime, so the Backend requires it.
+      knowledge_runtime:
+        condition: service_healthy
     networks:
       - wegent-network
 
@@ -319,8 +322,6 @@ services:
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-knowledge-runtime
     restart: always
-    profiles:
-      - rag
     ports:
       - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
     environment:
@@ -341,8 +342,11 @@ services:
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-knowledge-runtime
       # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    # Backend depends on this service, so depend on the database instead of
+    # creating a dependency cycle.
     depends_on:
-      - backend
+      mysql:
+        condition: service_healthy
     volumes:
       - ./logs/knowledge_runtime:/app/logs
     networks:

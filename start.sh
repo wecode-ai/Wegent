@@ -1316,6 +1316,7 @@ Options:
 
 Service Selection:
   Passing service names without --stop/--restart starts only those services.
+  Backend and knowledge_runtime always start and stop together.
   Example: $0 backend frontend
 
 Configuration File:
@@ -1858,6 +1859,13 @@ stop_services() {
         done
     fi
 
+    # knowledge_runtime is a required Backend dependency, so it always stops
+    # together with the Backend instead of being a separately selected service.
+    if [[ " ${services[*]} " == *" backend "* && " ${services[*]} " != *" knowledge_runtime "* ]]; then
+        services+=("knowledge_runtime")
+        service_ports+=("$(get_runtime_service_port "knowledge_runtime")")
+    fi
+
     if [ ${#services[@]} -eq 0 ]; then
         echo -e "${YELLOW}No services to stop${NC}"
         return 0
@@ -2290,6 +2298,15 @@ start_services() {
             esac
             specified_services+=("$service")
         done
+    fi
+
+    # RAG execution only runs in knowledge_runtime, so starting the Backend
+    # always starts the Knowledge Runtime too.
+    if [ "$start_backend" = true ]; then
+        start_knowledge_runtime=true
+        if [ $# -gt 0 ] && [[ " ${specified_services[*]} " != *" knowledge_runtime "* ]]; then
+            specified_services+=("knowledge_runtime")
+        fi
     fi
 
     local backend_mode=${WEGENT_BACKEND_MODE:-hybrid}

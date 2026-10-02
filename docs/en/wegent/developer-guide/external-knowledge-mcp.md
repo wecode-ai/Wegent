@@ -46,9 +46,7 @@ flowchart LR
     list --> mysql[(MySQL)]
     content --> mysql
     download --> storage[Attachment storage]
-    search --> rag{RAG query gateway}
-    rag --> remote[Knowledge Runtime remote]
-    rag --> local[Backend local RAG]
+    search --> remote[Knowledge Runtime remote]
     middleware --> redis[(Redis rate limits)]
 ```
 
@@ -264,7 +262,7 @@ Behavior:
 - Inaccessible `knowledge_base_ids` are ignored and returned in `ignored_knowledge_base_ids` with `warnings`. If no requested knowledge base is accessible, the tool returns `not_found`.
 - Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`, top-level `doc_ref`, or `metadata.doc_ref`.
 
-Search follows the configured RAG query gateway. A successful remote path sends only the basic runtime spec and does not build local `knowledge_base_configs`; local configs are built only for local mode or when a remote query falls back to local:
+Search has exactly one execution path: retrieval always runs in Knowledge Runtime. The external search tool sends the runtime retrieval configuration (`knowledge_base_configs`) of the target knowledge bases with the request, so on the normal path Knowledge Runtime does not read the Backend database:
 
 ```mermaid
 flowchart TD
@@ -274,18 +272,16 @@ flowchart TD
     dedupe --> access[Check each knowledge base permission]
     access --> found{Any accessible knowledge base?}
     found -->|No| not_found[Return not_found]
-    found -->|Yes| spec[Build QueryRuntimeSpec without local configs]
-    spec --> gateway{RAG query gateway}
-    gateway -->|local| build_local[Build local knowledge_base_configs]
-    build_local --> local_query[LocalRagGateway query]
-    gateway -->|remote| remote_query[RemoteRagGateway query]
+    found -->|Yes| spec[Build QueryRuntimeSpec with runtime retrieval configs]
+    spec --> remote_query[RemoteRagGateway query]
     remote_query --> ok{Remote query succeeded?}
     ok -->|Yes| response[Build search response]
-    ok -->|No and fallback allowed| build_fallback[Build local knowledge_base_configs]
-    build_fallback --> local_query
-    ok -->|No and fallback denied| error[Return internal error]
-    local_query --> response
+    ok -->|No| error[Return internal error]
 ```
+
+The Backend-local execution path and the `RAG_RUNTIME_MODE` switch are removed. Reason: keep a single
+implementation per behavior and remove the hidden "configured as remote, actually executed in the
+Backend" path; a retrieval failure is reported instead of falling back to local execution.
 
 ## Error Response
 

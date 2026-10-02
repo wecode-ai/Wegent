@@ -282,6 +282,13 @@ The standalone image includes embedded Redis:
 - Uses AOF (Append Only File) for durability
 - Memory is limited to 256MB with LRU eviction
 
+### Knowledge Retrieval Capability
+
+Knowledge base index, query, and delete run in the separate Knowledge Runtime service, which is a
+required Backend dependency. The standalone single-container image does not include that service, so
+standalone deployments do not provide knowledge retrieval. Use standard deployment when you need
+knowledge features.
+
 ### Standalone Executor Limitations
 
 1. **Resource Isolation**: Coding tasks execute where the selected executor runs; container mode does not provide per-task Docker sandbox isolation, and host mode directly accesses the host environment
