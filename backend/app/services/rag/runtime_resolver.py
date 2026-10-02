@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -20,20 +19,19 @@ from app.services.rag.runtime_specs import (
     ListChunksRuntimeSpec,
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
 )
-from knowledge_engine.embedding.capabilities import (
-    normalize_additional_input_modalities,
-)
-from shared.db.capability_reference import resolve_model_kind
-from shared.models import RetrievalScope, SearchHints
-from shared.utils.crypto import decrypt_api_key
-from shared.utils.placeholder import process_custom_headers_placeholders
+from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
 
 
 class RagRuntimeResolver:
+    """Resolve Backend control-plane metadata into runtime specs.
+
+    Index, delete, purge, drop and list-chunks requests cross the process
+    boundary with references only. ``knowledge_runtime`` resolves the retriever
+    and embedding model from those references, so these specs must never carry
+    a resolved execution config.
+    """
+
     def build_index_runtime_spec(
         self,
         *,
@@ -69,19 +67,6 @@ class RagRuntimeResolver:
             embedding_model_name=embedding_model_name,
             embedding_model_namespace=embedding_model_namespace,
             source=IndexSource(source_type="attachment", attachment_id=attachment_id),
-            retriever_config=self._build_resolved_retriever_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            ),
-            embedding_model_config=self._build_resolved_embedding_model_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                model_name=embedding_model_name,
-                model_namespace=embedding_model_namespace,
-                user_name=user_name,
-            ),
             splitter_config=splitter_config_dict,
             user_name=user_name,
         )
@@ -192,7 +177,6 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
         max_chunks: int,
         query: str | None = None,
         metadata_condition: dict | None = None,
@@ -209,14 +193,12 @@ class RagRuntimeResolver:
                 f"Knowledge base {knowledge_base_id} not found or access denied"
             )
 
-        del user_name
         kb_info = get_kb_index_info_by_record(
             db=db,
             knowledge_base=kb,
             current_user_id=user_id,
         )
         return self._build_list_chunks_runtime_spec(
-            db=db,
             kb=kb,
             index_owner_user_id=kb_info.index_owner_user_id,
             max_chunks=max_chunks,
@@ -227,33 +209,18 @@ class RagRuntimeResolver:
     def _build_list_chunks_runtime_spec(
         self,
         *,
-        db: Session,
         kb: Kind,
         index_owner_user_id: int | None,
         max_chunks: int,
         query: str | None,
         metadata_condition: dict | None,
     ) -> ListChunksRuntimeSpec:
-        retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-        if not retriever_name:
-            raise ValueError(
-                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
-            )
-
         owner_user_id = (
             kb.user_id if index_owner_user_id is None else index_owner_user_id
         )
         return ListChunksRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=owner_user_id,
-            retriever_config=self._build_resolved_retriever_config(
-                db=db,
-                user_id=owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            ),
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
@@ -272,14 +239,6 @@ class RagRuntimeResolver:
         if kb is None:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
 
-        retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-        if not retriever_name:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
-            )
-
         runtime_user_id = (
             kb.user_id if index_owner_user_id is None else index_owner_user_id
         )
@@ -287,12 +246,6 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             document_ref=document_ref,
             index_owner_user_id=runtime_user_id,
-            retriever_config=self._build_resolved_retriever_config(
-                db=db,
-                user_id=runtime_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            ),
             enabled_index_families=enabled_index_families or ["chunk_vector"],
         )
 
@@ -302,7 +255,6 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
     ) -> PurgeKnowledgeRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -320,7 +272,6 @@ class RagRuntimeResolver:
             db=db,
             kb=kb,
             current_user_id=user_id,
-            user_name=user_name,
             spec_type="purge",
         )
 
@@ -330,7 +281,6 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
     ) -> DropKnowledgeIndexRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -348,7 +298,6 @@ class RagRuntimeResolver:
             db=db,
             kb=kb,
             current_user_id=user_id,
-            user_name=user_name,
             spec_type="drop",
         )
 
@@ -374,156 +323,21 @@ class RagRuntimeResolver:
         db: Session,
         kb: Kind,
         current_user_id: int,
-        user_name: str | None,
         spec_type: Literal["purge", "drop"],
     ) -> PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec:
-        retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-        if not retriever_name:
-            raise ValueError(
-                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
-            )
-
         kb_info = get_kb_index_info_by_record(
             db=db,
             knowledge_base=kb,
             current_user_id=current_user_id,
-        )
-        resolved_retriever_config = self._build_resolved_retriever_config(
-            db=db,
-            user_id=kb_info.index_owner_user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
         )
 
         if spec_type == "purge":
             return PurgeKnowledgeRuntimeSpec(
                 knowledge_base_id=kb.id,
                 index_owner_user_id=kb_info.index_owner_user_id,
-                retriever_config=resolved_retriever_config,
             )
 
         return DropKnowledgeIndexRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=kb_info.index_owner_user_id,
-            retriever_config=resolved_retriever_config,
         )
-
-    def _build_resolved_retriever_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        name: str,
-        namespace: str,
-    ) -> RuntimeRetrieverConfig:
-        retriever = retriever_kinds_service.get_retriever(
-            db=db,
-            user_id=user_id,
-            name=name,
-            namespace=namespace,
-        )
-        if retriever is None:
-            raise ValueError(f"Retriever {name} (namespace: {namespace}) not found")
-
-        storage_config = retriever.spec.storageConfig
-        return RuntimeRetrieverConfig(
-            name=name,
-            namespace=namespace,
-            storage_config={
-                "type": storage_config.type,
-                "url": storage_config.url,
-                "username": storage_config.username,
-                "password": self._decrypt_optional_secret(storage_config.password),
-                "apiKey": self._decrypt_optional_secret(storage_config.apiKey),
-                "indexStrategy": (
-                    storage_config.indexStrategy.model_dump(exclude_none=True)
-                    if storage_config.indexStrategy is not None
-                    else {"mode": "per_dataset"}
-                ),
-                "ext": storage_config.ext or {},
-            },
-        )
-
-    def _build_resolved_embedding_model_config(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        model_name: str,
-        model_namespace: str,
-        user_name: str | None,
-    ) -> RuntimeEmbeddingModelConfig:
-        model_kind = self._get_model_kind(
-            db=db,
-            user_id=user_id,
-            model_name=model_name,
-            model_namespace=model_namespace,
-        )
-        if model_kind is None:
-            raise ValueError(
-                f"Embedding model '{model_name}' not found in namespace '{model_namespace}'"
-            )
-
-        spec = (model_kind.json or {}).get("spec", {})
-        model_config = spec.get("modelConfig", {})
-        env = model_config.get("env", {})
-        protocol = spec.get("protocol") or env.get("model")
-        custom_headers = env.get("custom_headers", {})
-        if custom_headers and isinstance(custom_headers, dict):
-            custom_headers = process_custom_headers_placeholders(
-                custom_headers,
-                user_name,
-            )
-
-        embedding_config = spec.get("embeddingConfig", {})
-        dimensions = embedding_config.get("dimensions") if embedding_config else None
-        encoding_format = (
-            embedding_config.get("encoding_format") if embedding_config else None
-        )
-        additional_input_modalities = normalize_additional_input_modalities(
-            embedding_config.get("additional_input_modalities")
-            if embedding_config
-            else None
-        )
-
-        return RuntimeEmbeddingModelConfig(
-            model_name=model_name,
-            model_namespace=model_namespace,
-            resolved_config={
-                "protocol": protocol,
-                "api_key": self._decrypt_optional_secret(env.get("api_key")),
-                "base_url": env.get("base_url"),
-                "model_id": env.get("model_id"),
-                "custom_headers": (
-                    custom_headers if isinstance(custom_headers, dict) else {}
-                ),
-                "dimensions": dimensions,
-                "encoding_format": encoding_format,
-                "additional_input_modalities": additional_input_modalities,
-            },
-        )
-
-    def _get_model_kind(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        model_name: str,
-        model_namespace: str,
-    ) -> Kind | None:
-        return resolve_model_kind(
-            db,
-            name=model_name,
-            namespace=model_namespace,
-            user_id=user_id,
-        )
-
-    def _decrypt_optional_secret(self, value: Any) -> Any:
-        if not value:
-            return value
-        try:
-            return decrypt_api_key(value)
-        except Exception:
-            return value

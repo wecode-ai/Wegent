@@ -142,7 +142,6 @@ async def list_index_chunks(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
             max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
             query="list_index_chunks",
         )
@@ -189,7 +188,6 @@ async def purge_index_contents(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
         )
         gateway = get_rag_gateway()
         return await gateway.purge_knowledge_index(runtime_spec, db=db)
@@ -215,7 +213,6 @@ async def drop_index(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
         )
         gateway = get_rag_gateway()
         return await gateway.drop_knowledge_index(runtime_spec, db=db)

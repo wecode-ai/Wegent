@@ -17,6 +17,13 @@ in `knowledge_runtime`. The Backend no longer contains a local execution plane o
 the mode switch that used to select one, so `knowledge_runtime` is a required
 dependency of the Backend rather than an alternative runtime.
 
+Index, delete, purge, drop and list-chunks requests carry references only: the
+knowledge base id, the document or chunk reference, and the index owner.
+`knowledge_runtime` resolves the retriever, embedding model and splitter
+configuration once per operation through its own `ConfigResolver`, so the
+Backend never resolves a retriever or embedding configuration that it would
+discard at the boundary.
+
 ## Responsibility Split
 
 ### Backend control plane
@@ -25,7 +32,7 @@ Backend continues to own:
 
 - permissions and multi-tenant namespace rules
 - `KnowledgeBase` / `KnowledgeDocument` metadata
-- retriever / embedding / runtime config resolution
+- knowledge base owner resolution and reference-only runtime specs
 - task orchestration, retries, and state write-back
 - `direct injection` route decisions
 - `restricted mediation`
@@ -38,7 +45,7 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 `backend/app/services/rag/` owns the seam between control plane and execution:
 
 - `runtime_specs.py`: normalized runtime contracts
-- `runtime_resolver.py`: resolves CRD + KB metadata into runtime specs
+- `runtime_resolver.py`: resolves CRD + KB metadata into reference-only specs
 - `gateway.py`: common gateway protocol
 - `remote_gateway.py`: the only execution path, through `knowledge_runtime`
 - `gateway_factory.py`: returns the `knowledge_runtime` gateway

@@ -130,7 +130,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
-    runtime_spec = SimpleNamespace(embedding_model_config=None)
+    runtime_spec = SimpleNamespace(knowledge_base_id=1, document_id=4)
     delete_spec = SimpleNamespace(knowledge_base_id=1, document_ref="4")
     gateway = MagicMock()
     call_order: list[str] = []

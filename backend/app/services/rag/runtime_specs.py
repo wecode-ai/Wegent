@@ -10,9 +10,6 @@ from app.services.knowledge.splitter_config import (
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RetrievalScope,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
     SearchHints,
 )
 
@@ -42,6 +39,13 @@ class DirectInjectionBudget(RuntimeSpecModel):
 
 
 class IndexRuntimeSpec(RuntimeSpecModel):
+    """Index request that crosses the process boundary with references only.
+
+    ``knowledge_runtime`` resolves the retriever and embedding model from the
+    knowledge base record and the document id, so the Backend never carries a
+    resolved execution config.
+    """
+
     knowledge_base_id: int
     document_id: Optional[int] = None
     index_owner_user_id: int
@@ -50,9 +54,10 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     embedding_model_name: str
     embedding_model_namespace: str
     source: IndexSource
-    retriever_config: RuntimeRetrieverConfig | None = None
-    embedding_model_config: RuntimeEmbeddingModelConfig | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    # Retained by contract: splitter normalization is owned by the knowledge
+    # ingestion path, and the runtime re-resolves the splitter from the document
+    # record. Dropping this field is a separate contract change.
     splitter_config: NormalizedSplitterConfig = Field(
         default_factory=build_runtime_default_splitter_config
     )
@@ -90,29 +95,27 @@ class QueryRuntimeSpec(RuntimeSpecModel):
 
 
 class DeleteRuntimeSpec(RuntimeSpecModel):
+    """Delete request that carries the document reference, not its config."""
+
     knowledge_base_id: int
     document_ref: str
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
 
 
 class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
 
 
 class DropKnowledgeIndexRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
 
 
 class ListChunksRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
     max_chunks: int = 10000
     query: Optional[str] = None
     metadata_condition: Optional[dict] = None

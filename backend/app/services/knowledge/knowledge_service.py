@@ -1211,7 +1211,6 @@ class KnowledgeService:
                 db=db,
                 knowledge_base_id=knowledge_base.id,
                 user_id=user_id,
-                user_name=None,
             )
         except Exception as exc:
             batch_logger.warning(

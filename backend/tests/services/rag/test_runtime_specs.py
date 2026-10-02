@@ -5,11 +5,12 @@ from app.services.knowledge.splitter_config import normalize_splitter_config
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DirectInjectionBudget,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
+    ListChunksRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrieverConfig,
 )
 from shared.models import RetrievalScope
 
@@ -24,19 +25,6 @@ def test_index_runtime_spec_keeps_control_plane_free_fields():
         embedding_model_name="embed-a",
         embedding_model_namespace="default",
         source=IndexSource(attachment_id=123, source_type="attachment"),
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
-        ),
-        embedding_model_config=RuntimeEmbeddingModelConfig(
-            model_name="embed-a",
-            model_namespace="default",
-            resolved_config={
-                "protocol": "openai",
-                "model_id": "text-embedding-3-small",
-            },
-        ),
         index_families=["chunk_vector"],
         splitter_config={"type": "smart"},
         user_name="alice",
@@ -44,9 +32,24 @@ def test_index_runtime_spec_keeps_control_plane_free_fields():
     assert spec.knowledge_base_id == 7
     assert spec.source.attachment_id == 123
     assert spec.index_families == ["chunk_vector"]
-    assert spec.retriever_config.storage_config["type"] == "qdrant"
     assert spec.splitter_config.chunk_strategy == "flat"
     assert spec.splitter_config.format_enhancement == "file_aware"
+
+
+@pytest.mark.parametrize(
+    "spec_type",
+    [
+        IndexRuntimeSpec,
+        DeleteRuntimeSpec,
+        PurgeKnowledgeRuntimeSpec,
+        DropKnowledgeIndexRuntimeSpec,
+        ListChunksRuntimeSpec,
+    ],
+)
+def test_execution_specs_declare_no_resolved_execution_config(spec_type):
+    """knowledge_runtime resolves retriever and embedding configs, not the Backend."""
+    assert "retriever_config" not in spec_type.model_fields
+    assert "embedding_model_config" not in spec_type.model_fields
 
 
 def test_index_runtime_spec_keeps_normalized_splitter_config_shape():
@@ -187,21 +190,17 @@ def test_query_runtime_spec_defaults_remote_compatible_fields():
     assert spec.retrieval_policy == "chunk_only"
 
 
-def test_delete_runtime_spec_keeps_resolved_retriever_config():
+def test_delete_runtime_spec_keeps_reference_fields():
     spec = DeleteRuntimeSpec(
         knowledge_base_id=7,
         document_ref="doc-8",
         index_owner_user_id=9,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
-        ),
         enabled_index_families=["chunk_vector", "summary_vector_index"],
     )
 
     assert spec.knowledge_base_id == 7
-    assert spec.retriever_config.storage_config["type"] == "qdrant"
+    assert spec.document_ref == "doc-8"
+    assert spec.index_owner_user_id == 9
     assert spec.enabled_index_families == ["chunk_vector", "summary_vector_index"]
 
 

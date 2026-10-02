@@ -25,7 +25,6 @@ from shared.models import (
     PresignedUrlContentRef,
     RemoteTestConnectionRequest,
     RetrievalScope,
-    RuntimeRetrieverConfig,
 )
 
 
@@ -404,11 +403,6 @@ async def test_remote_gateway_delete_posts_reference_mode_request(mocker) -> Non
         knowledge_base_id=1,
         document_ref="9",
         index_owner_user_id=7,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "elasticsearch"},
-        ),
     )
 
     result = await gateway.delete_document_index(spec, db=MagicMock())
@@ -441,11 +435,6 @@ async def test_remote_gateway_purge_index_posts_reference_mode_request(
     spec = PurgeKnowledgeRuntimeSpec(
         knowledge_base_id=1,
         index_owner_user_id=7,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "elasticsearch"},
-        ),
     )
 
     result = await gateway.purge_knowledge_index(spec, db=MagicMock())
@@ -475,11 +464,6 @@ async def test_remote_gateway_drop_index_posts_reference_mode_request(mocker) ->
     spec = DropKnowledgeIndexRuntimeSpec(
         knowledge_base_id=1,
         index_owner_user_id=7,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "elasticsearch"},
-        ),
     )
 
     result = await gateway.drop_knowledge_index(spec, db=MagicMock())
@@ -520,11 +504,6 @@ async def test_remote_gateway_list_chunks_posts_reference_mode_request(mocker) -
     spec = ListChunksRuntimeSpec(
         knowledge_base_id=1,
         index_owner_user_id=8,
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "qdrant"},
-        ),
         max_chunks=1000,
         query="list_index_chunks",
         metadata_condition={
