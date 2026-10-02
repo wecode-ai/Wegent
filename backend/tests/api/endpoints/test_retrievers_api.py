@@ -64,3 +64,41 @@ def test_retriever_test_connection_validates_required_fields(
         "success": False,
         "message": "Missing required fields: storage_type, url",
     }
+
+
+def test_list_storage_retrieval_methods_returns_capability_registry(
+    test_client,
+    test_token: str,
+):
+    response = test_client.get(
+        "/api/retrievers/storage-types/retrieval-methods",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "data": {
+            "elasticsearch": ["vector", "keyword", "hybrid"],
+            "qdrant": ["vector"],
+            "milvus": ["vector", "keyword", "hybrid"],
+        },
+        "storage_types": ["elasticsearch", "qdrant", "milvus"],
+    }
+
+
+def test_get_storage_retrieval_methods_rejects_unknown_storage_type(
+    test_client,
+    test_token: str,
+):
+    response = test_client.get(
+        "/api/retrievers/storage-types/unknown/retrieval-methods",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": (
+            "Unsupported storage type: unknown. "
+            "Supported types: ['elasticsearch', 'qdrant', 'milvus']"
+        )
+    }
