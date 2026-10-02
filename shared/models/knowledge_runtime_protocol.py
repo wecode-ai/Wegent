@@ -163,13 +163,19 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
-    """Query request - reference mode. KR resolves configs from DB."""
+    """Query request.
+
+    Callers that already resolved the execution configs carry them in
+    `knowledge_base_configs`; when they are omitted the runtime resolves the
+    configs from the database itself.
+    """
 
     knowledge_base_ids: list[int]
     user_id: int
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
+    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None
@@ -196,6 +202,25 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
         if set(self.scope.document_ids or []) != set(self.document_ids or []):
             raise ValueError(
                 "scope.document_ids and document_ids must match when both are set"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_configs(self) -> RemoteQueryRequest:
+        """Require carried configs to be unique and cover every requested KB."""
+        if self.knowledge_base_configs is None:
+            return self
+
+        config_ids = [
+            config.knowledge_base_id for config in self.knowledge_base_configs
+        ]
+        if len(set(config_ids)) != len(config_ids):
+            raise ValueError(
+                "knowledge_base_configs contains duplicate knowledge_base_id entries"
+            )
+        if set(config_ids) != set(self.knowledge_base_ids):
+            raise ValueError(
+                "knowledge_base_configs must contain every requested knowledge_base_id"
             )
         return self
 

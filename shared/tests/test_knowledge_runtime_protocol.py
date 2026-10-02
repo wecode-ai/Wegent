@@ -203,6 +203,58 @@ def test_remote_query_request_accepts_reference_mode() -> None:
     }
 
 
+def _query_runtime_config(knowledge_base_id: int) -> dict:
+    return {
+        "knowledge_base_id": knowledge_base_id,
+        "index_owner_user_id": 7,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {"type": "qdrant"},
+        },
+        "embedding_model_config": {
+            "model_name": "embed-a",
+            "model_namespace": "default",
+            "resolved_config": {"protocol": "openai"},
+        },
+        "retrieval_config": {"top_k": 5},
+    }
+
+
+def test_remote_query_request_accepts_carried_knowledge_base_configs() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    request = remote_query_request.model_validate(
+        {
+            "knowledge_base_ids": [1001],
+            "user_id": 42,
+            "query": "release checklist",
+            "knowledge_base_configs": [_query_runtime_config(1001)],
+        }
+    )
+
+    assert request.knowledge_base_configs is not None
+    assert request.knowledge_base_configs[0].knowledge_base_id == 1001
+    assert request.knowledge_base_configs[0].retriever_config.name == "retriever-a"
+
+
+def test_remote_query_request_rejects_incomplete_carried_configs() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(
+        ValidationError,
+        match="must contain every requested knowledge_base_id",
+    ):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001, 1002],
+                "user_id": 42,
+                "query": "release checklist",
+                "knowledge_base_configs": [_query_runtime_config(1001)],
+            }
+        )
+
+
 def test_remote_query_request_accepts_retrieval_scope_and_compatible_document_ids() -> (
     None
 ):

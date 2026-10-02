@@ -7,10 +7,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
-
 from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -577,6 +578,56 @@ class TestQueryExecutor:
             knowledge_base_ids=[1, 2],
             user_id=42,
         )
+
+    @pytest.mark.asyncio
+    async def test_execute_uses_carried_configs_without_database_lookup(self) -> None:
+        """Carried runtime configs are executed without resolving from the DB."""
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+        request = RemoteQueryRequest(
+            knowledge_base_ids=[1],
+            user_id=42,
+            query="test query",
+            knowledge_base_configs=[
+                RemoteKnowledgeBaseQueryConfig(
+                    knowledge_base_id=1,
+                    index_owner_user_id=7,
+                    retriever_config=RuntimeRetrieverConfig(
+                        name="carried-retriever",
+                        namespace="default",
+                        storage_config={"type": "qdrant"},
+                    ),
+                    embedding_model_config=RuntimeEmbeddingModelConfig(
+                        model_name="carried-embedding",
+                        model_namespace="default",
+                        resolved_config={"protocol": "openai"},
+                    ),
+                    retrieval_config=RuntimeRetrievalConfig(top_k=3),
+                )
+            ],
+        )
+        config_loader = _make_config_loader(_make_query_config(1))
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            await QueryExecutor(config_loader=config_loader).execute(request)
+
+        config_loader.resolve_query_configs.assert_not_called()
+        assert mock_kb_executor.execute.await_args.kwargs["retrieval_config"].top_k == 3
 
     @pytest.mark.asyncio
     async def test_extract_document_id_from_doc_ref(self) -> None:

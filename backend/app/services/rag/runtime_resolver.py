@@ -257,6 +257,30 @@ class RagRuntimeResolver:
             user_name=user_name,
         )
 
+    def with_query_knowledge_base_configs(
+        self,
+        runtime_spec: QueryRuntimeSpec,
+        *,
+        db: Session,
+    ) -> QueryRuntimeSpec:
+        """Return the spec carrying resolved configs for a remote query.
+
+        knowledge_runtime executes the query with these configs, so it never has
+        to resolve them from the Backend database itself.
+        """
+        if runtime_spec.knowledge_base_configs:
+            return runtime_spec
+        return runtime_spec.model_copy(
+            update={
+                "knowledge_base_configs": self.build_query_knowledge_base_configs(
+                    db=db,
+                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                    current_user_id=runtime_spec.user_id,
+                    user_name=runtime_spec.user_name,
+                )
+            }
+        )
+
     def build_public_list_chunks_runtime_spec(
         self,
         *,

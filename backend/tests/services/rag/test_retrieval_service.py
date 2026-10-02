@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -388,6 +389,13 @@ class TestRetrieveForChatShell:
         monkeypatch,
     ):
         from app.core.config import settings
+        from app.services.rag.runtime_specs import QueryRuntimeSpec
+        from shared.models import (
+            RemoteKnowledgeBaseQueryConfig,
+            RuntimeEmbeddingModelConfig,
+            RuntimeRetrievalConfig,
+            RuntimeRetrieverConfig,
+        )
 
         monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
         payload = {
@@ -403,22 +411,51 @@ class TestRetrieveForChatShell:
                 "max_direct_chunks": 500,
             },
         }
+        runtime_spec = QueryRuntimeSpec(
+            knowledge_base_ids=[123],
+            query="test",
+            route_mode="rag_retrieval",
+        )
+        knowledge_base_config = RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=123,
+            index_owner_user_id=7,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(top_k=5),
+        )
 
         with (
             patch(
                 "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
-                return_value=object(),
+                return_value=runtime_spec,
             ) as mock_resolve,
             patch(
-                "app.api.endpoints.internal.rag.LocalRagGateway.query",
-                new_callable=AsyncMock,
-                return_value={
-                    "mode": "rag_retrieval",
-                    "records": [],
-                    "total": 0,
-                    "total_estimated_tokens": 0,
-                },
-            ) as mock_query,
+                "app.api.endpoints.internal.rag.direct_injection.decide_route_mode_for_chat_shell",
+                return_value="rag_retrieval",
+            ),
+            patch(
+                "app.api.endpoints.internal.rag.RagRuntimeResolver."
+                "build_query_knowledge_base_configs",
+                return_value=[knowledge_base_config],
+            ),
+            patch(
+                "httpx.AsyncClient.post",
+                return_value=httpx.Response(
+                    200,
+                    json={"records": [], "total": 0, "total_estimated_tokens": 0},
+                    request=httpx.Request(
+                        "POST", "http://knowledge-runtime/internal/rag/query"
+                    ),
+                ),
+            ) as mock_post,
         ):
             response = test_client.post(
                 "/api/internal/rag/retrieve",
@@ -428,7 +465,11 @@ class TestRetrieveForChatShell:
 
         assert response.status_code == 200
         mock_resolve.assert_called_once()
-        mock_query.assert_awaited_once()
+        mock_post.assert_awaited_once()
+        assert [
+            config["knowledge_base_id"]
+            for config in mock_post.await_args.kwargs["json"]["knowledge_base_configs"]
+        ] == [123]
 
     @pytest.mark.asyncio
     async def test_force_rag_route_uses_standard_retrieval(self):

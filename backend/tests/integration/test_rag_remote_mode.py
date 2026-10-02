@@ -152,36 +152,28 @@ def _create_delete_test_data(db: Session, user: User) -> tuple[Kind, KnowledgeDo
     return kb, document
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target"),
-    [
-        ("local", "app.services.rag.local_gateway.LocalRagGateway.query"),
-        (
-            {"default": "local", "query": "remote"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.query",
-        ),
-    ],
-)
-def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
+@pytest.mark.parametrize("runtime_mode", ["local", "remote"])
+def test_internal_retrieve_preserves_response_shape_regardless_of_runtime_mode(
     test_client: TestClient,
     monkeypatch,
     runtime_mode,
-    patch_target: str,
 ) -> None:
     monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
 
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
-            return_value=_make_runtime_spec(
-                with_remote_configs=patch_target.endswith("RemoteRagGateway.query")
-            ),
+            return_value=_make_runtime_spec(with_remote_configs=True),
         ),
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.query",
             new_callable=AsyncMock,
             return_value=COMMON_QUERY_RESULT,
         ) as mock_query,
+        patch(
+            "app.services.rag.local_gateway.LocalRagGateway.query",
+            new_callable=AsyncMock,
+        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -196,16 +188,13 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
     assert response.status_code == 200
     assert response.json() == EXPECTED_QUERY_RESPONSE
     mock_query.assert_awaited_once()
+    mock_local_query.assert_not_called()
 
 
-def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integration(
+def test_internal_retrieve_reports_remote_failure_without_local_execution(
     test_client: TestClient,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        settings, "RAG_RUNTIME_MODE", {"default": "local", "query": "remote"}
-    )
-
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
@@ -237,10 +226,10 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
             headers=_internal_headers(),
         )
 
-    assert response.status_code == 200
-    assert response.json() == EXPECTED_QUERY_RESPONSE
+    assert response.status_code == 503
+    assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_remote_query.assert_awaited_once()
-    mock_local_query.assert_awaited_once()
+    mock_local_query.assert_not_called()
 
 
 @pytest.mark.parametrize(

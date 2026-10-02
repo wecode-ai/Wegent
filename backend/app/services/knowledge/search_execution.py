@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import logging
 from functools import partial
 from typing import Any, Literal
 
@@ -17,22 +16,28 @@ from app.db.session import SessionLocal
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.rag import direct_injection
-from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGatewayError,
-    should_fallback_to_local,
-)
+from app.services.rag.remote_gateway import RemoteRagGateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import RetrievalScope, SearchHints
 
-logger = logging.getLogger(__name__)
+
+def _with_query_knowledge_base_configs(runtime_spec: Any) -> Any:
+    """Attach the KB runtime config so knowledge_runtime needs no DB lookup."""
+    if getattr(runtime_spec, "knowledge_base_configs", None):
+        return runtime_spec
+
+    with SessionLocal() as db:
+        return RagRuntimeResolver().with_query_knowledge_base_configs(
+            runtime_spec,
+            db=db,
+        )
 
 
-async def _run_local_query(runtime_spec: Any, *, db: Any) -> dict[str, Any]:
-    """Run the Backend-side local query path inside a worker-owned Session."""
-    if getattr(runtime_spec, "route_mode", None) == "direct_injection":
-        injection_result = await direct_injection.try_direct_injection_with_budget(
+def _run_direct_injection_in_worker(runtime_spec: Any) -> dict[str, Any] | None:
+    """Try direct injection inside a worker-owned Session."""
+
+    async def inject(db: Any) -> dict[str, Any] | None:
+        return await direct_injection.try_direct_injection_with_budget(
             knowledge_base_ids=runtime_spec.knowledge_base_ids,
             scope=runtime_spec.scope,
             db=db,
@@ -40,13 +45,9 @@ async def _run_local_query(runtime_spec: Any, *, db: Any) -> dict[str, Any]:
             budget=runtime_spec.direct_injection_budget,
             metadata_condition=getattr(runtime_spec, "metadata_condition", None),
         )
-        if injection_result is not None:
-            return injection_result
-        # A rejected direct injection continues as the pre-existing
-        # Backend-local retrieval, which moves to the remote gateway in a
-        # follow-up change.
-        runtime_spec = runtime_spec.model_copy(update={"route_mode": "rag_retrieval"})
-    return await LocalRagGateway().query(runtime_spec, db=db)
+
+    with SessionLocal() as db:
+        return anyio.run(partial(inject, db))
 
 
 class KnowledgeSearchRunner:
@@ -100,21 +101,7 @@ class KnowledgeSearchRunner:
                 "total_estimated_tokens": 0,
             }
 
-        gateway = get_query_gateway()
-        if isinstance(gateway, LocalRagGateway):
-            result = await self._query_local(runtime_spec)
-        else:
-            try:
-                result = await gateway.query(runtime_spec)
-            except RemoteRagGatewayError as exc:
-                if not should_fallback_to_local(exc):
-                    raise
-                logger.warning(
-                    "[KnowledgeSearch] Remote query failed for KB %s; falling back: %s",
-                    knowledge_base_id,
-                    exc,
-                )
-                result = await self._query_local(runtime_spec)
+        result = await self._execute(runtime_spec)
 
         return {
             "query": query,
@@ -124,6 +111,28 @@ class KnowledgeSearchRunner:
             "total": result.get("total", 0),
             "total_estimated_tokens": result.get("total_estimated_tokens", 0),
         }
+
+    async def _execute(self, runtime_spec: Any) -> dict[str, Any]:
+        """Resolve direct injection in the Backend, else retrieve remotely.
+
+        Direct injection only reads the original documents from MySQL. Rejected
+        injections and plain retrieval are executed by knowledge_runtime, which
+        receives the KB runtime config and needs no Backend database lookup.
+        """
+        if getattr(runtime_spec, "route_mode", None) == "direct_injection":
+            injection_result = await run_in_threadpool_with_cleanup(
+                _run_direct_injection_in_worker, runtime_spec
+            )
+            if injection_result is not None:
+                return injection_result
+            runtime_spec = runtime_spec.model_copy(
+                update={"route_mode": "rag_retrieval"}
+            )
+
+        retrieval_spec = await run_in_threadpool_with_cleanup(
+            _with_query_knowledge_base_configs, runtime_spec
+        )
+        return await RemoteRagGateway().query(retrieval_spec)
 
     @staticmethod
     def _prepare(
@@ -245,17 +254,6 @@ class KnowledgeSearchRunner:
                     }
                 )
             return runtime_spec
-
-    @staticmethod
-    def _query_local_sync(runtime_spec: Any) -> dict[str, Any]:
-        """Execute local RAG and close its Session in the same worker thread."""
-        with SessionLocal() as db:
-            return anyio.run(partial(_run_local_query, runtime_spec, db=db))
-
-    async def _query_local(self, runtime_spec: Any) -> dict[str, Any]:
-        return await run_in_threadpool_with_cleanup(
-            self._query_local_sync, runtime_spec
-        )
 
 
 knowledge_search_runner = KnowledgeSearchRunner()

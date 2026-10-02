@@ -128,7 +128,7 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         assert kwargs["scope"].document_ids == [101]
         return runtime_spec
 
-    async def mock_execute_query_with_remote_fallback(spec, db):
+    async def mock_execute_query(spec, db):
         assert spec is runtime_spec
         return {
             "mode": "rag_retrieval",
@@ -141,8 +141,8 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         mock_build_query_runtime_spec,
     )
     monkeypatch.setattr(
-        "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
-        mock_execute_query_with_remote_fallback,
+        "app.api.endpoints.internal.rag._execute_query",
+        mock_execute_query,
     )
 
     result = await _execute_scoped_retrieve(
@@ -178,7 +178,7 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         assert kwargs["scope"] is None
         return runtime_spec
 
-    async def mock_execute_query_with_remote_fallback(spec, db):
+    async def mock_execute_query(spec, db):
         assert spec is runtime_spec
         return {
             "mode": "rag_retrieval",
@@ -191,8 +191,8 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         mock_build_query_runtime_spec,
     )
     monkeypatch.setattr(
-        "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
-        mock_execute_query_with_remote_fallback,
+        "app.api.endpoints.internal.rag._execute_query",
+        mock_execute_query,
     )
 
     result = await _execute_scoped_retrieve(

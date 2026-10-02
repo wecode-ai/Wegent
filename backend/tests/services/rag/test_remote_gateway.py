@@ -26,7 +26,14 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
-from shared.models import PresignedUrlContentRef, RetrievalScope, RuntimeRetrieverConfig
+from shared.models import (
+    PresignedUrlContentRef,
+    RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
 
 
 def _build_response(
@@ -230,6 +237,56 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "value": "kb",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_query_posts_carried_knowledge_base_configs(
+    mocker,
+) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="release checklist",
+        user_id=8,
+        knowledge_base_configs=[
+            RemoteKnowledgeBaseQueryConfig(
+                knowledge_base_id=1,
+                index_owner_user_id=7,
+                retriever_config=RuntimeRetrieverConfig(
+                    name="retriever-a",
+                    namespace="default",
+                    storage_config={"type": "qdrant"},
+                ),
+                embedding_model_config=RuntimeEmbeddingModelConfig(
+                    model_name="embed-a",
+                    model_namespace="default",
+                    resolved_config={"protocol": "openai"},
+                ),
+                retrieval_config=RuntimeRetrievalConfig(top_k=5),
+            )
+        ],
+    )
+
+    await gateway.query(spec)
+
+    _, kwargs = post_mock.await_args
+    posted_configs = kwargs["json"]["knowledge_base_configs"]
+    assert [config["knowledge_base_id"] for config in posted_configs] == [1]
+    assert posted_configs[0]["retriever_config"]["name"] == "retriever-a"
+    assert posted_configs[0]["embedding_model_config"]["model_name"] == "embed-a"
+    assert posted_configs[0]["retrieval_config"]["top_k"] == 5
 
 
 @pytest.mark.asyncio

@@ -31,14 +31,13 @@ from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
 from app.services.rag import direct_injection
-from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
     RemoteRagGateway,
     RemoteRagGatewayError,
-    should_fallback_to_local,
 )
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import QueryRuntimeSpec
 from app.services.rag.sources import (
     RetrievalContext,
     RetrievalSourceSummary,
@@ -563,7 +562,7 @@ async def _execute_scoped_retrieve(
             restricted_mode=restricted_mode,
         )
         runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
-        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        result = await _execute_query(runtime_spec, db)
         modes.add(result.get("mode", "rag_retrieval"))
         total_estimated_tokens += result.get("total_estimated_tokens", 0)
         all_records.extend(result.get("records", []))
@@ -579,18 +578,20 @@ async def _execute_scoped_retrieve(
     }
 
 
-def _resolve_query_gateway(runtime_spec):
-    route_mode = getattr(runtime_spec, "route_mode", "auto")
-    if route_mode == "rag_retrieval":
-        return get_query_gateway()
-    return LocalRagGateway()
+async def _retrieve_remotely(runtime_spec: QueryRuntimeSpec, db: Session) -> dict:
+    """Execute retrieval in knowledge_runtime with the resolved runtime config."""
+    retrieval_spec = runtime_resolver.with_query_knowledge_base_configs(
+        runtime_spec.model_copy(update={"route_mode": "rag_retrieval"}),
+        db=db,
+    )
+    return await RemoteRagGateway().query(retrieval_spec, db=db)
 
 
-async def _run_direct_injection(runtime_spec, db: Session) -> dict:
-    """Run Backend-side direct injection, else continue as plain retrieval.
+async def _run_direct_injection(runtime_spec: QueryRuntimeSpec, db: Session) -> dict:
+    """Run Backend-side direct injection, else retrieve remotely.
 
-    The rejected-injection fallback is the pre-existing Backend-local retrieval
-    and moves to the remote gateway in a follow-up change.
+    Direct injection only reads the original documents from MySQL. A rejected
+    injection is executed by knowledge_runtime, never in the Backend process.
     """
     injection_result = await direct_injection.try_direct_injection_with_budget(
         knowledge_base_ids=runtime_spec.knowledge_base_ids,
@@ -602,10 +603,7 @@ async def _run_direct_injection(runtime_spec, db: Session) -> dict:
     )
     if injection_result is not None:
         return injection_result
-    return await LocalRagGateway().query(
-        runtime_spec.model_copy(update={"route_mode": "rag_retrieval"}),
-        db=db,
-    )
+    return await _retrieve_remotely(runtime_spec, db)
 
 
 def _finalize_query_runtime_spec(
@@ -642,37 +640,12 @@ def _finalize_query_runtime_spec(
     return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
 
 
-async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+async def _execute_query(runtime_spec: QueryRuntimeSpec, db: Session) -> dict:
+    """Resolve direct injection in the Backend, otherwise retrieve remotely."""
     if getattr(runtime_spec, "route_mode", None) == "direct_injection":
         return await _run_direct_injection(runtime_spec, db)
 
-    rag_gateway = _resolve_query_gateway(runtime_spec)
-    if (
-        isinstance(rag_gateway, RemoteRagGateway)
-        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
-        and not getattr(runtime_spec, "knowledge_base_configs", None)
-    ):
-        runtime_spec = runtime_spec.model_copy(
-            update={
-                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
-                    db=db,
-                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
-                    current_user_id=runtime_spec.user_id,
-                    user_name=runtime_spec.user_name,
-                )
-            }
-        )
-    try:
-        return await rag_gateway.query(runtime_spec, db=db)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
-            getattr(runtime_spec, "knowledge_base_ids", []),
-            exc,
-        )
-        return await LocalRagGateway().query(runtime_spec, db=db)
+    return await _retrieve_remotely(runtime_spec, db)
 
 
 @router.post(
@@ -800,7 +773,7 @@ async def internal_retrieve(
                 db,
                 runtime_context,
             )
-            result = await _execute_query_with_remote_fallback(runtime_spec, db)
+            result = await _execute_query(runtime_spec, db)
 
         records = result.get("records", [])
         response_records = list(records)
