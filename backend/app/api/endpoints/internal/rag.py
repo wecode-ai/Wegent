@@ -107,7 +107,10 @@ class RetrievePersistenceContext(BaseModel):
     )
     restricted_mode: bool = Field(
         default=False,
-        description="Whether the retrieval ran in restricted search-only mode",
+        description=(
+            "Legacy location of the restricted search-only flag. Still read "
+            "for backward compatibility; new callers use the top-level field."
+        ),
     )
 
 
@@ -190,6 +193,13 @@ class InternalRetrieveRequest(BaseModel):
     persistence_context: Optional[RetrievePersistenceContext] = Field(
         default=None,
         description="Optional SubtaskContext persistence metadata handled entirely in Backend",
+    )
+    restricted_mode: bool = Field(
+        default=False,
+        description=(
+            "Whether the retrieval runs in restricted search-only mode. "
+            "Independent of the optional persistence metadata."
+        ),
     )
 
     @field_validator("document_ids")
@@ -709,8 +719,11 @@ async def internal_retrieve(
 
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
+        # The top-level flag is authoritative. The nested flag stays readable
+        # for callers that still send restricted mode inside persistence metadata.
         restricted_mode = bool(
-            persistence_context and persistence_context.restricted_mode
+            request.restricted_mode
+            or (persistence_context is not None and persistence_context.restricted_mode)
         )
 
         if not knowledge_base_ids:

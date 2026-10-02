@@ -1166,7 +1166,6 @@ class KnowledgeBaseTool(BaseTool):
         return {
             "user_subtask_id": self.user_subtask_id,
             "user_id": self.user_id,
-            "restricted_mode": self._is_restricted_search_only(),
         }
 
     def _build_backend_direct_injection_result(
@@ -1296,6 +1295,7 @@ class KnowledgeBaseTool(BaseTool):
                 search_hints.model_dump(exclude_none=True) if search_hints else None
             ),
             "runtime_context": self._build_runtime_context(),
+            "restricted_mode": self._is_restricted_search_only(),
         }
         if self.external_knowledge_refs:
             payload["external_knowledge_refs"] = self.external_knowledge_refs

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import contextmanager
 from unittest.mock import ANY, AsyncMock, patch
 
 import httpx
@@ -154,6 +155,159 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     assert "source_summaries" not in body
     mock_persist.assert_called_once()
     mock_transform.assert_awaited_once()
+
+
+@contextmanager
+def _restricted_retrieval(query: str):
+    """Patch retrieval and mediation, yielding the persistence and mediation mocks."""
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(knowledge_base_ids=[1], query=query),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._execute_query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "secret",
+                        "title": "doc",
+                        "knowledge_base_id": 1,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 33,
+            },
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
+        ) as mock_persist,
+        patch(
+            "app.api.endpoints.internal.rag.protected_knowledge_mediator.transform",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "restricted_safe_summary",
+                "retrieval_mode": "rag_retrieval",
+                "restricted_safe_summary": {
+                    "decision": "answer",
+                    "reason": "ok",
+                    "summary": "High-level diagnosis",
+                    "observations": [],
+                    "risks": [],
+                    "recommended_actions": [],
+                    "answer_guidance": "Stay abstract",
+                    "confidence": "medium",
+                },
+                "answer_contract": "Do not quote.",
+                "message": "Protected KB material was analyzed internally.",
+                "total": 1,
+                "total_estimated_tokens": 33,
+            },
+        ) as mock_transform,
+    ):
+        yield mock_persist, mock_transform
+
+
+def test_internal_retrieve_restricted_without_persistence_context_is_mediated(
+    test_client,
+):
+    """Top-level restricted mode must grade records without persistence metadata."""
+    payload = {
+        "query": "What risks do you see?",
+        "knowledge_base_ids": [1],
+        "restricted_mode": True,
+    }
+
+    with _restricted_retrieval(payload["query"]) as (mock_persist, mock_transform):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "restricted_safe_summary"
+    assert "source_summaries" not in response.json()
+    mock_transform.assert_awaited_once()
+    mock_persist.assert_not_called()
+
+
+def test_internal_retrieve_restricted_with_persistence_context_is_mediated(
+    test_client,
+):
+    """Top-level restricted mode also grades records when persistence is sent."""
+    payload = {
+        "query": "What risks do you see?",
+        "knowledge_base_ids": [1],
+        "restricted_mode": True,
+        "persistence_context": {
+            "user_subtask_id": 11,
+            "user_id": 7,
+        },
+    }
+
+    with _restricted_retrieval(payload["query"]) as (mock_persist, mock_transform):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "restricted_safe_summary"
+    mock_transform.assert_awaited_once()
+    mock_persist.assert_called_once()
+    assert mock_persist.call_args.kwargs["restricted_mode"] is True
+
+
+def test_internal_retrieve_unrestricted_returns_raw_records(test_client):
+    """Without restricted mode the records must stay unchanged."""
+    payload = {
+        "query": "What risks do you see?",
+        "knowledge_base_ids": [1],
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1], query=payload["query"]
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._execute_query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "raw chunk",
+                        "title": "doc",
+                        "knowledge_base_id": 1,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 5,
+            },
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.protected_knowledge_mediator.transform",
+            new_callable=AsyncMock,
+        ) as mock_transform,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "rag_retrieval"
+    assert [record["content"] for record in body["records"]] == ["raw chunk"]
+    mock_transform.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
