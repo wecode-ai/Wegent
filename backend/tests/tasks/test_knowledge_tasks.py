@@ -239,9 +239,9 @@ def test_index_document_task_routes_indexing_through_gateway():
                 "chunks_data": {"total_count": 8},
             }
         )
-        mock_get_index_gateway = stack.enter_context(
+        mock_get_rag_gateway = stack.enter_context(
             patch(
-                "app.services.knowledge.indexing.get_index_gateway",
+                "app.services.knowledge.indexing.get_rag_gateway",
                 return_value=mock_gateway,
             )
         )
@@ -262,7 +262,7 @@ def test_index_document_task_routes_indexing_through_gateway():
 
     assert result["status"] == "success"
     mock_resolve.assert_called_once()
-    mock_get_index_gateway.assert_called_once()
+    mock_get_rag_gateway.assert_called_once()
     mock_gateway.index_document.assert_awaited_once_with(
         mock_resolve.return_value,
         db=None,
@@ -402,7 +402,7 @@ def test_delete_late_index_uses_deleted_document_ref():
             return_value=delete_spec,
         ) as build_spec,
         patch(
-            "app.services.rag.gateway_factory.get_delete_gateway",
+            "app.services.rag.gateway_factory.get_rag_gateway",
             return_value=gateway,
         ),
     ):

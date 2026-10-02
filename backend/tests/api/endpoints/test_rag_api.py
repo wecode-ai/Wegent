@@ -80,7 +80,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
-            "app.api.endpoints.rag.get_query_gateway",
+            "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
     ):
@@ -162,7 +162,7 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
-            "app.api.endpoints.rag.get_query_gateway",
+            "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
     ):
@@ -224,7 +224,7 @@ def test_public_rag_index_contents_delete_routes_runtime_spec(
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
-            "app.api.endpoints.rag.get_delete_gateway",
+            "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
     ):
@@ -275,7 +275,7 @@ def test_public_rag_index_delete_routes_runtime_spec(
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
-            "app.api.endpoints.rag.get_delete_gateway",
+            "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ) as mock_get_gateway,
     ):
@@ -342,13 +342,9 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
             return_value=runtime_spec,
         ),
         patch(
-            "app.api.endpoints.rag.get_query_gateway",
+            "app.api.endpoints.rag.get_rag_gateway",
             return_value=gateway,
         ),
-        patch(
-            "app.api.endpoints.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/rag/retrieve",
@@ -369,7 +365,6 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "remote validation failed"
-    mock_local_query.assert_not_called()
 
 
 def test_public_rag_chunks_rejects_pages_beyond_scan_limit(

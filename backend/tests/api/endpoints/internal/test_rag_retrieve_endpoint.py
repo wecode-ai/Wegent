@@ -187,159 +187,23 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     mock_transform.assert_awaited_once()
 
 
-def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_client):
-    payload = {
-        "knowledge_base_id": 7,
-        "user_id": 9,
-        "max_chunks": 1000,
-        "query": "list_index_chunks",
-        "metadata_condition": {
-            "operator": "and",
-            "conditions": [
-                {"key": "lang", "operator": "==", "value": "zh"},
-            ],
-        },
-    }
-    runtime_spec = object()
-    with (
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_public_list_chunks_runtime_spec",
-            return_value=runtime_spec,
-        ) as mock_build_spec,
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.list_chunks",
-            new_callable=AsyncMock,
-            return_value={
-                "chunks": [
-                    {
-                        "content": "chunk-1",
-                        "title": "Doc 1",
-                        "chunk_id": 1,
-                        "doc_ref": "doc-1",
-                        "metadata": {"page": 1},
-                    }
-                ],
-                "total": 1,
-            },
-        ) as mock_list_chunks,
-    ):
-        response = test_client.post(
-            "/api/internal/rag/all-chunks",
-            json=payload,
-            headers=_internal_headers(),
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "chunks": [
-            {
-                "content": "chunk-1",
-                "title": "Doc 1",
-                "chunk_id": 1,
-                "doc_ref": "doc-1",
-                "metadata": {"page": 1},
-            }
-        ],
-        "total": 1,
-    }
-    mock_build_spec.assert_called_once_with(
-        db=ANY,
-        knowledge_base_id=7,
-        user_id=9,
-        user_name=None,
-        max_chunks=1000,
-        query="list_index_chunks",
-        metadata_condition=payload["metadata_condition"],
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/internal/rag/all-chunks",
+        "/api/internal/rag/purge-knowledge-index",
+        "/api/internal/rag/drop-knowledge-index",
+    ],
+)
+def test_local_only_internal_endpoints_are_not_exposed(test_client, path) -> None:
+    """Index administration lives in knowledge_runtime and must not be re-exposed."""
+    response = test_client.post(
+        path,
+        json={"knowledge_base_id": 7, "user_id": 9},
+        headers=_internal_headers(),
     )
-    mock_list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
 
-
-def test_internal_purge_index_routes_protocol_request_through_local_gateway(
-    test_client,
-):
-    payload = {
-        "knowledge_base_id": 7,
-        "user_id": 9,
-    }
-    runtime_spec = object()
-    with (
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_public_purge_index_runtime_spec",
-            return_value=runtime_spec,
-        ) as mock_build_spec,
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.purge_knowledge_index",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "deleted",
-                "knowledge_id": "7",
-                "deleted_chunks": 12,
-            },
-        ) as mock_purge,
-    ):
-        response = test_client.post(
-            "/api/internal/rag/purge-knowledge-index",
-            json=payload,
-            headers=_internal_headers(),
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "deleted",
-        "knowledge_id": "7",
-        "deleted_chunks": 12,
-    }
-    mock_build_spec.assert_called_once_with(
-        db=ANY,
-        knowledge_base_id=7,
-        user_id=9,
-        user_name=None,
-    )
-    mock_purge.assert_awaited_once_with(runtime_spec, db=ANY)
-
-
-def test_internal_drop_index_routes_protocol_request_through_local_gateway(
-    test_client,
-):
-    payload = {
-        "knowledge_base_id": 7,
-        "user_id": 9,
-    }
-    runtime_spec = object()
-    with (
-        patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_public_drop_index_runtime_spec",
-            return_value=runtime_spec,
-        ) as mock_build_spec,
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.drop_knowledge_index",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "dropped",
-                "knowledge_id": "7",
-                "index_name": "wegent_kb_7",
-            },
-        ) as mock_drop,
-    ):
-        response = test_client.post(
-            "/api/internal/rag/drop-knowledge-index",
-            json=payload,
-            headers=_internal_headers(),
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "dropped",
-        "knowledge_id": "7",
-        "index_name": "wegent_kb_7",
-    }
-    mock_build_spec.assert_called_once_with(
-        db=ANY,
-        knowledge_base_id=7,
-        user_id=9,
-        user_name=None,
-    )
-    mock_drop.assert_awaited_once_with(runtime_spec, db=ANY)
+    assert response.status_code == 404
 
 
 def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
@@ -496,10 +360,6 @@ def test_internal_retrieve_direct_injection_hit_never_queries_knowledge_runtime(
         ) as mock_direct_injection,
         patch("httpx.AsyncClient.post") as mock_remote_post,
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
-        patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
@@ -517,7 +377,6 @@ def test_internal_retrieve_direct_injection_hit_never_queries_knowledge_runtime(
     assert mock_direct_injection.await_args.kwargs["knowledge_base_ids"] == [1]
     assert mock_direct_injection.await_args.kwargs["route_mode"] == "direct_injection"
     mock_remote_post.assert_not_called()
-    mock_local_query.assert_not_called()
     mock_persist.assert_called_once()
 
 
@@ -577,10 +436,6 @@ def test_internal_retrieve_rejected_direct_injection_queries_knowledge_runtime(
             return_value=remote_response,
         ) as mock_remote_post,
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
-        patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
@@ -612,7 +467,6 @@ def test_internal_retrieve_rejected_direct_injection_queries_knowledge_runtime(
         current_user_id=7,
         user_name=None,
     )
-    mock_local_query.assert_not_called()
     mock_persist.assert_called_once()
 
 
@@ -834,10 +688,6 @@ def test_internal_retrieve_auto_route_queries_knowledge_runtime(test_client):
                 json_body={"records": [], "total": 0, "total_estimated_tokens": 0}
             ),
         ) as mock_remote_post,
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -853,7 +703,6 @@ def test_internal_retrieve_auto_route_queries_knowledge_runtime(test_client):
         config["knowledge_base_id"] for config in posted_body["knowledge_base_configs"]
     ] == [1]
     mock_build_configs.assert_called_once()
-    mock_local_query.assert_not_called()
 
 
 def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
@@ -960,10 +809,6 @@ def test_internal_retrieve_auto_route_injects_documents_in_backend(test_client):
                 "total_estimated_tokens": 10,
             },
         ) as mock_direct_injection,
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -976,7 +821,6 @@ def test_internal_retrieve_auto_route_injects_documents_in_backend(test_client):
     assert response.json()["records"][0]["content"] == "complete document"
     assert mock_direct_injection.await_args.kwargs["route_mode"] == "direct_injection"
     mock_remote_post.assert_not_called()
-    mock_local_query.assert_not_called()
 
 
 def test_internal_retrieve_reports_remote_failure_without_local_execution(
@@ -1027,10 +871,6 @@ def test_internal_retrieve_reports_remote_failure_without_local_execution(
             return_value=remote_failure,
         ) as mock_remote_post,
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
-        patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
@@ -1043,7 +883,6 @@ def test_internal_retrieve_reports_remote_failure_without_local_execution(
     assert response.status_code == 503
     assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_remote_post.assert_awaited_once()
-    mock_local_query.assert_not_called()
     mock_persist.assert_not_called()
 
 
@@ -1074,10 +913,6 @@ def test_internal_retrieve_returns_remote_validation_error(test_client):
             "httpx.AsyncClient.post",
             return_value=remote_failure,
         ),
-        patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -1098,4 +933,3 @@ def test_internal_retrieve_returns_remote_validation_error(test_client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "remote validation failed"
-    mock_local_query.assert_not_called()

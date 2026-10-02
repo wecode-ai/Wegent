@@ -126,11 +126,11 @@ def _to_json_dict(value: Any) -> Optional[dict[str, Any]]:
     return dict(value)
 
 
-def _get_delete_gateway():
-    """Load the delete gateway lazily to avoid import-time coupling."""
-    from app.services.rag.gateway_factory import get_delete_gateway
+def _get_rag_gateway():
+    """Load the RAG gateway lazily to avoid import-time coupling."""
+    from app.services.rag.gateway_factory import get_rag_gateway
 
-    return get_delete_gateway()
+    return get_rag_gateway()
 
 
 def _run_async_in_new_loop(coro):
@@ -1232,7 +1232,7 @@ class KnowledgeService:
         if purge_spec is not None:
             try:
                 _run_async_in_new_loop(
-                    _get_delete_gateway().purge_knowledge_index(purge_spec, db=db)
+                    _get_rag_gateway().purge_knowledge_index(purge_spec, db=db)
                 )
             except Exception as exc:
                 batch_logger.error(
@@ -2086,7 +2086,7 @@ class KnowledgeService:
         )
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
-        rag_gateway = _get_delete_gateway()
+        rag_gateway = _get_rag_gateway()
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:

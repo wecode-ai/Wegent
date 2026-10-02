@@ -613,7 +613,7 @@ class TestKnowledgeServiceDeleteDocument:
                 return_value=True,
             ) as mock_delete_context,
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(
@@ -705,7 +705,7 @@ class TestKnowledgeServiceDeleteDocument:
                 return_value=True,
             ) as mock_delete_context,
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(
@@ -777,7 +777,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(

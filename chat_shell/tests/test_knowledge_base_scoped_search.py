@@ -219,7 +219,7 @@ async def test_arun_unscoped_passes_call_filters_without_mutating_tool_defaults(
 
 @pytest.mark.asyncio
 async def test_unrestricted_scopes_do_not_block_per_call_document_filters():
-    """Unrestricted per-KB scopes should preserve legacy document filter behavior."""
+    """Unrestricted per-KB scopes keep forwarding legacy per-call document filters."""
     tool = KnowledgeBaseTool(
         knowledge_base_ids=[1],
         knowledge_base_scopes=[
@@ -228,25 +228,18 @@ async def test_unrestricted_scopes_do_not_block_per_call_document_filters():
         db_session=MagicMock(),
     )
 
-    with (
-        patch.object(
-            tool,
-            "_retrieve_with_scopes_package_mode",
-            AsyncMock(),
-        ) as scoped_retrieve,
-        patch.object(
-            tool,
-            "_retrieve_with_strategy_via_http",
-            AsyncMock(
-                return_value={
-                    "mode": "rag_retrieval",
-                    "records": [],
-                    "total": 0,
-                    "total_estimated_tokens": 0,
-                }
-            ),
-        ) as http_retrieve,
-    ):
+    with patch.object(
+        tool,
+        "_retrieve_with_strategy_via_http",
+        AsyncMock(
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            }
+        ),
+    ) as http_retrieve:
         await tool._retrieve_with_strategy_from_all_kbs(
             query="release checklist",
             max_results=8,
@@ -254,7 +247,6 @@ async def test_unrestricted_scopes_do_not_block_per_call_document_filters():
             document_names=["release.md"],
         )
 
-    scoped_retrieve.assert_not_awaited()
     http_retrieve.assert_awaited_once()
     assert http_retrieve.await_args.kwargs["document_ids"] == [101]
     assert http_retrieve.await_args.kwargs["document_names"] == ["release.md"]

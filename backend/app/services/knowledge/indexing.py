@@ -44,7 +44,7 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
     serialize_splitter_config,
 )
-from app.services.rag.gateway_factory import get_index_gateway
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.telemetry import add_span_event
 
@@ -376,7 +376,7 @@ def _run_indexing_gateway_calls(
     # loop with one we are about to close, breaking any subsequent async work on
     # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
-        rag_gateway = get_index_gateway()
+        rag_gateway = get_rag_gateway()
 
         if delete_spec is not None:
             try:

@@ -152,14 +152,9 @@ def _create_delete_test_data(db: Session, user: User) -> tuple[Kind, KnowledgeDo
     return kb, document
 
 
-@pytest.mark.parametrize("runtime_mode", ["local", "remote"])
-def test_internal_retrieve_preserves_response_shape_regardless_of_runtime_mode(
+def test_internal_retrieve_executes_in_knowledge_runtime(
     test_client: TestClient,
-    monkeypatch,
-    runtime_mode,
 ) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
-
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
@@ -170,10 +165,6 @@ def test_internal_retrieve_preserves_response_shape_regardless_of_runtime_mode(
             new_callable=AsyncMock,
             return_value=COMMON_QUERY_RESULT,
         ) as mock_query,
-        patch(
-            "app.services.rag.local_gateway.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -188,12 +179,10 @@ def test_internal_retrieve_preserves_response_shape_regardless_of_runtime_mode(
     assert response.status_code == 200
     assert response.json() == EXPECTED_QUERY_RESPONSE
     mock_query.assert_awaited_once()
-    mock_local_query.assert_not_called()
 
 
-def test_internal_retrieve_reports_remote_failure_without_local_execution(
+def test_internal_retrieve_reports_remote_failure(
     test_client: TestClient,
-    monkeypatch,
 ) -> None:
     with (
         patch(
@@ -210,11 +199,6 @@ def test_internal_retrieve_reports_remote_failure_without_local_execution(
                 status_code=503,
             ),
         ) as mock_remote_query,
-        patch(
-            "app.services.rag.local_gateway.LocalRagGateway.query",
-            new_callable=AsyncMock,
-            return_value=COMMON_QUERY_RESULT,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -229,31 +213,9 @@ def test_internal_retrieve_reports_remote_failure_without_local_execution(
     assert response.status_code == 503
     assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_remote_query.assert_awaited_once()
-    mock_local_query.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target", "other_patch_target"),
-    [
-        (
-            "local",
-            "app.services.rag.local_gateway.LocalRagGateway.index_document",
-            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
-        ),
-        (
-            {"default": "local", "index": "remote", "query": "local"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
-            "app.services.rag.local_gateway.LocalRagGateway.index_document",
-        ),
-    ],
-)
-def test_run_document_indexing_switches_index_mode_independently(
-    monkeypatch,
-    runtime_mode,
-    patch_target: str,
-    other_patch_target: str,
-) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
+def test_run_document_indexing_executes_in_knowledge_runtime() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
@@ -268,7 +230,7 @@ def test_run_document_indexing_switches_index_mode_independently(
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
             new_callable=AsyncMock,
             return_value={
                 "status": "success",
@@ -276,7 +238,6 @@ def test_run_document_indexing_switches_index_mode_independently(
                 "index_name": "kb-1",
             },
         ) as mock_selected_gateway,
-        patch(other_patch_target, new_callable=AsyncMock) as mock_other_gateway,
     ):
         result = run_document_indexing(
             knowledge_base_id="1",
@@ -297,7 +258,6 @@ def test_run_document_indexing_switches_index_mode_independently(
         mock_build_runtime_spec.return_value,
         db=None,
     )
-    mock_other_gateway.assert_not_called()
     assert result == {
         "status": "success",
         "reason": None,
@@ -309,30 +269,10 @@ def test_run_document_indexing_switches_index_mode_independently(
     }
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target", "other_patch_target"),
-    [
-        (
-            "local",
-            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
-            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
-        ),
-        (
-            {"default": "local", "delete": "remote", "query": "local"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
-            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
-        ),
-    ],
-)
-def test_delete_document_switches_delete_mode_independently(
+def test_delete_document_executes_in_knowledge_runtime(
     test_db: Session,
     test_user: User,
-    monkeypatch,
-    runtime_mode,
-    patch_target: str,
-    other_patch_target: str,
 ) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
     kb, document = _create_delete_test_data(test_db, test_user)
 
     with (
@@ -351,11 +291,10 @@ def test_delete_document_switches_delete_mode_independently(
             return_value=object(),
         ) as mock_build_delete_runtime_spec,
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
             new_callable=AsyncMock,
             return_value={"status": "success"},
         ) as mock_selected_gateway,
-        patch(other_patch_target, new_callable=AsyncMock) as mock_other_gateway,
     ):
         result = KnowledgeService.delete_document(
             db=test_db,
@@ -375,4 +314,3 @@ def test_delete_document_switches_delete_mode_independently(
         mock_build_delete_runtime_spec.return_value,
         db=test_db,
     )
-    mock_other_gateway.assert_not_called()

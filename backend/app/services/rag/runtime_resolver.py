@@ -12,7 +12,6 @@ from app.services.knowledge.index_runtime import (
     get_kb_index_info_by_record,
 )
 from app.services.rag.runtime_specs import (
-    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     DirectInjectionBudget,
     DropKnowledgeIndexRuntimeSpec,

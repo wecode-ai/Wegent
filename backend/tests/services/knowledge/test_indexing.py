@@ -45,7 +45,7 @@ def test_run_document_indexing_closes_owned_session_before_gateway_call() -> Non
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -91,7 +91,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -160,7 +160,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
             return_value=delete_spec,
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -206,7 +206,7 @@ def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -259,7 +259,7 @@ def test_run_document_indexing_normalizes_legacy_splitter_config_for_runtime_spe
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):

@@ -10,12 +10,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.services.rag.gateway_factory import (
-    get_delete_gateway,
-    get_index_gateway,
-    get_query_gateway,
-)
-from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
@@ -591,32 +586,8 @@ async def test_remote_gateway_list_chunks_posts_reference_mode_request(mocker) -
     }
 
 
-def test_gateway_factory_returns_local_gateways_by_default(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "local")
-
-    assert isinstance(get_index_gateway(), LocalRagGateway)
-    assert isinstance(get_query_gateway(), LocalRagGateway)
-    assert isinstance(get_delete_gateway(), LocalRagGateway)
-
-
-def test_gateway_factory_returns_remote_gateways_when_enabled(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "remote")
-
-    assert isinstance(get_index_gateway(), RemoteRagGateway)
-    assert isinstance(get_query_gateway(), RemoteRagGateway)
-    assert isinstance(get_delete_gateway(), RemoteRagGateway)
-
-
-def test_gateway_factory_supports_per_operation_overrides(monkeypatch) -> None:
-    monkeypatch.setattr(
-        settings,
-        "RAG_RUNTIME_MODE",
-        {"default": "local", "query": "remote", "delete": "remote"},
-    )
-
-    assert isinstance(get_index_gateway(), LocalRagGateway)
-    assert isinstance(get_query_gateway(), RemoteRagGateway)
-    assert isinstance(get_delete_gateway(), RemoteRagGateway)
+def test_gateway_factory_returns_the_remote_gateway() -> None:
+    assert isinstance(get_rag_gateway(), RemoteRagGateway)
 
 
 # ============================================================================

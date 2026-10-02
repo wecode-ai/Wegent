@@ -20,7 +20,6 @@ from app.mcp_server.tools import knowledge
 from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.services.knowledge import search_execution
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
@@ -332,7 +331,6 @@ async def test_remote_failure_is_reported_without_local_execution(
         knowledge_base_configs=[_remote_query_config(7)],
     )
     remote_error = RemoteRagGatewayError("runtime unavailable", retryable=True)
-    local_query = AsyncMock()
 
     monkeypatch.setattr(
         search_execution.KnowledgeSearchRunner,
@@ -352,12 +350,8 @@ async def test_remote_failure_is_reported_without_local_execution(
             )
         ),
     )
-    monkeypatch.setattr(LocalRagGateway, "query", local_query)
-
     with pytest.raises(RemoteRagGatewayError):
         await _retrieve(runtime_spec)
-
-    local_query.assert_not_called()
 
 
 async def test_direct_injection_hit_never_queries_knowledge_runtime(

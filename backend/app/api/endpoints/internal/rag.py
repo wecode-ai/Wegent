@@ -31,7 +31,6 @@ from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
 from app.services.rag import direct_injection
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
     RemoteRagGateway,
     RemoteRagGatewayError,
@@ -44,11 +43,6 @@ from app.services.rag.sources import (
     retrieval_source_registry,
 )
 from shared.models import (
-    RemoteDropKnowledgeIndexRequest,
-    RemoteListChunkRecord,
-    RemoteListChunksRequest,
-    RemoteListChunksResponse,
-    RemotePurgeKnowledgeIndexRequest,
     RetrievalScope,
     SearchHints,
 )
@@ -1078,125 +1072,6 @@ async def get_knowledge_base_info(
         total_file_size=total_file_size,
         total_estimated_tokens=total_estimated_tokens,
     )
-
-
-@router.post("/all-chunks", response_model=RemoteListChunksResponse)
-async def get_all_chunks(
-    request: RemoteListChunksRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Legacy internal endpoint for fetching all chunks for direct injection.
-
-    This endpoint retrieves all chunks stored in a knowledge base,
-    used when the total content fits within the model's context window.
-
-    Args:
-        request: Request with knowledge base ID and max chunks
-        db: Database session
-
-    Returns:
-        All chunks from the knowledge base
-    """
-    try:
-        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-            max_chunks=request.max_chunks,
-            query=request.query,
-            metadata_condition=request.metadata_condition,
-        )
-        result = await LocalRagGateway().list_chunks(
-            runtime_spec,
-            db=db,
-        )
-        chunks = result.get("chunks", [])
-
-        # Calculate total content size for logging
-        total_content_chars = sum(len(c.get("content", "")) for c in chunks)
-        total_content_kb = total_content_chars / 1024
-
-        logger.info(
-            "[internal_rag] Retrieved all %d chunks from KB %d, total_size=%.2fKB",
-            len(chunks),
-            request.knowledge_base_id,
-            total_content_kb,
-        )
-
-        return RemoteListChunksResponse(
-            chunks=[
-                RemoteListChunkRecord(
-                    content=c.get("content", ""),
-                    title=c.get("title", "Unknown"),
-                    chunk_id=c.get("chunk_id"),
-                    doc_ref=c.get("doc_ref"),
-                    metadata=c.get("metadata"),
-                )
-                for c in chunks
-            ],
-            total=result.get("total", len(chunks)),
-        )
-
-    except ValueError as e:
-        logger.warning("[internal_rag] All chunks error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/purge-knowledge-index")
-async def purge_knowledge_index(
-    request: RemotePurgeKnowledgeIndexRequest,
-    db: Session = Depends(get_db),
-):
-    """Delete all indexed chunks for one knowledge base from the local runtime."""
-    try:
-        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-        )
-        return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
-    except ValueError as e:
-        logger.warning("[internal_rag] Purge knowledge index error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "[internal_rag] Purge knowledge index failed: %s",
-            e,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/drop-knowledge-index")
-async def drop_knowledge_index(
-    request: RemoteDropKnowledgeIndexRequest,
-    db: Session = Depends(get_db),
-):
-    """Physically drop the dedicated index/collection for one knowledge base."""
-    try:
-        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
-            db=db,
-            knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
-            user_name=None,
-        )
-        return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
-    except ValueError as e:
-        logger.warning("[internal_rag] Drop knowledge index error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "[internal_rag] Drop knowledge index failed: %s",
-            e,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============== Document Listing API (kb_ls) ==============

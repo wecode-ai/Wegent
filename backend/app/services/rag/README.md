@@ -12,6 +12,11 @@ Current architecture:
 - `knowledge_runtime` is a thin remote adapter over `knowledge_engine`.
 - `backend/app/services/rag/` owns runtime specs, gateway routing, and Backend-facing adapters.
 
+RAG execution has exactly one path: every index, query and delete operation runs
+in `knowledge_runtime`. The Backend no longer contains a local execution plane or
+the mode switch that used to select one, so `knowledge_runtime` is a required
+dependency of the Backend rather than an alternative runtime.
+
 ## Responsibility Split
 
 ### Backend control plane
@@ -35,9 +40,8 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 - `runtime_specs.py`: normalized runtime contracts
 - `runtime_resolver.py`: resolves CRD + KB metadata into runtime specs
 - `gateway.py`: common gateway protocol
-- `local_gateway.py`: local execution path
-- `remote_gateway.py`: remote execution path through `knowledge_runtime`
-- `gateway_factory.py`: chooses local / remote by `RAG_RUNTIME_MODE`
+- `remote_gateway.py`: the only execution path, through `knowledge_runtime`
+- `gateway_factory.py`: returns the `knowledge_runtime` gateway
 - `direct_injection.py`: direct-injection routing and original-document reading, with no execution-kernel dependency
 
 ### Execution kernel
@@ -50,7 +54,9 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 - index / query / delete execution
 - retrieval filter helpers
 
-Several modules under `backend/app/services/rag/embedding/`, `storage/`, and `retrieval/` now exist mainly as compatibility import surfaces over `knowledge_engine`.
+The Backend still imports the light helpers of `knowledge_engine` (attachment
+Excel reading, embedding capability checks, retriever connection tests and
+storage capability listing), but never its retrieval execution.
 
 ### Remote runtime service
 
@@ -73,40 +79,28 @@ chat_shell / internal callers
   -> RagRuntimeResolver
   -> Backend route decision
      -> direct_injection stays in Backend
-     -> rag_retrieval goes through RagGateway
-  -> LocalRagGateway or RemoteRagGateway
-  -> knowledge_engine (directly or via knowledge_runtime)
+     -> rag_retrieval is executed by knowledge_runtime
+  -> RemoteRagGateway
+  -> knowledge_runtime
 ```
 
 Notes:
 
 - `/api/internal/rag/retrieve` is the primary internal retrieval surface.
-- `/api/internal/rag/all-chunks` remains a legacy internal endpoint only.
 - restricted flows are mediated in Backend after raw retrieval returns.
 
-### Index / Delete / Connection Test
+### Index / Delete
 
 ```text
 Backend task or API
   -> RagRuntimeResolver
   -> RagGateway
-  -> LocalRagGateway or RemoteRagGateway
-  -> knowledge_engine (directly or via knowledge_runtime)
+  -> RemoteRagGateway
+  -> knowledge_runtime
 ```
 
-`/api/retrievers/test-connection` also routes through this gateway boundary.
-
-## Runtime Modes
-
-`RAG_RUNTIME_MODE` controls whether each operation executes locally or remotely.
-
-Supported shapes:
-
-- `"local"`
-- `"remote"`
-- per-operation map such as `{"default": "local", "query": "remote"}`
-
-The current rollout target keeps local mode as the default while remote parity continues to harden.
+`/api/retrievers/test-connection` talks to the storage factory directly and does
+not go through the gateway.
 
 ## Content Transport
 
@@ -126,7 +120,6 @@ The following areas are intentionally not part of this boundary yet:
 - `summary_vector_index`
 - `tableRAG`
 - MCP `search`
-- full remote-primary rollout
 
 ## Practical Rule
 

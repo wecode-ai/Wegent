@@ -123,8 +123,4 @@ class ListChunksRuntimeSpec(RuntimeSpecModel):
     metadata_condition: Optional[dict] = None
 
 
-class ConnectionTestRuntimeSpec(RuntimeSpecModel):
-    retriever_config: RuntimeRetrieverConfig
-
-
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()
