@@ -11,6 +11,9 @@ it must neither declare the distributions nor import the modules.
 
 from __future__ import annotations
 
+# The execution kernel itself.
+EXECUTION_KERNEL_DISTRIBUTION = "wegent-knowledge-engine"
+
 # Distribution names as they appear in pyproject.toml dependency lists.
 EXECUTION_KERNEL_DISTRIBUTIONS = (
     "llama-index-core",

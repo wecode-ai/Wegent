@@ -117,10 +117,9 @@ dependencies = [
     # Discord Bot SDK for IM channel integration
     "discord.py>=2.4.0",
     # RAG execution dependencies (llama-index, pymilvus, vector stores, RAG
-    # document readers) belong to wegent-knowledge-engine and
-    # wegent-knowledge-runtime. The Backend only routes retrieval, so it
-    # declares none of them; the editable wegent-knowledge-engine dependency
-    # still installs them transitively for the kernel's own use.
+    # document readers) live in the kernel's optional ``retrieval`` extra and
+    # are installed by wegent-knowledge-runtime. The Backend only routes
+    # retrieval, so it declares none of them and depends on the plain kernel.
     # Chat Shell (local workspace dependency for Package mode)
     "wegent-chat-shell",
     # Knowledge Engine (monorepo workspace dependency)
