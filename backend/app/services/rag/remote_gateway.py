@@ -33,6 +33,8 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 
 
@@ -217,6 +219,17 @@ class RemoteRagGateway:
         )
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
+        return response.model_dump()
+
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
+    ) -> dict[str, Any]:
+        response_payload = await self._post_model(
+            "/internal/rag/test-connection",
+            request,
+        )
+        response = RemoteTestConnectionResponse.model_validate(response_payload)
         return response.model_dump()
 
 

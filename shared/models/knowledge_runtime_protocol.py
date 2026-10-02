@@ -260,3 +260,28 @@ class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
 
     chunks: list[RemoteListChunkRecord]
     total: int
+
+
+class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
+    """Test-connection request for one storage backend configuration.
+
+    Fields mirror ``create_storage_backend_from_config`` so the runtime can
+    build the backend without re-deriving the caller's configuration.
+    """
+
+    storage_type: str
+    url: str
+    username: str | None = None
+    password: str | None = None
+    api_key: str | None = None
+    index_strategy: dict[str, Any] = Field(
+        default_factory=lambda: {"mode": "per_dataset"}
+    )
+    ext: dict[str, Any] = Field(default_factory=dict)
+
+
+class RemoteTestConnectionResponse(KnowledgeRuntimeProtocolModel):
+    """Connection verdict returned by knowledge_runtime."""
+
+    success: bool
+    message: str

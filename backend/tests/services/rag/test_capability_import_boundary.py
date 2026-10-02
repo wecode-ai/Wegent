@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from tests.services.rag.execution_kernel_dependencies import EXECUTION_KERNEL_MO
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 SCANNED_SOURCE_DIRS = ("app", "tests", "scripts", "alembic", "integration_checks")
+STORAGE_FACTORY_MODULE = "knowledge_engine.storage.factory"
 
 EXECUTION_KERNEL_IMPORT = re.compile(
     r"^\s*(?:from|import)\s+(?:%s)\b" % "|".join(EXECUTION_KERNEL_MODULES),
@@ -81,6 +83,43 @@ def test_backend_does_not_import_the_execution_kernel() -> None:
         for source_dir in SCANNED_SOURCE_DIRS
         for path in sorted((BACKEND_ROOT / source_dir).rglob("*.py"))
         if EXECUTION_KERNEL_IMPORT.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert offenders == []
+
+
+def _builds_storage_backend(source: str) -> bool:
+    """Report whether source imports the factory or calls its constructors."""
+    for node in ast.walk(ast.parse(source)):
+        if _imports_storage_factory(node):
+            return True
+        if isinstance(node, ast.Name) and node.id.startswith("create_storage_backend"):
+            return True
+        if isinstance(node, ast.Attribute) and node.attr.startswith(
+            "create_storage_backend"
+        ):
+            return True
+    return False
+
+
+def _imports_storage_factory(node: ast.AST) -> bool:
+    if isinstance(node, ast.ImportFrom):
+        if node.module == STORAGE_FACTORY_MODULE:
+            return True
+        return node.module == "knowledge_engine.storage" and any(
+            alias.name == "factory" for alias in node.names
+        )
+    if isinstance(node, ast.Import):
+        return any(alias.name == STORAGE_FACTORY_MODULE for alias in node.names)
+    return False
+
+
+def test_backend_does_not_build_storage_backends() -> None:
+    """Only knowledge_runtime builds storage backends; the Backend must forward."""
+    offenders = [
+        str(path.relative_to(BACKEND_ROOT))
+        for path in sorted((BACKEND_ROOT / "app").rglob("*.py"))
+        if _builds_storage_backend(path.read_text(encoding="utf-8"))
     ]
 
     assert offenders == []

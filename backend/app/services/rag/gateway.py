@@ -10,6 +10,7 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
+from shared.models import RemoteTestConnectionRequest
 
 
 class RagGateway(Protocol):
@@ -53,4 +54,9 @@ class RagGateway(Protocol):
         spec: ListChunksRuntimeSpec,
         *,
         db: Session | None = None,
+    ) -> dict: ...
+
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
     ) -> dict: ...

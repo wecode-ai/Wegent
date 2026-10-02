@@ -24,6 +24,7 @@ from app.services.rag.runtime_specs import (
 from shared.models import (
     PresignedUrlContentRef,
     RemoteKnowledgeBaseQueryConfig,
+    RemoteTestConnectionRequest,
     RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -588,6 +589,42 @@ async def test_remote_gateway_list_chunks_posts_reference_mode_request(mocker) -
 
 def test_gateway_factory_returns_the_remote_gateway() -> None:
     assert isinstance(get_rag_gateway(), RemoteRagGateway)
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_test_connection_posts_storage_config(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/test-connection",
+            status_code=200,
+            json_body={"success": True, "message": "Connection successful"},
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+
+    result = await gateway.test_connection(
+        RemoteTestConnectionRequest(
+            storage_type="qdrant",
+            url="http://qdrant:6333",
+            username="alice",
+            password="secret",
+            api_key="api-token",
+        )
+    )
+
+    assert result == {"success": True, "message": "Connection successful"}
+    args, kwargs = post_mock.await_args
+    assert args[0] == "http://knowledge-runtime/internal/rag/test-connection"
+    assert kwargs["json"] == {
+        "storage_type": "qdrant",
+        "url": "http://qdrant:6333",
+        "username": "alice",
+        "password": "secret",
+        "api_key": "api-token",
+        "index_strategy": {"mode": "per_dataset"},
+        "ext": {},
+    }
 
 
 # ============================================================================

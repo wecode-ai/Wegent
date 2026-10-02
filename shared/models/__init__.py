@@ -73,6 +73,8 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
     RetrievalScope,
 )
 
@@ -179,6 +181,8 @@ __all__ = [
     "RemoteQueryRequest",
     "RemoteQueryRecord",
     "RemoteQueryResponse",
+    "RemoteTestConnectionRequest",
+    "RemoteTestConnectionResponse",
     # OpenAI Responses API
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",
