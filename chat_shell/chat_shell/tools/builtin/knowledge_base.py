@@ -1351,12 +1351,8 @@ class KnowledgeBaseTool(BaseTool):
                         }
                 except Exception:
                     pass
-                return {
-                    "mode": InjectionMode.RAG_ONLY,
-                    "records": [],
-                    "total": 0,
-                }
 
+            response.raise_for_status()
             data = response.json()
             logger.info(
                 "[KnowledgeBaseTool] HTTP internal retrieve mode=%s records=%d",
