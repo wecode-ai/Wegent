@@ -215,11 +215,15 @@ class TestQueryExecutor:
                 "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
             }
             config = _make_query_config(1)
+            config.scoped_document_ids = [10, 11]
             config_loader = _make_config_loader(config)
             executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[10, 11])
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
@@ -265,11 +269,16 @@ class TestQueryExecutor:
             query_request.knowledge_base_ids = [1]
             query_request.scope = RetrievalScope(document_ids=[20])
             query_request.document_ids = [20]
-            config_loader = _make_config_loader(_make_query_config(1))
+            config = _make_query_config(1)
+            config.scoped_document_ids = [20]
+            config_loader = _make_config_loader(config)
             executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[20])
         assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
             document_ids=[20]
         )
@@ -633,7 +642,9 @@ class TestQueryExecutor:
                 ]
             }
         )
-        config_loader = _make_config_loader(_make_query_config(1))
+        config = _make_query_config(1)
+        config.scoped_document_ids = [100]
+        config_loader = _make_config_loader(config)
         query_request.knowledge_base_ids = [1]
         query_request.scope = RetrievalScope(document_ids=[100])
 
@@ -655,6 +666,9 @@ class TestQueryExecutor:
                 query_request
             )
 
+        assert config_loader.resolve_query_configs.call_args.kwargs[
+            "scope"
+        ] == RetrievalScope(document_ids=[100])
         assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
             document_ids=[100]
         )

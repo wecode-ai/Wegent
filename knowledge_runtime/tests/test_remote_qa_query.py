@@ -238,15 +238,17 @@ async def test_out_of_scope_inactive_and_other_kb_qa_do_not_affect_plan(
 async def test_empty_effective_scope_returns_empty_without_storage_query(
     qa_query_db: Session,
 ) -> None:
-    result, storage = await run_query(
-        qa_query_db,
-        RemoteQueryRequest(
-            knowledge_base_ids=[1],
-            user_id=42,
-            query=QUERY,
-            scope=RetrievalScope(document_ids=[12, 20, 99]),
-        ),
-    )
+    with patch.object(QueryExecutor, "_build_query_target") as build_target:
+        result, storage = await run_query(
+            qa_query_db,
+            RemoteQueryRequest(
+                knowledge_base_ids=[1],
+                user_id=42,
+                query=QUERY,
+                scope=RetrievalScope(document_ids=[12, 20, 99]),
+            ),
+        )
+    build_target.assert_not_called()
     assert result.records == []
     assert result.total == 0
     storage.retrieve.assert_not_called()
@@ -387,6 +389,78 @@ async def test_qa_plan_is_per_knowledge_base(qa_query_db: Session) -> None:
     assert settings["1"]["hint_source"] == "qa_pair_profile"
     assert settings["4"]["hint_source"] == "fallback"
     assert settings["4"]["keywords"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_hints", [False, True])
+@pytest.mark.parametrize("compatibility_scope", [False, True])
+async def test_multi_kb_scope_is_clipped_before_independent_planning(
+    qa_query_db: Session, explicit_hints: bool, compatibility_scope: bool
+) -> None:
+    kb = qa_query_db.get(Kind, 1)
+    qa_query_db.add_all(
+        [
+            Kind(
+                id=4,
+                user_id=42,
+                kind="KnowledgeBase",
+                name="ordinary-kb",
+                namespace="search-team",
+                is_active=True,
+                json=kb.json,
+            ),
+            Kind(
+                id=5,
+                user_id=42,
+                kind="KnowledgeBase",
+                name="empty-kb",
+                namespace="search-team",
+                is_active=True,
+                json=kb.json,
+            ),
+            KnowledgeDocument(id=40, kind_id=4, is_active=True, chunks=None),
+        ]
+    )
+    qa_query_db.commit()
+    document_ids = [10, 12, 20, 40, 99]
+    scope_args = (
+        {"document_ids": document_ids}
+        if compatibility_scope
+        else {"scope": RetrievalScope(document_ids=document_ids)}
+    )
+    _, storage = await run_query(
+        qa_query_db,
+        RemoteQueryRequest(
+            knowledge_base_ids=[1, 4, 5],
+            user_id=42,
+            query=QUERY,
+            search_hints=(
+                SearchHints(semantic_query="release check", keywords=["release"])
+                if explicit_hints
+                else None
+            ),
+            **scope_args,
+        ),
+    )
+
+    calls = {
+        call.kwargs["knowledge_id"]: call.kwargs
+        for call in storage.retrieve.call_args_list
+    }
+    assert storage.retrieve.call_count == 2
+    assert set(calls) == {"1", "4"}
+    assert calls["1"]["scope"].document_ids == [10]
+    assert calls["4"]["scope"].document_ids == [40]
+    settings = {kb_id: call["retrieval_setting"] for kb_id, call in calls.items()}
+    if explicit_hints:
+        for setting in settings.values():
+            assert setting["hint_source"] == "explicit_hints"
+            assert setting["dense_query"] == "release check"
+            assert setting["keywords"] == ["release"]
+    else:
+        assert settings["1"]["hint_source"] == "qa_pair_profile"
+        assert settings["4"]["hint_source"] == "fallback"
+        assert settings["4"]["keywords"] == []
 
 
 @pytest.mark.asyncio

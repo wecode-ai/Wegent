@@ -46,8 +46,6 @@ async def query_documents(
     targets: Sequence[QueryTarget],
     *,
     query: str,
-    document_ids: list[int] | None = None,
-    query_plan: dict[str, Any] | None = None,
     metadata_condition: dict[str, Any] | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
@@ -59,30 +57,24 @@ async def query_documents(
     if max_results is not None and max_results < 1:
         raise ValueError("max_results must be positive")
     records: list[dict[str, Any]] = []
-    if document_ids != []:
-        for target in targets:
-            target_ids = (
-                target.document_ids if target.document_ids is not None else document_ids
-            )
-            if target_ids == []:
-                continue
-            scope = (
-                RetrievalScope(document_ids=target_ids)
-                if target_ids is not None
-                else None
-            )
-            result = await target.adapter.execute(
-                knowledge_id=target.knowledge_id,
-                query=query,
-                retrieval_config=target.retrieval_config,
-                scope=scope,
-                query_plan=(
-                    target.query_plan if target.query_plan is not None else query_plan
-                ),
-                metadata_condition=metadata_condition,
-                user_id=target.user_id,
-            )
-            records.extend(_query_records(result, target.knowledge_id))
+    for target in targets:
+        if target.document_ids == []:
+            continue
+        scope = (
+            RetrievalScope(document_ids=target.document_ids)
+            if target.document_ids is not None
+            else None
+        )
+        result = await target.adapter.execute(
+            knowledge_id=target.knowledge_id,
+            query=query,
+            retrieval_config=target.retrieval_config,
+            scope=scope,
+            query_plan=target.query_plan,
+            metadata_condition=metadata_condition,
+            user_id=target.user_id,
+        )
+        records.extend(_query_records(result, target.knowledge_id))
     records.sort(key=lambda record: record.get("score") or 0, reverse=True)
     limited = records if max_results is None else records[:max_results]
     return {

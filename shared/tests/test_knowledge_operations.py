@@ -14,9 +14,8 @@ async def test_empty_authorized_scope_never_queries_storage():
 
     engine = AsyncMock()
     result = await query_documents(
-        [QueryTarget(engine, "space", {})],
+        [QueryTarget(engine, "space", {}, document_ids=[])],
         query="secret",
-        document_ids=[],
     )
     assert result == {"records": [], "total": 0, "total_estimated_tokens": 0}
     engine.execute.assert_not_called()
@@ -31,9 +30,8 @@ async def test_scoped_query_keeps_reference_and_scope():
         "records": [{"content": "hit", "metadata": {"doc_ref": "doc_7"}}]
     }
     result = await query_documents(
-        [QueryTarget(engine, "space", {})],
+        [QueryTarget(engine, "space", {}, document_ids=[7])],
         query="needle",
-        document_ids=[7],
     )
     assert result["records"][0]["document_id"] == 7
     assert engine.execute.call_args.kwargs["scope"].document_ids == [7]
@@ -94,3 +92,29 @@ async def test_multi_space_query_ranks_globally_and_preserves_total():
     ]
     assert result["total"] == 2
     assert result["total_estimated_tokens"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mixed_targets_keep_independent_scopes_and_plans() -> None:
+    from shared.knowledge_module import QueryTarget, query_documents
+
+    whole, scoped, empty = AsyncMock(), AsyncMock(), AsyncMock()
+    whole.execute.return_value = {"records": []}
+    scoped.execute.return_value = {"records": []}
+    qa_plan = {"dense_query": "question", "hint_source": "qa_pair_profile"}
+    await query_documents(
+        [
+            QueryTarget(whole, "whole", {}),
+            QueryTarget(scoped, "scoped", {}, document_ids=[7], query_plan=qa_plan),
+            QueryTarget(empty, "empty", {}, document_ids=[]),
+        ],
+        query="question",
+    )
+
+    whole.execute.assert_awaited_once()
+    assert whole.execute.await_args.kwargs["scope"] is None
+    assert whole.execute.await_args.kwargs["query_plan"] is None
+    scoped.execute.assert_awaited_once()
+    assert scoped.execute.await_args.kwargs["scope"].document_ids == [7]
+    assert scoped.execute.await_args.kwargs["query_plan"] == qa_plan
+    empty.execute.assert_not_called()

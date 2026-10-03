@@ -97,22 +97,9 @@ class QueryExecutor:
             for knowledge_base_id in request.knowledge_base_ids
             if configs_by_kb_id[knowledge_base_id].scoped_document_ids != []
         ]
-        scope = (
-            request.scope.document_ids
-            if request.scope is not None
-            else request.document_ids
-        )
         result = await query_documents(
             targets,
             query=plan.normalized_query,
-            document_ids=scope,
-            query_plan={
-                "dense_query": plan.dense_query,
-                "sparse_query": plan.sparse_query,
-                "keywords": plan.keywords,
-                "phrases": plan.phrases,
-                "hint_source": plan.hint_source,
-            },
             metadata_condition=request.metadata_condition,
             max_results=request.max_results,
         )

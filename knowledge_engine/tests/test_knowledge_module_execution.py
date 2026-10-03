@@ -284,9 +284,16 @@ async def _query_plain_document(
 
     executor = QueryExecutor(storage_backend=storage, embed_model=object())
     result = await query_documents(
-        [QueryTarget(executor, _KNOWLEDGE_ID, config.retrieval_config, 7)],
+        [
+            QueryTarget(
+                executor,
+                _KNOWLEDGE_ID,
+                config.retrieval_config,
+                7,
+                document_ids=scope.document_ids if scope is not None else None,
+            )
+        ],
         query="release checklist",
-        document_ids=scope.document_ids if scope is not None else None,
     )
     return result["records"]
 
@@ -313,9 +320,16 @@ async def _run_query(scope: RetrievalScope | None) -> _RecordingStorage:
     storage = _RecordingStorage()
     executor = QueryExecutor(storage_backend=storage, embed_model=object())
     await query_documents(
-        [QueryTarget(executor, "1", config.retrieval_config, 7)],
+        [
+            QueryTarget(
+                executor,
+                "1",
+                config.retrieval_config,
+                7,
+                document_ids=scope.document_ids if scope is not None else None,
+            )
+        ],
         query="policy",
-        document_ids=scope.document_ids if scope is not None else None,
     )
     return storage
 
