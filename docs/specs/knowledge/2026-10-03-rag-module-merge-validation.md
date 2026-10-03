@@ -67,3 +67,11 @@ Backend 已按最终锁文件同步环境，卸载 30 个执行相关包。依�
 - 共享内部令牌仍只证明持有令牌，不能验证授权引用一定来自 Backend；保持目标规格接受的内网信任假设。
 - [来源桌面构建失败日志](https://github.com/wecode-ai/Wegent/actions/runs/37099123443/job/111135063804)仍为等待 `.ci-artifacts/wegent-executor` 420 秒超时；属于用户已接受的 fork PR 产物交接例外，不修复、不重跑、不声称 CI 全绿。
 - 本轮不推送、不合并 GitHub PR、不部署。
+
+## 后续来源同步（2026-10-03）
+
+来源 `refactor/rag-remove-local-mode` 随后移除了 `8e25b7e215f084e34115d69e175f85b2f941bf21`，最新 HEAD 为 `b16227db87dbf5cb9f25f21932cb3429540381bd`。该提交仅修改 `executor/src/local/session.rs` 的原子计数实现及对应新增测试。
+
+目标通过新增撤销提交同步代码，不重写已经推送的合并历史。Executor 文件与最新来源及 `wecode-ai/main` 完全一致；知识 Module／Adapter、授权引用、QA 和 RAG 合并适配保持不变。原提交仍属于历史，但其代码改动已完整撤销。
+
+本次验证：`cargo fmt --check`、`cargo test --all-features --lib`（1454 通过、1 项既有忽略）、`cargo clippy --all-targets --all-features -- -D warnings` 均通过。未重复运行未受影响的知识测试，未运行 E2E 或 ai:verify。
