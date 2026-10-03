@@ -8,12 +8,10 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
 )
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
+    RemoteAuthorizedIndexResources,
+    RemoteAuthorizedRetrievalResources,
     RemoteKnowledgeBaseRetrievalOverride,
     RetrievalScope,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
     SearchHints,
 )
 
@@ -43,6 +41,13 @@ class DirectInjectionBudget(RuntimeSpecModel):
 
 
 class IndexRuntimeSpec(RuntimeSpecModel):
+    """Index request that crosses the process boundary with references only.
+
+    ``knowledge_runtime`` resolves the retriever and embedding model from the
+    knowledge base record and the document id, so the Backend never carries a
+    resolved execution config.
+    """
+
     knowledge_base_id: int
     document_id: Optional[int] = None
     index_owner_user_id: int
@@ -50,10 +55,15 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     retriever_namespace: str
     embedding_model_name: str
     embedding_model_namespace: str
+    # Retrieval resources Backend authorized for the knowledge base owner. The
+    # remote index request sends only these references, so the runtime loads just
+    # them and resolves the index configuration through the shared module.
+    authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     source: IndexSource
-    retriever_config: RuntimeRetrieverConfig | None = None
-    embedding_model_config: RuntimeEmbeddingModelConfig | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    # Retained by contract: splitter normalization is owned by the knowledge
+    # ingestion path, and the runtime re-resolves the splitter from the document
+    # record. Dropping this field is a separate contract change.
     splitter_config: NormalizedSplitterConfig = Field(
         default_factory=build_runtime_default_splitter_config
     )
@@ -68,7 +78,6 @@ class IndexRuntimeSpec(RuntimeSpecModel):
         return normalize_runtime_splitter_config(value)
 
 
-QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
 QueryKnowledgeBaseRetrievalOverride = RemoteKnowledgeBaseRetrievalOverride
 
 
@@ -82,9 +91,9 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     scope: Optional[RetrievalScope] = None
     metadata_condition: Optional[dict] = None
     restricted_mode: bool = False
-    user_id: Optional[int] = None
+    user_id: int = Field(..., gt=0, strict=True)
     user_name: Optional[str] = None
-    knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
+    authorized_resources: list[RemoteAuthorizedRetrievalResources] = Field(
         default_factory=list
     )
     knowledge_base_retrieval_overrides: list[QueryKnowledgeBaseRetrievalOverride] = (
@@ -95,36 +104,34 @@ class QueryRuntimeSpec(RuntimeSpecModel):
 
 
 class DeleteRuntimeSpec(RuntimeSpecModel):
+    """Delete request that carries the document reference, not its config."""
+
     knowledge_base_id: int
     document_ref: str
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
 
 
 class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
 
 
 class DropKnowledgeIndexRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
 
 
 class ListChunksRuntimeSpec(RuntimeSpecModel):
     knowledge_base_id: int
     index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    authorized_resources: RemoteAuthorizedIndexResources | None = None
     max_chunks: int = 10000
     query: Optional[str] = None
     metadata_condition: Optional[dict] = None
-
-
-class ConnectionTestRuntimeSpec(RuntimeSpecModel):
-    retriever_config: RuntimeRetrieverConfig
 
 
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

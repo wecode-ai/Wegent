@@ -572,6 +572,9 @@ jobs:
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
 
+      - name: Install Knowledge Doc Converter dependencies
+        run: uv sync --project knowledge_doc_converter --frozen
+
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
@@ -602,8 +605,9 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
-          RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
           CHUNK_STORAGE_ENABLED: "true"
           ATTACHMENT_S3_ENDPOINT: minio:9000
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
@@ -653,6 +657,25 @@ jobs:
         run: |
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
+
+      - name: Start Knowledge Doc Converter
+        env:
+          BACKEND_BASE_URL: http://localhost:8000
+          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          CELERY_BROKER_URL: redis://redis:6379/0
+          CELERY_RESULT_BACKEND: redis://redis:6379/1
+          REDIS_URL: redis://redis:6379/0
+          MINERU_API_BASE_URL: http://localhost:9999/mineru
+          MINERU_POLL_INTERVAL_SECONDS: "1"
+          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
+          LOG_FILE_ENABLED: "false"
+        run: |
+          nohup uv run --project knowledge_doc_converter --no-sync celery \
+            -A knowledge_doc_converter.celery_app worker \
+            --queues=knowledge_conversion \
+            --concurrency=1 \
+            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
+          echo $! > knowledge_doc_converter/ci.pid
 
       - name: Wait for services
         run: |
@@ -713,6 +736,24 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
 
+      - name: Run knowledge remote index E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_QDRANT_URL: http://qdrant:6333
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_BOOTSTRAP_ADMIN_USER: admin
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/knowledge_remote_index.py
+
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
@@ -755,6 +796,14 @@ jobs:
         run: |
           if [ -f knowledge_runtime/ci.pid ]; then
             kill "$(cat knowledge_runtime/ci.pid)"
+          fi
+
+      - name: Stop Knowledge Doc Converter
+        if: always()
+        run: |
+          if [ -f knowledge_doc_converter/ci.pid ]; then
+            kill "$(cat knowledge_doc_converter/ci.pid)" 2>/dev/null || true
+            rm -f knowledge_doc_converter/ci.pid
           fi
 
       - name: Stop Mock Model Server

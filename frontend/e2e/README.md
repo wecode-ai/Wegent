@@ -119,8 +119,8 @@ e2e/
 ## 钉钉导入 remote 检索验证
 
 `tests/knowledge/dingtalk-import.spec.ts` 的 7 个场景由 CI 的
-`provider-native-chromium` 项目执行。Backend 必须设置 `RAG_RUNTIME_MODE=remote`
-和 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
+`provider-native-chromium` 项目执行。Backend 不再需要设置模式变量，只需设置
+`KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
 Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
 通过 `KNOWLEDGE_RUNTIME_DATABASE_URL` 和 `KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL` 连接。
 

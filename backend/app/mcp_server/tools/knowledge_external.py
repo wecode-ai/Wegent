@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Optional
 
-import anyio
-from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
@@ -74,12 +72,7 @@ from app.services.knowledge.namespace_utils import (
 )
 from app.services.knowledge.orchestrator import MAX_DOCUMENT_READ_LIMIT
 from app.services.rag.document_id_utils import extract_document_id
-from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGatewayError,
-    should_fallback_to_local,
-)
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 
@@ -571,13 +564,13 @@ def _prepare_search_content_sync(
 
         runtime_resolver = RagRuntimeResolver()
         runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
             knowledge_base_ids=target_ids,
             query=query,
             max_results=max_results,
             route_mode="rag_retrieval",
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=[],
         )
         return SearchPreparation(
             runtime_spec=runtime_spec,
@@ -593,51 +586,9 @@ def _prepare_search_content_sync(
         db.close()
 
 
-def _with_local_query_configs(
-    runtime_spec: QueryRuntimeSpec,
-    db: Session,
-) -> QueryRuntimeSpec:
-    if (
-        runtime_spec.route_mode != "rag_retrieval"
-        or runtime_spec.knowledge_base_configs
-    ):
-        return runtime_spec
-
-    knowledge_base_configs = RagRuntimeResolver().build_query_knowledge_base_configs(
-        db=db,
-        knowledge_base_ids=runtime_spec.knowledge_base_ids,
-        current_user_id=runtime_spec.user_id,
-        user_name=runtime_spec.user_name,
-    )
-    return runtime_spec.model_copy(
-        update={"knowledge_base_configs": knowledge_base_configs}
-    )
-
-
-def _query_content_local_sync(runtime_spec: QueryRuntimeSpec) -> dict:
-    db = SessionLocal()
-    try:
-        local_runtime_spec = _with_local_query_configs(runtime_spec, db)
-        return anyio.run(partial(LocalRagGateway().query, local_runtime_spec, db=db))
-    finally:
-        db.close()
-
-
 async def _query_content(runtime_spec: QueryRuntimeSpec) -> dict:
-    gateway = get_query_gateway()
-    if isinstance(gateway, LocalRagGateway):
-        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
-
-    try:
-        return await gateway.query(runtime_spec, db=None)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "External knowledge search remote query failed; falling back to local: %s",
-            exc,
-        )
-        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
+    gateway = get_rag_gateway()
+    return await gateway.query(runtime_spec, db=None)
 
 
 @external_knowledge_mcp_server.tool()

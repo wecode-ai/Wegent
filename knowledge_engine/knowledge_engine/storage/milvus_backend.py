@@ -42,6 +42,7 @@ from knowledge_engine.retrieval.filters import (
 )
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_dimension import (
     CollectionSnapshot,
@@ -49,7 +50,7 @@ from knowledge_engine.storage.milvus_dimension import (
     raise_on_dimension_mismatch,
     read_collection_snapshot,
 )
-from shared.models import RetrievalScope
+from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,9 @@ class MilvusBackend(BaseStorageBackend):
     """
 
     # Milvus supports vector, keyword (BM25), and hybrid search
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
+        STORAGE_BACKEND_SPECS["milvus"].retrieval_methods
+    )
     supports_retrieval_scope: ClassVar[bool] = True
 
     # Override INDEX_PREFIX for Milvus collections

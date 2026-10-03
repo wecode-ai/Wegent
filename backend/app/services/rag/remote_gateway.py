@@ -33,6 +33,8 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 
 
@@ -55,15 +57,9 @@ class RemoteRagGatewayError(RuntimeError):
         self.details = details
 
 
-def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
-    """Return whether a remote error is safe to retry locally."""
-
-    return error.retryable or (
-        error.status_code is not None and error.status_code >= 500
-    )
-
-
 class RemoteRagGateway:
+    """Send authorized resource references for Runtime-owned execution."""
+
     def __init__(
         self,
         *,
@@ -151,10 +147,11 @@ class RemoteRagGateway:
         del db
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
-            user_id=spec.user_id or 0,
+            user_id=spec.user_id,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
+            authorized_resources=spec.authorized_resources or None,
             knowledge_base_retrieval_overrides=(
                 spec.knowledge_base_retrieval_overrides or None
             ),
@@ -178,6 +175,7 @@ class RemoteRagGateway:
         payload = RemoteDeleteDocumentIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
             document_ref=spec.document_ref,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
@@ -192,6 +190,7 @@ class RemoteRagGateway:
         payload = RemotePurgeKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
         )
         return await self._post_model("/internal/rag/purge-knowledge-index", payload)
 
@@ -205,6 +204,7 @@ class RemoteRagGateway:
         payload = RemoteDropKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
         )
         return await self._post_model("/internal/rag/drop-knowledge-index", payload)
 
@@ -218,12 +218,24 @@ class RemoteRagGateway:
         payload = RemoteListChunksRequest(
             knowledge_base_id=spec.knowledge_base_id,
             user_id=spec.index_owner_user_id,
+            authorized_resources=spec.authorized_resources,
             max_chunks=spec.max_chunks,
             query=spec.query,
             metadata_condition=spec.metadata_condition,
         )
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
+        return response.model_dump()
+
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
+    ) -> dict[str, Any]:
+        response_payload = await self._post_model(
+            "/internal/rag/test-connection",
+            request,
+        )
+        response = RemoteTestConnectionResponse.model_validate(response_payload)
         return response.model_dump()
 
 
@@ -250,6 +262,7 @@ def _build_remote_index_request(
                 db=db,
                 attachment_id=spec.source.attachment_id,
             ),
+            authorized_resources=spec.authorized_resources,
         )
     finally:
         if own_session:

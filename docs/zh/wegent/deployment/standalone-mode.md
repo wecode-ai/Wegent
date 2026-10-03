@@ -282,6 +282,11 @@ Standalone 镜像包含内嵌 Redis：
 - 使用 AOF（Append Only File）保证数据持久性
 - 内存限制为 256MB，使用 LRU 淘汰策略
 
+### 知识库检索能力
+
+Standalone 模式不提供知识库功能：RAG 相关接口在该模式下不会注册，单容器镜像也不包含执行检索的
+Knowledge Runtime 服务与向量库。需要知识库时请使用标准模式部署。
+
 ### Standalone Executor 限制
 
 1. **资源隔离**：编码任务在所选 executor 位置执行；容器模式不具备每任务 Docker sandbox 隔离，宿主机模式会直接访问宿主机环境

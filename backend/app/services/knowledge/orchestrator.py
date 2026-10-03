@@ -69,10 +69,23 @@ from app.services.knowledge.external_refresh_snapshot import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
-    get_profile,
-    merge_profile_defaults,
+    load_profile,
+)
+from app.services.knowledge.retrieval_resource_resolver import (
+    resolve_embedding_model_resource,
+    resolve_retriever_resource,
 )
 from app.stores.tasks import task_store
+from shared.knowledge_module import (
+    EMBEDDING_RESOURCE_CATEGORY,
+    MODEL_RESOURCE_KIND,
+    RETRIEVER_RESOURCE_KIND,
+    RetrievalProfileRecord,
+    RetrievalResource,
+    evaluate_profile,
+    prepare_knowledge_config,
+    validate_retrieval_config_update,
+)
 from shared.models import SearchHints
 from shared.telemetry.decorators import trace_async
 
@@ -138,6 +151,72 @@ def _validate_document_read_result_payload(result: Dict[str, Any]) -> None:
     if missing_keys:
         raise ValueError(
             "Incomplete document read payload: missing " + ", ".join(missing_keys)
+        )
+
+
+class _WegentRetrievalConfigAdapter:
+    """Supplies Wegent's authorized records to the pure knowledge module.
+
+    The module decides how to compose and validate the configuration; this only
+    reports the stored profile and the candidates Wegent has authorized for this
+    user and namespace.
+    """
+
+    def __init__(
+        self, orchestrator: "KnowledgeOrchestrator", db: Session, user: User
+    ) -> None:
+        self._orchestrator = orchestrator
+        self._db = db
+        self._user = user
+
+    def retrieval_profile(self) -> RetrievalProfileRecord:
+        profile, _version, record = load_profile(self._db)
+        health = evaluate_profile(record)
+        if profile and health["status"] != "valid":
+            logger.warning(
+                "[Orchestrator] Retrieval profile is unavailable; using automatic "
+                "defaults: %s",
+                health["fallback_reason"],
+            )
+        return record
+
+    def default_retriever(self, namespace: str) -> Optional[RetrievalResource]:
+        record = self._orchestrator.get_default_retriever(
+            self._db, self._user.id, namespace
+        )
+        if not record:
+            return None
+        return RetrievalResource(
+            name=record["retriever_name"],
+            namespace=record.get("retriever_namespace") or "default",
+            kind=RETRIEVER_RESOURCE_KIND,
+        )
+
+    def default_embedding_model(self, namespace: str) -> Optional[RetrievalResource]:
+        record = self._orchestrator.get_default_embedding_model(
+            self._db, self._user.id, namespace
+        )
+        if not record:
+            return None
+        return RetrievalResource(
+            name=record["model_name"],
+            namespace=record.get("model_namespace") or "default",
+            kind=MODEL_RESOURCE_KIND,
+            category=EMBEDDING_RESOURCE_CATEGORY,
+        )
+
+    def resolve_retriever(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_retriever_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
+        )
+
+    def resolve_embedding_model(
+        self, name: str, namespace: str
+    ) -> Optional[RetrievalResource]:
+        return resolve_embedding_model_resource(
+            self._db, user_id=self._user.id, name=name, namespace=namespace
         )
 
 
@@ -318,54 +397,24 @@ class KnowledgeOrchestrator:
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Build a complete retrieval config, auto-filling missing core fields."""
-        if rag_config_mode == "disabled":
-            return None
+        """Compose the retrieval config through the shared knowledge module.
 
-        caller_overrides: Dict[str, Any] = {}
-        if retriever_name:
-            caller_overrides["retriever_name"] = retriever_name
-        if retriever_namespace:
-            caller_overrides["retriever_namespace"] = retriever_namespace
-        embedding_overrides: Dict[str, str] = {}
-        if embedding_model_name:
-            embedding_overrides["model_name"] = embedding_model_name
-        if embedding_model_namespace:
-            embedding_overrides["model_namespace"] = embedding_model_namespace
-        if embedding_overrides:
-            caller_overrides["embedding_config"] = embedding_overrides
-
-        profile, _, profile_health = get_profile(db)
-        if profile_health["status"] == "valid" and profile:
-            resolved_config = merge_profile_defaults(profile, caller_overrides)
-        else:
-            resolved_config = caller_overrides
-            if profile_health["status"] == "invalid":
-                logger.warning(
-                    "[Orchestrator] Retrieval profile is unavailable; using automatic defaults: %s",
-                    profile_health["fallback_reason"],
-                )
-        resolved_config = merge_profile_defaults(resolved_config, retrieval_config)
-        embedding_config = dict(resolved_config.get("embedding_config") or {})
-
-        retriever_name = resolved_config.get("retriever_name")
-        retriever_namespace = resolved_config.get("retriever_namespace")
-        embedding_model_name = embedding_config.get("model_name")
-        embedding_model_namespace = embedding_config.get("model_namespace")
-
-        if not retriever_name:
-            default_retriever = self.get_default_retriever(db, user.id, namespace)
-            if default_retriever:
-                retriever_name = default_retriever["retriever_name"]
-                retriever_namespace = default_retriever["retriever_namespace"]
-
-        if not embedding_model_name:
-            default_embedding = self.get_default_embedding_model(db, user.id, namespace)
-            if default_embedding:
-                embedding_model_name = default_embedding["model_name"]
-                embedding_model_namespace = default_embedding["model_namespace"]
-
-        if not retriever_name or not embedding_model_name:
+        The module owns the composition priority (explicit input, valid system
+        profile, authorized candidates) and the validation rules, so Wegent and a
+        second service resolve one configuration the same way. This method only
+        supplies the records Wegent has authorized.
+        """
+        resolved_config = prepare_knowledge_config(
+            _WegentRetrievalConfigAdapter(self, db, user),
+            namespace=namespace,
+            retrieval_config=retrieval_config,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+            rag_config_mode=rag_config_mode,
+        )
+        if resolved_config is None:
             logger.warning(
                 "[Orchestrator] Could not build retrieval_config: "
                 "retriever=%s, embedding=%s",
@@ -374,40 +423,12 @@ class KnowledgeOrchestrator:
             )
             return None
 
+        embedding_config = resolved_config.get("embedding_config") or {}
         logger.info(
             "[Orchestrator] Built retrieval_config: retriever=%s, embedding=%s",
-            retriever_name,
-            embedding_model_name,
+            resolved_config.get("retriever_name"),
+            embedding_config.get("model_name"),
         )
-        return self._build_complete_retrieval_config(
-            base_config=resolved_config,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-        )
-
-    def _build_complete_retrieval_config(
-        self,
-        *,
-        base_config: Dict[str, Any],
-        retriever_name: str,
-        retriever_namespace: Optional[str],
-        embedding_model_name: str,
-        embedding_model_namespace: Optional[str],
-    ) -> Dict[str, Any]:
-        """Build the only retrieval_config shape allowed to be persisted."""
-        resolved_config = dict(base_config)
-        resolved_config["retriever_name"] = retriever_name
-        resolved_config["retriever_namespace"] = retriever_namespace or "default"
-        resolved_config["embedding_config"] = {
-            "model_name": embedding_model_name,
-            "model_namespace": embedding_model_namespace or "default",
-        }
-        if not resolved_config.get("retrieval_mode"):
-            resolved_config["retrieval_mode"] = "vector"
-        resolved_config.setdefault("top_k", 5)
-        resolved_config.setdefault("score_threshold", 0.5)
         return resolved_config
 
     def get_task_model_as_summary_model(
@@ -1117,7 +1138,12 @@ class KnowledgeOrchestrator:
         if allow_document_download is not None:
             update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
-            update_fields["retrieval_config"] = retrieval_config
+            # An edit only writes the fields the caller sent, so only those are
+            # validated; a stored configuration that predates the current limits
+            # keeps its values until the caller changes them.
+            update_fields["retrieval_config"] = validate_retrieval_config_update(
+                retrieval_config
+            )
         if dingtalk_auto_sync_enabled is not None:
             update_fields["dingtalk_auto_sync_enabled"] = dingtalk_auto_sync_enabled
         if summary_enabled is not None:
@@ -3107,8 +3133,8 @@ class KnowledgeOrchestrator:
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing and gateway support.
 
-        Unified entry point for MCP tools and Open API. Supports both local and
-        remote RAG gateways with automatic fallback.
+        Unified entry point for MCP tools and Open API. Direct injection is
+        resolved in the Backend; every other retrieval runs in knowledge_runtime.
 
         Args:
             user_id: Current user ID for access control.

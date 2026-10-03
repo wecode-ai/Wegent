@@ -44,7 +44,7 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
     serialize_splitter_config,
 )
-from app.services.rag.gateway_factory import get_index_gateway
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.telemetry import add_span_event
 
@@ -54,6 +54,14 @@ runtime_resolver = RagRuntimeResolver()
 # Excel file size limit for RAG indexing (2MB)
 EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024  # 2MB in bytes
 EXCEL_EXTENSIONS = frozenset({".xls", ".xlsx"})
+
+
+class OldIndexCleanupError(RuntimeError):
+    """Raised when a rebuild cannot remove the previous generation's chunks.
+
+    Writing the new generation on top of an index that still holds the old one
+    would leave both queryable, so the rebuild stops instead of continuing.
+    """
 
 
 @dataclass
@@ -79,6 +87,7 @@ class _IndexingPreparation:
     delete_spec: Any | None
     kb_info: KnowledgeBaseIndexInfo | None
     skip_result: dict | None
+    gateway: Any | None = None
 
 
 def normalize_document_extension(file_extension: Optional[str]) -> str:
@@ -299,6 +308,7 @@ def _prepare_indexing_runtime(
         },
     )
 
+    index_gateway = get_rag_gateway()
     runtime_spec = runtime_resolver.build_index_runtime_spec(
         db=db,
         knowledge_base_id=knowledge_base_id,
@@ -326,18 +336,6 @@ def _prepare_indexing_runtime(
                 document_ref=str(document_id),
                 index_owner_user_id=kb_info.index_owner_user_id,
             )
-        except ValueError as e:
-            logger.warning(
-                f"[Indexing] Cannot delete old index for document {document_id}: {e}"
-            )
-            add_span_event(
-                "rag.indexing.old_index_delete_skipped",
-                {
-                    "kb_id": str(knowledge_base_id),
-                    "document_id": str(document_id),
-                    "reason": str(e),
-                },
-            )
         except Exception as e:
             logger.error(
                 f"[Indexing] Error preparing old index delete for document {document_id}: "
@@ -352,17 +350,25 @@ def _prepare_indexing_runtime(
                     "error": str(e),
                 },
             )
+            # The old generation cannot be addressed any more, so the new
+            # generation must not be written on top of it.
+            raise OldIndexCleanupError(
+                f"Cannot prepare the deletion of the old index for document "
+                f"{document_id}: {e}"
+            ) from e
 
     return _IndexingPreparation(
         runtime_spec=runtime_spec,
         delete_spec=delete_spec,
         kb_info=kb_info,
         skip_result=None,
+        gateway=index_gateway,
     )
 
 
 def _run_indexing_gateway_calls(
     *,
+    gateway: Any,
     runtime_spec: Any,
     delete_spec: Any | None,
     document_id: Optional[int],
@@ -376,12 +382,10 @@ def _run_indexing_gateway_calls(
     # loop with one we are about to close, breaking any subsequent async work on
     # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
-        rag_gateway = get_index_gateway()
-
         if delete_spec is not None:
             try:
                 delete_result = loop.run_until_complete(
-                    rag_gateway.delete_document_index(delete_spec, db=None)
+                    gateway.delete_document_index(delete_spec, db=None)
                 )
                 deleted_chunks = delete_result.get("deleted_chunks", 0)
                 if deleted_chunks > 0:
@@ -421,6 +425,11 @@ def _run_indexing_gateway_calls(
                         "error": str(e),
                     },
                 )
+                # A rebuild that cannot drop the previous generation would leave
+                # both generations queryable, so fail instead of continuing.
+                raise OldIndexCleanupError(
+                    f"Cannot delete the old index for document {document_id}: {e}"
+                ) from e
 
         logger.info(
             f"[Indexing] Starting gateway index_document: kb_id={knowledge_base_id}, "
@@ -435,9 +444,7 @@ def _run_indexing_gateway_calls(
                 "embedding_model_namespace": embedding_model_namespace,
             },
         )
-        result = loop.run_until_complete(
-            rag_gateway.index_document(runtime_spec, db=None)
-        )
+        result = loop.run_until_complete(gateway.index_document(runtime_spec, db=None))
         logger.info(
             "[Indexing] gateway index_document returned: status=%s indexed_count=%s index_name=%s",
             result.get("status"),
@@ -556,6 +563,7 @@ def run_document_indexing(
 
     try:
         result = _run_indexing_gateway_calls(
+            gateway=preparation.gateway,
             runtime_spec=preparation.runtime_spec,
             delete_spec=preparation.delete_spec,
             document_id=document_id,

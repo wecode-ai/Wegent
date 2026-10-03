@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -29,6 +29,7 @@ from app.services.knowledge.index_state_machine import (
     prepare_document_index_enqueue,
     prepare_external_refresh_enqueue,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
 
 
@@ -366,6 +367,75 @@ def test_mark_document_index_succeeded_only_updates_active_generation(
     assert finalized is False
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 2
+
+
+def test_mark_document_index_succeeded_refuses_a_deleted_document(
+    test_db: Session, test_user: User
+):
+    """A write that finishes after the delete cannot finalize.
+
+    This is the end state of the deletion race: the delete holds the document
+    row until it commits, so an in-flight index completion arrives after the row
+    is gone. The guarded update then matches nothing, which is what routes the
+    task into the late-index compensation instead of a successful write, and the
+    removed reference stays unqueryable.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=3,
+    )
+    document_id = document.id
+    test_db.delete(document)
+    test_db.commit()
+
+    finalized = mark_document_index_succeeded(
+        test_db,
+        document_id=document_id,
+        generation=3,
+        chunks={"total_count": 4},
+        chunk_storage_enabled=True,
+    )
+
+    assert finalized is False
+
+
+def test_lock_document_row_refreshes_the_row_before_deletion(
+    test_db: Session, test_user: User
+):
+    """The delete re-reads the row under a lock instead of trusting cached state.
+
+    This is the read half of the deletion race: a row another writer advanced
+    must reach the removal with its stored values, not the values an
+    already-loaded instance still holds, and the same locking query is what
+    blocks a concurrent indexing update until the delete commits.
+    """
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.SUCCESS,
+        index_generation=3,
+    )
+    document_id = document.id
+
+    # Another writer advances the row while this Session keeps the old value.
+    test_db.execute(
+        update(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .values(index_generation=7)
+        .execution_options(synchronize_session=False)
+    )
+    assert document.index_generation == 3
+
+    locked = KnowledgeService._lock_document_row(test_db, document_id)
+
+    assert locked is document
+    assert locked.index_generation == 7
 
 
 def test_mark_document_index_failed_persists_error_and_preserves_source_config(
@@ -918,3 +988,69 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
         222,
         retry_orphan_cleanup=True,
     )
+
+
+@pytest.mark.parametrize("chunk_storage_enabled", [False, True])
+def test_index_success_persists_qa_metadata_without_requiring_chunk_storage(
+    test_db: Session, test_user: User, chunk_storage_enabled: bool
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=1,
+    )
+    chunks = {
+        "items": [{"content": "Q: question\nA: private answer"}],
+        "total_count": 1,
+        "splitter_type": "qa",
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+
+    assert mark_document_index_succeeded(
+        test_db,
+        document.id,
+        1,
+        chunks=chunks,
+        chunk_storage_enabled=chunk_storage_enabled,
+    )
+
+    test_db.refresh(document)
+    assert document.chunks == (
+        chunks
+        if chunk_storage_enabled
+        else {
+            "splitter_subtype": "qa_pair",
+            "qa_pair_count": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "chunks", [None, {"splitter_subtype": None, "qa_pair_count": 0}]
+)
+def test_successful_reindex_replaces_old_qa_metadata_without_chunk_storage(
+    test_db: Session, test_user: User, chunks: dict | None
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.chunks = {
+        "items": [{"content": "old chunk body"}],
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+    test_db.commit()
+
+    assert mark_document_index_succeeded(test_db, document.id, 2, chunks=chunks)
+
+    test_db.refresh(document)
+    assert document.chunks == chunks

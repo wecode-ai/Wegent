@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from knowledge_engine.retrieval.query_planning import build_search_hint_plan
-from shared.models import normalize_search_terms, normalize_search_text
+from shared.knowledge_contracts import normalize_search_terms, normalize_search_text
+from shared.knowledge_module.query_planning import build_search_hint_plan
 
 
 @dataclass(slots=True)

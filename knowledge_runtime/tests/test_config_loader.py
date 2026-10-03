@@ -7,6 +7,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
@@ -14,7 +15,6 @@ from knowledge_runtime.services.config_resolver import (
     IndexConfig,
     QueryConfig,
 )
-
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -74,6 +74,7 @@ def test_resolve_index_config_closes_session_after_success() -> None:
         knowledge_base_id=1,
         user_id=42,
         document_id=100,
+        authorized=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()
@@ -121,11 +122,17 @@ def test_resolve_query_configs_uses_one_short_session() -> None:
         db=session,
         knowledge_base_id=1,
         user_id=42,
+        authorized=None,
+        retrieval_override=None,
+        scope=None,
     )
     resolver.resolve_query_config.assert_any_call(
         db=session,
         knowledge_base_id=2,
         user_id=42,
+        authorized=None,
+        retrieval_override=None,
+        scope=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()
@@ -142,12 +149,14 @@ def test_resolve_admin_config_closes_session_after_success() -> None:
     resolver.resolve_admin_config.return_value = expected_config
     loader = RuntimeConfigLoader(session_factory=session_factory, resolver=resolver)
 
-    result = loader.resolve_admin_config(knowledge_base_id=1)
+    result = loader.resolve_admin_config(knowledge_base_id=1, operation="drop")
 
     assert result is expected_config
     resolver.resolve_admin_config.assert_called_once_with(
         db=session,
         knowledge_base_id=1,
+        operation="drop",
+        authorized=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()
