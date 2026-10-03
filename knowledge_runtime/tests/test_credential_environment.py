@@ -51,6 +51,7 @@ def _credential_resolver(
         "_get_model_kind",
         lambda **kwargs: _make_model_kind(
             spec={
+                "modelType": "embedding",
                 "protocol": "openai",
                 "modelConfig": {"env": {"api_key": credentials["model-key"]}},
             }
