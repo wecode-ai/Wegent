@@ -802,7 +802,8 @@ class Settings(BaseSettings):
 
     # Knowledge base chunk storage configuration
     # Enable/disable storing chunk content in database for frontend viewing
-    # When disabled (default), chunks are only stored in vector database for retrieval
+    # When disabled (default), chunk bodies are only stored in the retrieval index;
+    # QA metadata is still saved to knowledge_documents.chunks for query planning.
     # When enabled, chunk content is also saved to knowledge_documents.chunks column
     CHUNK_STORAGE_ENABLED: bool = False
 
