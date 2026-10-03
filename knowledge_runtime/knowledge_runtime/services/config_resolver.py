@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
@@ -187,28 +188,31 @@ class ConfigResolver:
         scope: RetrievalScope | None,
     ) -> tuple[int, list[int] | None]:
         """Read only QA metadata within the active, authorized document scope."""
-        documents = db.query(
-            KnowledgeDocument.id,
-            KnowledgeDocument.chunks["splitter_subtype"].as_string(),
-            KnowledgeDocument.chunks["qa_pair_count"].as_integer(),
-        ).filter(
+        filters = (
             KnowledgeDocument.kind_id == knowledge_base_id,
             KnowledgeDocument.is_active.is_(True),
         )
+        subtype = KnowledgeDocument.chunks["splitter_subtype"].as_string()
+        count = KnowledgeDocument.chunks["qa_pair_count"].as_integer()
         scoped_ids = scope.document_ids if scope is not None else None
-        if scoped_ids is not None:
-            documents = documents.filter(KnowledgeDocument.id.in_(scoped_ids))
-        document_rows = documents.all()
+        if scoped_ids is None:
+            total = (
+                db.query(func.coalesce(func.sum(count), 0))
+                .filter(*filters, subtype == "qa_pair", count > 0)
+                .scalar()
+            )
+            return int(total or 0), None
+        document_rows = (
+            db.query(KnowledgeDocument.id, subtype, count)
+            .filter(*filters, KnowledgeDocument.id.in_(scoped_ids))
+            .all()
+        )
         qa_pair_count = sum(
             count
             for _, subtype, count in document_rows
             if subtype == "qa_pair" and isinstance(count, int) and count > 0
         )
-        return qa_pair_count, (
-            [document_id for document_id, _, _ in document_rows]
-            if scoped_ids is not None
-            else None
-        )
+        return qa_pair_count, [document_id for document_id, _, _ in document_rows]
 
     def resolve_admin_config(
         self,

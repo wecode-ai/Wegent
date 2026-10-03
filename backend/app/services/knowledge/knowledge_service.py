@@ -1087,6 +1087,12 @@ class KnowledgeService:
         purge_spec = KnowledgeService._build_code_wiki_purge_spec(
             db, kb, user_id, documents
         )
+        # Reference-mode purge needs the KB record before deletion commits.
+        # Keep the records intact when the runtime cannot complete the purge.
+        if purge_spec is not None:
+            _run_async_in_new_loop(
+                _get_rag_gateway().purge_knowledge_index(purge_spec, db=db)
+            )
 
         for document in documents:
             db.delete(document)
@@ -1130,9 +1136,7 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
-        KnowledgeService._cleanup_deleted_code_wiki_resources(
-            db, knowledge_base_id, purge_spec, attachment_refs
-        )
+        KnowledgeService._cleanup_deleted_code_wiki_resources(db, attachment_refs)
         return True
 
     @staticmethod
@@ -1223,24 +1227,9 @@ class KnowledgeService:
     @staticmethod
     def _cleanup_deleted_code_wiki_resources(
         db: Session,
-        knowledge_base_id: int,
-        purge_spec: Optional[Any],
         attachment_refs: set[tuple[int, int]],
     ) -> None:
         """Clean external resources after the Code Wiki database deletion commits."""
-        if purge_spec is not None:
-            try:
-                _run_async_in_new_loop(
-                    _get_rag_gateway().purge_knowledge_index(purge_spec, db=db)
-                )
-            except Exception as exc:
-                batch_logger.error(
-                    "Failed to delete RAG index for code wiki %s: %s",
-                    knowledge_base_id,
-                    exc,
-                    exc_info=True,
-                )
-
         if not attachment_refs:
             return
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.config_resolver import ConfigResolver
 from knowledge_runtime.services.query_executor import QueryExecutor
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
@@ -53,6 +54,27 @@ def qa_query_db(shared_model_db: Session) -> Session:
     )
     shared_model_db.commit()
     return shared_model_db
+
+
+def test_unscoped_qa_count_only_includes_active_documents_in_current_kb(
+    qa_query_db: Session,
+) -> None:
+    qa_query_db.add(
+        KnowledgeDocument(
+            id=13,
+            kind_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": -3},
+        )
+    )
+    qa_query_db.commit()
+
+    config = ConfigResolver().resolve_query_config(
+        qa_query_db, knowledge_base_id=1, user_id=42
+    )
+
+    assert config.qa_pair_count == 2
+    assert config.scoped_document_ids is None
 
 
 async def run_query(

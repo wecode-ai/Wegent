@@ -100,8 +100,9 @@ def test_compose_resolves_backend_encrypted_model_and_storage_credentials(
         assert runtime_env[name] == backend_env[name]
 
 
-def test_standalone_launcher_loads_crypto_environment(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("launcher_path", ["knowledge_runtime/start.sh", "start.sh"])
+def test_launcher_loads_crypto_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, launcher_path: str
 ) -> None:
     for name, value in SYNTHETIC_ENV.items():
         monkeypatch.setenv(name, value)
@@ -114,8 +115,12 @@ def test_standalone_launcher_loads_crypto_environment(
     env_file.write_text(
         "".join(f"{name}={value}\n" for name, value in SYNTHETIC_ENV.items())
     )
-    launcher = (REPOSITORY_ROOT / "knowledge_runtime/start.sh").read_text()
-    command = launcher.split("# Start uvicorn\n", 1)[1]
+    launcher = (REPOSITORY_ROOT / launcher_path).read_text()
+    command = next(
+        line
+        for line in launcher.splitlines()
+        if "uvicorn knowledge_runtime.main:app" in line
+    )
     assert "--env-file .env" in command
 
     # Exercise Uvicorn's actual env-file loader without starting a server.

@@ -62,8 +62,8 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 - retrieval filter helpers
 
 The Backend still imports the light helpers of `knowledge_engine` (attachment
-Excel reading, embedding capability checks, retriever connection tests and
-storage capability listing), but never its retrieval execution.
+Excel reading, embedding capability checks and storage capability listing),
+but never its retrieval execution or storage SDKs.
 
 ### Remote runtime service
 
@@ -74,7 +74,9 @@ storage capability listing), but never its retrieval execution.
 - translates transport requests into `knowledge_engine` inputs
 - returns protocol responses
 
-It does not read Backend DB or own control-plane policy.
+It reads records and credentials from the shared product database to resolve
+execution configuration by reference. Backend retains authorization and scope
+selection; the runtime does not own product permission policy.
 
 ## Current Request Flow
 
@@ -106,8 +108,9 @@ Backend task or API
   -> knowledge_runtime
 ```
 
-`/api/retrievers/test-connection` talks to the storage factory directly and does
-not go through the gateway.
+`/api/retrievers/test-connection` forwards the storage configuration through
+`get_rag_gateway().test_connection(...)` to `knowledge_runtime`, which performs
+the connection test using its storage factory.
 
 ## Content Transport
 

@@ -2594,7 +2594,7 @@ start_services() {
         # --reload-dir: Watch shared and knowledge_engine modules for changes (editable dependencies)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "knowledge_runtime" "knowledge_runtime" \
-            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --env-file .env --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug" \
             "$KNOWLEDGE_RUNTIME_PORT"
     fi
 
