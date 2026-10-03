@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -16,7 +17,6 @@ from app.services.knowledge.retrieval_resource_resolver import (
     resolve_embedding_model_resource,
     resolve_retriever_resource,
 )
-from app.services.rag import retrieval_resource_configs
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DirectInjectionBudget,
@@ -25,10 +25,9 @@ from app.services.rag.runtime_specs import (
     IndexSource,
     ListChunksRuntimeSpec,
     PurgeKnowledgeRuntimeSpec,
-    QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
-    RuntimeRetrievalConfig,
 )
+from shared.knowledge_contracts import RuntimeRetrievalConfig
 from shared.knowledge_module import (
     EMBEDDING_RESOURCE_CATEGORY,
     MODEL_RESOURCE_KIND,
@@ -103,15 +102,8 @@ class RagRuntimeResolver:
         document_id: int | None,
         splitter_config_dict: dict | None,
         kb_index_info: KnowledgeBaseIndexInfo | None = None,
-        resolve_execution_configs: bool = True,
     ) -> IndexRuntimeSpec:
-        """Build the index spec one gateway executes.
-
-        ``resolve_execution_configs`` is set from the gateway the caller will
-        execute through: the local data plane consumes the fully resolved
-        retriever and embedding configuration, while the remote gateway only
-        sends the authorized references and leaves configuration to the runtime.
-        """
+        """Authorize index resources without resolving execution configuration."""
         try:
             parsed_knowledge_base_id = int(knowledge_base_id)
         except ValueError as exc:
@@ -133,24 +125,6 @@ class RagRuntimeResolver:
             knowledge_base_id=parsed_knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
         )
-        retriever_config = None
-        embedding_model_config = None
-        if resolve_execution_configs:
-            retriever_config = retrieval_resource_configs.build_retriever_config(
-                db=db,
-                user_id=kb_info.index_owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-            )
-            embedding_model_config = (
-                retrieval_resource_configs.build_embedding_model_config(
-                    db=db,
-                    user_id=kb_info.index_owner_user_id,
-                    model_name=embedding_model_name,
-                    model_namespace=embedding_model_namespace,
-                    user_name=user_name,
-                )
-            )
         return IndexRuntimeSpec(
             knowledge_base_id=parsed_knowledge_base_id,
             document_id=document_id,
@@ -161,8 +135,6 @@ class RagRuntimeResolver:
             embedding_model_namespace=embedding_model_namespace,
             authorized_resources=authorized_resources,
             source=IndexSource(source_type="attachment", attachment_id=attachment_id),
-            retriever_config=retriever_config,
-            embedding_model_config=embedding_model_config,
             splitter_config=splitter_config_dict,
             user_name=user_name,
         )
@@ -190,7 +162,6 @@ class RagRuntimeResolver:
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
-        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
         authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
@@ -203,9 +174,6 @@ class RagRuntimeResolver:
                 max_direct_chunks=max_direct_chunks,
             )
 
-        resolved_knowledge_base_configs = (
-            [] if knowledge_base_configs is None else knowledge_base_configs
-        )
         resolved_authorized_resources = (
             [] if authorized_resources is None else authorized_resources
         )
@@ -234,7 +202,6 @@ class RagRuntimeResolver:
             user_id=user_id,
             user_name=user_name,
             authorized_resources=resolved_authorized_resources,
-            knowledge_base_configs=resolved_knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,
@@ -314,21 +281,6 @@ class RagRuntimeResolver:
                 }
             ],
             authorized_resources=[authorized_entry],
-        )
-
-    def build_query_knowledge_base_configs(
-        self,
-        *,
-        db: Session,
-        knowledge_base_ids: list[int],
-        current_user_id: int | None = None,
-        user_name: str | None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        return self._build_query_knowledge_base_configs(
-            db=db,
-            knowledge_base_ids=knowledge_base_ids,
-            current_user_id=current_user_id,
-            user_name=user_name,
         )
 
     def build_query_authorized_resources(
@@ -538,18 +490,11 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
         max_chunks: int,
         query: str | None = None,
         metadata_condition: dict | None = None,
-        resolve_execution_configs: bool = True,
     ) -> ListChunksRuntimeSpec:
-        """Build the chunk-listing spec for one gateway.
-
-        ``resolve_execution_configs`` is set from the executing gateway. The
-        remote gateway resolves the retriever itself, so only the owner's access
-        verdict travels with the request.
-        """
+        """Authorize the owner storage resource for remote chunk listing."""
         from app.services.knowledge.knowledge_service import KnowledgeService
 
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -562,7 +507,6 @@ class RagRuntimeResolver:
                 f"Knowledge base {knowledge_base_id} not found or access denied"
             )
 
-        del user_name
         kb_info = get_kb_index_info_by_record(
             db=db,
             knowledge_base=kb,
@@ -575,7 +519,6 @@ class RagRuntimeResolver:
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
-            resolve_execution_configs=resolve_execution_configs,
         )
 
     def _build_list_chunks_runtime_spec(
@@ -587,7 +530,6 @@ class RagRuntimeResolver:
         max_chunks: int,
         query: str | None,
         metadata_condition: dict | None,
-        resolve_execution_configs: bool,
     ) -> ListChunksRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")
@@ -604,14 +546,12 @@ class RagRuntimeResolver:
             knowledge_base_id=kb.id,
             index_owner_user_id=owner_user_id,
             authorized_resources=self._admin_authorization(
-                kb.id, owner_user_id, "list_chunks", retriever_name, retriever_namespace
-            ),
-            retriever_config=retrieval_resource_configs.owner_retriever_config(
-                db=db,
-                user_id=owner_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-                resolve_execution_configs=resolve_execution_configs,
+                db,
+                kb.id,
+                owner_user_id,
+                "list_chunks",
+                retriever_name,
+                retriever_namespace,
             ),
             max_chunks=max_chunks,
             query=query,
@@ -626,7 +566,6 @@ class RagRuntimeResolver:
         document_ref: str,
         index_owner_user_id: int | None = None,
         enabled_index_families: list[str] | None = None,
-        resolve_execution_configs: bool = False,
     ) -> DeleteRuntimeSpec:
         kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
         if kb is None:
@@ -647,6 +586,7 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             document_ref=document_ref,
             authorized_resources=self._admin_authorization(
+                db,
                 knowledge_base_id,
                 runtime_user_id,
                 "delete",
@@ -654,13 +594,6 @@ class RagRuntimeResolver:
                 retriever_namespace,
             ),
             index_owner_user_id=runtime_user_id,
-            retriever_config=retrieval_resource_configs.owner_retriever_config(
-                db=db,
-                user_id=runtime_user_id,
-                name=retriever_name,
-                namespace=retriever_namespace,
-                resolve_execution_configs=resolve_execution_configs,
-            ),
             enabled_index_families=enabled_index_families or ["chunk_vector"],
         )
 
@@ -670,8 +603,6 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
-        resolve_execution_configs: bool = True,
     ) -> PurgeKnowledgeRuntimeSpec:
         """Build the purge spec, keeping the owner's retriever access verdict."""
 
@@ -691,9 +622,7 @@ class RagRuntimeResolver:
             db=db,
             kb=kb,
             current_user_id=user_id,
-            user_name=user_name,
             spec_type="purge",
-            resolve_execution_configs=resolve_execution_configs,
         )
 
     def build_public_drop_index_runtime_spec(
@@ -702,8 +631,6 @@ class RagRuntimeResolver:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-        user_name: str | None,
-        resolve_execution_configs: bool = True,
     ) -> DropKnowledgeIndexRuntimeSpec:
         """Build the drop spec, keeping the owner's retriever access verdict."""
 
@@ -723,114 +650,8 @@ class RagRuntimeResolver:
             db=db,
             kb=kb,
             current_user_id=user_id,
-            user_name=user_name,
             spec_type="drop",
-            resolve_execution_configs=resolve_execution_configs,
         )
-
-    def _build_query_knowledge_base_configs(
-        self,
-        *,
-        db: Session,
-        knowledge_base_ids: list[int],
-        current_user_id: int | None = None,
-        user_name: str | None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        knowledge_base_records = []
-        for knowledge_base_id in knowledge_base_ids:
-            kb = self._get_knowledge_base_record(
-                db=db, knowledge_base_id=knowledge_base_id
-            )
-            if kb is None:
-                raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-            knowledge_base_records.append(kb)
-
-        return self.build_query_knowledge_base_configs_from_records(
-            db=db,
-            knowledge_base_records=knowledge_base_records,
-            current_user_id=current_user_id,
-            user_name=user_name,
-        )
-
-    def build_query_knowledge_base_configs_from_records(
-        self,
-        *,
-        db: Session,
-        knowledge_base_records: list[Kind],
-        current_user_id: int | None = None,
-        user_name: str | None = None,
-    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
-        for kb in knowledge_base_records:
-            knowledge_base_id = kb.id
-
-            retrieval_config = (kb.json or {}).get("spec", {}).get(
-                "retrievalConfig"
-            ) or {}
-            retriever_name = retrieval_config.get("retriever_name")
-            retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-            embedding_config = retrieval_config.get("embedding_config") or {}
-            embedding_model_name = embedding_config.get("model_name")
-            embedding_model_namespace = embedding_config.get(
-                "model_namespace",
-                "default",
-            )
-
-            if not retriever_name:
-                raise ValueError(
-                    f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
-                )
-            if not embedding_model_name:
-                raise ValueError(
-                    f"Knowledge base {knowledge_base_id} has incomplete embedding config"
-                )
-
-            owner_user_id = kb.user_id
-            if current_user_id is not None:
-                kb_info = get_kb_index_info_by_record(
-                    db=db,
-                    knowledge_base=kb,
-                    current_user_id=current_user_id,
-                )
-                owner_user_id = kb_info.index_owner_user_id
-
-            retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
-            hybrid_weights = retrieval_config.get("hybrid_weights") or {}
-            configs.append(
-                QueryKnowledgeBaseRuntimeConfig(
-                    knowledge_base_id=knowledge_base_id,
-                    index_owner_user_id=owner_user_id,
-                    retriever_config=retrieval_resource_configs.build_retriever_config(
-                        db=db,
-                        user_id=owner_user_id,
-                        name=retriever_name,
-                        namespace=retriever_namespace,
-                    ),
-                    embedding_model_config=retrieval_resource_configs.build_embedding_model_config(
-                        db=db,
-                        user_id=owner_user_id,
-                        model_name=embedding_model_name,
-                        model_namespace=embedding_model_namespace,
-                        user_name=user_name,
-                    ),
-                    retrieval_config=RuntimeRetrievalConfig(
-                        top_k=retrieval_config.get("top_k", 20),
-                        score_threshold=retrieval_config.get("score_threshold", 0.5),
-                        retrieval_mode=retrieval_mode,
-                        vector_weight=(
-                            hybrid_weights.get("vector_weight")
-                            if retrieval_mode == "hybrid"
-                            else None
-                        ),
-                        keyword_weight=(
-                            hybrid_weights.get("keyword_weight")
-                            if retrieval_mode == "hybrid"
-                            else None
-                        ),
-                    ),
-                )
-            )
-        return configs
 
     def _get_knowledge_base_record(
         self,
@@ -854,9 +675,7 @@ class RagRuntimeResolver:
         db: Session,
         kb: Kind,
         current_user_id: int,
-        user_name: str | None,
         spec_type: Literal["purge", "drop"],
-        resolve_execution_configs: bool,
     ) -> PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")
@@ -871,20 +690,13 @@ class RagRuntimeResolver:
             knowledge_base=kb,
             current_user_id=current_user_id,
         )
-        resolved_retriever_config = retrieval_resource_configs.owner_retriever_config(
-            db=db,
-            user_id=kb_info.index_owner_user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
-            resolve_execution_configs=resolve_execution_configs,
-        )
 
         if spec_type == "purge":
             return PurgeKnowledgeRuntimeSpec(
                 knowledge_base_id=kb.id,
                 index_owner_user_id=kb_info.index_owner_user_id,
-                retriever_config=resolved_retriever_config,
                 authorized_resources=self._admin_authorization(
+                    db,
                     kb.id,
                     kb_info.index_owner_user_id,
                     "purge",
@@ -896,8 +708,8 @@ class RagRuntimeResolver:
         return DropKnowledgeIndexRuntimeSpec(
             knowledge_base_id=kb.id,
             index_owner_user_id=kb_info.index_owner_user_id,
-            retriever_config=resolved_retriever_config,
             authorized_resources=self._admin_authorization(
+                db,
                 kb.id,
                 kb_info.index_owner_user_id,
                 "drop",
@@ -906,8 +718,9 @@ class RagRuntimeResolver:
             ),
         )
 
-    @staticmethod
     def _admin_authorization(
+        self,
+        db: Session,
         kb_id: int,
         owner_id: int,
         operation: Literal["delete", "purge", "drop", "list_chunks"],
@@ -915,6 +728,9 @@ class RagRuntimeResolver:
         namespace: str,
     ) -> RemoteAuthorizedIndexResources:
         """Carry the owner's access verdict without storage secrets."""
+        retriever_kinds_service.get_retriever(
+            db=db, user_id=owner_id, name=name, namespace=namespace
+        )
         return RemoteAuthorizedIndexResources(
             knowledge_base_id=kb_id,
             index_owner_user_id=owner_id,

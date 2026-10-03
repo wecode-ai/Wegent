@@ -16,11 +16,7 @@ from app.schemas.rag import (
     RetrieveRequest,
     RetrieveResponse,
 )
-from app.services.rag.gateway_factory import (
-    get_delete_gateway,
-    get_list_chunks_gateway,
-    get_query_gateway,
-)
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -131,9 +127,7 @@ async def retrieve_documents(
             metadata_condition=request.metadata_condition,
         )
 
-        gateway = get_query_gateway()
-        # Remote failures are surfaced instead of falling back to the deprecated
-        # local data plane; local is not a rollback path.
+        gateway = get_rag_gateway()
         result = await gateway.query(runtime_spec, db=db)
 
         return {"records": result.get("records", [])}
@@ -164,18 +158,14 @@ async def list_index_chunks(
                 f"{INDEX_CHUNK_LIST_MAX_CHUNKS}"
             )
 
-        gateway = get_list_chunks_gateway()
+        gateway = get_rag_gateway()
         runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
             max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
             query="list_index_chunks",
-            resolve_execution_configs=gateway.requires_resolved_configs,
         )
-        # Remote failures are surfaced instead of falling back to the deprecated
-        # local data plane; local is not a rollback path.
         result = await gateway.list_chunks(runtime_spec, db=db)
 
         chunks = result.get("chunks", [])
@@ -214,13 +204,11 @@ async def purge_index_contents(
 ):
     """Delete all indexed chunks stored for a knowledge base while keeping documents."""
     try:
-        gateway = get_delete_gateway()
+        gateway = get_rag_gateway()
         runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
-            resolve_execution_configs=gateway.requires_resolved_configs,
         )
         return await gateway.purge_knowledge_index(runtime_spec, db=db)
     except HTTPException:
@@ -241,13 +229,11 @@ async def drop_index(
 ):
     """Physically drop the dedicated index/collection for a knowledge base."""
     try:
-        gateway = get_delete_gateway()
+        gateway = get_rag_gateway()
         runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
-            resolve_execution_configs=gateway.requires_resolved_configs,
         )
         return await gateway.drop_knowledge_index(runtime_spec, db=db)
     except HTTPException:

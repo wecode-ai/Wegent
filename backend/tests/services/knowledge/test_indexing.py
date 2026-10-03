@@ -9,14 +9,13 @@ import pytest
 
 from app.core.config import settings
 from app.services.knowledge.indexing import OldIndexCleanupError, run_document_indexing
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway
 
 
-def test_index_gateways_declare_whether_they_consume_resolved_configs() -> None:
-    """Only the local data plane consumes the resolved retrieval configuration."""
-    assert LocalRagGateway.requires_resolved_configs is True
-    assert RemoteRagGateway.requires_resolved_configs is False
+def test_index_gateway_executes_remotely() -> None:
+    from app.services.rag.gateway_factory import get_rag_gateway
+
+    assert isinstance(get_rag_gateway(), RemoteRagGateway)
 
 
 def test_run_document_indexing_closes_owned_session_before_gateway_call() -> None:
@@ -56,7 +55,7 @@ def test_run_document_indexing_closes_owned_session_before_gateway_call() -> Non
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -107,7 +106,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -146,7 +145,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
-    runtime_spec = SimpleNamespace(embedding_model_config=None)
+    runtime_spec = SimpleNamespace(knowledge_base_id=1, document_id=4)
     delete_spec = SimpleNamespace(knowledge_base_id=1, document_ref="4")
     gateway = MagicMock()
     call_order: list[str] = []
@@ -176,7 +175,7 @@ def test_run_document_indexing_deletes_the_old_index_before_the_write() -> None:
             return_value=delete_spec,
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -226,7 +225,7 @@ def test_run_document_indexing_aborts_when_the_old_index_cannot_be_deleted() -> 
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -271,7 +270,7 @@ def test_run_document_indexing_aborts_when_the_old_index_spec_cannot_be_built() 
             side_effect=ValueError("Knowledge base 1 not found"),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -320,7 +319,7 @@ def test_run_document_indexing_normalizes_empty_splitter_config_for_runtime_spec
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -378,7 +377,7 @@ def test_run_document_indexing_normalizes_legacy_splitter_config_for_runtime_spe
             return_value=object(),
         ),
         patch(
-            "app.services.knowledge.indexing.get_index_gateway",
+            "app.services.knowledge.indexing.get_rag_gateway",
             return_value=gateway,
         ),
     ):

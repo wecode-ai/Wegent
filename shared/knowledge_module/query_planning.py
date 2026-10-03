@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from shared.knowledge_contracts import (
@@ -17,7 +17,7 @@ from shared.knowledge_contracts import (
     normalize_search_text,
 )
 
-HintSource = Literal["explicit_hints", "fallback"]
+HintSource = Literal["explicit_hints", "fallback", "qa_pair_profile"]
 
 
 @dataclass(slots=True)
@@ -30,6 +30,18 @@ class SearchHintPlan:
     keywords: list[str]
     phrases: list[str]
     hint_source: HintSource
+
+
+def plan_query(
+    query: str,
+    search_hints: SearchHints | dict[str, object] | None = None,
+    *,
+    qa_pair_count: int = 0,
+) -> SearchHintPlan:
+    """Prefer caller hints, otherwise derive QA hints from authorized metadata."""
+    if search_hints is not None or qa_pair_count <= 0:
+        return build_search_hint_plan(query, search_hints)
+    return replace(build_qa_search_hint_plan(query), hint_source="qa_pair_profile")
 
 
 def build_search_hint_plan(

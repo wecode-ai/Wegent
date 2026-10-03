@@ -83,7 +83,7 @@ def _delete_document_index(
     id that no longer resolves.
     """
     from app.services.knowledge.index_runtime import get_kb_index_info_by_record
-    from app.services.rag.gateway_factory import get_delete_gateway
+    from app.services.rag.gateway_factory import get_rag_gateway
     from app.services.rag.runtime_resolver import RagRuntimeResolver
 
     spec = (knowledge_base.json or {}).get("spec", {})
@@ -101,9 +101,8 @@ def _delete_document_index(
         # KnowledgeService.delete_document also uses.
         document_ref=str(document_id),
         index_owner_user_id=index_info.index_owner_user_id,
-        resolve_execution_configs=get_delete_gateway().requires_resolved_configs,
     )
-    result = _run(get_delete_gateway().delete_document_index(delete_spec, db=db))
+    result = _run(get_rag_gateway().delete_document_index(delete_spec, db=db))
     status = (result or {}).get("status")
     if status not in {"success", "deleted"}:
         raise RuntimeError(f"index deletion returned status '{status}'")

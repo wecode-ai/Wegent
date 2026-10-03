@@ -19,8 +19,8 @@ carries the converted body. Only MinerU itself is simulated.
 MySQL, Redis, object storage, the runtime process, Qdrant, the converter worker
 and the backend callbacks are real. Only the external embedding and
 document-parsing HTTP endpoints are deterministic mocks. The remote data plane
-is the only data plane: the local gateway must resolve to remote for indexing
-and querying, the in-process scoped query fails if any local data plane method
+is the only data plane: the gateway always resolves to remote for indexing
+and querying, the in-process scoped query fails if any removed local data plane method
 runs, and a superseded generation dispatched through the broker must stand down
 instead of overwriting the newer result. Deleting a document removes exactly its
 own references while its siblings stay searchable, a repeated delete or a late
@@ -165,7 +165,7 @@ def _assert_in_process_scoped_query(
     """A non-HTTP caller resolves and executes the scoped query remotely."""
 
     from app.db.session import SessionLocal
-    from app.services.rag.gateway_factory import get_query_gateway
+    from app.services.rag.gateway_factory import get_rag_gateway
     from app.services.rag.runtime_resolver import RagRuntimeResolver
     from shared.knowledge_contracts.retrieval_scope import RetrievalScope
 
@@ -180,7 +180,7 @@ def _assert_in_process_scoped_query(
             user_id=owner_user_id,
             user_name=ADMIN_USER_NAME,
         )
-        result = asyncio.run(get_query_gateway().query(spec, db=db))
+        result = asyncio.run(get_rag_gateway().query(spec, db=db))
 
     records = result.get("records", [])
     _check(

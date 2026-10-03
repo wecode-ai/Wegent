@@ -44,7 +44,7 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
     serialize_splitter_config,
 )
-from app.services.rag.gateway_factory import get_index_gateway
+from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.telemetry import add_span_event
 
@@ -308,7 +308,7 @@ def _prepare_indexing_runtime(
         },
     )
 
-    index_gateway = get_index_gateway()
+    index_gateway = get_rag_gateway()
     runtime_spec = runtime_resolver.build_index_runtime_spec(
         db=db,
         knowledge_base_id=knowledge_base_id,
@@ -325,7 +325,6 @@ def _prepare_indexing_runtime(
             splitter_config_dict=splitter_config_dict,
         ),
         kb_index_info=kb_info,
-        resolve_execution_configs=index_gateway.requires_resolved_configs,
     )
 
     delete_spec = None
@@ -336,7 +335,6 @@ def _prepare_indexing_runtime(
                 knowledge_base_id=int(knowledge_base_id),
                 document_ref=str(document_id),
                 index_owner_user_id=kb_info.index_owner_user_id,
-                resolve_execution_configs=index_gateway.requires_resolved_configs,
             )
         except Exception as e:
             logger.error(
@@ -384,7 +382,6 @@ def _run_indexing_gateway_calls(
     # loop with one we are about to close, breaking any subsequent async work on
     # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
-
         if delete_spec is not None:
             try:
                 delete_result = loop.run_until_complete(

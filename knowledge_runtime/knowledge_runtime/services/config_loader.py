@@ -22,6 +22,7 @@ from shared.db.sync_session import get_session_factory
 from shared.models import (
     RemoteAuthorizedIndexResources,
     RemoteAuthorizedRetrievalResources,
+    RetrievalScope,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class RuntimeConfigLoader:
         user_id: int,
         authorized: RemoteAuthorizedRetrievalResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
+        scope: RetrievalScope | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         return self._resolve_with_session(
@@ -75,6 +77,7 @@ class RuntimeConfigLoader:
                 user_id=user_id,
                 authorized=authorized,
                 retrieval_override=retrieval_override,
+                scope=scope,
             )
         )
 
@@ -85,6 +88,7 @@ class RuntimeConfigLoader:
         user_id: int,
         authorized: dict[int, RemoteAuthorizedRetrievalResources] | None = None,
         retrieval_overrides: Mapping[int, Mapping[str, Any]] | None = None,
+        scope: RetrievalScope | None = None,
     ) -> dict[int, QueryConfig]:
         """Resolve query configs for multiple knowledge bases in one session.
 
@@ -101,6 +105,7 @@ class RuntimeConfigLoader:
                     user_id=user_id,
                     authorized=authorized.get(knowledge_base_id),
                     retrieval_override=retrieval_overrides.get(knowledge_base_id),
+                    scope=scope,
                 )
                 for knowledge_base_id in knowledge_base_ids
             }

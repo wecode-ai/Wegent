@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
@@ -30,6 +31,7 @@ from shared.knowledge_module import (
 from shared.models import (
     RemoteAuthorizedIndexResources,
     RemoteAuthorizedRetrievalResources,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -62,6 +64,8 @@ class QueryConfig:
     embedding_model_config: RuntimeEmbeddingModelConfig
     retrieval_config: RuntimeRetrievalConfig
     user_name: str | None = None
+    qa_pair_count: int = 0
+    scoped_document_ids: list[int] | None = None
 
 
 @dataclass
@@ -178,6 +182,7 @@ class ConfigResolver:
         user_id: int,
         authorized: RemoteAuthorizedRetrievalResources | None = None,
         retrieval_override: Mapping[str, Any] | None = None,
+        scope: RetrievalScope | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base.
 
@@ -199,6 +204,9 @@ class ConfigResolver:
         index_owner_user_id = authorized.index_owner_user_id
         user_name = self._get_user_name(db, user_id)
 
+        qa_pair_count, scoped_document_ids = self._resolve_query_document_metadata(
+            db, knowledge_base_id=knowledge_base_id, scope=scope
+        )
         return QueryConfig(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
@@ -212,6 +220,8 @@ class ConfigResolver:
                 kb, authorized, retrieval_override
             ),
             user_name=user_name,
+            qa_pair_count=qa_pair_count,
+            scoped_document_ids=scoped_document_ids,
         )
 
     def _authorized_retriever_config(
@@ -317,6 +327,40 @@ class ConfigResolver:
                 namespace=authorized.embedding_model.namespace,
             ),
         )
+
+    def _resolve_query_document_metadata(
+        self,
+        db: Session,
+        *,
+        knowledge_base_id: int,
+        scope: RetrievalScope | None,
+    ) -> tuple[int, list[int] | None]:
+        """Read only QA metadata within the active, authorized document scope."""
+        filters = (
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        subtype = KnowledgeDocument.chunks["splitter_subtype"].as_string()
+        count = KnowledgeDocument.chunks["qa_pair_count"].as_integer()
+        scoped_ids = scope.document_ids if scope is not None else None
+        if scoped_ids is None:
+            total = (
+                db.query(func.coalesce(func.sum(count), 0))
+                .filter(*filters, subtype == "qa_pair", count > 0)
+                .scalar()
+            )
+            return int(total or 0), None
+        document_rows = (
+            db.query(KnowledgeDocument.id, subtype, count)
+            .filter(*filters, KnowledgeDocument.id.in_(scoped_ids))
+            .all()
+        )
+        qa_pair_count = sum(
+            count
+            for _, subtype, count in document_rows
+            if subtype == "qa_pair" and isinstance(count, int) and count > 0
+        )
+        return qa_pair_count, [document_id for document_id, _, _ in document_rows]
 
     def resolve_admin_config(
         self,

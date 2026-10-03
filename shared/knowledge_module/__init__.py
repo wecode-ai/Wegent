@@ -82,8 +82,10 @@ from .operations import (
     manage_index,
     query_documents,
 )
+from .query_planning import plan_query
 
 __all__ = [
+    "plan_query",
     "IndexStateSnapshot",
     "IndexStateDecision",
     "active_index_stale_reason",

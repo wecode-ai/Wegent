@@ -293,4 +293,4 @@ echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo ""
 
 # Start uvicorn
-.venv/bin/python -m uvicorn knowledge_runtime.main:app --host "$HOST" --port "$PORT" --reload
+.venv/bin/python -m uvicorn knowledge_runtime.main:app --env-file .env --host "$HOST" --port "$PORT" --reload

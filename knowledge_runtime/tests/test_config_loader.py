@@ -124,6 +124,7 @@ def test_resolve_query_configs_uses_one_short_session() -> None:
         user_id=42,
         authorized=None,
         retrieval_override=None,
+        scope=None,
     )
     resolver.resolve_query_config.assert_any_call(
         db=session,
@@ -131,6 +132,7 @@ def test_resolve_query_configs_uses_one_short_session() -> None:
         user_id=42,
         authorized=None,
         retrieval_override=None,
+        scope=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()

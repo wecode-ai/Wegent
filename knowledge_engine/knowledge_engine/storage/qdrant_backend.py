@@ -36,6 +36,7 @@ from knowledge_engine.retrieval.filters import (
 )
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from shared.knowledge_contracts import RetrievalScope
 
@@ -62,7 +63,9 @@ class QdrantBackend(BaseStorageBackend):
     """
 
     # Qdrant only supports vector search
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
+        STORAGE_BACKEND_SPECS["qdrant"].retrieval_methods
+    )
     supports_retrieval_scope: ClassVar[bool] = True
 
     # Override INDEX_PREFIX for Qdrant collections

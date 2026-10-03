@@ -26,7 +26,7 @@ from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
-    _get_delete_gateway,
+    _get_rag_gateway,
     _run_async_in_new_loop,
 )
 from app.services.knowledge.namespace_utils import get_namespace_level
@@ -799,7 +799,7 @@ class KnowledgeTransferService:
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
         logger = logging.getLogger(__name__)
-        rag_gateway = _get_delete_gateway()
+        rag_gateway = _get_rag_gateway()
 
         for doc in docs:
             spec = source_kb.json.get("spec", {})
@@ -818,7 +818,6 @@ class KnowledgeTransferService:
                     knowledge_base_id=source_kb.id,
                     document_ref=str(doc.id),
                     index_owner_user_id=kb_info.index_owner_user_id,
-                    resolve_execution_configs=rag_gateway.requires_resolved_configs,
                 )
                 _run_async_in_new_loop(
                     rag_gateway.delete_document_index(delete_runtime_spec, db=db)

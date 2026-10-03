@@ -33,6 +33,8 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 
 
@@ -56,9 +58,7 @@ class RemoteRagGatewayError(RuntimeError):
 
 
 class RemoteRagGateway:
-    # The remote request carries only the authorized references; the runtime
-    # resolves the retriever and embedding configuration itself.
-    requires_resolved_configs = False
+    """Send authorized resource references for Runtime-owned execution."""
 
     def __init__(
         self,
@@ -147,7 +147,7 @@ class RemoteRagGateway:
         del db
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
-            user_id=spec.user_id or 0,
+            user_id=spec.user_id,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
@@ -225,6 +225,17 @@ class RemoteRagGateway:
         )
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
+        return response.model_dump()
+
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
+    ) -> dict[str, Any]:
+        response_payload = await self._post_model(
+            "/internal/rag/test-connection",
+            request,
+        )
+        response = RemoteTestConnectionResponse.model_validate(response_payload)
         return response.model_dump()
 
 

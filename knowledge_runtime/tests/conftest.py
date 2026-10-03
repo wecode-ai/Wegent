@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models.db import Kind, User
 from shared.testing import capability_reference_database
@@ -149,7 +150,9 @@ def _shared_model_kinds() -> list[Kind]:
 @pytest.fixture
 def shared_model_db() -> Iterator[Session]:
     """Create a KB whose embedding Model is referenced into its group."""
-    with capability_reference_database(additional_tables=(User.__table__,)) as database:
+    with capability_reference_database(
+        additional_tables=(User.__table__, KnowledgeDocument.__table__)
+    ) as database:
         database.session.add(User(id=42, user_name="kb-owner", password_hash="unused"))
         database.session.add_all(_shared_model_kinds())
         database.session.execute(
@@ -205,7 +208,9 @@ def _referenced_retriever_kinds() -> list[Kind]:
 @pytest.fixture
 def referenced_retriever_db() -> Iterator[Session]:
     """Create a KB whose owner holds an approved reference to a Retriever."""
-    with capability_reference_database(additional_tables=(User.__table__,)) as database:
+    with capability_reference_database(
+        additional_tables=(User.__table__, KnowledgeDocument.__table__)
+    ) as database:
         database.session.add(User(id=42, user_name="kb-owner", password_hash="unused"))
         database.session.add_all(_referenced_retriever_kinds())
         database.session.execute(

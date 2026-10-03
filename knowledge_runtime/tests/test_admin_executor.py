@@ -15,6 +15,7 @@ from shared.models import (
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemotePurgeKnowledgeIndexRequest,
+    RemoteTestConnectionRequest,
     RuntimeRetrieverConfig,
 )
 
@@ -284,3 +285,60 @@ class TestAdminExecutor:
         mock_storage_backend.get_all_chunks.assert_called_once()
         call_kwargs = mock_storage_backend.get_all_chunks.call_args.kwargs
         assert call_kwargs["metadata_condition"] == {"doc_ref": "doc_123"}
+
+    @pytest.mark.asyncio
+    async def test_test_connection_builds_backend_from_request(
+        self, admin_executor
+    ) -> None:
+        """The runtime builds the backend from the caller-supplied config."""
+        request = RemoteTestConnectionRequest(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+            username="alice",
+            password="secret",
+            api_key="api-token",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.test_connection.return_value = True
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_config",
+            return_value=mock_storage_backend,
+        ) as mock_create:
+            result = await admin_executor.test_connection(request)
+
+        assert result.success is True
+        assert result.message == "Connection successful"
+        mock_create.assert_called_once_with(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+            username="alice",
+            password="secret",
+            api_key="api-token",
+            index_strategy={"mode": "per_dataset"},
+            ext={},
+        )
+        mock_storage_backend.test_connection.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_test_connection_reports_unreachable_storage(
+        self, admin_executor
+    ) -> None:
+        """An unreachable storage backend yields success=false, not an error."""
+        request = RemoteTestConnectionRequest(
+            storage_type="qdrant",
+            url="http://localhost:6333",
+        )
+
+        mock_storage_backend = MagicMock()
+        mock_storage_backend.test_connection.return_value = False
+
+        with patch(
+            "knowledge_runtime.services.admin_executor.create_storage_backend_from_config",
+            return_value=mock_storage_backend,
+        ):
+            result = await admin_executor.test_connection(request)
+
+        assert result.success is False
+        assert result.message == "Connection failed"

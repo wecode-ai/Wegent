@@ -605,7 +605,6 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
-          RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           KNOWLEDGE_CONVERSION_ENABLED: "true"
           KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"

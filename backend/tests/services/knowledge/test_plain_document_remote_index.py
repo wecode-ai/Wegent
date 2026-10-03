@@ -28,11 +28,11 @@ from app.schemas.knowledge import KnowledgeDocumentCreate
 from app.services.knowledge import search_execution
 from app.services.knowledge.indexing import run_document_indexing
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag import direct_injection
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
-from app.services.rag.retrieval_service import RetrievalService
 from app.tasks.knowledge_tasks import index_document_task
 from shared.models import PresignedUrlContentRef, RemoteIndexRequest, RetrievalScope
+from tests.utils.remote_only import reject_local_rag_imports  # noqa: F401
 from tests.utils.retrieval_resources import embedding_model_kind
 from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
 
@@ -167,7 +167,6 @@ def test_document_index_request_reaches_runtime_with_authorized_resources(
     test_db: Session, test_user: User, mocker
 ) -> None:
     kb, document = _prepare_indexable_kb(test_db, test_user)
-    mocker.patch.object(settings, "RAG_RUNTIME_MODE", "remote")
     mocker.patch(
         "app.services.rag.remote_gateway.SessionLocal", return_value=MagicMock()
     )
@@ -183,11 +182,6 @@ def test_document_index_request_reaches_runtime_with_authorized_resources(
         return_value=("release-notes.md", ".md"),
     )
     post = _patch_remote_request(mocker)
-    local_index = mocker.patch.object(
-        LocalRagGateway,
-        "index_document",
-        AsyncMock(side_effect=AssertionError("local index must not run")),
-    )
 
     result = run_document_indexing(**_index_kwargs(kb, document, test_user), db=test_db)
 
@@ -228,14 +222,12 @@ def test_document_index_request_reaches_runtime_with_authorized_resources(
         },
         "explicit_selection": False,
     }
-    local_index.assert_not_called()
 
 
 def test_remote_index_failure_is_visible_without_local_index(
     test_db: Session, test_user: User, mocker
 ) -> None:
     kb, document = _prepare_indexable_kb(test_db, test_user)
-    mocker.patch.object(settings, "RAG_RUNTIME_MODE", "remote")
     mocker.patch(
         "app.services.rag.remote_gateway.SessionLocal", return_value=MagicMock()
     )
@@ -251,16 +243,9 @@ def test_remote_index_failure_is_visible_without_local_index(
         return_value=("release-notes.md", ".md"),
     )
     _patch_remote_request(mocker, index_status_code=503)
-    local_index = mocker.patch.object(
-        LocalRagGateway,
-        "index_document",
-        AsyncMock(side_effect=AssertionError("local index must not run")),
-    )
 
     with pytest.raises(RemoteRagGatewayError):
         run_document_indexing(**_index_kwargs(kb, document, test_user), db=test_db)
-
-    local_index.assert_not_called()
 
 
 def test_stale_generation_task_never_reaches_the_index_gateway(
@@ -277,7 +262,7 @@ def test_stale_generation_task_never_reaches_the_index_gateway(
         side_effect=AssertionError("stale generation must not write")
     )
     get_gateway = mocker.patch(
-        "app.services.knowledge.indexing.get_index_gateway", return_value=gateway
+        "app.services.knowledge.indexing.get_rag_gateway", return_value=gateway
     )
     monkeypatch.setattr(
         "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
@@ -313,7 +298,6 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     contract, not a process.
     """
     kb, _ = _prepare_indexable_kb(test_db, test_user)
-    mocker.patch.object(settings, "RAG_RUNTIME_MODE", "remote")
     dispatched: list[dict[str, Any]] = []
 
     def _capture(**kwargs: Any) -> MagicMock:
@@ -380,11 +364,6 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
         return_value=("release-notes.md", ".md"),
     )
     post = _patch_remote_request(mocker)
-    local_index = mocker.patch.object(
-        LocalRagGateway,
-        "index_document",
-        AsyncMock(side_effect=AssertionError("local index must not run")),
-    )
 
     task_kwargs = {
         key: value for key, value in rebuild_task.items() if key != "index_generation"
@@ -409,7 +388,6 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     assert request.authorized_resources.index_owner_user_id == test_user.id
     assert request.authorized_resources.retriever.name == "retriever-a"
     assert request.authorized_resources.embedding_model.name == "embedding-a"
-    local_index.assert_not_called()
 
 
 async def test_product_query_entry_returns_the_indexed_document_reference(
@@ -417,10 +395,9 @@ async def test_product_query_entry_returns_the_indexed_document_reference(
 ) -> None:
     """A scoped query from the product entry returns the document reference."""
     kb, document = _prepare_indexable_kb(test_db, test_user)
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "remote")
     monkeypatch.setattr(search_execution, "SessionLocal", lambda: nullcontext(test_db))
     monkeypatch.setattr(
-        RetrievalService,
+        direct_injection,
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )
@@ -444,11 +421,6 @@ async def test_product_query_entry_returns_the_indexed_document_reference(
                 "total_estimated_tokens": 12,
             }
         ),
-    )
-    local_query = mocker.patch.object(
-        LocalRagGateway,
-        "query",
-        AsyncMock(side_effect=AssertionError("local query must not run")),
     )
 
     result = await search_execution.knowledge_search_runner.retrieve(
@@ -476,4 +448,3 @@ async def test_product_query_entry_returns_the_indexed_document_reference(
     assert result["knowledge_base_id"] == kb.id
     assert result["records"][0]["knowledge_base_id"] == kb.id
     assert result["records"][0]["document_id"] == document.id
-    local_query.assert_not_called()

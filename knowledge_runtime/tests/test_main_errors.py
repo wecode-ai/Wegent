@@ -15,6 +15,7 @@ from knowledge_runtime.main import (
     embedding_dimension_mismatch_handler,
     value_error_handler,
 )
+from knowledge_runtime.services.config_resolver import ConfigResolutionError
 
 
 def _index_request() -> Request:

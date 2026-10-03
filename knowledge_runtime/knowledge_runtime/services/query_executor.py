@@ -24,6 +24,7 @@ from shared.models import (
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RetrievalScope,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,10 +66,14 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.authorized_resources,
         )
+        resolved_scope = request.scope
+        if resolved_scope is None and request.document_ids is not None:
+            resolved_scope = RetrievalScope(document_ids=request.document_ids)
         configs_by_kb_id = self._config_loader.resolve_query_configs(
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
             authorized=authorized_by_kb_id,
+            scope=resolved_scope,
             retrieval_overrides={
                 knowledge_base_id: override.retrieval_config.model_dump(
                     exclude_unset=True
@@ -81,9 +86,16 @@ class QueryExecutor:
 
         targets = [
             self._build_query_target(
-                knowledge_base_id, configs_by_kb_id[knowledge_base_id]
+                knowledge_base_id,
+                configs_by_kb_id[knowledge_base_id],
+                self._planner.plan(
+                    request.query,
+                    request.search_hints,
+                    qa_pair_count=configs_by_kb_id[knowledge_base_id].qa_pair_count,
+                ),
             )
             for knowledge_base_id in request.knowledge_base_ids
+            if configs_by_kb_id[knowledge_base_id].scoped_document_ids != []
         ]
         scope = (
             request.scope.document_ids
@@ -141,7 +153,7 @@ class QueryExecutor:
     @staticmethod
     def _log_query_plan(plan: QueryPlan, search_hints: dict[str, Any]) -> None:
         logger.info(
-            "Query request: hint_source=%s, normalized_query='%s...', "
+            "Query request hints: hint_source=%s, normalized_query='%s...', "
             "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
             "semantic_query=%s, keywords=%s, phrases=%s",
             plan.hint_source,
@@ -155,7 +167,9 @@ class QueryExecutor:
         )
 
     @staticmethod
-    def _build_query_target(knowledge_base_id: int, config: QueryConfig) -> QueryTarget:
+    def _build_query_target(
+        knowledge_base_id: int, config: QueryConfig, plan: QueryPlan
+    ) -> QueryTarget:
         """Supply execution dependencies after the config session has closed."""
         storage = create_storage_backend_from_runtime_config(config.retriever_config)
         embedding = create_embedding_model_from_runtime_config(
@@ -166,6 +180,14 @@ class QueryExecutor:
             str(knowledge_base_id),
             config.retrieval_config,
             config.index_owner_user_id,
+            document_ids=config.scoped_document_ids,
+            query_plan={
+                "dense_query": plan.dense_query,
+                "sparse_query": plan.sparse_query,
+                "keywords": plan.keywords,
+                "phrases": plan.phrases,
+                "hint_source": plan.hint_source,
+            },
         )
 
     def _build_retrieval_override_map(

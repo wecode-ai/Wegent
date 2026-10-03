@@ -23,7 +23,6 @@ from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.services.knowledge import search_execution
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
@@ -34,6 +33,7 @@ from shared.models import (
     RetrievalScope,
 )
 from tests.utils.namespace_members import add_group_member, group_namespace
+from tests.utils.remote_only import reject_local_rag_imports  # noqa: F401
 from tests.utils.retrieval_resources import embedding_model_kind
 from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
 
@@ -129,7 +129,7 @@ def _prepare_environment(
         staticmethod(lambda **kwargs: ["authorized-resources"]),
     )
     monkeypatch.setattr(
-        search_execution.RetrievalService,
+        search_execution.direct_injection,
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )
@@ -235,14 +235,19 @@ async def test_remote_failure_is_exposed_without_local_query(
         "_prepare",
         staticmethod(lambda **kwargs: spec),
     )
-    monkeypatch.setattr(search_execution, "get_query_gateway", lambda: remote_gateway)
-    monkeypatch.setattr(LocalRagGateway, "query", local_query)
+    monkeypatch.setattr(search_execution, "RemoteRagGateway", lambda: remote_gateway)
+    monkeypatch.setattr(
+        search_execution.KnowledgeSearchRunner,
+        "_authorize_remote",
+        staticmethod(lambda *args, **kwargs: ["authorized-resources"]),
+    )
 
     with pytest.raises(RemoteRagGatewayError):
         await search_execution.knowledge_search_runner.retrieve(**_prepare_kwargs())
 
-    remote_gateway.query.assert_awaited_once_with(spec)
-    local_query.assert_not_called()
+    remote_gateway.query.assert_awaited_once_with(
+        spec.model_copy(update={"authorized_resources": ["authorized-resources"]})
+    )
 
 
 async def test_authorized_references_reach_the_runtime_request(
@@ -401,10 +406,6 @@ def _fail_all_gateways(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(name)
         raise AssertionError(f"{name} must not run for an unauthorized query")
 
-    monkeypatch.setattr(
-        "app.api.endpoints.internal.rag.LocalRagGateway.query",
-        lambda self, *args, **kwargs: record("local", *args, **kwargs),
-    )
     monkeypatch.setattr(
         "app.api.endpoints.internal.rag.RemoteRagGateway.query",
         lambda self, *args, **kwargs: record("remote", *args, **kwargs),

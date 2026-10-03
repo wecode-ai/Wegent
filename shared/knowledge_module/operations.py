@@ -38,6 +38,8 @@ class QueryTarget:
     knowledge_id: str
     retrieval_config: RuntimeRetrievalConfig | Mapping[str, Any]
     user_id: int | None = None
+    document_ids: list[int] | None = None
+    query_plan: dict[str, Any] | None = None
 
 
 async def query_documents(
@@ -58,18 +60,25 @@ async def query_documents(
         raise ValueError("max_results must be positive")
     records: list[dict[str, Any]] = []
     if document_ids != []:
-        scope = (
-            RetrievalScope(document_ids=document_ids)
-            if document_ids is not None
-            else None
-        )
         for target in targets:
+            target_ids = (
+                target.document_ids if target.document_ids is not None else document_ids
+            )
+            if target_ids == []:
+                continue
+            scope = (
+                RetrievalScope(document_ids=target_ids)
+                if target_ids is not None
+                else None
+            )
             result = await target.adapter.execute(
                 knowledge_id=target.knowledge_id,
                 query=query,
                 retrieval_config=target.retrieval_config,
                 scope=scope,
-                query_plan=query_plan,
+                query_plan=(
+                    target.query_plan if target.query_plan is not None else query_plan
+                ),
                 metadata_condition=metadata_condition,
                 user_id=target.user_id,
             )

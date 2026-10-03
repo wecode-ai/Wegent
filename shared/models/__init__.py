@@ -97,7 +97,6 @@ from .knowledge_runtime_protocol import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteIndexRequest,
-    RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteListChunkRecord,
     RemoteListChunksRequest,
@@ -108,6 +107,8 @@ from .knowledge_runtime_protocol import (
     RemoteQueryResponse,
     RemoteRagError,
     RemoteRetrievalResourceRef,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
     RetrievalScope,
 )
 
@@ -170,7 +171,6 @@ __all__ = [
     "normalize_search_text",
     "normalize_search_terms",
     "coerce_search_hints",
-    "RemoteKnowledgeBaseQueryConfig",
     "RemoteKnowledgeBaseRetrievalOverride",
     "RemoteAuthorizedRetrievalResources",
     "RemoteAuthorizedIndexResources",
@@ -186,6 +186,8 @@ __all__ = [
     "RemoteQueryRequest",
     "RemoteQueryRecord",
     "RemoteQueryResponse",
+    "RemoteTestConnectionRequest",
+    "RemoteTestConnectionResponse",
     # OpenAI Responses API
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",

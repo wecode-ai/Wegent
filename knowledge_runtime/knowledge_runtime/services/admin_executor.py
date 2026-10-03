@@ -6,11 +6,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from knowledge_engine.services.document_service import DocumentService
-from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_config,
+    create_storage_backend_from_runtime_config,
+)
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.document_index_adapter import (
     DocumentServiceIndexAdapter,
@@ -26,6 +30,8 @@ from shared.models import (
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -182,3 +188,39 @@ class AdminExecutor:
             user_id=config.index_owner_user_id,
         )
         return RemoteListChunksResponse.model_validate(result)
+
+    @trace_async(
+        span_name="test_connection",
+        tracer_name="knowledge_runtime.services.admin",
+    )
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
+    ) -> RemoteTestConnectionResponse:
+        """Test connectivity for a storage configuration supplied by the caller.
+
+        The Backend does not carry the vector store SDKs, so it forwards the
+        configuration here and this executor performs the real connection test.
+        """
+        storage_backend = create_storage_backend_from_config(
+            storage_type=request.storage_type,
+            url=request.url,
+            username=request.username,
+            password=request.password,
+            api_key=request.api_key,
+            index_strategy=request.index_strategy,
+            ext=request.ext,
+        )
+
+        success = await asyncio.to_thread(storage_backend.test_connection)
+
+        logger.info(
+            "Tested storage connection: storage_type=%s, success=%s",
+            request.storage_type,
+            success,
+        )
+
+        return RemoteTestConnectionResponse(
+            success=success,
+            message="Connection successful" if success else "Connection failed",
+        )

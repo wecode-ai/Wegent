@@ -284,9 +284,9 @@ def test_index_document_task_routes_indexing_through_gateway():
                 return_value=object(),
             )
         )
-        mock_get_index_gateway = stack.enter_context(
+        mock_get_rag_gateway = stack.enter_context(
             patch(
-                "app.services.knowledge.indexing.get_index_gateway",
+                "app.services.knowledge.indexing.get_rag_gateway",
                 return_value=mock_gateway,
             )
         )
@@ -307,7 +307,7 @@ def test_index_document_task_routes_indexing_through_gateway():
 
     assert result["status"] == "success"
     mock_resolve.assert_called_once()
-    mock_get_index_gateway.assert_called_once()
+    mock_get_rag_gateway.assert_called_once()
     mock_gateway.index_document.assert_awaited_once_with(
         mock_resolve.return_value,
         db=None,
@@ -684,7 +684,6 @@ def test_delete_late_index_uses_deleted_document_ref():
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     gateway = MagicMock()
-    gateway.requires_resolved_configs = False
     gateway.delete_document_index = AsyncMock(return_value={"status": "deleted"})
     delete_spec = object()
 
@@ -698,7 +697,7 @@ def test_delete_late_index_uses_deleted_document_ref():
             return_value=delete_spec,
         ) as build_spec,
         patch(
-            "app.services.rag.gateway_factory.get_delete_gateway",
+            "app.services.rag.gateway_factory.get_rag_gateway",
             return_value=gateway,
         ),
     ):
@@ -715,6 +714,5 @@ def test_delete_late_index_uses_deleted_document_ref():
         knowledge_base_id=1,
         document_ref="4",
         index_owner_user_id=9,
-        resolve_execution_configs=False,
     )
     gateway.delete_document_index.assert_awaited_once_with(delete_spec, db=db)

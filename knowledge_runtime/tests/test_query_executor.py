@@ -610,6 +610,7 @@ class TestQueryExecutor:
             user_id=42,
             authorized={1: _authorized(1), 2: _authorized(2)},
             retrieval_overrides={},
+            scope=None,
         )
 
     @pytest.mark.asyncio

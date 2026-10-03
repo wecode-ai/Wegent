@@ -588,7 +588,6 @@ class TestKnowledgeServiceDeleteDocument:
         db.query.return_value = kb_query
         delete_runtime_spec = object()
         mock_gateway = MagicMock()
-        mock_gateway.requires_resolved_configs = False
         mock_gateway.delete_document_index = MagicMock()
 
         with (
@@ -620,7 +619,7 @@ class TestKnowledgeServiceDeleteDocument:
                 return_value=True,
             ) as mock_delete_context,
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(
@@ -644,7 +643,6 @@ class TestKnowledgeServiceDeleteDocument:
             knowledge_base_id=10,
             document_ref="8",
             index_owner_user_id=7,
-            resolve_execution_configs=False,
         )
         build_kb_index_info.assert_called_once_with(
             db=db,
@@ -728,7 +726,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=MagicMock(),
             ),
             patch(
@@ -798,7 +796,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=MagicMock(),
             ),
             patch(
@@ -872,7 +870,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=MagicMock(),
             ),
             patch(
@@ -938,7 +936,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=MagicMock(),
             ),
             patch(
@@ -1019,7 +1017,7 @@ class TestKnowledgeServiceDeleteDocument:
                 return_value=True,
             ) as mock_delete_context,
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(
@@ -1096,7 +1094,7 @@ class TestKnowledgeServiceDeleteDocument:
                 ),
             ),
             patch(
-                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                "app.services.knowledge.knowledge_service._get_rag_gateway",
                 return_value=mock_gateway,
             ),
             patch(

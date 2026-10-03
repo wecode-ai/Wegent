@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
-from app.services.rag.local_gateway import LocalRagGateway
+from tests.utils.remote_only import reject_local_rag_imports  # noqa: F401
 from tests.utils.retrieval_resources import embedding_model_kind
 from tests.utils.retrieval_resources import retriever_kind as build_retriever_kind
 
@@ -32,7 +32,6 @@ _STORED_CONFIG = {
 
 @pytest.fixture(autouse=True)
 def configure_remote_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
     monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
 
 
@@ -107,11 +106,6 @@ def test_public_retrieve_executes_caller_selected_resources(
     _create_resource_pair(test_db, test_user.id, "a")
     _create_resource_pair(test_db, test_user.id, "b")
     kb = _create_knowledge_base(test_db, owner_user_id=test_user.id)
-    local_query = mocker.patch.object(
-        LocalRagGateway,
-        "query",
-        side_effect=AssertionError("local must not be used for remote queries"),
-    )
     post = mocker.patch("httpx.AsyncClient.post", return_value=_runtime_response())
 
     response = test_client.post(
@@ -153,7 +147,6 @@ def test_public_retrieve_executes_caller_selected_resources(
         }
     ]
     assert "explicit_resources" not in body
-    local_query.assert_not_called()
 
 
 def test_public_retrieve_authorizes_an_approved_shared_retriever(
@@ -408,11 +401,6 @@ def test_public_retrieve_exposes_remote_failure_without_local_fallback(
             ),
         ),
     )
-    local_query = mocker.patch.object(
-        LocalRagGateway,
-        "query",
-        side_effect=AssertionError("local must not be used as a rollback path"),
-    )
 
     response = test_client.post(
         "/api/rag/retrieve",
@@ -422,4 +410,3 @@ def test_public_retrieve_exposes_remote_failure_without_local_fallback(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "knowledge runtime unavailable"
-    local_query.assert_not_called()

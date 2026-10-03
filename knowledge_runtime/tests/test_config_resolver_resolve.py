@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.services.config_resolver import (
+    AdminResolvedConfig,
     ConfigResolutionError,
     ConfigResolver,
     IndexConfig,

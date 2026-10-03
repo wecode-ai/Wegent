@@ -64,8 +64,6 @@ def _build_spec(resolver: RagRuntimeResolver, db: Session, spec_type: str, kb_id
         "db": db,
         "knowledge_base_id": kb_id,
         "user_id": 1,
-        "user_name": "owner",
-        "resolve_execution_configs": False,
     }
     if spec_type == "chunks":
         return resolver.build_public_list_chunks_runtime_spec(
@@ -114,5 +112,5 @@ def test_admin_entries_keep_serving_an_authorized_owner(
 
     spec = _build_spec(RagRuntimeResolver(), test_db, spec_type, kb.id)
 
-    assert spec.retriever_config is None
+    assert "retriever_config" not in spec.model_dump()
     assert spec.index_owner_user_id == test_user.id

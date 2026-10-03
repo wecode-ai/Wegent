@@ -38,6 +38,7 @@ from knowledge_engine.retrieval.search_hints import (
     resolve_search_queries,
 )
 from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from shared.knowledge_contracts import RetrievalScope
 from shared.telemetry.decorators import add_span_event
@@ -59,7 +60,9 @@ class ElasticsearchBackend(BaseStorageBackend):
     """
 
     # Class-level constant defining supported retrieval methods
-    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = list(
+        STORAGE_BACKEND_SPECS["elasticsearch"].retrieval_methods
+    )
     TEXT_FIELD: ClassVar[str] = "content"
     PHRASE_HINT_BOOST: ClassVar[float] = 3.0
     KEYWORD_HINT_BOOST: ClassVar[float] = 1.0
