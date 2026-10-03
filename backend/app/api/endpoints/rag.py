@@ -16,12 +16,8 @@ from app.schemas.rag import (
     RetrieveRequest,
     RetrieveResponse,
 )
-from app.services.rag.gateway_factory import get_delete_gateway, get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGatewayError,
-    should_fallback_to_local,
-)
+from app.services.rag.gateway_factory import get_rag_gateway
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 router = APIRouter()
@@ -94,10 +90,6 @@ async def retrieve_documents(
             query=request.query,
             search_hints=request.search_hints,
             max_results=request.top_k,
-            retriever_name=request.retriever_ref.name,
-            retriever_namespace=request.retriever_ref.namespace,
-            embedding_model_name=request.embedding_model_ref.model_name,
-            embedding_model_namespace=request.embedding_model_ref.model_namespace,
             user_id=current_user.id,
             user_name=current_user.user_name,
             score_threshold=request.score_threshold,
@@ -115,13 +107,8 @@ async def retrieve_documents(
             metadata_condition=request.metadata_condition,
         )
 
-        gateway = get_query_gateway()
-        try:
-            result = await gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            result = await LocalRagGateway().query(runtime_spec, db=db)
+        gateway = get_rag_gateway()
+        result = await gateway.query(runtime_spec, db=db)
 
         return {"records": result.get("records", [])}
     except HTTPException:
@@ -155,17 +142,11 @@ async def list_index_chunks(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
             max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
             query="list_index_chunks",
         )
-        gateway = get_query_gateway()
-        try:
-            result = await gateway.list_chunks(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            result = await LocalRagGateway().list_chunks(runtime_spec, db=db)
+        gateway = get_rag_gateway()
+        result = await gateway.list_chunks(runtime_spec, db=db)
 
         chunks = result.get("chunks", [])
         page_items = chunks[start : start + page_size]
@@ -207,15 +188,9 @@ async def purge_index_contents(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
         )
-        gateway = get_delete_gateway()
-        try:
-            return await gateway.purge_knowledge_index(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+        gateway = get_rag_gateway()
+        return await gateway.purge_knowledge_index(runtime_spec, db=db)
     except HTTPException:
         raise
     except RemoteRagGatewayError as e:
@@ -238,15 +213,9 @@ async def drop_index(
             db=db,
             knowledge_base_id=knowledge_id,
             user_id=current_user.id,
-            user_name=current_user.user_name,
         )
-        gateway = get_delete_gateway()
-        try:
-            return await gateway.drop_knowledge_index(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if not should_fallback_to_local(exc):
-                raise
-            return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+        gateway = get_rag_gateway()
+        return await gateway.drop_knowledge_index(runtime_spec, db=db)
     except HTTPException:
         raise
     except RemoteRagGatewayError as e:

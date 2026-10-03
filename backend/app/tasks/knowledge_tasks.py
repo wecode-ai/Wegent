@@ -41,7 +41,7 @@ def _delete_late_index_if_document_was_deleted(
     """Compensate a RAG write that completed after its document was deleted."""
     from app.models.knowledge import KnowledgeDocument
     from app.services.knowledge.indexing import get_kb_index_info
-    from app.services.rag.gateway_factory import get_delete_gateway
+    from app.services.rag.gateway_factory import get_rag_gateway
     from app.services.rag.runtime_resolver import RagRuntimeResolver
 
     exists = (
@@ -63,7 +63,7 @@ def _delete_late_index_if_document_was_deleted(
         document_ref=str(document_id),
         index_owner_user_id=kb_info.index_owner_user_id,
     )
-    asyncio.run(get_delete_gateway().delete_document_index(delete_spec, db=db))
+    asyncio.run(get_rag_gateway().delete_document_index(delete_spec, db=db))
     return True
 
 

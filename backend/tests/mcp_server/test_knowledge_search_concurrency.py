@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.api.endpoints.knowledge_open import search_documents_open
@@ -19,15 +20,40 @@ from app.mcp_server.tools import knowledge
 from app.schemas.knowledge_search import KnowledgeSearchRequest
 from app.services.knowledge import search_execution
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
-from app.services.rag.retrieval_service import RetrievalService
-from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import QueryRuntimeSpec
 
 
-@pytest.mark.parametrize(
-    "stage", ["reader", "scope", "permission", "runtime", "route", "config"]
-)
+def _build_remote_response(
+    *,
+    status_code: int = 200,
+    json_body: dict | None = None,
+) -> httpx.Response:
+    request = httpx.Request("POST", "http://knowledge-runtime/internal/rag/query")
+    return httpx.Response(status_code, json=json_body or {}, request=request)
+
+
+async def _retrieve(runtime_spec: QueryRuntimeSpec) -> dict:
+    return await search_execution.knowledge_search_runner.retrieve(
+        user_id=3,
+        task_id=None,
+        knowledge_base_id=runtime_spec.knowledge_base_ids[0],
+        query="policy",
+        max_results=10,
+        document_ids=None,
+        folder_ids=None,
+        include_subfolders=True,
+        route_mode=runtime_spec.route_mode,
+        context_window=128000,
+        used_context_tokens=0,
+        reserved_output_tokens=4096,
+        context_buffer_ratio=0.1,
+        max_direct_chunks=500,
+        search_hints=None,
+    )
+
+
+@pytest.mark.parametrize("stage", ["reader", "scope", "permission", "runtime", "route"])
 async def test_search_keeps_event_loop_responsive(
     monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -56,12 +82,16 @@ async def test_search_keeps_event_loop_responsive(
             }
         }
     )
-    runtime = MagicMock()
-    runtime.model_copy.return_value = runtime
+    runtime = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="policy",
+        user_id=3,
+        user_name="alice",
+    )
 
     def at_stage(name: str, result: Any) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if name in {"permission", "runtime", "route", "config"}:
+            if name in {"permission", "runtime", "route"}:
                 preparation_threads.append(get_ident())
             if stage == name:
                 blocking_io()
@@ -91,17 +121,16 @@ async def test_search_keeps_event_loop_responsive(
         at_stage("runtime", runtime),
     )
     monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        at_stage("config", []),
-    )
-    monkeypatch.setattr(
-        search_execution.RetrievalService,
+        search_execution.direct_injection,
         "decide_route_mode_for_chat_shell",
         at_stage("route", "rag_retrieval"),
     )
-    gateway = SimpleNamespace(query=AsyncMock(return_value={"records": [], "total": 0}))
-    monkeypatch.setattr(search_execution, "get_query_gateway", lambda: gateway)
+    remote_post = AsyncMock(
+        return_value=_build_remote_response(
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0}
+        )
+    )
+    monkeypatch.setattr("httpx.AsyncClient.post", remote_post)
 
     # Act: run the actual async MCP search and orchestrator entry points.
     result = await knowledge.search_knowledge_base(
@@ -115,7 +144,7 @@ async def test_search_keeps_event_loop_responsive(
     assert "error" not in result, result
     assert observations and all(observations)
     assert len(set(preparation_threads)) == 1
-    gateway.query.assert_awaited_once()
+    remote_post.assert_awaited_once()
     session.__exit__.assert_called()
 
 
@@ -139,8 +168,12 @@ async def test_openapi_search_resolves_scope_in_worker(
             }
         }
     )
-    runtime = MagicMock()
-    runtime.model_copy.return_value = runtime
+    runtime = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="policy",
+        user_id=3,
+        user_name="alice",
+    )
 
     def resolve_scope(*args: Any, **kwargs: Any) -> list[int]:
         loop.call_soon_threadsafe(progressed.set)
@@ -169,17 +202,16 @@ async def test_openapi_search_resolves_scope_in_worker(
         lambda *args, **kwargs: runtime,
     )
     monkeypatch.setattr(
-        search_execution.RetrievalService,
+        search_execution.direct_injection,
         "decide_route_mode_for_chat_shell",
         lambda *args, **kwargs: "rag_retrieval",
     )
-    monkeypatch.setattr(
-        search_execution.RagRuntimeResolver,
-        "build_query_knowledge_base_configs",
-        lambda *args, **kwargs: [],
+    remote_post = AsyncMock(
+        return_value=_build_remote_response(
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0}
+        )
     )
-    gateway = SimpleNamespace(query=AsyncMock(return_value={"records": []}))
-    monkeypatch.setattr(search_execution, "get_query_gateway", lambda: gateway)
+    monkeypatch.setattr("httpx.AsyncClient.post", remote_post)
 
     result = await search_documents_open(
         data=KnowledgeSearchRequest(
@@ -192,7 +224,7 @@ async def test_openapi_search_resolves_scope_in_worker(
 
     assert result == {"records": []}
     assert progressed.is_set()
-    gateway.query.assert_awaited_once()
+    remote_post.assert_awaited_once()
     session.__exit__.assert_called_once()
 
 
@@ -250,23 +282,53 @@ async def test_cancelled_search_waits_for_session_worker(
     assert closed_after_worker == [True]
 
 
-async def test_remote_failure_falls_back_to_local_with_worker_owned_session(
+async def test_remote_failure_is_reported_without_local_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Retryable remote errors must execute local fallback with a closed Session."""
+    """A failing knowledge runtime surfaces its error instead of executing locally."""
+    runtime_spec = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="policy",
+        route_mode="rag_retrieval",
+        user_id=3,
+    )
+    remote_error = RemoteRagGatewayError("runtime unavailable", retryable=True)
+
+    monkeypatch.setattr(
+        search_execution.KnowledgeSearchRunner,
+        "_prepare",
+        staticmethod(lambda **kwargs: runtime_spec),
+    )
+    monkeypatch.setattr(
+        "httpx.AsyncClient.post",
+        AsyncMock(
+            return_value=_build_remote_response(
+                status_code=503,
+                json_body={
+                    "code": "runtime_unavailable",
+                    "message": remote_error.args[0],
+                    "retryable": True,
+                },
+            )
+        ),
+    )
+    with pytest.raises(RemoteRagGatewayError):
+        await _retrieve(runtime_spec)
+
+
+async def test_direct_injection_hit_never_queries_knowledge_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct injection hit is served from MySQL without a knowledge runtime call."""
+    runtime_spec = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="policy",
+        route_mode="direct_injection",
+        user_id=3,
+    )
     session = MagicMock()
     session.__enter__.return_value = MagicMock()
-    local_finished = Event()
-    session.__exit__.side_effect = lambda *args: local_finished.is_set()
-    runtime_spec = object()
-    remote_error = RemoteRagGatewayError("runtime unavailable", retryable=True)
-    remote_gateway = SimpleNamespace(query=AsyncMock(side_effect=remote_error))
-
-    async def local_query(_self: LocalRagGateway, spec: Any, *, db: Any) -> dict:
-        assert spec is runtime_spec
-        assert db is session.__enter__.return_value
-        local_finished.set()
-        return {"records": [{"content": "local"}], "total": 1}
+    remote_post = AsyncMock()
 
     monkeypatch.setattr(search_execution, "SessionLocal", lambda: session)
     monkeypatch.setattr(
@@ -274,33 +336,83 @@ async def test_remote_failure_falls_back_to_local_with_worker_owned_session(
         "_prepare",
         staticmethod(lambda **kwargs: runtime_spec),
     )
-    monkeypatch.setattr(search_execution, "get_query_gateway", lambda: remote_gateway)
-    monkeypatch.setattr(LocalRagGateway, "query", local_query)
+    monkeypatch.setattr(
+        search_execution.direct_injection,
+        "get_original_documents_from_knowledge_base",
+        AsyncMock(
+            return_value=[
+                {
+                    "content": "full document",
+                    "score": 1.0,
+                    "title": "Original doc",
+                    "metadata": {"document_id": 10, "total_length": 13},
+                    "knowledge_base_id": 7,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr("httpx.AsyncClient.post", remote_post)
 
-    result = await search_execution.knowledge_search_runner.retrieve(
-        user_id=3,
-        task_id=None,
-        knowledge_base_id=7,
+    result = await _retrieve(runtime_spec)
+
+    assert result["mode"] == "direct_injection"
+    assert [record["content"] for record in result["records"]] == ["full document"]
+    assert session.__exit__.called
+    remote_post.assert_not_called()
+
+
+async def test_rejected_direct_injection_queries_knowledge_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected injection is executed remotely by reference, without configs."""
+    runtime_spec = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
         query="policy",
-        max_results=10,
-        document_ids=None,
-        folder_ids=None,
-        include_subfolders=True,
-        route_mode="rag_retrieval",
-        context_window=128000,
-        used_context_tokens=0,
-        reserved_output_tokens=4096,
-        context_buffer_ratio=0.1,
-        max_direct_chunks=500,
-        search_hints=None,
+        route_mode="direct_injection",
+        user_id=3,
+        user_name="alice",
+    )
+    session = MagicMock()
+    session.__enter__.return_value = MagicMock()
+    remote_post = AsyncMock(
+        return_value=_build_remote_response(
+            json_body={
+                "records": [
+                    {
+                        "content": "retrieved chunk",
+                        "title": "Chunk doc",
+                        "score": 0.5,
+                        "knowledge_base_id": 7,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 4,
+            }
+        )
     )
 
-    assert result["records"] == [{"content": "local"}]
-    remote_gateway.query.assert_awaited_once_with(runtime_spec)
-    session.__exit__.assert_called_once()
-    assert (
-        session.__exit__.call_args.args and session.__exit__.call_args.args[0] is None
+    monkeypatch.setattr(search_execution, "SessionLocal", lambda: session)
+    monkeypatch.setattr(
+        search_execution.KnowledgeSearchRunner,
+        "_prepare",
+        staticmethod(lambda **kwargs: runtime_spec),
     )
+    monkeypatch.setattr(
+        search_execution.direct_injection,
+        "get_original_documents_from_knowledge_base",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("httpx.AsyncClient.post", remote_post)
+
+    result = await _retrieve(runtime_spec)
+
+    assert result["mode"] == "rag_retrieval"
+    assert [record["content"] for record in result["records"]] == ["retrieved chunk"]
+    remote_post.assert_awaited_once()
+    assert remote_post.await_args.args[0].endswith("/internal/rag/query")
+    posted_body = remote_post.await_args.kwargs["json"]
+    assert posted_body["knowledge_base_ids"] == [7]
+    assert "knowledge_base_configs" not in posted_body
 
 
 async def test_retrieve_knowledge_restores_default_for_non_positive_max_results(

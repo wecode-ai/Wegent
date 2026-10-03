@@ -20,12 +20,6 @@ from app.services.knowledge.indexing import run_document_indexing
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import DirectInjectionBudget, QueryRuntimeSpec
-from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
-)
 
 COMMON_QUERY_RESULT = {
     "mode": "rag_retrieval",
@@ -74,39 +68,14 @@ def _make_runtime_spec(
     knowledge_base_ids: list[int] | None = None,
     query: str = "release checklist",
     with_budget: bool = False,
-    with_remote_configs: bool = False,
 ) -> QueryRuntimeSpec:
     knowledge_base_ids = knowledge_base_ids or [1]
-    knowledge_base_configs = [
-        RemoteKnowledgeBaseQueryConfig(
-            knowledge_base_id=knowledge_base_ids[0],
-            index_owner_user_id=8,
-            retriever_config=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={
-                    "type": "qdrant",
-                    "url": "http://qdrant:6333",
-                },
-            ),
-            embedding_model_config=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
-            ),
-            retrieval_config=RuntimeRetrievalConfig(
-                top_k=20,
-                score_threshold=0.7,
-                retrieval_mode="vector",
-            ),
-        )
-    ]
 
     return QueryRuntimeSpec(
+        user_id=7,
         knowledge_base_ids=knowledge_base_ids,
         query=query,
         route_mode=route_mode,
-        knowledge_base_configs=knowledge_base_configs,
         direct_injection_budget=(
             DirectInjectionBudget(context_window=10000) if with_budget else None
         ),
@@ -152,33 +121,16 @@ def _create_delete_test_data(db: Session, user: User) -> tuple[Kind, KnowledgeDo
     return kb, document
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target"),
-    [
-        ("local", "app.services.rag.local_gateway.LocalRagGateway.query"),
-        (
-            {"default": "local", "query": "remote"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.query",
-        ),
-    ],
-)
-def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
+def test_internal_retrieve_executes_in_knowledge_runtime(
     test_client: TestClient,
-    monkeypatch,
-    runtime_mode,
-    patch_target: str,
 ) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
-
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
-            return_value=_make_runtime_spec(
-                with_remote_configs=patch_target.endswith("RemoteRagGateway.query")
-            ),
+            return_value=_make_runtime_spec(),
         ),
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.query",
             new_callable=AsyncMock,
             return_value=COMMON_QUERY_RESULT,
         ) as mock_query,
@@ -186,6 +138,7 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
         response = test_client.post(
             "/api/internal/rag/retrieve",
             json={
+                "user_id": 7,
                 "query": "release checklist",
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",
@@ -198,18 +151,13 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
     mock_query.assert_awaited_once()
 
 
-def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integration(
+def test_internal_retrieve_reports_remote_failure(
     test_client: TestClient,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        settings, "RAG_RUNTIME_MODE", {"default": "local", "query": "remote"}
-    )
-
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
-            return_value=_make_runtime_spec(with_remote_configs=True),
+            return_value=_make_runtime_spec(),
         ),
         patch(
             "app.services.rag.remote_gateway.RemoteRagGateway.query",
@@ -221,15 +169,11 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
                 status_code=503,
             ),
         ) as mock_remote_query,
-        patch(
-            "app.services.rag.local_gateway.LocalRagGateway.query",
-            new_callable=AsyncMock,
-            return_value=COMMON_QUERY_RESULT,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
             json={
+                "user_id": 7,
                 "query": "release checklist",
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",
@@ -237,34 +181,12 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
             headers=_internal_headers(),
         )
 
-    assert response.status_code == 200
-    assert response.json() == EXPECTED_QUERY_RESPONSE
+    assert response.status_code == 503
+    assert response.json()["detail"] == "knowledge runtime unavailable"
     mock_remote_query.assert_awaited_once()
-    mock_local_query.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target", "other_patch_target"),
-    [
-        (
-            "local",
-            "app.services.rag.local_gateway.LocalRagGateway.index_document",
-            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
-        ),
-        (
-            {"default": "local", "index": "remote", "query": "local"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
-            "app.services.rag.local_gateway.LocalRagGateway.index_document",
-        ),
-    ],
-)
-def test_run_document_indexing_switches_index_mode_independently(
-    monkeypatch,
-    runtime_mode,
-    patch_target: str,
-    other_patch_target: str,
-) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
+def test_run_document_indexing_executes_in_knowledge_runtime() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
@@ -279,7 +201,7 @@ def test_run_document_indexing_switches_index_mode_independently(
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.index_document",
             new_callable=AsyncMock,
             return_value={
                 "status": "success",
@@ -287,7 +209,6 @@ def test_run_document_indexing_switches_index_mode_independently(
                 "index_name": "kb-1",
             },
         ) as mock_selected_gateway,
-        patch(other_patch_target, new_callable=AsyncMock) as mock_other_gateway,
     ):
         result = run_document_indexing(
             knowledge_base_id="1",
@@ -308,7 +229,6 @@ def test_run_document_indexing_switches_index_mode_independently(
         mock_build_runtime_spec.return_value,
         db=None,
     )
-    mock_other_gateway.assert_not_called()
     assert result == {
         "status": "success",
         "reason": None,
@@ -320,30 +240,10 @@ def test_run_document_indexing_switches_index_mode_independently(
     }
 
 
-@pytest.mark.parametrize(
-    ("runtime_mode", "patch_target", "other_patch_target"),
-    [
-        (
-            "local",
-            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
-            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
-        ),
-        (
-            {"default": "local", "delete": "remote", "query": "local"},
-            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
-            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
-        ),
-    ],
-)
-def test_delete_document_switches_delete_mode_independently(
+def test_delete_document_executes_in_knowledge_runtime(
     test_db: Session,
     test_user: User,
-    monkeypatch,
-    runtime_mode,
-    patch_target: str,
-    other_patch_target: str,
 ) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", runtime_mode)
     kb, document = _create_delete_test_data(test_db, test_user)
 
     with (
@@ -362,11 +262,10 @@ def test_delete_document_switches_delete_mode_independently(
             return_value=object(),
         ) as mock_build_delete_runtime_spec,
         patch(
-            patch_target,
+            "app.services.rag.remote_gateway.RemoteRagGateway.delete_document_index",
             new_callable=AsyncMock,
             return_value={"status": "success"},
         ) as mock_selected_gateway,
-        patch(other_patch_target, new_callable=AsyncMock) as mock_other_gateway,
     ):
         result = KnowledgeService.delete_document(
             db=test_db,
@@ -386,4 +285,3 @@ def test_delete_document_switches_delete_mode_independently(
         mock_build_delete_runtime_spec.return_value,
         db=test_db,
     )
-    mock_other_gateway.assert_not_called()

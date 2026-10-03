@@ -918,3 +918,69 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
         222,
         retry_orphan_cleanup=True,
     )
+
+
+@pytest.mark.parametrize("chunk_storage_enabled", [False, True])
+def test_index_success_persists_qa_metadata_without_requiring_chunk_storage(
+    test_db: Session, test_user: User, chunk_storage_enabled: bool
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=1,
+    )
+    chunks = {
+        "items": [{"content": "Q: question\nA: private answer"}],
+        "total_count": 1,
+        "splitter_type": "qa",
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+
+    assert mark_document_index_succeeded(
+        test_db,
+        document.id,
+        1,
+        chunks=chunks,
+        chunk_storage_enabled=chunk_storage_enabled,
+    )
+
+    test_db.refresh(document)
+    assert document.chunks == (
+        chunks
+        if chunk_storage_enabled
+        else {
+            "splitter_subtype": "qa_pair",
+            "qa_pair_count": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "chunks", [None, {"splitter_subtype": None, "qa_pair_count": 0}]
+)
+def test_successful_reindex_replaces_old_qa_metadata_without_chunk_storage(
+    test_db: Session, test_user: User, chunks: dict | None
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.chunks = {
+        "items": [{"content": "old chunk body"}],
+        "splitter_subtype": "qa_pair",
+        "qa_pair_count": 1,
+    }
+    test_db.commit()
+
+    assert mark_document_index_succeeded(test_db, document.id, 2, chunks=chunks)
+
+    test_db.refresh(document)
+    assert document.chunks == chunks

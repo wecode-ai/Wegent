@@ -608,6 +608,16 @@ def mark_document_index_succeeded(
     document.status = DocumentStatus.ENABLED
     if chunk_storage_enabled:
         document.chunks = chunks
+    else:
+        document.chunks = (
+            {
+                field: chunks[field]
+                for field in ("splitter_subtype", "qa_pair_count")
+                if field in chunks
+            }
+            if chunks
+            else None
+        )
     _finalize_external_source_on_success(document)
     document.updated_at = _utcnow()
 

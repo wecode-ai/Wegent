@@ -17,7 +17,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.3",
     "sqlalchemy>=2.0.0",
-    "wegent-knowledge-engine",
+    # The runtime is the only service that executes retrieval: it indexes and
+    # queries through the kernel, so it declares the retrieval extra.
+    "wegent-knowledge-engine[retrieval]",
     "wegent-shared",
 ]
 

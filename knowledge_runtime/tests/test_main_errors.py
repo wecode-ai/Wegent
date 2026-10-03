@@ -11,7 +11,11 @@ from knowledge_engine.embedding.errors import (
     CollectionDimensionMismatchError,
     EmbeddingDimensionMismatchError,
 )
-from knowledge_runtime.main import embedding_dimension_mismatch_handler
+from knowledge_runtime.main import (
+    embedding_dimension_mismatch_handler,
+    value_error_handler,
+)
+from knowledge_runtime.services.config_resolver import ConfigResolutionError
 
 
 def _index_request() -> Request:
@@ -76,3 +80,32 @@ async def test_embedding_dimension_mismatch_returns_stable_nonretryable_error(
     }
     for leaked in ("milvus", "localhost", "http", "0.5"):
         assert leaked not in json.dumps(payload).lower()
+
+
+@pytest.mark.asyncio
+async def test_config_resolution_error_returns_bad_request_and_keeps_the_message() -> (
+    None
+):
+    """Config failures from this service reach Backend as 400 invalid_request.
+
+    The delete, purge, drop and list-chunks prechecks moved from the Backend to
+    ``ConfigResolver``, so this mapping is what keeps their status code and text.
+    """
+    error = ConfigResolutionError(
+        "config_incomplete",
+        "Knowledge base 7 has incomplete retrieval config (missing retriever_name)",
+    )
+
+    response = await value_error_handler(_index_request(), error)
+    payload = json.loads(response.body)
+
+    assert response.status_code == 400
+    assert payload == {
+        "code": "invalid_request",
+        "message": (
+            "Knowledge base 7 has incomplete retrieval config "
+            "(missing retriever_name)"
+        ),
+        "retryable": False,
+        "details": None,
+    }

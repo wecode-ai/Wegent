@@ -7,6 +7,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
@@ -14,7 +15,6 @@ from knowledge_runtime.services.config_resolver import (
     IndexConfig,
     QueryConfig,
 )
-
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -121,11 +121,13 @@ def test_resolve_query_configs_uses_one_short_session() -> None:
         db=session,
         knowledge_base_id=1,
         user_id=42,
+        scope=None,
     )
     resolver.resolve_query_config.assert_any_call(
         db=session,
         knowledge_base_id=2,
         user_id=42,
+        scope=None,
     )
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()

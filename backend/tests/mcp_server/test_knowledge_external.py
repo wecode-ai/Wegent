@@ -31,6 +31,7 @@ from app.services.knowledge.external_document_access import (
     DOWNLOAD_TOKEN_HEADER,
     verify_document_download_token,
 )
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 
 
 def _set_external_user(user):
@@ -51,11 +52,6 @@ def allow_external_search_rate_limit():
             knowledge_external,
             "_search_rate_limit_status",
             return_value=ExternalMcpRateLimitStatus.ALLOWED,
-        ),
-        patch.object(
-            knowledge_external.RagRuntimeResolver,
-            "build_query_knowledge_base_configs_from_records",
-            return_value=["resolved-config"],
         ),
         patch.object(
             knowledge_external.RagRuntimeResolver,
@@ -2407,7 +2403,7 @@ async def test_search_content_ignores_non_numeric_doc_ref(test_user):
 
 
 @pytest.mark.asyncio
-async def test_search_content_uses_query_gateway_without_remote_local_configs(
+async def test_search_content_queries_the_gateway_by_reference(
     test_user,
 ):
     kb = _make_kb(1, test_user.id, "Payments", datetime(2026, 1, 6, 8, 0, 0))
@@ -2430,12 +2426,7 @@ async def test_search_content_uses_query_gateway_without_remote_local_configs(
                 "get_knowledge_base",
                 return_value=(kb, True),
             ),
-            patch.object(knowledge_external, "get_query_gateway", return_value=gateway),
-            patch.object(
-                knowledge_external.RagRuntimeResolver,
-                "build_query_knowledge_base_configs_from_records",
-                return_value=["resolved-config"],
-            ) as build_configs,
+            patch.object(knowledge_external, "get_rag_gateway", return_value=gateway),
             patch.object(
                 knowledge_external.RagRuntimeResolver,
                 "build_query_runtime_spec",
@@ -2452,166 +2443,39 @@ async def test_search_content_uses_query_gateway_without_remote_local_configs(
 
     payload = json.loads(result)
     assert payload["searched_knowledge_base_ids"] == [1]
-    build_configs.assert_not_called()
     build_spec.assert_called_once()
     assert "db" not in build_spec.call_args.kwargs
     assert build_spec.call_args.kwargs["route_mode"] == "rag_retrieval"
-    assert build_spec.call_args.kwargs["knowledge_base_configs"] == []
+    assert "knowledge_base_configs" not in build_spec.call_args.kwargs
     gateway.query.assert_awaited_once_with(runtime_spec, db=None)
 
 
-def test_query_content_local_sync_builds_missing_local_configs():
-    runtime_spec = knowledge_external.QueryRuntimeSpec(
-        knowledge_base_ids=[1],
-        query="payment",
-        max_results=10,
-        route_mode="rag_retrieval",
-        user_id=7,
-        user_name="alice",
-        knowledge_base_configs=[],
-    )
-    db = MagicMock()
-    local_gateway = MagicMock()
-    local_gateway.query = AsyncMock(return_value={"total": 0, "records": []})
-
-    with (
-        patch.object(knowledge_external, "SessionLocal", return_value=db),
-        patch.object(
-            knowledge_external.RagRuntimeResolver,
-            "build_query_knowledge_base_configs",
-            return_value=["resolved-config"],
-        ) as build_configs,
-        patch.object(
-            knowledge_external,
-            "LocalRagGateway",
-            return_value=local_gateway,
-        ),
-    ):
-        result = knowledge_external._query_content_local_sync(runtime_spec)
-
-    assert result == {"total": 0, "records": []}
-    build_configs.assert_called_once_with(
-        db=db,
-        knowledge_base_ids=[1],
-        current_user_id=7,
-        user_name="alice",
-    )
-    local_gateway.query.assert_awaited_once()
-    local_runtime_spec = local_gateway.query.await_args.args[0]
-    assert local_runtime_spec.knowledge_base_configs == ["resolved-config"]
-    db.close.assert_called_once()
-
-
 @pytest.mark.asyncio
-async def test_query_content_routes_local_gateway_through_threadpool():
+async def test_query_content_executes_in_knowledge_runtime():
     runtime_spec = MagicMock()
-    local_result = {"total": 0, "records": []}
-    run_in_threadpool = AsyncMock(return_value=local_result)
+    gateway = MagicMock()
+    gateway.query = AsyncMock(return_value={"total": 1, "records": []})
 
-    with (
-        patch.object(
-            knowledge_external,
-            "get_query_gateway",
-            return_value=knowledge_external.LocalRagGateway(),
-        ),
-        patch.object(
-            knowledge_external,
-            "run_in_threadpool",
-            run_in_threadpool,
-        ),
-    ):
+    with patch.object(knowledge_external, "get_rag_gateway", return_value=gateway):
         result = await knowledge_external._query_content(runtime_spec)
 
-    assert result == local_result
-    run_in_threadpool.assert_awaited_once_with(
-        knowledge_external._query_content_local_sync,
-        runtime_spec,
-    )
+    assert result == {"total": 1, "records": []}
+    gateway.query.assert_awaited_once_with(runtime_spec, db=None)
 
 
 @pytest.mark.asyncio
-async def test_query_content_falls_back_to_local_threadpool_for_retryable_remote_error():
+async def test_query_content_propagates_retryable_remote_error():
     runtime_spec = MagicMock()
-    fallback_result = {"total": 1, "records": [{"content": "fallback"}]}
     gateway = MagicMock()
     gateway.query = AsyncMock(
-        side_effect=knowledge_external.RemoteRagGatewayError(
+        side_effect=RemoteRagGatewayError(
             "knowledge runtime unavailable",
             retryable=True,
         )
     )
-    run_in_threadpool = AsyncMock(return_value=fallback_result)
 
-    with (
-        patch.object(knowledge_external, "get_query_gateway", return_value=gateway),
-        patch.object(
-            knowledge_external,
-            "run_in_threadpool",
-            run_in_threadpool,
-        ),
-    ):
-        result = await knowledge_external._query_content(runtime_spec)
+    with patch.object(knowledge_external, "get_rag_gateway", return_value=gateway):
+        with pytest.raises(RemoteRagGatewayError):
+            await knowledge_external._query_content(runtime_spec)
 
-    assert result == fallback_result
     gateway.query.assert_awaited_once_with(runtime_spec, db=None)
-    run_in_threadpool.assert_awaited_once_with(
-        knowledge_external._query_content_local_sync,
-        runtime_spec,
-    )
-
-
-@pytest.mark.asyncio
-async def test_query_content_remote_fallback_builds_local_configs_before_query():
-    runtime_spec = knowledge_external.QueryRuntimeSpec(
-        knowledge_base_ids=[1],
-        query="payment",
-        max_results=10,
-        route_mode="rag_retrieval",
-        user_id=7,
-        user_name="alice",
-        knowledge_base_configs=[],
-    )
-    remote_gateway = MagicMock()
-    remote_gateway.query = AsyncMock(
-        side_effect=knowledge_external.RemoteRagGatewayError(
-            "knowledge runtime unavailable",
-            status_code=503,
-        )
-    )
-    db = MagicMock()
-    local_query = AsyncMock(
-        return_value={"total": 1, "records": [{"content": "fallback"}]}
-    )
-
-    with (
-        patch.object(
-            knowledge_external,
-            "get_query_gateway",
-            return_value=remote_gateway,
-        ),
-        patch.object(knowledge_external, "SessionLocal", return_value=db),
-        patch.object(
-            knowledge_external.RagRuntimeResolver,
-            "build_query_knowledge_base_configs",
-            return_value=["resolved-config"],
-        ) as build_configs,
-        patch.object(
-            knowledge_external.LocalRagGateway,
-            "query",
-            local_query,
-        ),
-    ):
-        result = await knowledge_external._query_content(runtime_spec)
-
-    assert result == {"total": 1, "records": [{"content": "fallback"}]}
-    remote_gateway.query.assert_awaited_once_with(runtime_spec, db=None)
-    build_configs.assert_called_once_with(
-        db=db,
-        knowledge_base_ids=[1],
-        current_user_id=7,
-        user_name="alice",
-    )
-    local_query.assert_awaited_once()
-    local_runtime_spec = local_query.await_args.args[0]
-    assert local_runtime_spec.knowledge_base_configs == ["resolved-config"]
-    db.close.assert_called_once()

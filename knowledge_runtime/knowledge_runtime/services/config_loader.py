@@ -10,15 +10,16 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar
 
+from sqlalchemy.orm import Session, sessionmaker
+
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
     ConfigResolver,
     IndexConfig,
     QueryConfig,
 )
-from sqlalchemy.orm import Session, sessionmaker
-
 from shared.db.sync_session import get_session_factory
+from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class RuntimeConfigLoader:
         *,
         knowledge_base_ids: list[int],
         user_id: int,
+        scope: RetrievalScope | None = None,
     ) -> dict[int, QueryConfig]:
         """Resolve query configs for multiple knowledge bases in one session."""
         return self._resolve_with_session(
@@ -81,6 +83,7 @@ class RuntimeConfigLoader:
                     db=db,
                     knowledge_base_id=knowledge_base_id,
                     user_id=user_id,
+                    scope=scope,
                 )
                 for knowledge_base_id in knowledge_base_ids
             }

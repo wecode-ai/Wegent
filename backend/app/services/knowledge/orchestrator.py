@@ -3107,8 +3107,8 @@ class KnowledgeOrchestrator:
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing and gateway support.
 
-        Unified entry point for MCP tools and Open API. Supports both local and
-        remote RAG gateways with automatic fallback.
+        Unified entry point for MCP tools and Open API. Direct injection is
+        resolved in the Backend; every other retrieval runs in knowledge_runtime.
 
         Args:
             user_id: Current user ID for access control.

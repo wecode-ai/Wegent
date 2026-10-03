@@ -33,6 +33,8 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
+    RemoteTestConnectionResponse,
 )
 
 
@@ -53,14 +55,6 @@ class RemoteRagGatewayError(RuntimeError):
         self.retryable = retryable
         self.status_code = status_code
         self.details = details
-
-
-def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
-    """Return whether a remote error is safe to retry locally."""
-
-    return error.retryable or (
-        error.status_code is not None and error.status_code >= 500
-    )
 
 
 class RemoteRagGateway:
@@ -151,7 +145,7 @@ class RemoteRagGateway:
         del db
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
-            user_id=spec.user_id or 0,
+            user_id=spec.user_id,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
@@ -224,6 +218,17 @@ class RemoteRagGateway:
         )
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
+        return response.model_dump()
+
+    async def test_connection(
+        self,
+        request: RemoteTestConnectionRequest,
+    ) -> dict[str, Any]:
+        response_payload = await self._post_model(
+            "/internal/rag/test-connection",
+            request,
+        )
+        response = RemoteTestConnectionResponse.model_validate(response_payload)
         return response.model_dump()
 
 

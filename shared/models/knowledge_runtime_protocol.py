@@ -11,11 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shared.models.runtime_config import (
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
-)
+from shared.models.runtime_config import RuntimeRetrievalConfig
 from shared.models.search_hints import MAX_SEARCH_QUERY_LENGTH, SearchHints
 
 
@@ -71,16 +67,6 @@ class RemoteRagError(KnowledgeRuntimeProtocolModel):
     message: str
     retryable: bool = False
     details: dict[str, Any] | None = None
-
-
-class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
-    """Resolved execution config for one queryable knowledge base."""
-
-    knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
-    embedding_model_config: RuntimeEmbeddingModelConfig
-    retrieval_config: RuntimeRetrievalConfig
 
 
 class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
@@ -166,7 +152,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     """Query request - reference mode. KR resolves configs from DB."""
 
     knowledge_base_ids: list[int]
-    user_id: int
+    user_id: int = Field(..., gt=0, strict=True)
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
@@ -235,3 +221,28 @@ class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
 
     chunks: list[RemoteListChunkRecord]
     total: int
+
+
+class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
+    """Test-connection request for one storage backend configuration.
+
+    Fields mirror ``create_storage_backend_from_config`` so the runtime can
+    build the backend without re-deriving the caller's configuration.
+    """
+
+    storage_type: str
+    url: str
+    username: str | None = None
+    password: str | None = None
+    api_key: str | None = None
+    index_strategy: dict[str, Any] = Field(
+        default_factory=lambda: {"mode": "per_dataset"}
+    )
+    ext: dict[str, Any] = Field(default_factory=dict)
+
+
+class RemoteTestConnectionResponse(KnowledgeRuntimeProtocolModel):
+    """Connection verdict returned by knowledge_runtime."""
+
+    success: bool
+    message: str

@@ -77,6 +77,9 @@ jobs:
         working-directory: ./backend
         run: uv sync --dev
 
+      - name: Install runtime dependencies for index-to-query contract tests
+        run: uv sync --project knowledge_runtime --frozen
+
       - name: Run backend tests
         working-directory: ./backend
         env:
