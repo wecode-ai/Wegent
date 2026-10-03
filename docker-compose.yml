@@ -338,6 +338,9 @@ services:
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Database connection for config resolution (reference-mode)
       - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+      # Decrypt model and retriever credentials with the same keys as Backend.
+      - GIT_TOKEN_AES_KEY=${GIT_TOKEN_AES_KEY:-}
+      - GIT_TOKEN_AES_IV=${GIT_TOKEN_AES_IV:-}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-knowledge-runtime
