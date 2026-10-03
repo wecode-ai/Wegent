@@ -72,6 +72,7 @@ _SHARED_RETRIEVER_SPEC = {
     }
 }
 _SHARED_EMBEDDING_SPEC = {
+    "modelType": "embedding",
     "protocol": "openai",
     "modelConfig": {
         "env": {
@@ -293,6 +294,7 @@ def _make_model_kind(
     """Create a mock Model Kind record."""
     if spec is None:
         spec = {
+            "modelType": "embedding",
             "protocol": "openai",
             "modelConfig": {
                 "env": {

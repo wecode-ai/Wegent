@@ -23,6 +23,7 @@ from shared.models import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.models.db import Kind
 
 from .conftest import (
     _make_kb_kind,
@@ -55,6 +56,89 @@ def _authorized_entry(
         ),
         explicit_selection=explicit_selection,
     )
+
+
+@pytest.mark.parametrize("operation", ["query", "index"])
+@pytest.mark.parametrize(
+    "category_fields",
+    [
+        {"modelType": "llm"},
+        {"modelConfig": {"modelType": "llm"}},
+        {"modelType": "llm", "modelConfig": {"modelType": "embedding"}},
+        {},
+    ],
+)
+def test_rejects_model_changed_to_llm_after_authorization(
+    resolver: ConfigResolver,
+    shared_model_db: Session,
+    operation: str,
+    category_fields: dict,
+) -> None:
+    """Current Model capabilities must override the earlier authorization."""
+    authorized = _authorized_entry(
+        embedding_model_name="shared-embedding",
+        embedding_model_namespace="search-team",
+    )
+    model = shared_model_db.get(Kind, 3)
+    spec = dict(model.json["spec"])
+    spec.pop("modelType")
+    model.json = {"spec": {**spec, **category_fields}}
+    shared_model_db.commit()
+
+    with pytest.raises(ConfigResolutionError) as exc_info:
+        getattr(resolver, f"resolve_{operation}_config")(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
+            authorized=authorized,
+        )
+
+    assert exc_info.value.code == "config_invalid"
+    assert "embedding" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("operation", ["query", "index"])
+@pytest.mark.parametrize(
+    "category_fields",
+    [
+        {"modelType": "embedding"},
+        {"modelType": " EMBEDDING "},
+        {"modelConfig": {"modelType": "embedding"}},
+        {"modelType": None, "modelConfig": {"modelType": "embedding"}},
+    ],
+)
+def test_accepts_current_and_legacy_embedding_category(
+    resolver: ConfigResolver,
+    shared_model_db: Session,
+    operation: str,
+    category_fields: dict,
+) -> None:
+    """Both runtime operations use the same current/legacy category semantics."""
+    model = shared_model_db.get(Kind, 3)
+    spec = dict(model.json["spec"])
+    spec.pop("modelType")
+    model_config = {**spec["modelConfig"], **category_fields.get("modelConfig", {})}
+    model.json = {"spec": {**spec, **category_fields, "modelConfig": model_config}}
+    shared_model_db.commit()
+    authorized = _authorized_entry(
+        embedding_model_name="shared-embedding",
+        embedding_model_namespace="search-team",
+    )
+
+    with patch.object(
+        resolver, "_get_model_kind", wraps=resolver._get_model_kind
+    ) as load:
+        result = getattr(resolver, f"resolve_{operation}_config")(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
+            authorized=authorized,
+        )
+
+    assert result.embedding_model_config.resolved_config["model_id"] == (
+        "provider-embedding-id"
+    )
+    load.assert_called_once()
 
 
 class TestResolveIndexConfig:
