@@ -9,10 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from knowledge_engine.retrieval.query_planning import build_search_hint_plan
+from knowledge_engine.retrieval.query_planning import (
+    build_qa_search_hint_plan,
+    build_search_hint_plan,
+)
 from shared.models import SearchHints
 
-HintSource = Literal["explicit_hints", "fallback"]
+HintSource = Literal["explicit_hints", "fallback", "qa_pair_profile"]
 
 
 @dataclass(slots=True)
@@ -35,8 +38,15 @@ class QueryPlanner:
         self,
         query: str,
         search_hints: SearchHints | dict[str, Any] | None = None,
+        *,
+        qa_pair_count: int = 0,
     ) -> QueryPlan:
-        resolved = build_search_hint_plan(query, search_hints)
+        use_qa_plan = search_hints is None and qa_pair_count > 0
+        resolved = (
+            build_qa_search_hint_plan(query)
+            if use_qa_plan
+            else build_search_hint_plan(query, search_hints)
+        )
 
         return QueryPlan(
             original_query=query,
@@ -45,5 +55,5 @@ class QueryPlanner:
             sparse_query=resolved.sparse_query,
             keywords=resolved.keywords,
             phrases=resolved.phrases,
-            hint_source=resolved.hint_source,
+            hint_source="qa_pair_profile" if use_qa_plan else resolved.hint_source,
         )

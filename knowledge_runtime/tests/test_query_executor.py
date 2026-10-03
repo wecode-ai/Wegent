@@ -573,6 +573,7 @@ class TestQueryExecutor:
         config_loader.resolve_query_configs.assert_called_once_with(
             knowledge_base_ids=[1, 2],
             user_id=42,
+            scope=None,
         )
 
     @pytest.mark.asyncio

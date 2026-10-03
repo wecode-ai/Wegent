@@ -482,11 +482,7 @@ def test_query_headers_use_reader_name_and_owner_credentials(
     retriever.assert_called_once()
     assert retriever.call_args.kwargs["user_id"] == 42
     assert get_model.call_args.kwargs["user_id"] == 42
-    assert (
-        str(
-            mock_db.query.return_value.filter.call_args.args[0].compile(
-                compile_kwargs={"literal_binds": True}
-            )
-        )
-        == "users.id = 7"
-    )
+    assert "users.id = 7" in [
+        str(call.args[0].compile(compile_kwargs={"literal_binds": True}))
+        for call in mock_db.query.return_value.filter.call_args_list
+    ]

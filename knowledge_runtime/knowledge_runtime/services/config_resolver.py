@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -51,6 +52,8 @@ class QueryConfig:
     embedding_model_config: RuntimeEmbeddingModelConfig
     retrieval_config: RuntimeRetrievalConfig
     user_name: str | None = None
+    qa_pair_count: int = 0
+    scoped_document_ids: list[int] | None = None
 
 
 @dataclass
@@ -119,6 +122,7 @@ class ConfigResolver:
         *,
         knowledge_base_id: int,
         user_id: int,
+        scope: RetrievalScope | None = None,
     ) -> QueryConfig:
         """Resolve configs needed for querying a single knowledge base."""
         kb = self._get_knowledge_base(db, knowledge_base_id)
@@ -160,6 +164,10 @@ class ConfigResolver:
             ),
         )
 
+        qa_pair_count, scoped_document_ids = self._resolve_query_document_metadata(
+            db, knowledge_base_id=knowledge_base_id, scope=scope
+        )
+
         return QueryConfig(
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
@@ -167,6 +175,39 @@ class ConfigResolver:
             embedding_model_config=embedding_model_config,
             retrieval_config=runtime_retrieval_config,
             user_name=user_name,
+            qa_pair_count=qa_pair_count,
+            scoped_document_ids=scoped_document_ids,
+        )
+
+    def _resolve_query_document_metadata(
+        self,
+        db: Session,
+        *,
+        knowledge_base_id: int,
+        scope: RetrievalScope | None,
+    ) -> tuple[int, list[int] | None]:
+        """Read only QA metadata within the active, authorized document scope."""
+        documents = db.query(
+            KnowledgeDocument.id,
+            KnowledgeDocument.chunks["splitter_subtype"].as_string(),
+            KnowledgeDocument.chunks["qa_pair_count"].as_integer(),
+        ).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        scoped_ids = scope.document_ids if scope is not None else None
+        if scoped_ids is not None:
+            documents = documents.filter(KnowledgeDocument.id.in_(scoped_ids))
+        document_rows = documents.all()
+        qa_pair_count = sum(
+            count
+            for _, subtype, count in document_rows
+            if subtype == "qa_pair" and isinstance(count, int) and count > 0
+        )
+        return qa_pair_count, (
+            [document_id for document_id, _, _ in document_rows]
+            if scoped_ids is not None
+            else None
         )
 
     def resolve_admin_config(

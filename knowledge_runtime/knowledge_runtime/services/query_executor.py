@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from knowledge_engine.embedding.factory import (
@@ -61,9 +62,13 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
         )
+        resolved_scope = request.scope
+        if resolved_scope is None and request.document_ids is not None:
+            resolved_scope = RetrievalScope(document_ids=request.document_ids)
         configs_by_kb_id = self._config_loader.resolve_query_configs(
             knowledge_base_ids=request.knowledge_base_ids,
             user_id=request.user_id,
+            scope=resolved_scope,
         )
 
         if request.search_hints is None:
@@ -73,7 +78,7 @@ class QueryExecutor:
         else:
             search_hints = request.search_hints.model_dump(exclude_none=True)
         logger.info(
-            "Query request: hint_source=%s, normalized_query='%s...', "
+            "Query request hints: hint_source=%s, normalized_query='%s...', "
             "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
             "semantic_query=%s, keywords=%s, phrases=%s",
             plan.hint_source,
@@ -88,11 +93,17 @@ class QueryExecutor:
 
         # Query each knowledge base after config loading has closed its DB session.
         for knowledge_base_id in request.knowledge_base_ids:
+            config = configs_by_kb_id[knowledge_base_id]
+            if config.scoped_document_ids == []:
+                continue
+            kb_plan = self._planner.plan(
+                request.query, request.search_hints, qa_pair_count=config.qa_pair_count
+            )
             records = await self._query_knowledge_base(
                 request=request,
                 knowledge_base_id=knowledge_base_id,
-                config=configs_by_kb_id[knowledge_base_id],
-                plan=plan,
+                config=config,
+                plan=kb_plan,
                 retrieval_override=retrieval_override_by_kb_id.get(knowledge_base_id),
             )
             all_records.extend(records)
@@ -107,9 +118,8 @@ class QueryExecutor:
         )
 
         logger.info(
-            "Query complete: hint_source=%s, normalized_query='%s...', "
+            "Query complete: normalized_query='%s...', "
             "total_results=%d, returned=%d",
-            plan.hint_source,
             plan.normalized_query[:50],
             len(all_records),
             len(limited_records),
@@ -139,13 +149,9 @@ class QueryExecutor:
             List of records from this knowledge base.
         """
         if retrieval_override is not None:
-            config = config.__class__(
-                knowledge_base_id=config.knowledge_base_id,
-                index_owner_user_id=config.index_owner_user_id,
-                retriever_config=config.retriever_config,
-                embedding_model_config=config.embedding_model_config,
+            config = replace(
+                config,
                 retrieval_config=retrieval_override.retrieval_config,
-                user_name=config.user_name,
             )
 
         # Create storage backend and embedding model
@@ -160,7 +166,8 @@ class QueryExecutor:
         logger.info(
             "Query KB config: knowledge_base_id=%d, config_source=%s, "
             "storage_type=%s, retrieval_mode=%s, top_k=%s, "
-            "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
+            "score_threshold=%s, vector_weight=%s, keyword_weight=%s, "
+            "hint_source=%s, qa_pair_count=%s",
             knowledge_base_id,
             "request_override" if retrieval_override is not None else "database",
             storage_type,
@@ -169,6 +176,8 @@ class QueryExecutor:
             config.retrieval_config.score_threshold,
             config.retrieval_config.vector_weight,
             config.retrieval_config.keyword_weight,
+            plan.hint_source,
+            config.qa_pair_count,
         )
 
         # Create query executor
@@ -182,6 +191,8 @@ class QueryExecutor:
         resolved_scope = request.scope
         if resolved_scope is None and request.document_ids is not None:
             resolved_scope = RetrievalScope(document_ids=request.document_ids)
+        if config.scoped_document_ids is not None:
+            resolved_scope = RetrievalScope(document_ids=config.scoped_document_ids)
         result = await executor.execute(
             knowledge_id=knowledge_id,
             query=plan.normalized_query,
