@@ -145,7 +145,7 @@ class RemoteRagGateway:
         del db
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
-            user_id=spec.user_id or 0,
+            user_id=spec.user_id,
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,

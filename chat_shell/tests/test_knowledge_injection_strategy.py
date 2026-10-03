@@ -408,7 +408,8 @@ class TestKnowledgeBaseTool:
         assert runtime_context["context_buffer_ratio"] == tool.context_buffer_ratio
         persistence_context = payload["persistence_context"]
         assert persistence_context["user_subtask_id"] == 123
-        assert persistence_context["user_id"] == 456
+        assert persistence_context == {"user_subtask_id": 123}
+        assert payload["user_id"] == 456
         assert payload["restricted_mode"] is False
         assert payload["mediation_context"] == {
             "current_model_name": "my-model",

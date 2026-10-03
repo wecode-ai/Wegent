@@ -12,7 +12,7 @@ from app.services.rag.runtime_specs import (
     PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
-from shared.models import RetrievalScope
+from shared.models import RemoteQueryRequest, RetrievalScope
 
 
 def test_index_runtime_spec_keeps_control_plane_free_fields():
@@ -177,6 +177,7 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
 def test_query_runtime_spec_forbids_control_plane_only_fields():
     with pytest.raises(ValidationError):
         QueryRuntimeSpec(
+            user_id=7,
             knowledge_base_ids=[1],
             query="how to ship",
             user_subtask_id=77,
@@ -184,7 +185,7 @@ def test_query_runtime_spec_forbids_control_plane_only_fields():
 
 
 def test_query_runtime_spec_defaults_remote_compatible_fields():
-    spec = QueryRuntimeSpec(knowledge_base_ids=[1], query="how to ship")
+    spec = QueryRuntimeSpec(user_id=7, knowledge_base_ids=[1], query="how to ship")
 
     assert spec.enabled_index_families == ["chunk_vector"]
     assert spec.retrieval_policy == "chunk_only"
@@ -216,3 +217,16 @@ def test_delete_runtime_spec_keeps_reference_fields():
 def test_index_source_enforces_coherent_shape(kwargs, expected_message):
     with pytest.raises(ValidationError, match=expected_message):
         IndexSource(**kwargs)
+
+
+@pytest.mark.parametrize("spec_type", [QueryRuntimeSpec, RemoteQueryRequest])
+@pytest.mark.parametrize("identity", [None, 0, -1, True, "7", 7.5])
+def test_query_contract_rejects_invalid_identity(spec_type, identity):
+    with pytest.raises(ValidationError, match="user_id"):
+        spec_type(knowledge_base_ids=[1], query="probe", user_id=identity)
+
+
+@pytest.mark.parametrize("spec_type", [QueryRuntimeSpec, RemoteQueryRequest])
+def test_query_contract_requires_identity(spec_type):
+    with pytest.raises(ValidationError, match="user_id"):
+        spec_type(knowledge_base_ids=[1], query="probe")

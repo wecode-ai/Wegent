@@ -450,3 +450,43 @@ class TestResolveAdminConfig:
         assert str(exc_info.value) == (
             "Retriever missing-retriever (namespace: default) not found"
         )
+
+
+def test_query_headers_use_reader_name_and_owner_credentials(
+    resolver: ConfigResolver, mock_db: MagicMock
+) -> None:
+    kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
+    model = _make_model_kind()
+    model.json["spec"]["modelConfig"]["env"]["custom_headers"] = {
+        "X-Query-User": "${user.name}"
+    }
+    reader = MagicMock(user_name="reader")
+    mock_db.query.return_value.filter.return_value.first.return_value = reader
+    with (
+        patch.object(resolver, "_get_knowledge_base", return_value=kb),
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="test-retriever", namespace="default", storage_config={}
+            ),
+        ) as retriever,
+        patch.object(resolver, "_get_model_kind", return_value=model) as get_model,
+    ):
+        result = resolver.resolve_query_config(mock_db, knowledge_base_id=1, user_id=7)
+    assert result.index_owner_user_id == 42
+    assert result.user_name == "reader"
+    assert result.embedding_model_config.resolved_config["custom_headers"] == {
+        "X-Query-User": "reader"
+    }
+    retriever.assert_called_once()
+    assert retriever.call_args.kwargs["user_id"] == 42
+    assert get_model.call_args.kwargs["user_id"] == 42
+    assert (
+        str(
+            mock_db.query.return_value.filter.call_args.args[0].compile(
+                compile_kwargs={"literal_binds": True}
+            )
+        )
+        == "users.id = 7"
+    )

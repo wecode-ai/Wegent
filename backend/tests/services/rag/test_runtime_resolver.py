@@ -88,6 +88,7 @@ def test_build_query_runtime_spec_omits_budget_without_context_window():
     resolver = RagRuntimeResolver()
 
     spec = resolver.build_query_runtime_spec(
+        user_id=7,
         knowledge_base_ids=[1],
         query="release checklist",
         max_results=3,

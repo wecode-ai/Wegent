@@ -60,6 +60,7 @@ def test_validate_document_ids_against_scopes_rejects_out_of_scope_document():
 def test_internal_retrieve_request_rejects_empty_document_ids():
     with pytest.raises(ValidationError, match="document_ids must not be empty"):
         InternalRetrieveRequest(
+            user_id=7,
             query="q",
             knowledge_base_ids=[1],
             document_ids=[],
@@ -68,6 +69,7 @@ def test_internal_retrieve_request_rejects_empty_document_ids():
 
 def test_internal_retrieve_request_accepts_search_hints() -> None:
     request = InternalRetrieveRequest(
+        user_id=7,
         query="release checklist",
         knowledge_base_id=1,
         search_hints={"keywords": ["release"], "phrases": ["release checklist"]},
@@ -80,6 +82,7 @@ def test_internal_retrieve_request_accepts_search_hints() -> None:
 @pytest.mark.asyncio
 async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_total():
     request = InternalRetrieveRequest(
+        user_id=7,
         query="q",
         knowledge_base_scopes=[
             KnowledgeBaseScopePayload(
@@ -97,7 +100,6 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
-        persistence_context=None,
     )
 
     assert result["records"] == []
@@ -111,6 +113,7 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
 @pytest.mark.asyncio
 async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeypatch):
     request = InternalRetrieveRequest(
+        user_id=7,
         query="q",
         max_results=2,
         knowledge_base_scopes=[
@@ -152,7 +155,6 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
-        persistence_context=None,
     )
 
     assert result["total"] == 1
@@ -162,6 +164,7 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
 @pytest.mark.asyncio
 async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeypatch):
     request = InternalRetrieveRequest(
+        user_id=7,
         query="q",
         max_results=2,
         knowledge_base_scopes=[
@@ -202,7 +205,6 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
-        persistence_context=None,
     )
 
     assert result["total"] == 0

@@ -1165,7 +1165,6 @@ class KnowledgeBaseTool(BaseTool):
 
         return {
             "user_subtask_id": self.user_subtask_id,
-            "user_id": self.user_id,
         }
 
     def _build_backend_direct_injection_result(

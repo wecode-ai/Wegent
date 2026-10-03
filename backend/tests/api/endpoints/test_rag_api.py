@@ -54,6 +54,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
         },
     }
     runtime_spec = QueryRuntimeSpec(
+        user_id=7,
         knowledge_base_ids=[7],
         query="release checklist",
         search_hints=payload["search_hints"],
@@ -368,6 +369,7 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
     test_token: str,
 ):
     runtime_spec = QueryRuntimeSpec(
+        user_id=7,
         knowledge_base_ids=[7],
         query="release checklist",
         route_mode="rag_retrieval",

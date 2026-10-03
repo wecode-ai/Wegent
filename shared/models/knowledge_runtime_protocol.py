@@ -152,7 +152,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     """Query request - reference mode. KR resolves configs from DB."""
 
     knowledge_base_ids: list[int]
-    user_id: int
+    user_id: int = Field(..., gt=0, strict=True)
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)

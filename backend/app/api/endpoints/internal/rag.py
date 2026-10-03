@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -95,22 +95,12 @@ class DirectInjectionRuntimeContext(BaseModel):
 class RetrievePersistenceContext(BaseModel):
     """Persistence context for Backend-side SubtaskContext updates."""
 
+    model_config = ConfigDict(extra="forbid")
+
     user_subtask_id: int = Field(
         ...,
         ge=1,
         description="User subtask ID whose knowledge base context should be updated",
-    )
-    user_id: int = Field(
-        ...,
-        ge=0,
-        description="User ID used when auto-creating the knowledge base context",
-    )
-    restricted_mode: bool = Field(
-        default=False,
-        description=(
-            "Legacy location of the restricted search-only flag. Still read "
-            "for backward compatibility; new callers use the top-level field."
-        ),
     )
 
 
@@ -149,10 +139,11 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional retrieval hints for dense rewrite and sparse planning",
     )
-    user_id: Optional[int] = Field(
-        default=None,
-        ge=0,
-        description="Top-level retrieval identity for external sources",
+    user_id: int = Field(
+        ...,
+        gt=0,
+        strict=True,
+        description="Query user identity for retrieval, mediation, and persistence",
     )
     knowledge_base_id: Optional[int] = Field(
         default=None, description="Single knowledge base ID"
@@ -374,9 +365,7 @@ def _ignored_external_summary(
 
 
 def _external_retrieval_context(request: InternalRetrieveRequest) -> RetrievalContext:
-    """Build provider context, failing fast when caller lacks identity."""
-    if not request.user_id:
-        raise ValueError("user_id is required for external knowledge retrieval")
+    """Build provider context from the validated query identity."""
     return RetrievalContext(user_id=request.user_id, user_name=request.user_name)
 
 
@@ -497,7 +486,6 @@ async def _execute_scoped_retrieve(
     resolved_document_ids: list[int],
     runtime_context: DirectInjectionRuntimeContext | None,
     restricted_mode: bool,
-    persistence_context: RetrievePersistenceContext | None,
 ) -> dict:
     """Execute retrieve grouped by per-KB scopes."""
     if resolved_document_ids:
@@ -547,7 +535,7 @@ async def _execute_scoped_retrieve(
             max_results=request.max_results,
             scope=retrieval_scope,
             route_mode=request.route_mode,
-            user_id=persistence_context.user_id if persistence_context else None,
+            user_id=request.user_id,
             user_name=request.user_name,
             context_window=runtime_context.context_window if runtime_context else None,
             used_context_tokens=(
@@ -719,12 +707,7 @@ async def internal_retrieve(
 
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
-        # The top-level flag is authoritative. The nested flag stays readable
-        # for callers that still send restricted mode inside persistence metadata.
-        restricted_mode = bool(
-            request.restricted_mode
-            or (persistence_context is not None and persistence_context.restricted_mode)
-        )
+        restricted_mode = request.restricted_mode
 
         if not knowledge_base_ids:
             result = {
@@ -741,7 +724,6 @@ async def internal_retrieve(
                 resolved_document_ids=resolved_document_ids,
                 runtime_context=runtime_context,
                 restricted_mode=restricted_mode,
-                persistence_context=persistence_context,
             )
         else:
             runtime_spec = runtime_resolver.build_query_runtime_spec(
@@ -755,7 +737,7 @@ async def internal_retrieve(
                     else None
                 ),
                 route_mode=request.route_mode,
-                user_id=persistence_context.user_id if persistence_context else None,
+                user_id=request.user_id,
                 user_name=request.user_name,
                 context_window=(
                     runtime_context.context_window if runtime_context else None
@@ -851,7 +833,7 @@ async def internal_retrieve(
             retrieval_persistence_service.persist_retrieval_result(
                 db=db,
                 user_subtask_id=persistence_context.user_subtask_id,
-                user_id=persistence_context.user_id,
+                user_id=request.user_id,
                 query=request.query,
                 mode=internal_mode,
                 records=records,
@@ -871,7 +853,7 @@ async def internal_retrieve(
                 ),
                 knowledge_base_ids=knowledge_base_ids,
                 total_estimated_tokens=total_estimated_tokens,
-                user_id=persistence_context.user_id if persistence_context else None,
+                user_id=request.user_id,
                 user_name=request.user_name or "system",
             )
             if external_records or source_summaries:
@@ -1267,6 +1249,7 @@ class ReadDocRequest(BaseModel):
 class ReadDocsRequest(BaseModel):
     """Batch request for reading document content."""
 
+    user_id: int = Field(..., gt=0, strict=True, description="Document reader identity")
     document_ids: list[int] = Field(..., description="Document IDs")
     offset: int = Field(default=0, ge=0, description="Start position in characters")
     limit: int = Field(
@@ -1434,7 +1417,7 @@ async def read_documents(
             user_subtask_id=(
                 persistence_context.user_subtask_id if persistence_context else None
             ),
-            user_id=persistence_context.user_id if persistence_context else None,
+            user_id=request.user_id,
         )
 
         logger.info(

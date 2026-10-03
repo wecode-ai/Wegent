@@ -85,7 +85,7 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     scope: Optional[RetrievalScope] = None
     metadata_condition: Optional[dict] = None
     restricted_mode: bool = False
-    user_id: Optional[int] = None
+    user_id: int = Field(..., gt=0, strict=True)
     user_name: Optional[str] = None
     knowledge_base_retrieval_overrides: list[QueryKnowledgeBaseRetrievalOverride] = (
         Field(default_factory=list)

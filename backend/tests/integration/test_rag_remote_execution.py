@@ -72,6 +72,7 @@ def _make_runtime_spec(
     knowledge_base_ids = knowledge_base_ids or [1]
 
     return QueryRuntimeSpec(
+        user_id=7,
         knowledge_base_ids=knowledge_base_ids,
         query=query,
         route_mode=route_mode,
@@ -137,6 +138,7 @@ def test_internal_retrieve_executes_in_knowledge_runtime(
         response = test_client.post(
             "/api/internal/rag/retrieve",
             json={
+                "user_id": 7,
                 "query": "release checklist",
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",
@@ -171,6 +173,7 @@ def test_internal_retrieve_reports_remote_failure(
         response = test_client.post(
             "/api/internal/rag/retrieve",
             json={
+                "user_id": 7,
                 "query": "release checklist",
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",

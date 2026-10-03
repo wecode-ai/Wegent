@@ -82,7 +82,7 @@ class RagRuntimeResolver:
         document_ids: list[int] | None = None,
         metadata_condition: dict | None = None,
         restricted_mode: bool = False,
-        user_id: int | None = None,
+        user_id: int,
         user_name: str | None = None,
         enabled_index_families: list[str] | None = None,
         retrieval_policy: str = "chunk_only",
