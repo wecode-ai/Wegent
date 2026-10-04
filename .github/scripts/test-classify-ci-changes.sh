@@ -1263,7 +1263,7 @@ if [[ "$core_build_job" != *"restore-wework-core-e2e-build-oci.sh"* ]] ||
     "$wework_core_build_action" ||
   ! grep -Fq "resources/bin/wegent-executor" "$wework_core_build_action" ||
   ! grep -Fq "restore-oci-runtime-binary.sh" "$wework_core_build_action" ||
-  grep -Fq "cargo build" "$wework_core_build_action"; then
+  ! grep -Fq "BUILD_RUNTIMES_FROM_SOURCE:" "$wework_core_build_action"; then
   printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
   exit 1
 fi
