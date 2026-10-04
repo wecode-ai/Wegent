@@ -35,6 +35,7 @@ ruby -ryaml -e '
 cat > "$temp_dir/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+test -z "${GITHUB_TOKEN:-}"
 echo cargo >> "$TEST_LOG"
 [[ "${FAIL_CARGO:-false}" != true ]] || exit 1
 manifest=""
@@ -53,6 +54,7 @@ EOF
 cat > "$temp_dir/bin/pnpm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+test -z "${GITHUB_TOKEN:-}"
 echo package >> "$TEST_LOG"
 if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == true ]]; then
   test -x .ci-artifacts/wegent-executor
@@ -78,6 +80,7 @@ run_case() {
   cat > "$repo/.github/scripts/restore-oci-runtime-binary.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${GITHUB_TOKEN:-}" = synthetic-read-token
 echo oci >> "$TEST_LOG"
 [[ "$BUILD_RUNTIMES_FROM_SOURCE" != true ]] || exit 1
 mkdir -p "$(dirname "$3")"
@@ -88,19 +91,20 @@ EOF
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
     BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
-    EXECUTOR_IMAGE=executor BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
+    GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
+    BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
   if [[ "$expected" == success ]]; then
     test "$status" -eq 0
     test -x "$repo/.ci-artifacts/wegent-backend-rs"
   else
     test "$status" -ne 0
-    ! grep -q package "$repo/log"
+    if grep -q package "$repo/log"; then return 1; fi
   fi
   if [[ "$mode" == true ]]; then
-    ! grep -q oci "$repo/log"
+    if grep -q oci "$repo/log"; then return 1; fi
     test "$(grep -c cargo "$repo/log")" -eq 2
   else
-    ! grep -q cargo "$repo/log"
+    if grep -q cargo "$repo/log"; then return 1; fi
     test "$(grep -c oci "$repo/log")" -eq 2
   fi
 }

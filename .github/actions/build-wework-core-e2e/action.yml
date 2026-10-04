@@ -47,6 +47,9 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
+        if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
+          unset GITHUB_TOKEN
+        fi
         (
           if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
             cargo build --release --locked --manifest-path executor/Cargo.toml --bin wegent-executor
@@ -76,6 +79,7 @@ runs:
           if ! wait "$backend_pid"; then status=1; fi
           if ((status != 0)); then exit "$status"; fi
         fi
+        unset GITHUB_TOKEN
         pnpm --filter wework ai:verify:electron:build || status=$?
         if [[ "$BUILD_RUNTIMES_FROM_SOURCE" != "true" ]]; then
           if ! wait "$executor_pid"; then status=1; fi
