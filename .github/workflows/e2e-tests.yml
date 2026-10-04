@@ -248,7 +248,7 @@ jobs:
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Publish content-addressed Backend Rust E2E image
-        if: steps.image-check.outputs.exists != 'true'
+        if: steps.image-check.outputs.exists != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
         run: |
