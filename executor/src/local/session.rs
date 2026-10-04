@@ -57,9 +57,47 @@ pub(crate) fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
 
 fn subtract_metric(metric: &AtomicU64, value: usize) {
     let value = value as u64;
-    let _ = metric.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        Some(current.saturating_sub(value))
-    });
+    let mut current = metric.load(Ordering::Relaxed);
+    loop {
+        match metric.compare_exchange_weak(
+            current,
+            current.saturating_sub(value),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+
+    #[test]
+    fn metric_subtraction_saturates_at_zero() {
+        let metric = AtomicU64::new(10);
+        subtract_metric(&metric, 3);
+        assert_eq!(metric.load(Ordering::Relaxed), 7);
+        subtract_metric(&metric, 8);
+        assert_eq!(metric.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn concurrent_subtractions_do_not_lose_updates() {
+        let metric = AtomicU64::new(1000);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..250 {
+                        subtract_metric(&metric, 1);
+                    }
+                });
+            }
+        });
+        assert_eq!(metric.load(Ordering::Relaxed), 0);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
