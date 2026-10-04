@@ -75,3 +75,67 @@ Backend 已按最终锁文件同步环境，卸载 30 个执行相关包。依�
 目标通过新增撤销提交同步代码，不重写已经推送的合并历史。Executor 文件与最新来源及 `wecode-ai/main` 完全一致；知识 Module／Adapter、授权引用、QA 和 RAG 合并适配保持不变。原提交仍属于历史，但其代码改动已完整撤销。
 
 本次验证：`cargo fmt --check`、`cargo test --all-features --lib`（1454 通过、1 项既有忽略）、`cargo clippy --all-targets --all-features -- -D warnings` 均通过。未重复运行未受影响的知识测试，未运行 E2E 或 ai:verify。
+
+## 最终验收（2026-10-03）
+
+本节记录用户明确授权运行远程 E2E 后的新证据；前文“未运行 E2E”描述的是此前合并阶段，不代表本节的最终结果。
+
+- 固定起点：`refactor/pure-knowledge-contracts`，HEAD `c1b320796d56bd185a5e7d3c46ff37ded1cca2e5`。
+- 验收树：该 HEAD 加本节记录及两个 E2E 文件的未提交修复。未修改产品代码、未提交、未推送、未创建 PR、未合并或部署。
+- 需求：`.scratch/open-source-knowledge-module/spec.md`、八张基础实施票及其引用的知识 Module 设计规格。
+- 保留结论：Engine 与 Module 使用同一个 `finalize_index_result`，规则只有一份；重复调用仅为低优先级可选简化，不作为合并阻断，不修改 Engine 入口或适配链。
+
+### 环境与执行入口
+
+复用本地 `.scratch/open-source-knowledge-module/harness/remote-e2e.sh` 的 `infra`、`migrate`、`serve`、`run` 阶段。`run` 执行的是 GitHub CI 在 `.github/workflows/e2e-tests.yml` 注册的同一入口：
+
+```bash
+cd backend
+uv run --no-sync python tests/e2e/knowledge_remote_index.py
+```
+
+本机新建隔离 MySQL、Redis、Qdrant、MinIO，独立端口为 13306、16379、16333、19000；Backend 与 Runtime 分别为 18000、18200。真实 Backend、Celery 索引 worker、转换 worker、数据库、对象存储和 Qdrant 参与执行；仅 Embedding 与 MinerU 文档解析模型使用已有确定性 HTTP mock。已有开发 MySQL/Redis 未改动。隔离数据库初始化至 Alembic head，未验证迁移回滚。
+
+### 失败诊断与最小修复
+
+1. 首次跨项目聚焦测试误用根 pytest 配置，6 个未标记的异步用例未被执行。显式使用已有 `knowledge_runtime/pyproject.toml` 的 `asyncio_mode=auto` 后，115 项完整通过；没有修改测试、跳过用例或放宽断言。
+2. E2E 首次停在删除旧 local 模块的检查。源码已删除，工作区残留 `local_data_plane/__pycache__` 被 Python 识别为命名空间包。仅把这个已确认的旧缓存目录移至 `/tmp/wegent-final-stale-local-data-plane-c1b320796` 保留；不改断言、不改代码。
+3. 环境清理后，管理场景报 `build_public_list_chunks_runtime_spec()` 不接受 `user_name`。删除 `knowledge_remote_index_support.py` 中唯一过期的 `user_name=None` 参数；不扩大产品签名。
+4. 下一次完整执行到最后的查询故障场景时，首次索引失败文档尚未激活，Runtime 将有效范围裁剪为空并返回 200 空结果，无法用它触发模型故障。修正 `knowledge_remote_index.py` 的前置条件：保留首次索引失败与 processing error 检查；增加未激活文档空结果检查；复用现有模型更新 helper，真实索引成功一个同库兄弟文档后断开模型，再查询该文档。原 Runtime/Backend `>=500` 和错误 detail 断言保留，新增文档在 `finally` 清理。
+
+每次重新执行均有已确认的环境或测试修复；没有以不变条件重跑获取通过，也没有跳过场景或用本地成功掩盖远端失败。
+
+### 本次验证结果
+
+| 范围 | 本次证据 |
+| --- | --- |
+| Module 配置、执行配置、文档、状态、查询操作、QA 规划及共享模型类别；Runtime 模型类别执行与 QA | 显式 `-c knowledge_runtime/pyproject.toml`，上述九个文件：115 通过。 |
+| 执行核纯契约依赖边界、非 Wegent 调用方的 Module 执行 | `uv run --project knowledge_engine --no-sync pytest -c knowledge_engine/pyproject.toml knowledge_engine/tests/test_contract_import_boundary.py knowledge_engine/tests/test_knowledge_module_execution.py -q`：12 通过。 |
+| Backend 授权、显式资源、普通文档远程索引、转换生命周期、资源解析和任务补偿 | 在 backend 下定向运行 `test_authorized_remote_query.py`、`test_explicit_retrieval_resources.py`、`test_plain_document_remote_index.py`、`test_conversion_lifecycle.py`、`test_retrieval_resource_resolver.py`、`test_resource_authorization.py`、`test_knowledge_tasks.py`：62 通过。 |
+| 完整远程 E2E | 修复后的原 CI 入口退出码 0，输出 `Knowledge remote index E2E passed`。普通文档创建、正文更新与重建，转换后索引，重复/旧代次回调和 broker 任务，显式 Retriever/Embedding 生效及无权资源拒绝，列块、purge、drop，删除不影响兄弟文档、删除后的迟到任务不恢复引用，索引/转换/查询/管理/删除失败与恢复均通过。 |
+| 空范围与多库 QA 的验证层次 | E2E 实际验证未激活失败文档的空有效范围。多库 QA 各自计划、有效范围裁剪、显式 hints 优先和 hybrid 权重保持由本次 Runtime 聚焦测试验证；未新增真实多库 QA HTTP E2E，不把该层测试描述为端到端证据。 |
+| 格式与审查 | 两个修改的 E2E 文件 Black/isort 检查及 `git diff --check` 通过；本轮新增修复 Standards、Spec 均无问题。 |
+
+本次聚焦集合共 189 项通过。完整成功日志：`/tmp/wegent-final-remote-e2e-active-scope.log`；首次缓存失败、过期参数失败及故障前置条件失败分别保留在 `/tmp/wegent-final-remote-e2e.log`、`/tmp/wegent-final-remote-e2e-after-cache.log`、`/tmp/wegent-final-remote-e2e-fixed.log`。Backend 聚焦日志为 `/tmp/wegent-final-backend-focused.log`；隔离迁移日志为 `/tmp/wegent-final-migrate.log`。不提交临时日志、凭据或服务会话文件。
+
+### 限制与交付状态
+
+- 已完成上述本机隔离环境的远程 E2E 与聚焦验证；本轮没有读取或触发远端 CI，不声称 CI 全绿。
+- 原 E2E 的迟到任务在文档已删除后才投递，只证明任务拒绝执行、不恢复引用；实际已开始的索引写入晚于删除及其清理重试由本次任务聚焦测试验证，未新增真实并发迟到写入 E2E。不能把现有 E2E 的通过当作票 07 该并发场景的端到端证据。
+- 未运行 `ai:verify`、真实模型/生产召回、生产部署或内部版接入。共享内部令牌的来源不可验证限制仍保持原规格接受的信任假设。
+- 本轮测试服务在验收后停止，隔离容器停止并保留以便诊断；无关未跟踪文件保持原状。
+
+## CI 登录修复与补丁交付（2026-10-04）
+
+基线为 `f2640f8019f7fcca607654a75c6de95b11966e08`。PR 的知识 E2E 在登录阶段返回 HTTP 400：CI 为 bootstrap admin 和隔离测试账号生成不同密码；启动 Executor 时已用 bootstrap 密码初始化 `admin`，知识 E2E 却优先使用隔离账号密码。
+
+本次仅修改测试：知识 E2E 的初始化和登录统一使用 `E2E_BOOTSTRAP_ADMIN_USER`（默认 `admin`）与 `E2E_BOOTSTRAP_ADMIN_PASSWORD`，缺失密码立即失败，不回退到隔离账号。同时交付前节已验证但尚未提交的两处补丁：移除列块 helper 的过期参数；查询故障场景先建立有效索引文档，保持空范围与远端失败断言。
+
+验证证据：
+
+- 新增 bootstrap 登录回归 3 项，覆盖两套凭据同时存在、初始化成功/已初始化两种响应和缺失 bootstrap 密码。原代码 3 项失败，修复后 3 项通过。
+- 在真实隔离 Backend 中预先初始化 bootstrap 账号，同时设置不同的隔离账号密码，执行基线版本的 `_login`，复现 `login failed: 400`。未打印密码或访问令牌。
+- 保持上述前置条件，复用原 CI 入口 `uv run --no-sync python tests/e2e/knowledge_remote_index.py` 完整执行，退出码 0，输出 `Knowledge remote index E2E passed`。日志为 `/tmp/wegent-bootstrap-paired-full-e2e.log`。
+- 本次成功包含公开显式资源、普通文档创建/更新/重建、转换与旧代次回调、列块/purge/drop、删除与删除后迟到任务、远端失败及恢复；多库 QA 和真实并发迟到写入的证据限制仍按前节保留。
+
+本节与前节涉及的测试补丁、登录回归和验收记录一起提交推送；产品代码、登录接口和无关未跟踪文件不变。远端 CI 以推送后结果为准，本地通过不等于 CI 全绿。

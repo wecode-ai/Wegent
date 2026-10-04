@@ -45,14 +45,8 @@ INTERNAL_SERVICE_TOKEN = os.environ.get("E2E_INTERNAL_SERVICE_TOKEN") or os.envi
 # Backend variable with the E2E one when only the latter is provided.
 if INTERNAL_SERVICE_TOKEN and not os.environ.get("INTERNAL_SERVICE_TOKEN"):
     os.environ["INTERNAL_SERVICE_TOKEN"] = INTERNAL_SERVICE_TOKEN
-ADMIN_USER_NAME = (
-    os.environ.get("E2E_ADMIN_USER")
-    or os.environ.get("E2E_BOOTSTRAP_ADMIN_USER")
-    or "admin"
-)
-ADMIN_password = os.environ.get("E2E_ADMIN_PASSWORD") or os.environ.get(
-    "E2E_BOOTSTRAP_ADMIN_PASSWORD", ""
-)
+ADMIN_USER_NAME = os.environ.get("E2E_BOOTSTRAP_ADMIN_USER") or "admin"
+ADMIN_password = os.environ.get("E2E_BOOTSTRAP_ADMIN_PASSWORD", "")
 
 EMBEDDING_DIMENSIONS = 32
 INDEX_TIMEOUT_SECONDS = float(os.environ.get("E2E_INDEX_TIMEOUT_SECONDS", "120"))
@@ -87,7 +81,7 @@ def _auth_headers(token: str) -> dict[str, str]:
 def _login(client: httpx.Client) -> tuple[str, int]:
     """Log the CI admin in, provisioning the bootstrap password on a fresh DB."""
 
-    _check(ADMIN_password, "the E2E admin password env var is required")
+    _check(ADMIN_password, "E2E_BOOTSTRAP_ADMIN_PASSWORD is required")
     setup = client.post(
         "/api/auth/admin-password/setup", json={"password": ADMIN_password}
     )
@@ -795,7 +789,6 @@ def _runtime_list_chunks(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=owner_user_id,
-            user_name=None,
             max_chunks=max_chunks,
         )
     _check(INTERNAL_SERVICE_TOKEN, "the internal service token is required")

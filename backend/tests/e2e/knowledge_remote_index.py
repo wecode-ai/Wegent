@@ -50,7 +50,10 @@ from knowledge_remote_index_delete import (
     run_delete_failure_scenario,
     run_document_delete_scenario,
 )
-from knowledge_remote_index_public import run_public_retrieval_scenario
+from knowledge_remote_index_public import (
+    _point_embedding_at,
+    run_public_retrieval_scenario,
+)
 from knowledge_remote_index_support import (
     ADMIN_USER_NAME,
     BACKEND_URL,
@@ -69,6 +72,7 @@ from knowledge_remote_index_support import (
     _create_document,
     _create_knowledge_base,
     _create_retrieval_resources,
+    _delete_document,
     _delete_scenario_fixtures,
     _document_chunks,
     _internal_retrieve,
@@ -463,6 +467,7 @@ def _run_failure_scenario(client: httpx.Client, token: str, owner_user_id: int) 
     attachment_id, _ = _upload_attachment(client, token, "WEGENT-E2E-FAILURE")
     document = _create_document(client, token, knowledge_base_id, attachment_id)
     document_id = int(document["id"])
+    query_document_id = None
     try:
         failed = _wait_for_index_status(
             client, token, knowledge_base_id, document_id, "failed"
@@ -485,9 +490,37 @@ def _run_failure_scenario(client: httpx.Client, token: str, owner_user_id: int) 
             "WEGENT-E2E-FAILURE-QUERY",
             user_id=owner_user_id,
         )
+        _check(
+            query.status_code == 200 and query.json().get("records") == [],
+            "the inactive failed document must return an empty effective scope: "
+            f"{query.status_code} {query.text}",
+        )
+        _log("the inactive failed document returned an empty effective scope")
+
+        # A failed first index is inactive and cannot exercise a model call.
+        # Index a real sibling before breaking the model for query failures.
+        _point_embedding_at(client, token, resource_name, EMBEDDING_MODEL_URL)
+        query_attachment_id, _ = _upload_attachment(
+            client, token, "WEGENT-E2E-FAILURE-QUERY"
+        )
+        query_document = _create_document(
+            client, token, knowledge_base_id, query_attachment_id
+        )
+        query_document_id = int(query_document["id"])
+        _wait_for_index_status(
+            client, token, knowledge_base_id, query_document_id, "success"
+        )
+        _point_embedding_at(client, token, resource_name, UNREACHABLE_EMBEDDING_URL)
+        query = _internal_retrieve(
+            client,
+            knowledge_base_id,
+            query_document_id,
+            "WEGENT-E2E-FAILURE-QUERY",
+            user_id=owner_user_id,
+        )
         runtime = _runtime_query(
             knowledge_base_id,
-            document_id,
+            query_document_id,
             resource_name,
             owner_user_id,
             "WEGENT-E2E-FAILURE-QUERY",
@@ -517,6 +550,8 @@ def _run_failure_scenario(client: httpx.Client, token: str, owner_user_id: int) 
             f"detail={detail}"
         )
     finally:
+        if query_document_id is not None:
+            _delete_document(client, token, query_document_id)
         _delete_scenario_fixtures(
             client,
             token,
