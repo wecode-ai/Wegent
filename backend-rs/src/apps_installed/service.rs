@@ -199,11 +199,26 @@ pub(crate) fn app_connected(app: &ConnectorApp) -> bool {
     app.auth_type == "none"
 }
 
+/// `_server_config` session headers for the authenticated caller.
+///
+/// The source starts from `_decrypt_json(app.provider_headers_encrypted)` and
+/// then always adds the caller's user context headers, forwarding them on
+/// every request of the MCP session. The recorded catalog stores no provider
+/// headers, so only the user context headers are produced here; apps that
+/// carry encrypted provider headers are not yet supported.
+pub(crate) fn session_headers(user: &UserRow) -> Vec<(&'static str, String)> {
+    vec![
+        ("x-wegent-username", user.users_user_name.clone()),
+        ("x-wegent-user-id", user.users_id.to_string()),
+    ]
+}
+
 /// `connector_runtime_service.list_tools` restricted to this endpoint's
 /// needs: per connected app, MCP tools filtered by the allowlist. Apps whose
 /// discovery fails are skipped with a warning, exactly like the source's
 /// `except HTTPException` branch.
-async fn list_tools(apps: &[&ConnectorApp]) -> Vec<ConnectorTool> {
+async fn list_tools(apps: &[&ConnectorApp], user: &UserRow) -> Vec<ConnectorTool> {
+    let headers = session_headers(user);
     let mut tools = Vec::new();
     for app in apps {
         if !app_connected(app) {
@@ -215,17 +230,18 @@ async fn list_tools(apps: &[&ConnectorApp]) -> Vec<ConnectorTool> {
             // empty and contributes no tools.
             continue;
         }
-        let upstream: Vec<UpstreamTool> = match mcp::list_tools(&app.mcp_url).await {
-            Ok(tools) => tools,
-            Err(error) => {
-                tracing::warn!(
-                    connector = %app.slug,
-                    %error,
-                    "skipping unavailable connector during tool discovery"
-                );
-                continue;
-            }
-        };
+        let upstream: Vec<UpstreamTool> =
+            match mcp::list_tools_with_headers(&app.mcp_url, &headers).await {
+                Ok(tools) => tools,
+                Err(error) => {
+                    tracing::warn!(
+                        connector = %app.slug,
+                        %error,
+                        "skipping unavailable connector during tool discovery"
+                    );
+                    continue;
+                }
+            };
         let allowlist = &app.tool_allowlist;
         for tool in upstream {
             if !allowlist.is_empty() && !allowlist.contains(&tool.name) {
@@ -256,7 +272,7 @@ pub async fn installed_apps(
         .copied()
         .filter(|app| app_connected(app))
         .collect();
-    let tools = list_tools(&connected_for_tools).await;
+    let tools = list_tools(&connected_for_tools, user).await;
     let mut tools_by_app: HashMap<&str, Vec<ToolSummary>> = HashMap::new();
     for tool in &tools {
         let summaries = tools_by_app.entry(tool.connector_id.as_str()).or_default();
@@ -420,5 +436,21 @@ mod tests {
         let oauth = app_row(2, "b", serde_json::json!({"authType": "oauth2"}));
         assert_eq!(connection_view(&row_to_app(&none)).status, "connected");
         assert_eq!(connection_view(&row_to_app(&oauth)).status, "disconnected");
+    }
+
+    #[test]
+    fn session_headers_carry_the_user_context() {
+        let user = UserRow {
+            users_id: 83,
+            users_user_name: "junshu".to_string(),
+            ..user()
+        };
+        assert_eq!(
+            session_headers(&user),
+            vec![
+                ("x-wegent-username", "junshu".to_string()),
+                ("x-wegent-user-id", "83".to_string()),
+            ]
+        );
     }
 }

@@ -4,7 +4,23 @@
 
 //! Application-wide CORS compatibility for the hybrid HTTP server.
 
+use std::time::Duration;
+
 const EXPOSED_HEADERS: [&str; 2] = ["Content-Disposition", "X-Request-ID"];
+
+/// Whole-request deadline for the exported Rust origin (request read plus
+/// handler invocation, and each inactive response-write gap).
+///
+/// The Python source this gateway replaces is served by `uvicorn app.main:app`
+/// (`backend/start.sh`), which sets no per-request handler deadline and no
+/// worker timeout, so a source handler runs to completion however long it
+/// takes. Its database horizon is `DB_POOL_TIMEOUT` (30s), which the MySQL pool
+/// already mirrors (`backend-rs/src/startup/mysql.rs`). The framework default
+/// (`brz_http_server::ServerConfig::default()`, 15s) is not source-derived and
+/// closes the connection on a legitimate long-running handler, answering an
+/// empty 408 that the source never produces. Keep the deadline on the source's
+/// 30s request horizon instead.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) fn server_config() -> brz_http_server::ServerConfig {
     let mut cors = brz_http_server::Cors::permissive();
@@ -13,6 +29,7 @@ pub(crate) fn server_config() -> brz_http_server::ServerConfig {
 
     brz_http_server::ServerConfig {
         cors: Some(cors),
+        request_timeout: REQUEST_TIMEOUT,
         ..Default::default()
     }
 }
@@ -141,5 +158,17 @@ mod tests {
         );
         assert_eq!(header_of(&raw, "access-control-max-age:"), "600");
         assert_eq!(raw.split_once("\r\n\r\n").unwrap().1, "OK");
+    }
+
+    #[test]
+    fn request_deadline_uses_the_source_request_horizon() {
+        // The framework default closes a legitimate long-running handler that
+        // the deadline-free source would serve; the configured deadline must
+        // stay above it.
+        assert_eq!(server_config().request_timeout, REQUEST_TIMEOUT);
+        assert!(
+            REQUEST_TIMEOUT > Duration::from_secs(15),
+            "the configured deadline must exceed the framework default"
+        );
     }
 }

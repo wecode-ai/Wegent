@@ -432,6 +432,17 @@ where
     mysql.fetch_all(sql.as_str(), ids.to_vec()).await
 }
 
+/// One user by id (`db.query(User).filter(User.id == user_id).first()`),
+/// used by the public-model `allowedUsers` check. The source statement uses
+/// `.first()`, so the rendering carries `LIMIT 1`.
+pub async fn user_by_id<M>(mysql: &M, id: i64) -> MysqlResult<Option<UserSummaryRow>>
+where
+    M: Mysql,
+{
+    let sql = format!("SELECT {USER_COLUMNS} FROM users WHERE users.id = ? LIMIT 1");
+    mysql.fetch_optional(sql.as_str(), (id,)).await
+}
+
 /// Bots by `(user_id, name, namespace)` triples (personal bots) or
 /// `(name, namespace)` pairs (group bots). `refs` keeps the caller's
 /// construction order, duplicates included, exactly like the source's

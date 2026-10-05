@@ -13,7 +13,7 @@ use chrono::NaiveDateTime;
 use serde_json::Value as Json;
 
 use crate::crd::{CrdDocument, NumericId};
-use crate::task_routing::ByUserId;
+use crate::task_store::quote_sql_literal;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the personal list flow.
 ///
@@ -208,8 +208,8 @@ where
             }
             conditions.push_str(&format!(
                 "({}, {}, {})",
-                quote_literal(name),
-                quote_literal(namespace),
+                quote_sql_literal(name),
+                quote_sql_literal(namespace),
                 owner
             ));
         }
@@ -237,8 +237,8 @@ where
             }
             conditions.push_str(&format!(
                 "({}, {})",
-                quote_literal(name),
-                quote_literal(namespace)
+                quote_sql_literal(name),
+                quote_sql_literal(namespace)
             ));
         }
         let sql = format!(
@@ -283,8 +283,8 @@ where
             }
             conditions.push_str(&format!(
                 "({}, {})",
-                quote_literal(name),
-                quote_literal(namespace)
+                quote_sql_literal(name),
+                quote_sql_literal(namespace)
             ));
         }
         let sql = accessible_teams_sql(&conditions, user_id, &accessible_ids);
@@ -366,7 +366,7 @@ where
          AND resource_members.entity_type = 'user' \
          AND resource_members.entity_id = {entity} \
          AND resource_members.status IN ('approved', 'APPROVED')",
-        entity = quote_literal(&user_id.to_string())
+        entity = quote_sql_literal(&user_id.to_string())
     );
     let rows: Vec<Row> = mysql.fetch_all(sql.as_str(), ()).await?;
     Ok(rows.into_iter().map(|row| row.resource_id).collect())
@@ -391,7 +391,7 @@ where
         #[mysql(rename = "namespace_id")]
         id: i64,
     }
-    let entity = quote_literal(&user_id.to_string());
+    let entity = quote_sql_literal(&user_id.to_string());
     let direct_sql = format!(
         "SELECT namespace.id AS namespace_id, namespace.name AS namespace_name \n\
          FROM namespace INNER JOIN resource_members \
@@ -403,7 +403,10 @@ where
          AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Reporter')"
     );
     let direct: Vec<MembershipRow> = mysql.fetch_all(direct_sql.as_str(), ()).await?;
-    let mut ids: Vec<String> = direct.iter().map(|row| row.id.to_string()).collect();
+    let mut ids: Vec<String> = Vec::new();
+    for row in &direct {
+        push_unique_id(&mut ids, row.id);
+    }
     if direct.is_empty() {
         return Ok(ids);
     }
@@ -419,7 +422,7 @@ where
             // pattern is invalid SQL that fails the statement prepare.
             format!(
                 "namespace.name LIKE {} ESCAPE '\\\\'",
-                quote_literal(pattern)
+                quote_sql_literal(pattern)
             )
         })
         .collect();
@@ -434,8 +437,20 @@ where
          WHERE namespace.is_active IS true AND {name_filter}"
     );
     let children: Vec<ChildRow> = mysql.fetch_all(child_sql.as_str(), ()).await?;
-    ids.extend(children.iter().map(|row| row.id.to_string()));
+    for row in &children {
+        push_unique_id(&mut ids, row.id);
+    }
     Ok(ids)
+}
+
+/// Collect one namespace id the way the source's `set[str]` does: a namespace
+/// reached both as a direct membership and as a `name LIKE 'parent/%'` child
+/// contributes a single `entity_id IN (...)` value.
+fn push_unique_id(ids: &mut Vec<String>, id: i64) {
+    let value = id.to_string();
+    if !ids.contains(&value) {
+        ids.push(value);
+    }
 }
 
 /// `_escape_sql_like`: backslash, percent and underscore are escaped for a
@@ -470,7 +485,7 @@ where
     }
     let entities = namespace_ids
         .iter()
-        .map(|id| quote_literal(id))
+        .map(|id| quote_sql_literal(id))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
@@ -509,27 +524,6 @@ pub fn resolved_team(row: &TeamKindRow) -> ResolvedTeam {
     }
 }
 
-/// Escape one string literal with MySQL's default quoting rules.
-fn quote_literal(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('\'');
-    for character in value.chars() {
-        match character {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            '\0' => out.push_str("\\0"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            // Ctrl-Z never appears in these identifiers; every other
-            // character (including all non-ASCII) is copied verbatim so
-            // UTF-8 names stay byte-identical.
-            other => out.push(other),
-        }
-    }
-    out.push('\'');
-    out
-}
-
 /// Workspace git-repository data by `(name, namespace)` reference
 /// (`_batch_query_workspaces` through the configured workspace repository).
 ///
@@ -538,42 +532,12 @@ fn quote_literal(value: &str) -> String {
 /// 3x-refs prepared-statement parameter list; a large prepared parameter
 /// count also stalls some MySQL client transports. The tuple values are
 /// inlined with the same escaping to keep the recorded call topology.
-pub async fn batch_query_workspaces<M>(
-    mysql: &M,
+pub async fn batch_query_workspaces(
+    task_store: &dyn crate::task_store::TaskStore,
     user_id: i64,
     refs: &[(String, String)],
-) -> brz_mysql::MysqlResult<HashMap<(String, String), String>>
-where
-    M: Mysql,
-{
-    if refs.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let mut conditions = String::new();
-    for (index, (name, namespace)) in refs.iter().enumerate() {
-        if index > 0 {
-            conditions.push_str(", ");
-        }
-        conditions.push_str(&format!(
-            "({}, {}, {})",
-            user_id,
-            quote_literal(namespace),
-            quote_literal(name)
-        ));
-    }
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE kind = 'Workspace' AND is_active = 1
-         AND (user_id, namespace, name) IN (",
-    );
-    sql.push_str(&conditions);
-    sql.push(')');
-    let rows: Vec<brz_mysql::MysqlRow> = mysql
-        .route(ByUserId(user_id as u64))
-        .fetch_all(sql.as_str(), ())
-        .await?;
+) -> brz_mysql::MysqlResult<HashMap<(String, String), String>> {
+    let rows = task_store.list_workspaces_by_ref(user_id, refs).await?;
     let rows: Vec<WorkspaceRow> = rows
         .iter()
         .map(WorkspaceRow::from_row)
@@ -598,51 +562,19 @@ where
 /// (the configured store): the owner's routed task table,
 /// ordered `created_at DESC, id DESC`, with the keyset cursor filter.
 /// `batch_size = max(limit + 1, 100)` mirrors the source.
-pub async fn list_personal_task_candidates_after<M>(
-    mysql: &M,
+pub async fn list_personal_task_candidates_after(
+    task_store: &dyn crate::task_store::TaskStore,
     user_id: i64,
     limit: i64,
     cursor: Option<(NaiveDateTime, i64)>,
     client_origin: Option<&str>,
-) -> brz_mysql::MysqlResult<Vec<TaskCandidateRow>>
-where
-    M: Mysql,
-{
-    // Keep predicate and binding order aligned with the source keyset query.
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at,
-                updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE user_id = ? AND kind = 'Task' AND is_active = 1
-         AND namespace != 'system' AND is_group_chat = false",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" AND project_id = 0");
-    if cursor.is_some() {
-        sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
-    }
-    sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
-
-    // Argument order: `user_id` (int literal), optional `client_origin`
-    // (string), optional keyset cursor (`created_at` datetime twice, `id`
-    // int), then `limit` (int). `serde_json::Value` binding would serialize
-    // every value as a JSON string and miss the recorded literals.
-    let mut args: Vec<UnionArg> = vec![UnionArg::Int(user_id)];
-    if let Some(origin) = client_origin {
-        args.push(UnionArg::Str(origin.to_string()));
-    }
-    if let Some((cursor_created_at, cursor_id)) = cursor {
-        args.push(UnionArg::DateTime(cursor_created_at));
-        args.push(UnionArg::DateTime(cursor_created_at));
-        args.push(UnionArg::Int(cursor_id));
-    }
-    args.push(UnionArg::Int(limit));
-    mysql
-        .route(ByUserId(user_id as u64))
-        .fetch_all(sql.as_str(), args)
-        .await
+) -> brz_mysql::MysqlResult<Vec<TaskCandidateRow>> {
+    let rows = task_store
+        .list_personal_task_candidates(user_id, limit, cursor, client_origin)
+        .await?;
+    rows.into_iter()
+        .map(TaskCandidateRow::from_mysql_row)
+        .collect()
 }
 
 impl TaskCandidateRow {
@@ -697,33 +629,6 @@ pub fn filter_personal_tasks(
             }
         })
         .collect()
-}
-
-/// One bound argument preserving the recorded literal's token kind: owner
-/// user ids render as integer literals, names/namespaces/origins as quoted
-/// strings, and keyset cursors as datetimes.
-#[derive(Debug, Clone)]
-pub enum UnionArg {
-    Int(i64),
-    Str(String),
-    DateTime(NaiveDateTime),
-}
-
-impl brz_mysql::MysqlValue for UnionArg {
-    fn write(self, writer: &mut brz_mysql::MysqlValueWriter) -> brz_mysql::MysqlResult<()> {
-        match self {
-            Self::Int(value) => value.write(writer),
-            Self::Str(value) => value.write(writer),
-            Self::DateTime(value) => value.write(writer),
-        }
-    }
-    fn encoded_size_hint(&self) -> usize {
-        match self {
-            Self::Int(value) => value.encoded_size_hint(),
-            Self::Str(value) => value.encoded_size_hint(),
-            Self::DateTime(value) => value.encoded_size_hint(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -834,7 +739,7 @@ mod tests {
         let pattern = format!("{}/%", escape_sql_like(name));
         let rendered = format!(
             "namespace.name LIKE {} ESCAPE '\\\\'",
-            quote_literal(&pattern)
+            quote_sql_literal(&pattern)
         );
         assert_eq!(rendered, "namespace.name LIKE 'team-check/%' ESCAPE '\\\\'");
         // Wildcards stay escaped inside the quotes; the literal rendering
@@ -843,7 +748,7 @@ mod tests {
         assert_eq!(
             format!(
                 "namespace.name LIKE {} ESCAPE '\\\\'",
-                quote_literal(&tricky)
+                quote_sql_literal(&tricky)
             ),
             "namespace.name LIKE 'a\\\\%b/%' ESCAPE '\\\\'"
         );
@@ -855,25 +760,47 @@ mod tests {
         assert_eq!(team_scope_priority(9, 7), 1);
         assert_eq!(team_scope_priority(0, 7), 2);
     }
+
+    #[test]
+    fn namespace_ids_dedupe_like_the_source_set() {
+        // Recorded case 9b2542a1: the direct membership probe returns
+        // `OKR_test/PMO-OKR2` (id 137) and the child `name LIKE 'OKR_test/%'`
+        // probe returns that same namespace again. The source keeps
+        // `set[str]`, so its `entity_id IN (...)` list carries 11 values; a
+        // plain append emitted 137 twice and Replay rejected the exchange.
+        let mut ids = Vec::new();
+        for id in [137, 125, 198, 199, 182, 209, 207, 188, 513] {
+            push_unique_id(&mut ids, id);
+        }
+        for id in [137, 126, 128] {
+            push_unique_id(&mut ids, id);
+        }
+        assert_eq!(
+            ids,
+            [
+                "137", "125", "198", "199", "182", "209", "207", "188", "513", "126", "128"
+            ]
+        );
+    }
 }
 
 #[cfg(test)]
 mod sql_tests {
     use super::*;
-    use crate::sql_test_support::{QueryCapture, Route};
+    use crate::sql_test_support::KindQueryCapture;
 
     #[tokio::test]
     async fn personal_task_query_keeps_cursor_and_origin_binding_order() {
         let timestamp = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
         for cursor in [None, Some((timestamp, 41))] {
             for origin in [None, Some(""), Some("client'\\name")] {
-                let mysql = QueryCapture::default();
-                list_personal_task_candidates_after(&mysql, 7, 100, cursor, origin)
+                let mysql = KindQueryCapture::default();
+                let store = crate::task_store::DefaultTaskStore::new(mysql.clone());
+                list_personal_task_candidates_after(&store, 7, 100, cursor, origin)
                     .await
                     .unwrap();
                 let queries = mysql.queries();
                 let query = &queries[0];
-                assert_eq!(query.route, Route::User(7));
                 assert_eq!(
                     query.args,
                     2 + usize::from(origin.is_some()) + 3 * usize::from(cursor.is_some())
@@ -905,16 +832,17 @@ mod sql_tests {
 
     #[tokio::test]
     async fn workspace_batch_keeps_text_query_escaping_and_empty_fast_path() {
-        let mysql = QueryCapture::default();
+        let mysql = KindQueryCapture::default();
+        let store = crate::task_store::DefaultTaskStore::new(mysql.clone());
         assert!(
-            batch_query_workspaces(&mysql, 7, &[])
+            batch_query_workspaces(&store, 7, &[])
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert!(mysql.queries().is_empty());
         batch_query_workspaces(
-            &mysql,
+            &store,
             7,
             &[
                 ("a'b".into(), "ns\\x".into()),
@@ -924,7 +852,6 @@ mod sql_tests {
         .await
         .unwrap();
         let queries = mysql.queries();
-        assert_eq!(queries[0].route, Route::User(7));
         assert_eq!(queries[0].args, 0);
         assert!(
             queries[0]

@@ -80,20 +80,6 @@ impl HttpError {
             detail: "Internal server error".to_string(),
         }
     }
-
-    /// `500 Internal Server Error` for an unsupported loop-item branch.
-    ///
-    /// The recorded cloud-context case never reaches the loop-item branch;
-    /// a partial `LoopItemResponse` projection would diverge from the source
-    /// schema, so this surfaces the unsupported path instead of emitting a
-    /// malformed body.
-    pub fn internal_unsupported_loop_item() -> Self {
-        tracing::error!("cloud-context loop-item branch reached without a recorded projection");
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: "Internal server error".to_string(),
-        }
-    }
 }
 
 impl IntoHttpError for HttpError {

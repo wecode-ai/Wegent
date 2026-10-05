@@ -67,21 +67,6 @@ fn list_projects_declares_the_json_response_model() {
 }
 
 #[test]
-fn merge_puts_shard_rows_first_dedups_and_sorts_desc() {
-    let shard = vec![
-        task_row(2, "b", "2026-09-02 10:00:00"),
-        task_row(3, "c", "2026-09-01 10:00:00"),
-    ];
-    let legacy = vec![
-        task_row(1, "a", "2026-09-05 10:00:00"),
-        task_row(2, "b-old", "2026-09-04 10:00:00"),
-    ];
-    let merged = merge_project_tasks(shard, legacy);
-    let ids: Vec<i64> = merged.iter().map(|row| row.id).collect();
-    assert_eq!(ids, vec![1, 2, 3]);
-}
-
-#[test]
 fn task_item_uses_the_source_fallbacks() {
     let crd = TaskCrd {
         spec: Some(TaskSpec {
@@ -260,100 +245,29 @@ fn model_selection_fills_default_options() {
 }
 
 #[tokio::test]
-async fn project_task_queries_bind_origin_and_preserve_ordering() {
-    use crate::sql_test_support::{QueryCapture, Route};
-    for origin in [None, Some(""), Some("client'\\name")] {
-        let mysql = QueryCapture::default();
-        query_base_project_tasks(&mysql, 11, 7, origin)
+async fn the_public_store_reads_project_tasks_from_the_base_table() {
+    use crate::sql_test_support::KindQueryCapture;
+    use crate::task_store::{DefaultTaskStore, TaskStore};
+
+    for origin in [None, Some("frontend")] {
+        let mysql = KindQueryCapture::default();
+        let rows = DefaultTaskStore::new(mysql.clone())
+            .list_active_project_tasks(11, 7, origin)
             .await
             .unwrap();
-        query_shard_project_tasks(&mysql, 11, 7, origin)
-            .await
-            .unwrap();
+        assert!(rows.is_empty());
         let queries = mysql.queries();
-        assert_eq!(queries.len(), 2);
-        // The legacy rows live in the base table, so the base read passes the
-        // zero routing key even though an owner id is available; only the
-        // shard read routes to the owner's shard.
-        assert_eq!(queries[0].route, Route::User(0));
-        assert_eq!(queries[1].route, Route::User(7));
-        for query in &queries {
-            assert_eq!(query.args, 2 + usize::from(origin.is_some()));
-            assert_eq!(
-                query.sql.contains("AND client_origin = ?"),
-                origin.is_some()
-            );
-            assert!(!query.sql.contains("client'"));
-        }
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].args, 2 + usize::from(origin.is_some()));
+        assert_eq!(queries[0].first_integer, Some(11));
+        assert!(queries[0].sql.starts_with("SELECT id, user_id, kind"));
+        assert!(queries[0].sql.contains("FROM tasks"));
+        assert!(queries[0].sql.contains("AND user_id = ?"));
+        assert_eq!(
+            queries[0].sql.contains("AND client_origin = ?"),
+            origin.is_some()
+        );
         assert!(queries[0].sql.ends_with("ORDER BY updated_at DESC"));
-        assert!(!queries[1].sql.contains("ORDER BY"));
+        assert!(!queries[0].sql.contains('{'));
     }
-}
-
-#[tokio::test]
-async fn base_project_task_query_uses_the_base_route_once() {
-    use crate::sql_test_support::{QueryCapture, Route};
-    let mysql = QueryCapture::default();
-    let rows = query_base_project_tasks(&mysql, 11, 7, Some("frontend"))
-        .await
-        .unwrap();
-    assert!(rows.is_empty());
-    let queries = mysql.queries();
-    assert_eq!(queries.len(), 1);
-    assert_eq!(queries[0].route, Route::User(0));
-    assert_eq!(queries[0].args, 3);
-    assert!(queries[0].sql.contains("FROM {{tasks}}"));
-    assert!(queries[0].sql.contains("user_id = ?"));
-    assert!(queries[0].sql.ends_with("ORDER BY updated_at DESC"));
-}
-
-#[tokio::test]
-async fn migrated_task_probe_binds_each_id_and_skips_empty_input() {
-    use crate::sql_test_support::{QueryCapture, Route};
-    let mysql = QueryCapture::default();
-    assert!(
-        exclude_migrated_legacy_rows(&mysql, 7, vec![])
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(mysql.queries().is_empty());
-    let tasks = vec![
-        task_row(41, "one", "2026-01-01 00:00:00"),
-        task_row(42, "two", "2026-01-01 00:00:00"),
-    ];
-    assert_eq!(
-        exclude_migrated_legacy_rows(&mysql, 7, tasks)
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-    let queries = mysql.queries();
-    assert_eq!(queries[0].route, Route::User(7));
-    assert_eq!(
-        queries[0].sql,
-        "SELECT id FROM {{tasks}} WHERE id IN (?, ?)"
-    );
-    assert_eq!(queries[0].args, 2);
-}
-
-#[tokio::test]
-async fn migrated_task_read_uses_the_base_route_for_the_legacy_half() {
-    use crate::sql_test_support::{QueryCapture, Route};
-    let mysql = QueryCapture::default();
-    // The capture stub returns no rows, so the legacy half is empty and the
-    // source's probe early-out applies; only the two reads are issued.
-    let merged = query_migrated_project_tasks(&mysql, 11, 7, Some("frontend"))
-        .await
-        .unwrap();
-    assert!(merged.is_empty());
-    let queries = mysql.queries();
-    assert_eq!(queries.len(), 2);
-    // The legacy rows are read from the base `tasks` table (`ByUserId(0)`),
-    // while the shard half routes to the owner's shard table.
-    assert_eq!(queries[0].route, Route::User(0));
-    assert!(queries[0].sql.ends_with("ORDER BY updated_at DESC"));
-    assert_eq!(queries[1].route, Route::User(7));
-    assert!(!queries[1].sql.contains("ORDER BY"));
 }

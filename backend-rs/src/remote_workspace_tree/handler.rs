@@ -43,9 +43,10 @@ pub struct Deps<M: Mysql, R: Redis> {
     pub(crate) config: Config,
     pub(crate) http: HttpClient,
     pub(crate) mysql: M,
-    /// The deployment's task-shard policy: selects the physical task and
-    /// subtask tables and enables the migrated-legacy probes.
-    pub(crate) task_policy: crate::task_routing::TaskPolicy,
+    /// The task and subtask row provider: selects the physical task and
+    /// subtask tables, probes the migrated legacy rows, and runs the owner
+    /// guard the subtask listing needs.
+    pub(crate) task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     /// Employee-directory provider for the team redaction check's
     /// entity-derived membership pass.
     pub(crate) erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
@@ -55,26 +56,42 @@ pub struct Deps<M: Mysql, R: Redis> {
     /// The kinds-cache client of the deployment's cached reader
     /// (`kind:v2:idx` / `kind:v2:data` reads); `None` keeps direct SQL.
     pub(crate) kinds_redis: Option<R>,
+    /// The application's registered entity resolvers: the team-reader
+    /// resolution (`_get_team` -> `TeamShareService.check_permission`)
+    /// matches entity-derived share bindings through them.
+    pub(crate) entity_resolvers: crate::permissions::EntityResolvers<R>,
+    /// The deployment's registered video-result URL refresh: the video
+    /// integration and the long-lived client its signing call reuses
+    /// (`refresh_extended_video_result_urls`, the last dependency step of
+    /// `get_task_detail`).
+    pub(crate) video_refresh: crate::remote_workspace_status::app_state::VideoRefresh,
 }
 
 /// Assemble supplied clients; construction and routing belong to the caller.
+/// Every client is injected explicitly, like the sibling dependency-carrying
+/// loaders.
+#[allow(clippy::too_many_arguments)]
 pub fn build_deps<M: Mysql, R: Redis>(
     config: Config,
     mysql: M,
-    task_policy: crate::task_routing::TaskPolicy,
+    task_store: std::sync::Arc<dyn crate::task_store::TaskStore>,
     http: HttpClient,
     redis: Option<R>,
     kinds_redis: Option<R>,
     erp: std::sync::Arc<dyn crate::erp_provider::ErpProvider<R> + Send + Sync>,
+    entity_resolvers: crate::permissions::EntityResolvers<R>,
+    video_refresh: crate::remote_workspace_status::app_state::VideoRefresh,
 ) -> Arc<Deps<M, R>> {
     Arc::new(Deps {
         config,
         http,
         mysql,
-        task_policy,
+        task_store,
         erp,
         redis,
         kinds_redis,
+        entity_resolvers,
+        video_refresh,
     })
 }
 
@@ -227,9 +244,11 @@ async fn tree(
     let _task = task_detail::load_task_detail(
         &deps.mysql,
         deps.redis.as_ref(),
-        deps.task_policy,
+        deps.task_store.as_ref(),
         &erp,
         &kinds,
+        Some(&deps.entity_resolvers),
+        &deps.video_refresh,
         task_id,
         user_id,
     )
@@ -254,9 +273,11 @@ async fn tree(
         let detail = task_detail::load_task_detail(
             &deps.mysql,
             deps.redis.as_ref(),
-            deps.task_policy,
+            deps.task_store.as_ref(),
             &erp,
             &kinds,
+            Some(&deps.entity_resolvers),
+            &deps.video_refresh,
             task_id,
             user_id,
         )

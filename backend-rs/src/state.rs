@@ -23,8 +23,15 @@ pub struct AppState {
     /// default renders the stored column.
     pub user_git_info: Arc<dyn crate::user_profile::UserGitInfoProvider>,
     pub media_policy: Arc<dyn crate::media_policy::MediaPolicy>,
+    /// `_stream_external_attachment`: the registered external media playback
+    /// resolvers and their relay. The public default resolves nothing.
+    pub external_media: Arc<dyn crate::attachments::external_media::ExternalMediaRelay>,
     pub document_download_policy: Arc<dyn crate::knowledge_download_policy::DocumentDownloadPolicy>,
-    pub task_policy: crate::task_routing::TaskPolicy,
+    /// Task and subtask row reads. The public default reads the single
+    /// `tasks` / `subtasks` tables; an application whose deployment resolves
+    /// task storage differently registers its own implementation before route
+    /// construction.
+    pub task_store: Arc<dyn crate::task_store::TaskStore>,
     /// Lookup strategy for Workspace resources referenced by subscriptions.
     pub workspace_repository: Arc<dyn crate::subscriptions_list::workspaces::WorkspaceRepository>,
     pub auth: AuthConfig,

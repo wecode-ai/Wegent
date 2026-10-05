@@ -28,6 +28,10 @@ extern crate self as wegent_backend_rs;
 use std::sync::Arc;
 
 pub use application::Application;
+pub use attachments::external_media::{
+    AttachmentDownload, ExternalMediaReference, ExternalMediaRelay, ExternalMediaRequest,
+    MediaStream,
+};
 pub use brz_http_gateway::{
     BoxError, ConfigError, Gateway, GatewayBody, GatewayResponse, MatchedService as RustApi,
     OriginService, ProxyConfigError, RejectMatched as NoRustApi, RouteRule, RouteTable,
@@ -87,6 +91,7 @@ mod pet;
 mod plugins_installed;
 mod plugins_marketplace;
 mod projects;
+mod py_set_order;
 mod quota;
 mod remote_workspace_status;
 mod remote_workspace_tree;
@@ -96,6 +101,7 @@ mod responses;
 mod runtime_check;
 mod shutdown_state;
 mod skills;
+mod sql_support;
 #[cfg(test)]
 mod sql_test_support;
 mod startup;
@@ -111,7 +117,10 @@ mod task_pipeline_stage_info;
 mod task_pipeline_stage_info_repo;
 pub mod task_routing;
 mod task_skills;
+pub mod task_store;
 mod tasks_lite_personal;
+mod tasks_search;
+pub use tasks_search::statements as tasks_search_statements;
 mod teams;
 pub mod user_profile;
 pub mod user_reader;
@@ -121,6 +130,7 @@ mod users_search;
 mod users_welcome_config;
 pub mod video_result_urls;
 mod wework_notifications;
+mod wework_transcript_encryption;
 mod wework_transcripts;
 mod work_queues;
 

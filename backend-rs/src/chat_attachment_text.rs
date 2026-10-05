@@ -20,14 +20,13 @@
 //!    an unlinked one (`subtask_id == 0`) must belong to the task's user
 //!    (404 `Attachment not found` otherwise, so callers cannot probe ids).
 //! 6. The extracted-text slice plus pagination flags.
-use brz_mysql::{Mysql, MysqlResult, MysqlRow};
+use brz_mysql::{MysqlResult, MysqlRow};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::chat_repository::{ChatHistoryRepository, SubtaskContextRow};
 use crate::internal_auth::http_error::HttpError;
 use crate::state::AppState;
-use crate::task_routing::ByTaskId;
 
 /// `AttachmentTextResponse`: a character slice of an attachment's extracted
 /// text, with the source's field order.
@@ -150,7 +149,7 @@ async fn get_attachment_text_inner(
         ));
     }
 
-    let repository = ChatHistoryRepository::new(&app.mysql, app.task_policy);
+    let repository = ChatHistoryRepository::new(&app.mysql, &*app.task_store);
     let task = repository
         .get_task_by_id(task_id)
         .await
@@ -204,8 +203,8 @@ async fn get_attachment_text_inner(
 /// The `subtask_contexts` lookup of `get_attachment_text`: one row by id
 /// restricted to a ready attachment, rendered with the source's labeled
 /// projection and inlined literals.
-async fn get_ready_attachment<'a, M: Mysql>(
-    repository: &ChatHistoryRepository<'a, M>,
+async fn get_ready_attachment(
+    repository: &ChatHistoryRepository<'_>,
     attachment_id: i64,
 ) -> MysqlResult<Option<SubtaskContextRow>> {
     let sql = format!(
@@ -213,7 +212,7 @@ async fn get_ready_attachment<'a, M: Mysql>(
          WHERE subtask_contexts.id = {attachment_id} \
          AND subtask_contexts.context_type = 'attachment' \
          AND subtask_contexts.status = 'ready' \n LIMIT 1",
-        columns = crate::chat_repository::context_columns()
+        columns = crate::task_store::subtask_context_columns()
     );
     let row: Option<MysqlRow> = repository
         .mysql_ref()
@@ -224,20 +223,14 @@ async fn get_ready_attachment<'a, M: Mysql>(
         .transpose()
 }
 
-/// `subtask_store.list_ids_by_task(db, task_id=task_id)`: the sharded store
-/// lists the `subtasks_{:04}` table filtered by `task_id` (no owner guard:
-/// `owner_user_id` and `user_id` are both unset on this call path).
-async fn list_ids_by_task<'a, M: Mysql>(
-    repository: &ChatHistoryRepository<'a, M>,
+/// `subtask_store.list_ids_by_task(db, task_id=task_id)`: the task's subtask
+/// ids by way of the configured task store (no owner guard: `owner_user_id`
+/// and `user_id` are both unset on this call path).
+async fn list_ids_by_task(
+    repository: &ChatHistoryRepository<'_>,
     task_id: i64,
 ) -> MysqlResult<Vec<i64>> {
-    let sql = "SELECT id \nFROM {{subtasks}} \nWHERE task_id = ?";
-    let rows: Vec<MysqlRow> = repository
-        .mysql_ref()
-        .route(ByTaskId(task_id as u64))
-        .fetch_all(sql, (task_id,))
-        .await?;
-    rows.iter().map(|row| row.get_required("id")).collect()
+    repository.list_subtask_ids_by_task(task_id).await
 }
 
 #[cfg(test)]

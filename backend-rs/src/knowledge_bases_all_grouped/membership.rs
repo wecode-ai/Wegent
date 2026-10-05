@@ -11,7 +11,6 @@ use brz_mysql::{Mysql, MysqlResult};
 
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 
-use super::py_order::PySetOrder;
 use super::queries::{
     NamespaceActiveForm, direct_namespace_memberships, direct_namespace_resource_ids, group_member,
     kinds_by_filter_unordered, namespace_by_name_exact, namespace_entity_kb_members,
@@ -22,6 +21,7 @@ use super::{
     MEMBER_COLUMNS, MemberRow, RESOLVER_APPROVED_STATUS, RESOLVER_KB_RESOURCE_TYPE, has_permission,
     highest_role, quote_literal,
 };
+use crate::py_set_order::SetOrder;
 
 // ---------------------------------------------------------------------------
 // DIAGNOSTIC(all-grouped membership invocations) - temporary
@@ -909,7 +909,7 @@ where
     }
     // `kb_ids` is a Python set of ints; the IN list renders the CPython set
     // iteration order.
-    let mut set_order = PySetOrder::new();
+    let mut set_order = SetOrder::new();
     for id in kb_ids {
         set_order.add(*id);
     }
@@ -934,7 +934,7 @@ where
 /// `context.external_member_role_map`, so the `kinds.id IN` list renders the
 /// CPython `set[int]` iteration order.
 pub(super) fn external_editable_kb_ids(metadata: &EntityKbMetadata) -> Vec<i64> {
-    let mut set_order = PySetOrder::new();
+    let mut set_order = SetOrder::new();
     for (kb_id, roles) in &metadata.role_map {
         if roles.iter().any(|role| has_permission(role, "Developer")) {
             set_order.add(*kb_id);
