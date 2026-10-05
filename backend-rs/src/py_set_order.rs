@@ -2,16 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! CPython `set[int]` iteration-order emulation for the installed-Skill filter.
+//! CPython `set[int]` iteration-order emulation.
 //!
-//! `skill_binding_service.list_user_default_skill_ids` returns a `set[int]`,
-//! and `ResourceLibraryService.list_public` renders it straight into
-//! `Kind.id.notin_(...)`. The discovery statements select the computed
-//! `$.spec.capability.marketplace.recommendationScore` projection, so Replay's
-//! parsed-predicate equivalence (which compares `IN`/`NOT IN` lists without
-//! regard to value order) cannot read them and the recorded statement is
-//! matched token for token. The set's iteration order is therefore observable
-//! in the dependency stream and must be reproduced exactly.
+//! Several migrated APIs render a Python `set[int]` straight into a
+//! dependency sequence — one cache read per element, a MySQL
+//! `IN (...)`/`NOT IN (...)` list, or a recorded statement's token order — so
+//! the set's iteration order is observable in the dependency stream and has
+//! to be reproduced exactly for Replay to match it.
 //!
 //! Integer hashing is the identity, so the layout is deterministic. A probe
 //! starts at `hash & mask`, scans the next [`LINEAR_PROBES`] slots linearly
@@ -32,14 +29,14 @@ const PERTURB_SHIFT: u32 = 5;
 
 /// A CPython `set[int]` order emulator.
 #[derive(Default)]
-pub(super) struct SetOrder {
+pub(crate) struct SetOrder {
     table: Vec<Option<i64>>,
     used: usize,
     fill: usize,
 }
 
 impl SetOrder {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             table: vec![None; MIN_SIZE],
             used: 0,
@@ -83,7 +80,7 @@ impl SetOrder {
     }
 
     /// `set.add(value)`; duplicates keep their first slot.
-    pub(super) fn add(&mut self, value: i64) {
+    pub(crate) fn add(&mut self, value: i64) {
         let Some(index) = Self::find(&self.table, value) else {
             return;
         };
@@ -115,7 +112,7 @@ impl SetOrder {
     }
 
     /// `list(the_set)` — the slot-ascending iteration order.
-    pub(super) fn order(&self) -> Vec<i64> {
+    pub(crate) fn order(&self) -> Vec<i64> {
         self.table.iter().flatten().copied().collect()
     }
 }
@@ -146,8 +143,60 @@ mod tests {
         );
     }
 
+    /// Case 33bcf50b (task 567348000083401): the subtask rows in message
+    /// order carry bot ids [110593, 110593, ..., 110592, ...], so the set is
+    /// built by inserting 110593 first. CPython's iteration order renders
+    /// [110592, 110593] — exactly the recorded cache GET sequence
+    /// (`kind:v2:data:Bot:110592` then `kind:v2:data:Bot:110593`), which the
+    /// insertion order would have reversed.
+    #[test]
+    fn bot_id_set_order_matches_the_recorded_read_sequence() {
+        let mut set = SetOrder::new();
+        set.add(110_593);
+        set.add(110_592);
+        assert_eq!(set.order(), vec![110_592, 110_593]);
+    }
+
+    /// Case 9fa3d863 (task 426335633820473): both subtask rows carry the
+    /// group team's fourteen bot ids in ascending order, so the set is built
+    /// in that order and resizes 8 -> 32 at the fifth insert. The ids
+    /// 256308 and 264052 collide (`% 32 == 20`); CPython's linear run
+    /// places 264052 at the next free slot, so the iteration order renders
+    /// it tenth — the recorded read order
+    /// (`kind:v2:data:Bot:…, 256341, 264052, 256311, …`). A perturb-only
+    /// probe moves it to slot 0 instead, which reorders the cache reads and
+    /// their MySQL fallback parameters against the recorded lane.
+    #[test]
+    fn bot_id_set_order_follows_the_recorded_collision_order() {
+        let mut set = SetOrder::new();
+        let ids = [
+            256_308, 256_311, 256_314, 256_317, 256_320, 256_323, 256_326, 256_329, 256_332,
+            256_335, 256_338, 256_341, 256_344, 264_052,
+        ];
+        for _ in 0..2 {
+            for id in ids {
+                set.add(id);
+            }
+        }
+        assert_eq!(
+            set.order(),
+            vec![
+                256_320, 256_323, 256_326, 256_329, 256_332, 256_335, 256_338, 256_308, 256_341,
+                264_052, 256_311, 256_344, 256_314, 256_317,
+            ]
+        );
+    }
+
     #[test]
     fn duplicates_keep_the_first_slot_and_order_stays_slot_ascending() {
+        // The recorded single-bot case: six duplicate inserts of one id keep
+        // a single slot.
+        let mut single = SetOrder::new();
+        for _ in 0..6 {
+            single.add(259_750);
+        }
+        assert_eq!(single.order(), vec![259_750]);
+
         let mut ids = SetOrder::new();
         for _ in 0..6 {
             ids.add(259_750);

@@ -9,13 +9,12 @@
 //! The configured `ATTACHMENT_STORAGE_BACKEND` selects the backend
 //! (`mysql` stores bytes in `subtask_contexts.binary_data`; `minio`/`s3`
 //! store them in the object store). Encryption is applied at this layer
-//! (`decrypt_attachment`, AES-256-CBC) when `type_data.is_encrypted` is set;
-//! the deployment keeps it disabled, so the target implements only the
-//! unencrypted path and fails closed on encrypted rows.
+//! (`decrypt_attachment`, AES-CBC) when `type_data.is_encrypted` is set.
 use brz_http::Client as HttpClient;
 use brz_mysql::Mysql;
 
 use super::context_store::SubtaskContextRow;
+use super::crypto;
 use super::minio_client::{self, MinioConfig};
 
 /// `get_attachment_binary_data`: resolve the bytes from the configured
@@ -63,10 +62,16 @@ where
         None => return Ok(None),
     };
     if context.is_encrypted() {
-        // The deployment keeps `ATTACHMENT_ENCRYPTION_ENABLED=false`; an
-        // encrypted row cannot be served without the AES key material and is
-        // failed closed like a retrieval failure.
-        return Err(MinioStorageError);
+        // `decrypt_attachment`: the service layer decrypts after the backend
+        // read and re-raises a decryption failure, which the endpoint renders
+        // as its 500.
+        return match crypto::decrypt_attachment(&binary_data) {
+            Ok(decrypted) => Ok(Some(decrypted)),
+            Err(error) => {
+                tracing::error!(%error, "attachment decryption failed");
+                Err(MinioStorageError)
+            }
+        };
     }
     Ok(Some(binary_data))
 }

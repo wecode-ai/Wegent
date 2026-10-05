@@ -270,7 +270,7 @@ async fn list_user_teams(
     };
 
     // Batch preload related users, bots, shells, and models.
-    let preloaded = preload_related(&state.mysql, &teams)
+    let preloaded = preload_related(&state.mysql, user_id, &teams)
         .await
         .map_err(|error| HttpError::internal(error.to_string()))?;
 

@@ -51,7 +51,7 @@ pub fn connect_read_write(master_url: &str, slave_url: Option<&str>) -> MysqlRes
         }
         None => MysqlService::connect_lazy_with_options(master_url, options)?,
     };
-    Ok(service.with_route(crate::task_routing::NoSharding))
+    Ok(service)
 }
 
 #[cfg(test)]

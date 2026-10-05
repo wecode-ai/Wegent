@@ -404,9 +404,11 @@ async fn list_cloud_devices(
         let slot_online = get_online_info(state, user_id, &device_id).await;
         let slot_used = slot_online.as_ref().map_or(0, online_running_count);
         let running_tasks = match slot_online.as_ref() {
-            Some(info) => list_running_tasks(&state.mysql, user_id, online_running_task_ids(info))
-                .await
-                .map_err(running_tasks_error)?,
+            Some(info) => {
+                list_running_tasks(&*state.task_store, user_id, online_running_task_ids(info))
+                    .await
+                    .map_err(running_tasks_error)?
+            }
             None => Vec::new(),
         };
         let executor_version = online_state

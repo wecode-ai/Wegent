@@ -33,7 +33,10 @@ async fn public_master_and_slave_pools_allow_256_connections_each() {
     mysql.close().await;
 }
 
+/// The public deployment binds no routing policy, so its handles issue plain
+/// statements; the pool still backs every injected clone. The routed
+/// behaviour is the internal deployment's and is covered by its own suite.
 #[tokio::test]
-async fn public_pool_keeps_new_task_ids_on_base_tables() {
-    pool::assert_shared_pool(|mysql| mysql, "SELECT id FROM `tasks` WHERE id = ?").await;
+async fn public_pool_is_shared_with_injected_handles() {
+    pool::assert_plain_shared_pool().await;
 }
