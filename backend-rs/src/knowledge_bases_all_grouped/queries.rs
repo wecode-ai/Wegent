@@ -441,7 +441,7 @@ fn acl_deny_group_clause(
 /// namespace-id query rows: the CPython `set[str]` iteration order, which
 /// `PyStrSetOrder` reproduces (see its documentation).
 /// `external_editable_ids` renders `Kind.id.in_(external_editable_ids)` over
-/// the source's `set[int]` comprehension, whose order `PySetOrder` reproduces.
+/// the source's `set[int]` comprehension, whose order `SetOrder` reproduces.
 /// `group_roles` renders both the editable-group branch and
 /// [`acl_deny_group_clause`].
 #[allow(clippy::too_many_arguments)]

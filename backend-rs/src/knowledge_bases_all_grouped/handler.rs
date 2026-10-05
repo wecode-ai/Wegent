@@ -18,7 +18,6 @@ use super::membership::{
     collect_entity_authorized_kbs, effective_role_in_group, effective_roles, entity_kbs,
     external_editable_kb_ids, user_group_role_map, user_groups,
 };
-use super::py_order::PySetOrder;
 use super::queries::{
     NamespaceActiveForm, accessible_namespace_ids, active_namespace_names, direct_kb_members,
     document_counts, filter_accessible_kb_ids, kinds_by_filter, namespaces_by_names,
@@ -29,6 +28,7 @@ use super::{
     AllGroupedTeamGroup, KIND_COLUMNS, KbWithGroupInfo, KindRow, SharedSourceInfo,
     build_shared_with_me, highest_role, kb_to_response, merge_roles, quote_literal,
 };
+use crate::py_set_order::SetOrder;
 
 // ---------------------------------------------------------------------------
 // Handler
@@ -477,7 +477,7 @@ where
 
     // `owner_user_ids: set[int]` — `User.id.in_(list(owner_user_ids))`
     // renders the CPython set iteration order.
-    let mut owner_user_ids = PySetOrder::new();
+    let mut owner_user_ids = SetOrder::new();
     for kb in personal_created
         .iter()
         .chain(personal_shared.iter())
@@ -518,7 +518,7 @@ where
 
     // `all_inviter_ids: set[int]` — the inviter users query renders the
     // CPython set iteration order.
-    let mut all_inviter_ids = PySetOrder::new();
+    let mut all_inviter_ids = SetOrder::new();
     for inviter in shared_kb_inviter_map.values() {
         all_inviter_ids.add(*inviter);
     }

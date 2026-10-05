@@ -9,6 +9,7 @@ pub mod auth;
 pub mod auth_error;
 pub mod group_membership;
 pub mod http_error;
+pub mod public_model_access;
 pub mod quick_access;
 pub mod quick_launch;
 pub mod recent_teams;

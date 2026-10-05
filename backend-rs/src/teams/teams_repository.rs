@@ -58,7 +58,7 @@ pub const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
 /// existing `repo::` call sites.
 pub use super::team_union::{
     AccessibleTeamsQuery, TeamListFilter, accessible_teams, kinds_by_refs, public_kinds_by_names,
-    team_count, users_by_ids,
+    team_count, user_by_id, users_by_ids,
 };
 
 /// `namespace` column list rendered by `db.query(Namespace)`.

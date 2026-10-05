@@ -459,6 +459,7 @@ class RealCloudEnvironment {
       cwd: join(repoDir, 'backend-rs'),
       env: {
         ...this.backendEnv,
+        RS_DATABASE_URL_COLLATION: 'utf8mb4_0900_ai_ci',
         WEGENT_RS_LISTEN_HOST: '127.0.0.1',
         WEGENT_RS_LISTEN_PORT: String(this.backendPort),
         WEGENT_PYTHON_UPSTREAM_URL: `http://127.0.0.1:${this.pythonBackendPort}`,
