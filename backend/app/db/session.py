@@ -127,6 +127,9 @@ def _create_async_engine() -> AsyncEngine:
         return async_engine
     async_engine = create_async_engine(
         async_url,
+        connect_args={
+            "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
+        },
         pool_pre_ping=True,
         poolclass=ObservedAsyncQueuePool,
         pool_size=settings.DB_ASYNC_POOL_SIZE,

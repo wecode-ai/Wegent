@@ -361,3 +361,43 @@ class TestSettings:
         s = build_settings_from_env()
 
         assert s.RAG_AUTO_DISABLE_DIRECT_INJECTION is True
+
+
+@pytest.mark.unit
+def test_database_timezone_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_TIMEZONE", "+05:30")
+
+    configured = build_settings_from_env()
+
+    assert configured.DATABASE_TIMEZONE == "+05:30"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("offset", ["+00:00", "-05:30", "+05:45", "-13:59", "+14:00"])
+def test_database_timezone_accepts_mysql_fixed_offsets(offset: str) -> None:
+    assert build_settings(DATABASE_TIMEZONE=offset).DATABASE_TIMEZONE == offset
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "offset",
+    [
+        "UTC",
+        "SYSTEM",
+        "Asia/Shanghai",
+        "+08:60",
+        "+14:01",
+        "-14:00",
+        "",
+        "+08:00'; SELECT 1",
+    ],
+)
+def test_database_timezone_rejects_invalid_or_named_offsets(offset: str) -> None:
+    with pytest.raises(ValidationError, match="DATABASE_TIMEZONE"):
+        build_settings(DATABASE_TIMEZONE=offset)
+
+
+def test_database_timezone_default_preserves_existing_contract() -> None:
+    assert build_settings().DATABASE_TIMEZONE == "+08:00"

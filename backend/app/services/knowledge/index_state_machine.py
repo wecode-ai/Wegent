@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_now
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.external_refresh_snapshot import (
@@ -69,11 +70,6 @@ ACTIVE_INDEX_STATUSES = {
 }
 
 
-def _utcnow() -> datetime:
-    """Return a timezone-naive UTC timestamp for DB comparisons."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 def _get_active_index_stale_reason(
     document: KnowledgeDocument,
 ) -> Optional[str]:
@@ -95,7 +91,7 @@ def _get_active_index_stale_reason_for(
     if updated_at is None:
         return None
 
-    age_seconds = (_utcnow() - updated_at).total_seconds()
+    age_seconds = (database_datetime_now() - updated_at).total_seconds()
     if (
         index_status == DocumentIndexStatus.QUEUED
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
@@ -609,7 +605,6 @@ def mark_document_index_succeeded(
     if chunk_storage_enabled:
         document.chunks = chunks
     _finalize_external_source_on_success(document)
-    document.updated_at = _utcnow()
 
     db.commit()
     if cleanup_attachment_ids:
@@ -665,7 +660,6 @@ def _persist_attempt_failure(
     """Store the attempt's failure for the user and return what was stored."""
     persisted_error = _normalize_processing_error(candidate, generation)
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
-    document.updated_at = _utcnow()
     return persisted_error
 
 
@@ -771,7 +765,6 @@ def mark_document_index_failed(
         # The restored snapshot already carries the previous body's outcome;
         # this attempt only reports what it learned about the source.
         persisted_error = _normalize_processing_error(candidate, generation)
-        document.updated_at = _utcnow()
     else:
         persisted_error = _persist_attempt_failure(document, generation, candidate)
         if has_active_sync_index:
@@ -983,7 +976,6 @@ def mark_document_conversion_started(
         )
 
     document.index_status = DocumentIndexStatus.CONVERTING
-    document.updated_at = _utcnow()
     db.commit()
     _record_transition(
         "knowledge.conversion.start.accepted",
@@ -1023,7 +1015,6 @@ def mark_document_conversion_succeeded(
     """
     update_payload = {
         KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
-        KnowledgeDocument.updated_at: _utcnow(),
     }
     # No longer update file_extension / name / file_size.
     # These fields keep their original file values so users can download the source document.

@@ -21,7 +21,6 @@ Architecture:
 
 import base64
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
@@ -1930,7 +1929,6 @@ class KnowledgeOrchestrator:
 
         """
         document_id = document.id
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         existing_external = document.external_source_config
         incoming_external = dict(content.metadata or {})
@@ -1965,7 +1963,6 @@ class KnowledgeOrchestrator:
             KnowledgeDocument.file_extension: content.file_extension,
             KnowledgeDocument.file_size: len(content.content),
             KnowledgeDocument.source_config: merged_source_config,
-            KnowledgeDocument.updated_at: now,
         }
         sync_config = merged_external.get("sync")
         follows_source_title = document.external_provider == "dingtalk" or (
@@ -2440,7 +2437,6 @@ class KnowledgeOrchestrator:
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing
                 document.index_status = DocumentIndexStatus.PENDING_CONVERSION
-                document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
 
                 from app.core.celery_app import celery_app
