@@ -597,6 +597,7 @@ jobs:
       - name: Start backend server
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://redis:6379/0
           EXECUTOR_MANAGER_URL: http://localhost:8001
           SECRET_KEY: test-secret-key-for-ci-testing
@@ -1125,6 +1126,7 @@ jobs:
       - name: Start backend server
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://localhost:6379/0
           EXECUTOR_MANAGER_URL: http://localhost:8001
           SECRET_KEY: test-secret-key-for-ci-testing

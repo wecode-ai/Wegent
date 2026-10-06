@@ -37,7 +37,6 @@ use serde_json::json;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
-use crate::task_routing::ByUserId;
 
 /// `projects` columns as rendered by `db.query(Project)` (labeled
 /// `projects_<column>`).
@@ -486,139 +485,20 @@ async fn query_projects<M: Mysql>(
         .await
 }
 
-/// The legacy per-project read over the **base** `tasks` table
-/// (`SqlAlchemyTaskStore.list_active_project_tasks`): `ORDER BY
-/// tasks.updated_at DESC`; the owner and origin filters mirror the recorded
-/// rendering (the project id and owner bind as integers, the origin binds as
-/// a string).
-///
-/// Legacy rows live in the base table, so the read passes the zero routing key
-/// — the explicit base-table contract already used by the migration-free
-/// repository — rather than the owner's routing key, which resolves to the
-/// owner's shard. Both task-store policies use this read: the migration-free
-/// store on its own, and the migration store as the legacy half of its merge,
-/// whose shard half is [`query_shard_project_tasks`].
-async fn query_base_project_tasks<M: Mysql>(
-    mysql: &M,
+/// `task_store.list_active_project_tasks`: the project's active tasks owned by
+/// `owner_user_id`, newest `updated_at` first. The store owns the table choice
+/// and, in a deployment that also reads migrated legacy rows, their merge.
+async fn query_project_tasks(
+    state: &AppState,
     project_id: i64,
     owner_user_id: i64,
-    client_origin: Option<&str>,
+    client_origin: &str,
 ) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE project_id = ? AND kind = 'Task' AND is_active = 1 AND user_id = ?",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" ORDER BY updated_at DESC");
-    let mysql = mysql.route(ByUserId(0));
-    let rows: Vec<MysqlRow> = match client_origin {
-        Some(origin) => {
-            mysql
-                .fetch_all(&sql, (project_id, owner_user_id, origin))
-                .await?
-        }
-        None => mysql.fetch_all(&sql, (project_id, owner_user_id)).await?,
-    };
-    rows.iter().map(decode_task_row).collect()
-}
-
-/// The owner's shard-table per-project query (`ShardedTaskStore`'s second
-/// half of `list_active_project_tasks`): same filters, no ORDER BY (the
-/// Python merge sorts in memory). Uses `{{tasks}}` routed by the owner's
-/// user id.
-async fn query_shard_project_tasks<M: Mysql>(
-    mysql: &M,
-    project_id: i64,
-    owner_user_id: i64,
-    client_origin: Option<&str>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE project_id = ? AND user_id = ? AND kind = 'Task' AND is_active = 1",
-    );
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    let mysql = mysql.route(ByUserId(owner_user_id as u64));
-    let rows: Vec<MysqlRow> = match client_origin {
-        Some(origin) => {
-            mysql
-                .fetch_all(&sql, (project_id, owner_user_id, origin))
-                .await?
-        }
-        None => mysql.fetch_all(&sql, (project_id, owner_user_id)).await?,
-    };
-    rows.iter().map(decode_task_row).collect()
-}
-
-/// `ShardedTaskStore._exclude_migrated_legacy_index_rows`: drop legacy
-/// rows whose id is already migrated into the owner's shard table. Returns
-/// the input unchanged when the legacy result is empty (the source
-/// early-out, as in the recorded case). Probes `{{tasks}}` routed by the
-/// owner's user id, because the migrated ids are indexed in that shard.
-async fn exclude_migrated_legacy_rows<M: Mysql>(
-    mysql: &M,
-    owner_user_id: i64,
-    legacy: Vec<ProjectTaskRow>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    if legacy.is_empty() {
-        return Ok(legacy);
-    }
-    let ids: Vec<i64> = legacy.iter().map(|row| row.id).collect();
-    let mut sql = String::from("SELECT id FROM {{tasks}} WHERE id IN (");
-    sql.push_str(&vec!["?"; ids.len()].join(", "));
-    sql.push(')');
-    let rows: Vec<MysqlRow> = mysql
-        .route(ByUserId(owner_user_id as u64))
-        .fetch_all(&sql, ids)
+    let rows = state
+        .task_store
+        .list_active_project_tasks(project_id, owner_user_id, Some(client_origin))
         .await?;
-    let migrated: Vec<i64> = rows
-        .iter()
-        .map(|row| row.get_required::<i64>("id"))
-        .collect::<MysqlResult<_>>()?;
-    Ok(legacy
-        .into_iter()
-        .filter(|row| !migrated.contains(&row.id))
-        .collect())
-}
-
-/// `list_active_project_tasks`'s merge: shard rows first, first-wins
-/// dedup by id, then sorted `updated_at DESC`.
-fn merge_project_tasks(
-    shard: Vec<ProjectTaskRow>,
-    legacy: Vec<ProjectTaskRow>,
-) -> Vec<ProjectTaskRow> {
-    let mut merged: Vec<ProjectTaskRow> = Vec::with_capacity(shard.len() + legacy.len());
-    for row in shard.into_iter().chain(legacy) {
-        if !merged.iter().any(|existing| existing.id == row.id) {
-            merged.push(row);
-        }
-    }
-    merged.sort_by_key(|row| std::cmp::Reverse(row.updated_at));
-    merged
-}
-
-/// The migration task store's `list_active_project_tasks`
-/// (`ShardedTaskStore`): the legacy base-table read, then the migrated-index
-/// probe, then the owner's shard read, then the merge. The source performs
-/// exactly these calls in this order, and the probe only filters the legacy
-/// rows, so the merge itself is order-independent.
-async fn query_migrated_project_tasks<M: Mysql>(
-    mysql: &M,
-    project_id: i64,
-    owner_user_id: i64,
-    client_origin: Option<&str>,
-) -> MysqlResult<Vec<ProjectTaskRow>> {
-    let legacy = query_base_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
-    let legacy = exclude_migrated_legacy_rows(mysql, owner_user_id, legacy).await?;
-    let shard = query_shard_project_tasks(mysql, project_id, owner_user_id, client_origin).await?;
-    Ok(merge_project_tasks(shard, legacy))
+    rows.iter().map(decode_task_row).collect()
 }
 
 /// The `_get_project_tasks` projection for one task row.
@@ -712,25 +592,14 @@ async fn projects_list(
         // does not issue a task-count query in this branch, so the count
         // remains zero as in the recorded implementation.
         let (tasks, task_count) = if params.include_tasks {
-            let merged = if state.task_policy.resolve_migrated_legacy {
-                query_migrated_project_tasks(
-                    &state.mysql,
-                    project.projects_id,
-                    project.projects_user_id,
-                    Some(&params.client_origin),
-                )
-                .await
-                .map_err(dependency_error)?
-            } else {
-                query_base_project_tasks(
-                    &state.mysql,
-                    project.projects_id,
-                    project.projects_user_id,
-                    Some(&params.client_origin),
-                )
-                .await
-                .map_err(dependency_error)?
-            };
+            let merged = query_project_tasks(
+                state,
+                project.projects_id,
+                project.projects_user_id,
+                &params.client_origin,
+            )
+            .await
+            .map_err(dependency_error)?;
             let count = merged.len() as i64;
             let items = merged
                 .iter()

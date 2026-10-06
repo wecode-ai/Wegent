@@ -151,7 +151,7 @@ async fn download(
     if_none_match: Option<&str>,
 ) -> Result<HttpResponse<Binary>, SkillDownloadError> {
     let mysql = &state.mysql;
-    let repository = SkillDownloadRepository::new(mysql, state.task_policy);
+    let repository = SkillDownloadRepository::new(mysql, &*state.task_store);
     let params = DownloadParams {
         namespace: namespace.unwrap_or_else(default_namespace),
         task_id,
@@ -227,16 +227,13 @@ impl From<brz_mysql::MysqlError> for ResolveError {
 }
 
 /// The five-step search order. Returns `None` when the Skill is not found.
-async fn resolve_skill<M>(
-    repository: &SkillDownloadRepository<'_, M>,
+async fn resolve_skill(
+    repository: &SkillDownloadRepository<'_>,
     current_user: &auth::SkillDownloadUser,
     skill_id: i32,
     params: &DownloadParams,
     state: &Arc<AppState>,
-) -> Result<Option<Resolved>, ResolveError>
-where
-    M: brz_mysql::Mysql,
-{
+) -> Result<Option<Resolved>, ResolveError> {
     // 1. The user's personal Skill.
     if let Some(skill) = repository
         .get_skill_by_id(skill_id, current_user.id)
@@ -255,6 +252,15 @@ where
     };
     let default_ids = repository.list_user_default_skill_ids(&resolution).await?;
     if default_ids.contains(&skill_id)
+        && let Some((skill, binary_data)) = repository.get_skill_archive_by_id(skill_id).await?
+    {
+        return Ok(Some(Resolved { skill, binary_data }));
+    }
+
+    // 2b. A group binding grants access to the source archive in its original
+    // namespace.
+    let group_ids = repository.list_user_group_skill_ids(&resolution).await?;
+    if group_ids.contains(&skill_id)
         && let Some((skill, binary_data)) = repository.get_skill_archive_by_id(skill_id).await?
     {
         return Ok(Some(Resolved { skill, binary_data }));
@@ -289,7 +295,7 @@ where
     // 4. Task-authorized lookups when `task_id` is provided.
     if let Some(task_id) = params.task_id
         && repository.is_task_member(task_id, current_user.id).await?
-        && let Some(task) = repository.get_task_by_states_routed(task_id).await?
+        && let Some(task) = repository.get_task_by_states(task_id).await?
     {
         let team_namespace = task.team_namespace();
         if team_namespace != "default"

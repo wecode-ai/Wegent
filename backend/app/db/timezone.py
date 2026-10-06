@@ -2,19 +2,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Database-session timezone helpers."""
+"""Configured database timezone and clock helpers."""
 
-from datetime import timedelta, timezone
+from datetime import datetime, timezone
+from typing import cast
 
-from sqlalchemy.orm import Session
+from app.core.config import settings
 
-MYSQL_SESSION_TIMEZONE_OFFSET = "+08:00"
-MYSQL_SESSION_TIMEZONE = timezone(timedelta(hours=8))
+MYSQL_SESSION_TIMEZONE_OFFSET = settings.DATABASE_TIMEZONE
+MYSQL_SESSION_TIMEZONE = cast(
+    timezone,
+    datetime.strptime(MYSQL_SESSION_TIMEZONE_OFFSET, "%z").tzinfo,
+)
 
 
-def database_datetime_timezone(db: Session) -> timezone:
-    """Return the timezone used for naive datetimes read from this session."""
-    bind = db.get_bind()
-    if bind is not None and bind.dialect.name == "sqlite":
-        return timezone.utc
-    return MYSQL_SESSION_TIMEZONE
+DATABASE_DATETIME_TIMEZONE = (
+    timezone.utc
+    if settings.DATABASE_URL.startswith("sqlite")
+    else MYSQL_SESSION_TIMEZONE
+)
+
+
+def database_datetime_timezone() -> timezone:
+    """Return the configured naive datetime convention for the application DB."""
+    return DATABASE_DATETIME_TIMEZONE
+
+
+def database_datetime_now() -> datetime:
+    """Return now in the configured convention for persisted naive datetimes."""
+    return datetime.now(database_datetime_timezone()).replace(tzinfo=None)

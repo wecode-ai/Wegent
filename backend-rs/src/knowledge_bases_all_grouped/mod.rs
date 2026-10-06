@@ -428,8 +428,9 @@ fn build_shared_with_me(
 #[cfg(test)]
 mod tests {
     use super::membership::{effective_roles, user_groups};
-    use super::py_order::{PySetOrder, PyStrSetOrder, cpython_hash_key, siphash13};
+    use super::py_order::{PyStrSetOrder, cpython_hash_key, siphash13};
     use super::*;
+    use crate::py_set_order::SetOrder;
 
     #[test]
     fn merge_roles_prefers_higher_privilege() {
@@ -496,7 +497,7 @@ mod tests {
     fn py_set_order_matches_recorded_iterations() {
         // Case 2 (`xuran3`): owner ids inserted personal-then-group-then-org
         // render as (642, 101, 2800, 52, 1750, 1723, 2811).
-        let mut set = PySetOrder::new();
+        let mut set = SetOrder::new();
         for id in [1750, 1723, 642, 2811, 52, 101, 2800] {
             set.add(id);
         }
@@ -504,7 +505,7 @@ mod tests {
 
         // Case 1 (`wenxuan10`): org-only owner ids render as
         // (2800, 2811, 52, 101).
-        let mut set = PySetOrder::new();
+        let mut set = SetOrder::new();
         for id in [2811, 52, 101, 2800] {
             set.add(id);
         }

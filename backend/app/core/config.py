@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     # - MySQL: "mysql+pymysql://user:pass@localhost/db"
     # - SQLite: "sqlite:///./data/wegent.db"
     DATABASE_URL: str = "mysql+pymysql://user:password@localhost/task_manager"
+    DATABASE_TIMEZONE: str = Field(
+        default="+08:00",
+        pattern=r"^(?:[+-](?:0[0-9]|1[0-3]):[0-5][0-9]|\+14:00)$",
+    )
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True

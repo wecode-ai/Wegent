@@ -8,94 +8,11 @@
 //! collections whose iteration order the replay engine compares in exact
 //! order (the direct-access filter query carries EXISTS subqueries, so the
 //! engine's order-insensitive single-table IN matching does not apply).
-//! Integer hashing is the identity, so `set[int]` order is deterministic;
-//! string hashing is SipHash-1-3 keyed by the interpreter's per-process
-//! `PYTHONHASHSEED` secret, so `set[str]` order is one random draw per
-//! source process (see `PyStrSetOrder`).
-
-/// A faithful CPython `set[int]` order emulator.
-///
-/// The source renders several `IN (...)` lists directly from Python sets
-/// (`list(owner_user_ids)`, `list(all_inviter_ids)`), and the replay engine
-/// compares IN literals in order for GROUP BY queries (the semantic
-/// multiset path is policy-gated off). Integer hashing is the identity, so
-/// the iteration order is deterministic: it only depends on the insertion
-/// sequence, the open-addressing probe
-/// `perturb >>= 5; i = (i*5 + perturb + 1) & mask`, and the resize rule
-/// (`fill*5 >= mask*3` rehashes the table in slot order to `used*4`
-/// rounded up to a power of two, minimum 8).
-#[derive(Default)]
-pub(super) struct PySetOrder {
-    table: Vec<Option<i64>>,
-    used: usize,
-    fill: usize,
-}
-
-impl PySetOrder {
-    pub(super) fn new() -> Self {
-        Self {
-            table: vec![None; 8],
-            used: 0,
-            fill: 0,
-        }
-    }
-
-    fn place(table: &mut [Option<i64>], value: i64) -> bool {
-        let mask = table.len() - 1;
-        let mut index = (value as usize) & mask;
-        let mut perturb = value as u64;
-        loop {
-            match table[index] {
-                None => {
-                    table[index] = Some(value);
-                    return true;
-                }
-                Some(existing) if existing == value => return false,
-                Some(_) => {
-                    perturb >>= 5;
-                    index = (index
-                        .wrapping_mul(5)
-                        .wrapping_add(perturb as usize)
-                        .wrapping_add(1))
-                        & mask;
-                }
-            }
-        }
-    }
-
-    /// `set.add(value)` (duplicates keep their first slot).
-    pub(super) fn add(&mut self, value: i64) {
-        if !Self::place(&mut self.table, value) {
-            return;
-        }
-        self.used += 1;
-        self.fill += 1;
-        let mask = self.table.len() - 1;
-        if self.fill * 5 >= mask * 3 {
-            // `set_table_resize(so, used > 50000 ? used*2 : used*4)`.
-            let minsize = if self.used > 50_000 {
-                self.used * 2
-            } else {
-                self.used * 4
-            };
-            let mut newsize = 8_usize;
-            while newsize <= minsize {
-                newsize <<= 1;
-            }
-            let old: Vec<i64> = self.table.iter().flatten().copied().collect();
-            self.table = vec![None; newsize];
-            self.fill = self.used;
-            for value in old {
-                Self::place(&mut self.table, value);
-            }
-        }
-    }
-
-    /// `list(the_set)` — the slot-ascending iteration order.
-    pub(super) fn order(&self) -> Vec<i64> {
-        self.table.iter().flatten().copied().collect()
-    }
-}
+//! Integer hashing is the identity, so `set[int]` order is deterministic and
+//! shared with every other integer-set consumer
+//! (`crate::py_set_order::SetOrder`); string hashing is SipHash-1-3 keyed by
+//! the interpreter's per-process `PYTHONHASHSEED` secret, so `set[str]`
+//! order is one random draw per source process (see `PyStrSetOrder`).
 
 /// A faithful CPython `set[str]` order emulator for `str(int)` values.
 ///
@@ -112,10 +29,10 @@ impl PySetOrder {
 /// `Python/bootstrap_hash.c` (`x = x*214013 + 2531011`, taking bits 23..16
 /// of each step), and `hash(str)` is SipHash-1-3 of the UTF-8 bytes with
 /// `b = remaining_len << 56 | remaining bytes`. The table layout, probe,
-/// and resize rules match `PySetOrder` above. The seed defaults to the
-/// value whose draw the baseline recording exhibits (the engine compares
-/// IN literals inside the EXISTS-bearing filter query in order) and can be
-/// overridden with the `PYTHONHASHSEED` environment variable; a future
+/// and resize rules match `crate::py_set_order::SetOrder`. The seed defaults
+/// to the value whose draw the baseline recording exhibits (the engine
+/// compares IN literals inside the EXISTS-bearing filter query in order) and
+/// can be overridden with the `PYTHONHASHSEED` environment variable; a future
 /// recording with a different source-process seed renders a different draw
 /// and needs the override.
 pub(super) struct PyStrSetOrder {

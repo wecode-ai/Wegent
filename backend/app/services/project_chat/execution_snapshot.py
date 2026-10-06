@@ -28,7 +28,6 @@ TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "canc
 
 
 def _match_turn(
-    db: Session,
     row: ProjectChatMessage,
     snapshot: RuntimeExecutionSnapshot,
     *,
@@ -63,7 +62,7 @@ def _match_turn(
         turn = snapshot.turns[0]
         completed_at = _completion_time(turn.completed_at)
         created_at = (
-            row.created_at.replace(tzinfo=database_datetime_timezone(db))
+            row.created_at.replace(tzinfo=database_datetime_timezone())
             .astimezone(UTC)
             .replace(tzinfo=None)
         )
@@ -113,7 +112,7 @@ def reconcile_execution_snapshot(
     for row in rows:
         if row.status not in {"pending", "streaming"}:
             continue
-        turn = _match_turn(db, row, snapshot, single_execution=len(rows) == 1)
+        turn = _match_turn(row, snapshot, single_execution=len(rows) == 1)
         if turn is None or turn.status not in TERMINAL_STATUSES:
             continue
         project_chat_service._require_scope(

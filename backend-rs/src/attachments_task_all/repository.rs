@@ -8,14 +8,12 @@
 //! `subtask_store.list_by_task_unfiltered`, and
 //! `context_service.get_attachments_by_task`).
 //!
-//! Task/subtask queries use brz-mysql routed `{{tasks}}`/`{{subtasks}}`
-//! tokens with `ByTaskId` routing keys. Public startup resolves these keys to
-//! base tables; private startup may resolve them to physical shards.
+//! Task/subtask rows come from the injected `TaskStore`, which owns the table
+//! choice: the public store reads the base `tasks`/`subtasks` tables, while a
+//! deployment that resolves task storage differently supplies its own store.
 use crate::json_compat::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
-
-use crate::task_routing::ByTaskId;
 
 /// A `tasks` row restricted to the ownership columns
 /// (`TaskStore.get_by_id`).
@@ -25,21 +23,13 @@ pub struct TaskRow {
     pub user_id: i32,
 }
 
-/// `TaskStore.get_by_id`: the full column list on the shard table for the
-/// task id.
-pub async fn get_task_by_id<M>(mysql: &M, task_id: i64) -> MysqlResult<Option<TaskRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(
-            "SELECT id, user_id, kind, name, namespace, json, is_active, \
-             created_at, updated_at, project_id, client_origin, is_group_chat \
-             \nFROM {{tasks}} \nWHERE id = ? \n LIMIT 1",
-            (task_id,),
-        )
-        .await
+/// `task_store.get_by_id`: the full projection of the task id.
+pub async fn get_task_by_id(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_task(task_id).await?;
+    row.map(TaskRow::from_mysql_row).transpose()
 }
 
 /// The inline approved-membership query from the endpoint: the full
@@ -87,27 +77,14 @@ pub struct SubtaskRow {
     pub id: i64,
 }
 
-/// `ShardedSubtaskStore.list_by_task_unfiltered` for a new-format task id:
-/// the full projection on the shard table filtered by `task_id`, with no
+/// `ShardedSubtaskStore.list_by_task_unfiltered`: the task's subtasks, with no
 /// ordering (`query.all()`).
-pub async fn list_subtask_ids_by_task<M>(mysql: &M, task_id: i64) -> MysqlResult<Vec<SubtaskRow>>
-where
-    M: Mysql,
-{
-    mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_all(
-            "SELECT id, user_id, task_id, team_id, title, bot_ids, \
-             `role`, executor_namespace, executor_name, \
-             executor_deleted_at, prompt, message_id, \
-             parent_id, status, progress, result, \
-             error_message, created_at, updated_at, completed_at, \
-             sender_type, sender_user_id, reply_to_subtask_id \
-             \nFROM {{subtasks}} \n\
-             WHERE task_id = ?",
-            (task_id,),
-        )
-        .await
+pub async fn list_subtask_ids_by_task(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+) -> MysqlResult<Vec<SubtaskRow>> {
+    let rows = task_store.list_subtasks_by_task(task_id).await?;
+    rows.into_iter().map(SubtaskRow::from_mysql_row).collect()
 }
 
 /// One `subtask_contexts` row (`SubtaskContext`), decoded from the
@@ -182,24 +159,4 @@ where
             (),
         )
         .await
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn attachment_query_matches_recorded_shape() {
-        let ids = [655_721_247_171_616_i64, 655_721_247_171_617_i64];
-        let ids_text = ids
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        assert_eq!(ids_text, "655721247171616, 655721247171617");
-    }
-
-    #[test]
-    fn empty_subtask_list_short_circuits() {
-        let ids: Vec<i64> = Vec::new();
-        assert!(ids.is_empty());
-    }
 }

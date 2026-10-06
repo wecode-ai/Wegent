@@ -4,7 +4,7 @@
 
 """Tests for knowledge indexing state machine helpers."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +21,6 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
-    _utcnow,
     begin_external_import_attempt,
     mark_document_index_failed,
     mark_document_index_started,
@@ -88,7 +87,9 @@ def test_prepare_document_index_enqueue_schedules_new_generation(
 ):
     knowledge_base = _create_knowledge_base(test_db, test_user)
     document = _create_document(test_db, test_user, knowledge_base)
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -138,7 +139,9 @@ def test_prepare_document_index_enqueue_recovers_stale_queued_generation(
     )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 5)
         },
         synchronize_session=False,
@@ -170,7 +173,9 @@ def test_prepare_document_index_enqueue_recovers_stale_indexing_generation(
     )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS + 5)
         },
         synchronize_session=False,
@@ -220,7 +225,9 @@ def test_prepare_document_index_enqueue_can_replace_active_generation(
         index_status=DocumentIndexStatus.INDEXING,
         index_generation=4,
     )
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -323,7 +330,9 @@ def test_mark_document_index_started_updates_timestamp_on_success(
         index_status=DocumentIndexStatus.QUEUED,
         index_generation=2,
     )
-    previous_updated_at = _utcnow() - timedelta(seconds=5)
+    previous_updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {KnowledgeDocument.updated_at: previous_updated_at},
         synchronize_session=False,
@@ -745,6 +754,10 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
         external_resource_id="v1:conn-primary:42",
     )
     test_db.commit()
+    document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        seconds=5
+    )
+    test_db.commit()
     previous_updated_at = document.updated_at
 
     finalized = mark_document_index_succeeded(test_db, document.id, 2)
@@ -962,7 +975,9 @@ def test_external_refresh_enqueue_recovers_abandoned_snapshot_before_retry(
     test_db.commit()
     test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document.id).update(
         {
-            KnowledgeDocument.updated_at: _utcnow()
+            KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             - timedelta(seconds=settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS + 5)
         },
         synchronize_session=False,
