@@ -14,7 +14,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from knowledge_engine.embedding.capabilities import (
@@ -367,27 +366,20 @@ class ConfigResolver:
         *,
         knowledge_base_id: int,
         scope: RetrievalScope | None,
-    ) -> tuple[int, list[int] | None]:
-        """Read only QA metadata within the active, authorized document scope."""
+    ) -> tuple[int, list[int]]:
+        """Resolve enabled indexed documents and QA metadata within the scope."""
         filters = (
             KnowledgeDocument.kind_id == knowledge_base_id,
             KnowledgeDocument.is_active.is_(True),
+            KnowledgeDocument.status == "enabled",
         )
         subtype = KnowledgeDocument.chunks["splitter_subtype"].as_string()
         count = KnowledgeDocument.chunks["qa_pair_count"].as_integer()
         scoped_ids = scope.document_ids if scope is not None else None
-        if scoped_ids is None:
-            total = (
-                db.query(func.coalesce(func.sum(count), 0))
-                .filter(*filters, subtype == "qa_pair", count > 0)
-                .scalar()
-            )
-            return int(total or 0), None
-        document_rows = (
-            db.query(KnowledgeDocument.id, subtype, count)
-            .filter(*filters, KnowledgeDocument.id.in_(scoped_ids))
-            .all()
-        )
+        query = db.query(KnowledgeDocument.id, subtype, count).filter(*filters)
+        if scoped_ids is not None:
+            query = query.filter(KnowledgeDocument.id.in_(scoped_ids))
+        document_rows = query.all()
         qa_pair_count = sum(
             count
             for _, subtype, count in document_rows

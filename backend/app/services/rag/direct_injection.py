@@ -55,10 +55,10 @@ def estimate_total_tokens_for_knowledge_bases(
     """
     from sqlalchemy import func
 
-    from app.models.knowledge import KnowledgeDocument
+    from app.models.knowledge import DocumentStatus, KnowledgeDocument
     from app.models.subtask_context import SubtaskContext
 
-    if not knowledge_base_ids:
+    if not knowledge_base_ids or document_ids == []:
         return 0
 
     document_query = db.query(func.coalesce(func.sum(SubtaskContext.text_length), 0))
@@ -69,8 +69,9 @@ def estimate_total_tokens_for_knowledge_bases(
     document_query = document_query.filter(
         KnowledgeDocument.kind_id.in_(knowledge_base_ids),
         KnowledgeDocument.is_active.is_(True),
+        KnowledgeDocument.status == DocumentStatus.ENABLED,
     )
-    if document_ids:
+    if document_ids is not None:
         document_query = document_query.filter(KnowledgeDocument.id.in_(document_ids))
 
     total_text_length = document_query.scalar()
@@ -377,7 +378,7 @@ async def get_original_documents_from_knowledge_base(
         - []: No documents found
         - [records]: List of document dicts with content, score, title, metadata
     """
-    from app.models.knowledge import KnowledgeDocument
+    from app.models.knowledge import DocumentStatus, KnowledgeDocument
     from app.models.subtask_context import SubtaskContext
     from app.services.knowledge.document_read_service import document_read_service
 
@@ -404,7 +405,10 @@ async def get_original_documents_from_knowledge_base(
                 SubtaskContext,
                 KnowledgeDocument.attachment_id == SubtaskContext.id,
             )
-            .filter(KnowledgeDocument.is_active.is_(True))
+            .filter(
+                KnowledgeDocument.is_active.is_(True),
+                KnowledgeDocument.status == DocumentStatus.ENABLED,
+            )
             .filter(KnowledgeDocument.id.in_(document_ids))
             .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
         )
@@ -460,7 +464,10 @@ async def get_original_documents_from_knowledge_base(
                 SubtaskContext,
                 KnowledgeDocument.attachment_id == SubtaskContext.id,
             )
-            .filter(KnowledgeDocument.is_active.is_(True))
+            .filter(
+                KnowledgeDocument.is_active.is_(True),
+                KnowledgeDocument.status == DocumentStatus.ENABLED,
+            )
             .filter(KnowledgeDocument.kind_id == kb_id)
         )
         doc_rows = query.all()

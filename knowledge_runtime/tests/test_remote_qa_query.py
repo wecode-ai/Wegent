@@ -56,19 +56,24 @@ def qa_query_db(shared_model_db: Session) -> Session:
                 id=10,
                 kind_id=1,
                 is_active=True,
+                status="enabled",
                 chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 2},
             ),
-            KnowledgeDocument(id=11, kind_id=1, is_active=True, chunks=None),
+            KnowledgeDocument(
+                id=11, kind_id=1, is_active=True, status="enabled", chunks=None
+            ),
             KnowledgeDocument(
                 id=12,
                 kind_id=1,
                 is_active=False,
+                status="enabled",
                 chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 5},
             ),
             KnowledgeDocument(
                 id=20,
                 kind_id=2,
                 is_active=True,
+                status="enabled",
                 chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 9},
             ),
         ]
@@ -85,6 +90,7 @@ def test_unscoped_qa_count_only_includes_active_documents_in_current_kb(
             id=13,
             kind_id=1,
             is_active=True,
+            status="enabled",
             chunks={"splitter_subtype": "qa_pair", "qa_pair_count": -3},
         )
     )
@@ -98,7 +104,32 @@ def test_unscoped_qa_count_only_includes_active_documents_in_current_kb(
     )
 
     assert config.qa_pair_count == 2
-    assert config.scoped_document_ids is None
+    assert config.scoped_document_ids == [10, 11, 13]
+
+
+@pytest.mark.parametrize("document_ids", [None, [10, 11, 12, 20], [10], [99]])
+def test_disabled_documents_do_not_affect_scope_or_qa_strategy(
+    qa_query_db: Session, document_ids: list[int] | None
+) -> None:
+    qa_query_db.get(KnowledgeDocument, 10).status = "disabled"
+    qa_query_db.commit()
+
+    config = ConfigResolver().resolve_query_config(
+        qa_query_db,
+        knowledge_base_id=1,
+        user_id=42,
+        authorized=authorized_for(qa_query_db, 1),
+        scope=(
+            RetrievalScope(document_ids=document_ids)
+            if document_ids is not None
+            else None
+        ),
+    )
+
+    assert config.scoped_document_ids == (
+        [11] if document_ids is None or document_ids == [10, 11, 12, 20] else []
+    )
+    assert config.qa_pair_count == 0
 
 
 async def run_query(
@@ -143,6 +174,61 @@ async def run_query(
     ):
         result = await QueryExecutor(config_loader=loader).execute(request)
     return result, storage
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document_ids",
+    [None, [10], [10, 11]],
+    ids=["whole-kb", "document", "resolved-folder"],
+)
+async def test_disable_all_and_reenable_query_existing_index(
+    qa_query_db: Session, document_ids: list[int] | None
+) -> None:
+    indexed_records = [
+        {"content": "qa-body", "score": 0.9, "metadata": {"doc_ref": "doc_10"}},
+        {"content": "ordinary-body", "score": 0.8, "metadata": {"doc_ref": "doc_11"}},
+    ]
+    storage = MagicMock()
+    storage.supports_retrieval_scope = True
+    storage.retrieve.side_effect = lambda **kwargs: {
+        "records": [
+            record
+            for record in indexed_records
+            if int(record["metadata"]["doc_ref"][4:]) in kwargs["scope"].document_ids
+        ]
+    }
+    request = RemoteQueryRequest(
+        knowledge_base_ids=[1],
+        user_id=42,
+        query=QUERY,
+        scope=RetrievalScope(document_ids=document_ids) if document_ids else None,
+    )
+    for disabled_ids, expected in (
+        ([], [10] if document_ids == [10] else [10, 11]),
+        ([10], [] if document_ids == [10] else [11]),
+        ([10, 11], []),
+        ([], [10] if document_ids == [10] else [10, 11]),
+    ):
+        for document_id in (10, 11):
+            qa_query_db.get(KnowledgeDocument, document_id).status = (
+                "disabled" if document_id in disabled_ids else "enabled"
+            )
+        qa_query_db.commit()
+        calls_before = storage.retrieve.call_count
+
+        result, _ = await run_query(qa_query_db, request, storage=storage)
+
+        assert [record.document_id for record in result.records] == expected
+        assert result.total == len(expected)
+        assert storage.retrieve.call_count == calls_before + bool(expected)
+        if expected:
+            setting = storage.retrieve.call_args.kwargs["retrieval_setting"]
+            assert setting["hint_source"] == (
+                "qa_pair_profile" if 10 in expected else "fallback"
+            )
+    storage.delete_document.assert_not_called()
+    storage.index_document.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -374,6 +460,9 @@ async def test_qa_plan_is_per_knowledge_base(qa_query_db: Session) -> None:
             json=kb.json,
         )
     )
+    qa_query_db.add(
+        KnowledgeDocument(id=40, kind_id=4, is_active=True, status="enabled")
+    )
     qa_query_db.commit()
     _, storage = await run_query(
         qa_query_db,
@@ -419,7 +508,9 @@ async def test_multi_kb_scope_is_clipped_before_independent_planning(
                 is_active=True,
                 json=kb.json,
             ),
-            KnowledgeDocument(id=40, kind_id=4, is_active=True, chunks=None),
+            KnowledgeDocument(
+                id=40, kind_id=4, is_active=True, status="enabled", chunks=None
+            ),
         ]
     )
     qa_query_db.commit()

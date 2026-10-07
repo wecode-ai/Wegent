@@ -1582,6 +1582,7 @@ class KnowledgeService:
             .filter(
                 KnowledgeDocument.kind_id == knowledge_base_id,
                 KnowledgeDocument.is_active == True,
+                KnowledgeDocument.status == DocumentStatus.ENABLED,
             )
             .one()
         )

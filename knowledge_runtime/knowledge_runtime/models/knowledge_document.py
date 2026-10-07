@@ -11,7 +11,7 @@ and enums not required by KR.
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Column, Integer
+from sqlalchemy import JSON, Boolean, Column, Integer, String
 
 from shared.models.db.base import Base
 
@@ -24,6 +24,7 @@ class KnowledgeDocument(Base):
     id = Column(Integer, primary_key=True, index=True)
     kind_id = Column(Integer, nullable=False, index=True)
     is_active = Column(Boolean, nullable=False, default=False)
+    status = Column(String(20), nullable=False, default="disabled")
     chunks = Column(JSON, nullable=True)
     attachment_id = Column(Integer, nullable=False, default=0)
     splitter_config = Column(JSON, nullable=False, default={})

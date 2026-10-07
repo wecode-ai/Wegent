@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentStatus, KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,11 @@ class DocumentReadService:
 
         documents = (
             db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id.in_(document_ids))
+            .filter(
+                KnowledgeDocument.id.in_(document_ids),
+                KnowledgeDocument.status == DocumentStatus.ENABLED,
+                KnowledgeDocument.is_active.is_(True),
+            )
             .all()
         )
         return {document.id: document for document in documents}
