@@ -437,6 +437,7 @@ def _get_document_content_sync(
             offset=offset,
             limit=limit,
             knowledge_base_ids=[access.knowledge_base_id],
+            searchable_only=False,
         )
         result = results[0] if results else None
         if result is None or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:

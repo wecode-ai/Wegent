@@ -135,6 +135,23 @@ def test_kb_size_only_counts_enabled_indexed_documents(
     assert stats.active_document_count == 1
 
 
+def test_management_preview_reads_stored_bodies_without_search_visibility(
+    visibility_db: Session,
+) -> None:
+    results = DocumentReadService().read_documents(
+        visibility_db,
+        document_ids=[10, 11, 12],
+        knowledge_base_ids=[1],
+        searchable_only=False,
+    )
+
+    assert [result["content"] for result in results] == [
+        "body-10",
+        "body-11",
+        "body-12",
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "folder_ids, include_subfolders, expected",

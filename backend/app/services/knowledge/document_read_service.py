@@ -25,20 +25,22 @@ class DocumentReadService:
     def _load_documents(
         db: Session,
         document_ids: list[int],
+        *,
+        searchable_only: bool,
     ) -> dict[int, KnowledgeDocument]:
         """Load documents in bulk and index them by ID."""
         if not document_ids:
             return {}
 
-        documents = (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.id.in_(document_ids),
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id.in_(document_ids)
+        )
+        if searchable_only:
+            query = query.filter(
                 KnowledgeDocument.status == DocumentStatus.ENABLED,
                 KnowledgeDocument.is_active.is_(True),
             )
-            .all()
-        )
+        documents = query.all()
         return {document.id: document for document in documents}
 
     @staticmethod
@@ -160,12 +162,15 @@ class DocumentReadService:
         knowledge_base_ids: Optional[list[int]] = None,
         user_subtask_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        searchable_only: bool = True,
     ) -> list[Dict[str, Any]]:
-        """Read multiple documents while preserving input order."""
+        """Read searchable bodies, or stored bodies for authorized management preview."""
         if not document_ids:
             return []
 
-        documents_by_id = self._load_documents(db, document_ids)
+        documents_by_id = self._load_documents(
+            db, document_ids, searchable_only=searchable_only
+        )
 
         # Collect all attachment_ids to load (original + converted)
         all_attachment_ids: set[int] = set()

@@ -959,6 +959,7 @@ class KnowledgeOrchestrator:
             offset=offset,
             limit=limit,
             knowledge_base_ids=[document.kind_id],
+            searchable_only=False,
         )
         result = results[0] if results else None
 
