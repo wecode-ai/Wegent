@@ -152,8 +152,8 @@ CI 的 shard 1 执行 `backend/tests/e2e/knowledge_remote_index.py` 和
 
 Milvus 场景需要真实四并发 Backend Celery worker，不能使用串行嵌入式 worker。
 测试模型要求四个不同文档的请求同时到达，串行执行或重试都无法通过；
-Milvus、Runtime、队列、数据库和对象存储不模拟。CI 用两行包装 Dockerfile
-设置 Milvus 启动命令，复用已有镜像发布流程。
+Milvus、Runtime、队列、数据库和对象存储不模拟。CI 直接使用官方 Milvus 镜像，
+通过 service 的 `command: milvus run standalone` 启动，无需构建或发布包装镜像。
 
 `tests/tasks/provider-native-chat.spec.ts` 新增 021/022 场景：同一聊天 K→K+L→解绑 L 后 K，
 以及长文分页追问、点击来源打开真实资料详情。解绑走真实任务 API，模型只提供测试工具调用和回复。

@@ -375,9 +375,6 @@ platform_e2e_expected="${all_false/platform_e2e=false/platform_e2e=true}"
 assert_case "docker changes run platform E2E" "$platform_e2e_expected" \
   "docker/docker-compose.yml"
 
-assert_case "Milvus E2E image changes run platform E2E" "$platform_e2e_expected" \
-  "docker/wework-e2e/milvus.Dockerfile"
-
 executor_dependency_expected="${platform_e2e_expected/executor=false/executor=true}"
 assert_case "executor dependency setup changes run executor and platform E2E" \
   "$executor_dependency_expected" \

@@ -112,7 +112,6 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.image.outputs.ref }}
-      milvus-image: ${{ steps.milvus-image.outputs.ref }}
 
     steps:
       - name: Checkout code
@@ -169,32 +168,6 @@ jobs:
           tags: ${{ steps.image.outputs.ref }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
-
-      - name: Resolve Milvus E2E image
-        id: milvus-image
-        run: |
-          digest="$(sha256sum docker/wework-e2e/milvus.Dockerfile | cut -d ' ' -f 1)"
-          echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:milvus-$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Check Milvus E2E image
-        id: milvus-image-check
-        env:
-          IMAGE: ${{ steps.milvus-image.outputs.ref }}
-        run: |
-          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build and publish Milvus E2E image
-        if: steps.milvus-image-check.outputs.exists != 'true'
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
-        with:
-          context: .
-          file: docker/wework-e2e/milvus.Dockerfile
-          push: true
-          tags: ${{ steps.milvus-image.outputs.ref }}
 
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
@@ -504,10 +477,8 @@ jobs:
           ETCD_DATA_DIR: /etcd
 
       milvus:
-        image: ${{ needs.prepare-platform-e2e-image.outputs.milvus-image }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        image: milvusdb/milvus:v2.5.4
+        command: milvus run standalone
         env:
           ETCD_ENDPOINTS: etcd:2379
           MINIO_ADDRESS: minio:9000
