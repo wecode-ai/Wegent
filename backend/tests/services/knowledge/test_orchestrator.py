@@ -871,6 +871,7 @@ class TestKnowledgeOrchestrator:
             offset=2,
             limit=4,
             knowledge_base_ids=[77],
+            searchable_only=False,
         )
 
     @pytest.mark.parametrize(
