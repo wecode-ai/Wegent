@@ -431,14 +431,20 @@ class TestKnowledgeServiceDocumentFolderQueries:
 
 @pytest.mark.unit
 class TestKnowledgeServiceUpdateDocumentContent:
-    def test_update_document_content_overwrites_attachment_binary(self) -> None:
+    @pytest.mark.parametrize(
+        "source_type, extension",
+        [("text", "md"), ("file", "md"), ("file", ".md"), ("file", ".MD")],
+    )
+    def test_update_document_content_overwrites_attachment_binary(
+        self, source_type: str, extension: str
+    ) -> None:
         """Editable documents should update attachment storage before reindexing."""
         db = MagicMock()
         document = SimpleNamespace(
             id=1,
             kind_id=10,
-            source_type="text",
-            file_extension="md",
+            source_type=source_type,
+            file_extension=extension,
             attachment_id=20,
             name="release-notes",
             file_size=12,
@@ -480,6 +486,19 @@ class TestKnowledgeServiceUpdateDocumentContent:
             binary_data="# Updated release notes".encode("utf-8"),
         )
         db.refresh.assert_called_once_with(document)
+
+    @pytest.mark.parametrize(
+        "source_type, extension", [("file", ".pdf"), ("external", ".md")]
+    )
+    def test_update_document_content_rejects_uneditable_sources(
+        self, source_type: str, extension: str
+    ) -> None:
+        document = SimpleNamespace(source_type=source_type, file_extension=extension)
+        with patch.object(KnowledgeService, "get_document", return_value=document):
+            with pytest.raises(ValueError, match="read-only|can be edited"):
+                KnowledgeService.update_document_content(
+                    MagicMock(), document_id=1, content="updated", user_id=99
+                )
 
 
 @pytest.mark.unit

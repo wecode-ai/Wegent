@@ -312,7 +312,7 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
             "storage_key": "source",
             "storage_backend": "mysql",
             "original_filename": "release-notes.md",
-            "file_extension": "md",
+            "file_extension": ".md",
             "mime_type": "text/markdown",
             "file_size": 128,
         },
@@ -357,6 +357,20 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     )
     created_row.index_status = DocumentIndexStatus.SUCCESS
     test_db.commit()
+    updated = knowledge_orchestrator.update_document_content(
+        db=test_db,
+        user=test_user,
+        document_id=created.id,
+        content="# Updated release notes",
+        trigger_reindex=True,
+    )
+    assert updated["success"] is True
+    test_db.refresh(created_row)
+    assert created_row.file_extension == "md"
+    assert created_row.attachment_id != source.id
+    assert created_row.index_generation == 2
+    created_row.index_status = DocumentIndexStatus.SUCCESS
+    test_db.commit()
     rebuilt = knowledge_orchestrator.reindex_document(
         db=test_db,
         user=test_user,
@@ -365,11 +379,12 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     )
 
     assert rebuilt["skipped"] is False
-    assert rebuilt["index_generation"] == 2
-    assert len(dispatched) == 2
-    create_task, rebuild_task = dispatched
+    assert rebuilt["index_generation"] == 3
+    assert len(dispatched) == 3
+    create_task, update_task, rebuild_task = dispatched
     assert create_task["index_generation"] == 1
-    assert rebuild_task["index_generation"] == 2
+    assert update_task["index_generation"] == 2
+    assert rebuild_task["index_generation"] == 3
     assert rebuild_task["document_id"] == created.id
     assert rebuild_task["knowledge_base_id"] == str(kb.id)
     assert rebuild_task["retriever_name"] == "retriever-a"

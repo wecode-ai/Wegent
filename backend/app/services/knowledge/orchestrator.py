@@ -83,6 +83,7 @@ from shared.knowledge_module import (
     RetrievalProfileRecord,
     RetrievalResource,
     evaluate_profile,
+    normalize_document_extension,
     prepare_knowledge_config,
     validate_retrieval_config_update,
 )
@@ -1735,7 +1736,9 @@ class KnowledgeOrchestrator:
         data = data.model_copy(
             update={
                 "attachment_id": attachment.id,
-                "file_extension": attachment.file_extension,
+                "file_extension": normalize_document_extension(
+                    attachment.file_extension
+                ),
                 "file_size": attachment.file_size,
             }
         )

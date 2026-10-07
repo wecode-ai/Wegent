@@ -93,6 +93,7 @@ from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
     can_manage_accessible_knowledge_document,
 )
+from shared.knowledge_module import normalize_document_extension
 
 batch_logger = logging.getLogger(__name__)
 
@@ -2353,7 +2354,7 @@ class KnowledgeService:
         is_text_type = doc.source_type == "text"
         is_editable_file = (
             doc.source_type == "file"
-            and doc.file_extension.lower() in editable_extensions
+            and normalize_document_extension(doc.file_extension) in editable_extensions
         )
         if not (is_text_type or is_editable_file):
             raise ValueError(
