@@ -621,6 +621,7 @@ def _runtime_query(
                 {
                     "knowledge_base_id": knowledge_base_id,
                     "index_owner_user_id": owner_user_id,
+                    "operation": "query",
                     "retriever": {
                         "kind": "Retriever",
                         "name": resource_name,
