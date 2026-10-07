@@ -121,6 +121,9 @@ def _create_retrieval_resources(
     *,
     embedding_url: str,
     on_created: Callable[[str], None] | None = None,
+    storage_type: str = "qdrant",
+    storage_url: str = QDRANT_URL,
+    embedding_model_id: str = "e2e-embedding",
 ) -> None:
     """Create the real Retriever and Model records the knowledge base references."""
 
@@ -128,11 +131,11 @@ def _create_retrieval_resources(
     connection = client.post(
         "/api/retrievers/test-connection",
         headers=headers,
-        json={"storage_type": "qdrant", "url": QDRANT_URL},
+        json={"storage_type": storage_type, "url": storage_url},
     )
     _check(
         connection.status_code == 200 and connection.json().get("success") is True,
-        f"Qdrant must be reachable through the retriever check: {connection.text}",
+        f"{storage_type} must be reachable through the retriever check: {connection.text}",
     )
     model = client.post(
         "/api/v1/namespaces/default/models",
@@ -151,7 +154,7 @@ def _create_retrieval_resources(
                 "modelConfig": {
                     "env": {
                         "model": "custom",
-                        "model_id": "e2e-embedding",
+                        "model_id": embedding_model_id,
                         "base_url": embedding_url,
                     }
                 },
@@ -166,7 +169,7 @@ def _create_retrieval_resources(
     retriever = client.post(
         "/api/retrievers",
         headers=headers,
-        json=_retriever_payload(name, QDRANT_URL),
+        json=_retriever_payload(name, storage_url, storage_type=storage_type),
     )
     _check(
         retriever.status_code < 300, f"creating the retriever failed: {retriever.text}"
@@ -175,7 +178,9 @@ def _create_retrieval_resources(
         on_created(f"/api/retrievers/{name}")
 
 
-def _retriever_payload(name: str, storage_url: str) -> dict[str, Any]:
+def _retriever_payload(
+    name: str, storage_url: str, *, storage_type: str = "qdrant"
+) -> dict[str, Any]:
     """Build the Retriever CRD whose storage the runtime executes against."""
 
     return {
@@ -184,11 +189,18 @@ def _retriever_payload(name: str, storage_url: str) -> dict[str, Any]:
         "metadata": {"name": name, "namespace": "default"},
         "spec": {
             "storageConfig": {
-                "type": "qdrant",
+                "type": storage_type,
                 "url": storage_url,
                 "indexStrategy": {"mode": "per_dataset"},
             },
-            "retrievalMethods": {"vector": {"enabled": True}},
+            "retrievalMethods": {
+                method: {"enabled": True}
+                for method in (
+                    ("vector", "keyword", "hybrid")
+                    if storage_type == "milvus"
+                    else ("vector",)
+                )
+            },
         },
     }
 

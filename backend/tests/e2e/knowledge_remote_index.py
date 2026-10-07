@@ -46,6 +46,7 @@ import uuid
 
 import httpx
 from knowledge_remote_index_admin import run_admin_scenarios
+from knowledge_remote_index_contracts import run_contract_scenarios
 from knowledge_remote_index_delete import (
     run_delete_failure_scenario,
     run_document_delete_scenario,
@@ -86,6 +87,7 @@ from knowledge_remote_index_support import (
     _upload_conversion_attachment,
     _wait_for_index_status,
 )
+from knowledge_retrieval_parameters import run_qa_retrieval, run_retrieval_parameters
 
 
 def _assert_stale_generation_stands_down(
@@ -795,6 +797,9 @@ def run() -> None:
     with _create_client() as client:
         token, owner_user_id = _login(client)
         run_public_retrieval_scenario(client, token, owner_user_id)
+        run_retrieval_parameters(client, token, owner_user_id)
+        run_qa_retrieval(client, token, owner_user_id)
+        run_contract_scenarios(client, token, owner_user_id)
         _run_plain_document_scenario(client, token, owner_user_id)
         _run_converted_document_scenario(client, token, owner_user_id)
         _run_conversion_failure_scenario(client, token, owner_user_id)

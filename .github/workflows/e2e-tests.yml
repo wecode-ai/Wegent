@@ -112,6 +112,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.image.outputs.ref }}
+      milvus-image: ${{ steps.milvus-image.outputs.ref }}
 
     steps:
       - name: Checkout code
@@ -168,6 +169,32 @@ jobs:
           tags: ${{ steps.image.outputs.ref }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
+
+      - name: Resolve Milvus E2E image
+        id: milvus-image
+        run: |
+          digest="$(sha256sum docker/wework-e2e/milvus.Dockerfile | cut -d ' ' -f 1)"
+          echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:milvus-$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Check Milvus E2E image
+        id: milvus-image-check
+        env:
+          IMAGE: ${{ steps.milvus-image.outputs.ref }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish Milvus E2E image
+        if: steps.milvus-image-check.outputs.exists != 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: docker/wework-e2e/milvus.Dockerfile
+          push: true
+          tags: ${{ steps.milvus-image.outputs.ref }}
 
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
@@ -469,6 +496,30 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
+      etcd:
+        image: quay.io/coreos/etcd:v3.5.16
+        env:
+          ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_DATA_DIR: /etcd
+
+      milvus:
+        image: ${{ needs.prepare-platform-e2e-image.outputs.milvus-image }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          ETCD_ENDPOINTS: etcd:2379
+          MINIO_ADDRESS: minio:9000
+          MINIO_ACCESS_KEY_ID: wegent-e2e
+          MINIO_SECRET_ACCESS_KEY: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9091/healthz"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-start-period=30s
+          --health-retries=30
+
       qdrant:
         image: qdrant/qdrant:v1.15.4
 
@@ -596,6 +647,8 @@ jobs:
 
       - name: Start backend server
         env:
+          EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
+          EMBEDDED_CELERY_ENABLED: "false"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://redis:6379/0
@@ -622,6 +675,41 @@ jobs:
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
           echo $! > backend/backend.pid
+
+      - name: Start parallel Backend index worker
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          EMBEDDED_CELERY_ENABLED: "false"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
+          CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          PYTHONPATH: ..:.
+        run: |
+          uv run --no-sync celery -A app.core.celery_app worker \
+            --pool=threads --concurrency=4 --queues=wegent_online --beat \
+            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
+          echo $! > index-worker.pid
+          for i in {1..60}; do
+            if grep -q ' ready.' index-worker.log; then
+              exit 0
+            fi
+            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
+            sleep 1
+          done
+          cat index-worker.log
+          exit 1
 
       - name: Start Knowledge Runtime
         env:
@@ -750,10 +838,13 @@ jobs:
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           E2E_QDRANT_URL: http://qdrant:6333
+          E2E_MILVUS_URL: http://milvus:19530
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
           PYTHONPATH: ..:.
-        run: uv run --no-sync python tests/e2e/knowledge_remote_index.py
+        run: |
+          uv run --no-sync python tests/e2e/knowledge_remote_index.py
+          uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
 
       - name: Verify Chat Shell is running
         run: |
@@ -791,6 +882,15 @@ jobs:
             --workers=1 \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
             --no-deps
+
+      - name: Stop Backend index worker
+        if: always()
+        working-directory: ./backend
+        run: |
+          if [ -f index-worker.pid ]; then
+            kill "$(cat index-worker.pid)" 2>/dev/null || true
+            rm -f index-worker.pid
+          fi
 
       - name: Stop Knowledge Runtime
         if: always()
@@ -865,6 +965,7 @@ jobs:
           name: backend-logs-${{ matrix.shardIndex }}
           path: |
             backend/backend.log
+            backend/index-worker.log
             logs/backend/rust/
             backend/chat_shell.log
             knowledge_runtime/ci.log

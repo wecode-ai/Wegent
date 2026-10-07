@@ -57,6 +57,9 @@ classify_path() {
       changed[executor]=true
       changed[platform_e2e]=true
       ;;
+    docker/wework-e2e/milvus.Dockerfile)
+      changed[platform_e2e]=true
+      ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \

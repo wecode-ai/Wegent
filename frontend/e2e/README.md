@@ -144,6 +144,33 @@ pnpm exec playwright test e2e/tests/knowledge/dingtalk-import.spec.ts \
 非默认端口另设 `E2E_BASE_URL`、`E2E_API_URL` 和 `MOCK_MODEL_SERVER_URL`。
 模拟 embedding 返回确定性的 32 维向量，只验证检索基础设施契约，不评估语义检索质量。
 
+## 知识库核心回归
+
+CI 的 shard 1 执行 `backend/tests/e2e/knowledge_remote_index.py` 和
+`backend/tests/e2e/knowledge_milvus_e2e.py`，覆盖真实索引、检索参数、QA、分享撤权、
+迁移与自动转移索引、个人 API Key 的 MCP 查询和撤销。
+
+Milvus 场景需要真实四并发 Backend Celery worker，不能使用串行嵌入式 worker。
+测试模型要求四个不同文档的请求同时到达，串行执行或重试都无法通过；
+Milvus、Runtime、队列、数据库和对象存储不模拟。CI 用两行包装 Dockerfile
+设置 Milvus 启动命令，复用已有镜像发布流程。
+
+`tests/tasks/provider-native-chat.spec.ts` 新增 021/022 场景：同一聊天 K→K+L→解绑 L 后 K，
+以及长文分页追问、点击来源打开真实资料详情。解绑走真实任务 API，模型只提供测试工具调用和回复。
+这些场景属于原 `provider-native-chromium` 项目，CI 无重试执行。
+
+服务就绪后，在各自目录运行：
+
+```bash
+# backend
+uv run --no-sync python tests/e2e/knowledge_remote_index.py
+E2E_MILVUS_URL=http://localhost:19530 uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
+
+# frontend
+pnpm exec playwright test e2e/tests/tasks/provider-native-chat.spec.ts \
+  --project=provider-native-chromium --workers=1 --retries=0
+```
+
 ## Agent Conversation Regression
 
 `tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:

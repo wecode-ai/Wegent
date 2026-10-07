@@ -940,7 +940,7 @@ const server = http.createServer((req, res) => {
       return
     }
 
-    if (handleEmbeddingRequest(req, res, body)) return
+    if (await handleEmbeddingRequest(req, res, body)) return
 
     try {
       if (await handleMineruRequest(req, res, body)) return
