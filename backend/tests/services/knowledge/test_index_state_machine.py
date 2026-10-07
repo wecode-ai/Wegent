@@ -1069,3 +1069,78 @@ def test_successful_reindex_replaces_old_qa_metadata_without_chunk_storage(
 
     test_db.refresh(document)
     assert document.chunks == chunks
+
+
+def test_scanner_recovers_first_inactive_queued_attempt(
+    test_db, test_user, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from app.services.knowledge import index_state_machine
+    from app.tasks.knowledge_tasks import scan_stale_index_tasks
+
+    kb = _create_knowledge_base(test_db, test_user)
+    doc = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=1,
+    )
+    expired_now = doc.updated_at + timedelta(
+        seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 1
+    )
+    monkeypatch.setattr(
+        index_state_machine, "database_datetime_now", lambda: expired_now
+    )
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.SessionLocal", lambda: nullcontext(test_db)
+    )
+
+    scan_stale_index_tasks.run()
+
+    test_db.refresh(doc)
+    assert doc.index_status == DocumentIndexStatus.FAILED
+    assert doc.is_active is False
+    assert doc.index_generation == 1
+
+
+def test_scanner_does_not_fail_worker_that_started_after_snapshot(
+    test_db, test_user, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from app.services.knowledge import index_state_machine
+    from app.tasks.knowledge_tasks import scan_stale_index_tasks
+
+    kb = _create_knowledge_base(test_db, test_user)
+    doc = _create_document(
+        test_db,
+        test_user,
+        kb,
+        is_active=True,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=1,
+    )
+    expired_now = doc.updated_at + timedelta(
+        seconds=settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS + 1
+    )
+    moved = False
+
+    def clock():
+        nonlocal moved
+        if not moved:
+            moved = True
+            assert mark_document_index_started(test_db, doc.id, 1).should_execute
+        return expired_now
+
+    monkeypatch.setattr(index_state_machine, "database_datetime_now", clock)
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.SessionLocal", lambda: nullcontext(test_db)
+    )
+
+    scan_stale_index_tasks.run()
+
+    test_db.refresh(doc)
+    assert doc.index_status == DocumentIndexStatus.INDEXING
+    assert doc.index_generation == 1

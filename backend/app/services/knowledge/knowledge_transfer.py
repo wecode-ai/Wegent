@@ -969,6 +969,7 @@ class KnowledgeTransferService:
                         knowledge_base=target_kb,
                         document=doc,
                         user=user,
+                        caller_user_id=user.id,
                         trigger_summary=False,
                     )
                     logger.info(

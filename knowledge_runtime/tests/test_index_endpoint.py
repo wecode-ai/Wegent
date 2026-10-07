@@ -30,6 +30,7 @@ def _index_request() -> RemoteIndexRequest:
             url="https://storage.example.com/release-notes.md",
         ),
         authorized_resources=RemoteAuthorizedRetrievalResources(
+            operation="index",
             knowledge_base_id=7,
             index_owner_user_id=42,
             retriever=RemoteRetrievalResourceRef(
@@ -67,6 +68,7 @@ def test_index_request_keeps_the_authorized_references() -> None:
     payload = _index_request().model_dump(mode="json", exclude_none=True)
 
     assert payload["authorized_resources"] == {
+        "operation": "index",
         "knowledge_base_id": 7,
         "index_owner_user_id": 42,
         "retriever": {

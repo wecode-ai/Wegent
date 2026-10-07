@@ -283,6 +283,7 @@ def index_document_task(
     index_generation: int = 0,
     splitter_config_dict: Optional[dict] = None,
     trigger_summary: bool = True,
+    caller_user_id: int | None = None,
 ):
     """
     Celery task for RAG document indexing.
@@ -337,6 +338,7 @@ def index_document_task(
             embedding_model_namespace=embedding_model_namespace,
             user_id=user_id,
             user_name=user_name,
+            caller_user_id=caller_user_id,
             splitter_config_dict=splitter_config_dict,
             document_id=document_id,
             trigger_summary=trigger_summary,
@@ -462,6 +464,7 @@ def index_document_task(
                 embedding_model_namespace=embedding_model_namespace,
                 user_id=user_id,
                 user_name=user_name,
+                caller_user_id=caller_user_id,
                 splitter_config_dict=splitter_config_dict,
                 document_id=document_id,
                 trigger_summary=trigger_summary,
@@ -763,11 +766,15 @@ def update_kb_summary_task(
 
 @celery_app.task(name="app.tasks.knowledge_tasks.scan_stale_index_tasks")
 def scan_stale_index_tasks():
-    """Scan all active indexing states and mark stale ones as FAILED.
+    """Scan in-flight indexing states and mark stale ones as FAILED.
 
     This is the safety net for scenarios where converter/indexing workers
     crash, timeout, or become unreachable. Without this scan, documents
     stay in CONVERTING/INDEXING/QUEUED indefinitely.
+
+    Include documents that have never completed indexing and are therefore
+    not yet active for retrieval. Index status, not retrieval activation,
+    identifies an attempt that needs timeout recovery.
 
     Idempotency: mark_document_index_failed uses WHERE generation=N AND
     status IN (ACTIVE), so normally completed documents are unaffected.
@@ -795,7 +802,6 @@ def scan_stale_index_tasks():
                         DocumentIndexStatus.INDEXING,
                     ]
                 ),
-                KnowledgeDocument.is_active == True,  # noqa: E712
             )
             .all()
         )
@@ -812,6 +818,7 @@ def scan_stale_index_tasks():
                         index_status,
                         generation=generation,
                     ),
+                    require_stale=True,
                 )
                 if finalized:
                     marked_count += 1

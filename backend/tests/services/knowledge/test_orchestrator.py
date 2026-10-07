@@ -1369,53 +1369,81 @@ class TestKnowledgeOrchestrator:
                 )
 
     def test_create_document_from_attachment_skips_large_excel_indexing(
-        self, orchestrator, mock_db, mock_user
+        self, orchestrator, test_db, test_user, monkeypatch
     ):
-        """Test large Excel documents (>2MB) are created without scheduling RAG indexing."""
-        mock_kb = MagicMock()
-        mock_kb.id = 1
-        mock_kb.json = {"spec": {}}
+        """Large Excel imports keep a private body without enqueueing indexing."""
+        from app.models.kind import Kind
+        from app.models.subtask_context import SubtaskContext
+        from app.tasks.knowledge_tasks import index_document_task
+        from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
 
-        mock_doc = MagicMock()
-        mock_doc.id = 99
-        mock_doc.attachment_id = 123
-
-        # File size > 2MB (3MB)
         large_file_size = 3 * 1024 * 1024
-
-        data = KnowledgeDocumentCreate(
-            attachment_id=123,
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name="large-excel",
+            namespace="default",
+            is_active=True,
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever",
+                        "embedding_config": {"model_name": "embedding"},
+                    }
+                }
+            },
+        )
+        source = SubtaskContext(
+            user_id=test_user.id,
+            subtask_id=0,
+            context_type="attachment",
             name="report.xlsx",
-            file_extension="xlsx",
-            file_size=large_file_size,
-            source_type=DocumentSourceType.FILE,
+            status="ready",
+            type_data={
+                "storage_key": "source",
+                "storage_backend": "mysql",
+                "original_filename": "report.xlsx",
+                "file_extension": "xlsx",
+                "mime_type": "application/octet-stream",
+                "file_size": large_file_size,
+            },
+        )
+        test_db.add_all(
+            [
+                kb,
+                source,
+                retriever_kind(test_user.id, "retriever"),
+                embedding_model_kind(test_user.id, "embedding"),
+            ]
+        )
+        test_db.commit()
+        storage = MagicMock(backend_type="mysql")
+        storage.get.return_value = b"x" * large_file_size
+        monkeypatch.setitem(
+            context_service.get_attachment_binary_data.__globals__,
+            "get_storage_backend",
+            lambda db: storage,
+        )
+        enqueue = MagicMock()
+        monkeypatch.setattr(index_document_task, "delay", enqueue)
+
+        created = orchestrator.create_document_from_attachment(
+            test_db,
+            test_user,
+            kb.id,
+            KnowledgeDocumentCreate(
+                attachment_id=source.id,
+                name="report.xlsx",
+                file_extension="xlsx",
+                file_size=large_file_size,
+            ),
+            trigger_indexing=True,
+            trigger_summary=False,
         )
 
-        with patch(
-            "app.services.knowledge.orchestrator.KnowledgeService"
-        ) as mock_service:
-            mock_service.get_knowledge_base.return_value = (mock_kb, True)
-            mock_service.can_manage_knowledge_base_documents.return_value = True
-            mock_service.create_document.return_value = mock_doc
-
-            with patch.object(
-                orchestrator, "_schedule_indexing_celery"
-            ) as mock_schedule:
-                with patch(
-                    "app.services.knowledge.orchestrator.KnowledgeDocumentResponse"
-                ) as mock_response:
-                    mock_response.model_validate.return_value = MagicMock()
-
-                    orchestrator.create_document_from_attachment(
-                        db=mock_db,
-                        user=mock_user,
-                        knowledge_base_id=1,
-                        data=data,
-                        trigger_indexing=True,
-                        trigger_summary=False,
-                    )
-
-        mock_schedule.assert_not_called()
+        assert created.attachment_id != source.id
+        assert created.file_size == large_file_size
+        enqueue.assert_not_called()
 
     def test_create_document_from_attachment_requires_manage_permission(
         self,

@@ -48,6 +48,8 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     resolved execution config.
     """
 
+    # Legacy/system dispatches omit caller; manual dispatches retain both identities.
+    caller_user_id: int | None = Field(default=None, gt=0, strict=True)
     knowledge_base_id: int
     document_id: Optional[int] = None
     index_owner_user_id: int

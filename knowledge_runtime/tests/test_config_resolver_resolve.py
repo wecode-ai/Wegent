@@ -4,6 +4,7 @@
 
 """Tests for ConfigResolver resolve_index_config and resolve_query_config."""
 
+from typing import Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,9 +42,11 @@ def _authorized_entry(
     embedding_model_name: str = "text-embedding-3-small",
     embedding_model_namespace: str = "default",
     explicit_selection: bool = False,
+    operation: Literal["query", "index"] = "query",
 ) -> RemoteAuthorizedRetrievalResources:
     """Build the resources Backend authorized for one query."""
     return RemoteAuthorizedRetrievalResources(
+        operation=operation,
         knowledge_base_id=knowledge_base_id,
         index_owner_user_id=index_owner_user_id,
         retriever=RemoteRetrievalResourceRef(
@@ -76,6 +79,7 @@ def test_rejects_model_changed_to_llm_after_authorization(
 ) -> None:
     """Current Model capabilities must override the earlier authorization."""
     authorized = _authorized_entry(
+        operation=operation,
         embedding_model_name="shared-embedding",
         embedding_model_namespace="search-team",
     )
@@ -121,6 +125,7 @@ def test_accepts_current_and_legacy_embedding_category(
     model.json = {"spec": {**spec, **category_fields, "modelConfig": model_config}}
     shared_model_db.commit()
     authorized = _authorized_entry(
+        operation=operation,
         embedding_model_name="shared-embedding",
         embedding_model_namespace="search-team",
     )
@@ -149,7 +154,7 @@ class TestResolveIndexConfig:
     ) -> None:
         """Test successful index config resolution with document_id."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        authorized = _authorized_entry()
+        authorized = _authorized_entry(operation="index")
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
@@ -184,7 +189,7 @@ class TestResolveIndexConfig:
     ) -> None:
         """Test index config resolution without document_id yields empty splitter_config."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        authorized = _authorized_entry()
+        authorized = _authorized_entry(operation="index")
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
@@ -218,7 +223,9 @@ class TestResolveIndexConfig:
                     mock_db,
                     knowledge_base_id=999,
                     user_id=42,
-                    authorized=_authorized_entry(knowledge_base_id=999),
+                    authorized=_authorized_entry(
+                        operation="index", knowledge_base_id=999
+                    ),
                 )
             assert exc_info.value.code == "config_not_found"
 
@@ -241,7 +248,9 @@ class TestResolveIndexConfig:
     ) -> None:
         """A stored resource replaced outside the authorized set cannot index."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        authorized = _authorized_entry(retriever_name="other-retriever")
+        authorized = _authorized_entry(
+            operation="index", retriever_name="other-retriever"
+        )
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
@@ -263,7 +272,7 @@ class TestResolveIndexConfig:
     ) -> None:
         """References authorized for another knowledge base never index this one."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        authorized = _authorized_entry(knowledge_base_id=2)
+        authorized = _authorized_entry(operation="index", knowledge_base_id=2)
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
@@ -286,7 +295,7 @@ class TestResolveIndexConfig:
     ) -> None:
         """References authorized for another owner never index this knowledge base."""
         kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-        authorized = _authorized_entry(index_owner_user_id=99)
+        authorized = _authorized_entry(operation="index", index_owner_user_id=99)
 
         with (
             patch.object(resolver, "_get_knowledge_base", return_value=kb),
@@ -359,7 +368,7 @@ class TestResolveQueryConfig:
             shared_model_db,
             knowledge_base_id=1,
             user_id=42,
-            authorized=authorized,
+            authorized=authorized.model_copy(update={"operation": "index"}),
         )
 
         assert query_config.embedding_model_config.model_name == "shared-embedding"
@@ -712,3 +721,70 @@ def test_management_executes_without_embedding_or_query_parameters(
     )
     assert config.index_owner_user_id == 42
     assert config.retriever_config.storage_config["type"] == "qdrant"
+
+
+@pytest.mark.parametrize(
+    "operation,grant_operation", [("index", "query"), ("query", "index")]
+)
+def test_rejects_grant_for_another_operation(
+    resolver: ConfigResolver,
+    shared_model_db: Session,
+    operation: Literal["query", "index"],
+    grant_operation: Literal["query", "index"],
+) -> None:
+    grant = _authorized_entry(
+        operation=grant_operation,
+        embedding_model_name="shared-embedding",
+        embedding_model_namespace="search-team",
+    )
+    with pytest.raises(ConfigResolutionError) as error:
+        getattr(resolver, f"resolve_{operation}_config")(
+            shared_model_db, knowledge_base_id=1, user_id=42, authorized=grant
+        )
+    assert error.value.code == "authorization_mismatch"
+
+
+def test_index_rejects_temporary_resource_selection(
+    resolver: ConfigResolver, shared_model_db: Session
+) -> None:
+    grant = _authorized_entry(
+        operation="index",
+        explicit_selection=True,
+        embedding_model_name="shared-embedding",
+        embedding_model_namespace="search-team",
+    )
+    with pytest.raises(ConfigResolutionError) as error:
+        resolver.resolve_index_config(
+            shared_model_db, knowledge_base_id=1, user_id=42, authorized=grant
+        )
+    assert error.value.code == "authorization_mismatch"
+
+
+@pytest.mark.parametrize(
+    "modalities,expected",
+    [(None, []), (["image"], ["image"]), (["image", "image"], ["image"])],
+)
+def test_query_preserves_embedding_input_capabilities(
+    resolver: ConfigResolver,
+    shared_model_db: Session,
+    modalities: list[str] | None,
+    expected: list[str],
+) -> None:
+    model = shared_model_db.get(Kind, 3)
+    spec = dict(model.json["spec"])
+    spec["embeddingConfig"] = {
+        "dimensions": 1024,
+        "additional_input_modalities": modalities,
+    }
+    model.json = {"spec": spec}
+    shared_model_db.commit()
+    grant = _authorized_entry(
+        embedding_model_name="shared-embedding", embedding_model_namespace="search-team"
+    )
+    config = resolver.resolve_query_config(
+        shared_model_db, knowledge_base_id=1, user_id=42, authorized=grant
+    )
+    assert (
+        config.embedding_model_config.resolved_config["additional_input_modalities"]
+        == expected
+    )

@@ -39,6 +39,7 @@ def authorize_test_resources(monkeypatch):
     from shared.models import RemoteAuthorizedRetrievalResources
 
     grant = RemoteAuthorizedRetrievalResources(
+        operation="query",
         knowledge_base_id=7,
         index_owner_user_id=3,
         retriever={"kind": "Retriever", "name": "test", "namespace": "default"},

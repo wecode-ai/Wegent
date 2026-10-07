@@ -596,6 +596,7 @@ def mark_document_index_failed(
     *,
     error: Optional[DocumentProcessingError] = None,
     preserve_active_sync_index: bool = False,
+    require_stale: bool = False,
 ) -> bool:
     """Persist a failed processing result for the active generation.
 
@@ -607,6 +608,11 @@ def mark_document_index_failed(
     """
     document = _load_active_index_attempt(db, document_id, generation)
     if document is None:
+        return False
+    # A scanner's snapshot may expire before a worker advances this attempt.
+    # Recheck the current timeout while holding the existing document row lock.
+    if require_stale and _get_active_index_stale_reason(document) is None:
+        db.rollback()
         return False
 
     candidate = error or generic_processing_error(

@@ -17,6 +17,9 @@ from typing import Any, Mapping
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from knowledge_engine.embedding.capabilities import (
+    normalize_additional_input_modalities,
+)
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind, resolve_retriever_kind
 from shared.knowledge_module import (
@@ -113,6 +116,11 @@ class ConfigResolver:
                 f"Knowledge base {knowledge_base_id} indexing requires authorized "
                 "retrieval resources",
             )
+        self._require_operation(authorized, "index")
+        if authorized.explicit_selection:
+            raise ConfigResolutionError(
+                "authorization_mismatch", "Indexing requires stored resources"
+            )
         kb = self._get_knowledge_base(db, knowledge_base_id)
         self._require_authorized_target(kb, authorized=authorized)
         index_owner_user_id = authorized.index_owner_user_id
@@ -144,6 +152,16 @@ class ConfigResolver:
             splitter_config=splitter_config,
             user_name=user_name,
         )
+
+    @staticmethod
+    def _require_operation(
+        authorized: RemoteAuthorizedRetrievalResources, operation: str
+    ) -> None:
+        """Reject a grant intended for another operation before loading resources."""
+        if authorized.operation != operation:
+            raise ConfigResolutionError(
+                "authorization_mismatch", f"Authorized operation is not {operation}"
+            )
 
     @staticmethod
     def _require_authorized_target(
@@ -206,6 +224,7 @@ class ConfigResolver:
                 f"Knowledge base {knowledge_base_id} query requires authorized "
                 "retrieval resources",
             )
+        self._require_operation(authorized, "query")
         kb = self._get_knowledge_base(db, knowledge_base_id)
         self._require_authorized_target(kb, authorized=authorized)
         index_owner_user_id = authorized.index_owner_user_id
@@ -526,6 +545,11 @@ class ConfigResolver:
                 ),
                 "dimensions": dimensions,
                 "encoding_format": encoding_format,
+                "additional_input_modalities": normalize_additional_input_modalities(
+                    embedding_config.get("additional_input_modalities")
+                    if embedding_config
+                    else None
+                ),
             },
         )
 

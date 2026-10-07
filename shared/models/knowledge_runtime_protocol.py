@@ -114,6 +114,7 @@ class RemoteAuthorizedRetrievalResources(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_id: int
     index_owner_user_id: int
+    operation: Literal["index", "query"]
     retriever: RemoteRetrievalResourceRef
     embedding_model: RemoteRetrievalResourceRef
     explicit_selection: bool = False

@@ -162,6 +162,13 @@ class QueryExecutor:
         embedding = create_embedding_model_from_runtime_config(
             config.embedding_model_config
         )
+        logger.info(
+            "Runtime query config: kb_id=%s top_k=%s score_threshold=%s retrieval_mode=%s",
+            knowledge_base_id,
+            config.retrieval_config.top_k,
+            config.retrieval_config.score_threshold,
+            config.retrieval_config.retrieval_mode,
+        )
         return QueryTarget(
             KnowledgeQueryExecutor(storage_backend=storage, embed_model=embedding),
             str(knowledge_base_id),

@@ -75,6 +75,7 @@ def _make_runtime_spec(
     return QueryRuntimeSpec(
         authorized_resources=[
             RemoteAuthorizedRetrievalResources(
+                operation="query",
                 knowledge_base_id=kb_id,
                 index_owner_user_id=7,
                 retriever={

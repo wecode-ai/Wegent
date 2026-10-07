@@ -92,6 +92,7 @@ def test_compose_resolves_backend_encrypted_model_and_storage_credentials(
         knowledge_base_id=1,
         user_id=42,
         authorized=RemoteAuthorizedRetrievalResources(
+            operation="index",
             knowledge_base_id=1,
             index_owner_user_id=42,
             retriever={

@@ -31,6 +31,7 @@ async def test_category_mismatch_never_constructs_or_executes_model(
 ) -> None:
     """Real config resolution rejects LLM before reaching engine factories."""
     authorized = RemoteAuthorizedRetrievalResources(
+        operation=operation,
         knowledge_base_id=1,
         index_owner_user_id=42,
         retriever=RemoteRetrievalResourceRef(
@@ -78,7 +79,12 @@ async def test_category_mismatch_never_constructs_or_executes_model(
     ):
         await executor.execute(request)
 
-    assert exc_info.value.code == "config_invalid"
+    expected_code = (
+        "authorization_mismatch"
+        if operation == "index" and explicit_selection
+        else "config_invalid"
+    )
+    assert exc_info.value.code == expected_code
     model_factory.assert_not_called()
     storage_factory.assert_not_called()
     engine.assert_not_called()

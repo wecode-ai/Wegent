@@ -18,7 +18,7 @@ dependencies = [
     # CLI framework
     "click>=8.1.0",
     # Database related
-    "sqlalchemy>=2.0.25",
+    "sqlalchemy[asyncio]>=2.0.25",
     "pymysql>=1.1.0",
     "asyncmy>=0.2.9",
     "cryptography>=42.0.4",

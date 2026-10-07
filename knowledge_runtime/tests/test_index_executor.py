@@ -23,6 +23,7 @@ from shared.models import (
 def _authorized_resources() -> RemoteAuthorizedRetrievalResources:
     """Build the references Backend authorizes for this indexing call."""
     return RemoteAuthorizedRetrievalResources(
+        operation="index",
         knowledge_base_id=1,
         index_owner_user_id=42,
         retriever=RemoteRetrievalResourceRef(

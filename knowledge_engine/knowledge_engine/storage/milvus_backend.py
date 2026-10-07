@@ -955,6 +955,10 @@ class MilvusBackend(BaseStorageBackend):
 
         vector_store = self.create_vector_store(collection_name)
 
+        # A concurrent creator may have made the collection visible before loading it.
+        # Wait before query/delete and propagate errors instead of hiding failed cleanup.
+        vector_store.client.load_collection(collection_name, timeout=20.0)
+
         # Build filters to match the document
         filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
 

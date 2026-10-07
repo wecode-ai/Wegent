@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -40,6 +40,7 @@ from shared.models import (
     RetrievalScope,
     SearchHints,
 )
+from shared.telemetry.decorators import trace_sync
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class _QueryResourceReferences:
         knowledge_base_id: int,
         index_owner_user_id: int,
         explicit_selection: bool = False,
+        operation: Literal["index", "query"] = "query",
     ) -> RemoteAuthorizedRetrievalResources:
         """Bundle the references into the authorized-resources protocol entry."""
         retriever, embedding_model = self._resource_refs()
@@ -66,6 +68,7 @@ class _QueryResourceReferences:
             retriever=retriever,
             embedding_model=embedding_model,
             explicit_selection=explicit_selection,
+            operation=operation,
         )
 
     def _resource_refs(
@@ -102,6 +105,7 @@ class RagRuntimeResolver:
         document_id: int | None,
         splitter_config_dict: dict | None,
         kb_index_info: KnowledgeBaseIndexInfo | None = None,
+        caller_user_id: int | None = None,
     ) -> IndexRuntimeSpec:
         """Authorize index resources without resolving execution configuration."""
         try:
@@ -114,6 +118,13 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             current_user_id=user_id,
         )
+        if caller_user_id is not None:
+            kb = self._require_manual_index_access(
+                db, parsed_knowledge_base_id, document_id, caller_user_id
+            )
+            kb_info = get_kb_index_info_by_record(
+                db=db, knowledge_base=kb, current_user_id=caller_user_id
+            )
         authorized_resources = self._authorized_entry(
             db=db,
             references=_QueryResourceReferences(
@@ -124,6 +135,7 @@ class RagRuntimeResolver:
             ),
             knowledge_base_id=parsed_knowledge_base_id,
             index_owner_user_id=kb_info.index_owner_user_id,
+            operation="index",
         )
         return IndexRuntimeSpec(
             knowledge_base_id=parsed_knowledge_base_id,
@@ -134,10 +146,58 @@ class RagRuntimeResolver:
             embedding_model_name=embedding_model_name,
             embedding_model_namespace=embedding_model_namespace,
             authorized_resources=authorized_resources,
+            caller_user_id=caller_user_id,
             source=IndexSource(source_type="attachment", attachment_id=attachment_id),
             splitter_config=splitter_config_dict,
             user_name=user_name,
         )
+
+    @staticmethod
+    @trace_sync(
+        span_name="knowledge.manual_index_authorization", tracer_name="knowledge.rag"
+    )
+    def _require_manual_index_access(
+        db: Session, knowledge_base_id: int, document_id: int | None, caller_id: int
+    ) -> Kind:
+        """Recheck the manual caller through the existing knowledge policy."""
+        from app.models.knowledge import KnowledgeDocument
+        from app.models.user import User
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        caller = (
+            db.query(User)
+            .filter(User.id == caller_id, User.is_active.is_(True))
+            .first()
+        )
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, caller_id
+        )
+        if caller is None or kb is None or not has_access:
+            raise HTTPException(status_code=403, detail="Knowledge index access denied")
+        if document_id is None:
+            allowed = KnowledgeService.can_manage_knowledge_base_documents(
+                db, knowledge_base_id, caller_id
+            )
+        else:
+            document = (
+                db.query(KnowledgeDocument)
+                .filter(
+                    KnowledgeDocument.id == document_id,
+                    KnowledgeDocument.kind_id == knowledge_base_id,
+                )
+                .first()
+            )
+            allowed = (
+                document is not None
+                and KnowledgeService.can_manage_knowledge_document(
+                    db, knowledge_base_id, caller_id, cast(int, document.user_id)
+                )
+            )
+        if not allowed:
+            raise HTTPException(
+                status_code=403, detail="Knowledge index operation denied"
+            )
+        return kb
 
     def build_query_runtime_spec(
         self,
@@ -422,6 +482,7 @@ class RagRuntimeResolver:
         knowledge_base_id: int,
         index_owner_user_id: int,
         explicit_selection: bool = False,
+        operation: Literal["index", "query"] = "query",
     ) -> RemoteAuthorizedRetrievalResources:
         """Bundle one operation's references, rejecting ones the owner cannot use.
 
@@ -436,6 +497,7 @@ class RagRuntimeResolver:
             knowledge_base_id=knowledge_base_id,
             index_owner_user_id=index_owner_user_id,
             explicit_selection=explicit_selection,
+            operation=operation,
         )
         self._authorize_owner_resources(db=db, entry=entry)
         return entry

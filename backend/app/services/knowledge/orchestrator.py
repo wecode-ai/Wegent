@@ -33,6 +33,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     KnowledgeDocument,
 )
+from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -1625,68 +1626,24 @@ class KnowledgeOrchestrator:
                     "attachment_id is required for source_type='attachment'"
                 )
 
-            # Import context type enum (context_service already imported at function start)
-            from app.models.subtask_context import ContextType
+            source_context = self._get_import_attachment(db, user, attachment_id)
 
-            # 1. Verify attachment exists and user has access (ownership check)
-            source_context = context_service.get_context_optional(
-                db=db,
-                context_id=attachment_id,
-                user_id=user.id,
-            )
-            if not source_context:
-                raise ValueError(
-                    f"Attachment {attachment_id} not found or access denied"
-                )
-
-            if source_context.context_type != ContextType.ATTACHMENT.value:
-                raise ValueError(f"Context {attachment_id} is not an attachment")
-
-            # 2. Get binary data from source attachment (auto-decrypts if needed)
-            binary_data = context_service.get_attachment_binary_data(
-                db=db,
-                context=source_context,
-            )
-            if binary_data is None:
-                raise ValueError(
-                    f"Failed to retrieve content from attachment {attachment_id}"
-                )
-
-            # 3. Extract file info from source attachment
-            filename = source_context.name or f"document_{attachment_id}"
-            normalized_ext = (
-                source_context.file_extension or DEFAULT_TEXT_FILE_EXTENSION
-            )
-
-            # 4. Create a copy as a new attachment for the document
-            # This ensures the knowledge base document is independent of the original
-            attachment, _ = context_service.upload_attachment(
-                db=db,
-                user_id=user.id,
-                filename=filename,
-                binary_data=binary_data,
-                subtask_id=0,  # Unlinked attachment for knowledge base
-            )
-
-            # Create document using shared helper
             doc_data = KnowledgeDocumentCreate(
-                name=name or filename,
-                source_type="file",  # Store as file type in the document
-                attachment_id=attachment.id,
-                file_extension=normalized_ext,
-                file_size=len(binary_data),
+                name=name or source_context.original_filename,
+                source_type="file",
+                attachment_id=attachment_id,
+                file_extension=source_context.file_extension,
+                file_size=source_context.file_size,
                 folder_id=folder_id,
+                splitter_config=splitter_config,
             )
-
-            return self._create_and_index_document(
+            return self.create_document_from_attachment(
                 db=db,
                 user=user,
-                knowledge_base=kb,
                 knowledge_base_id=knowledge_base_id,
                 data=doc_data,
                 trigger_indexing=trigger_indexing,
                 trigger_summary=trigger_summary,
-                splitter_config=splitter_config,
             )
 
         else:
@@ -1738,7 +1695,7 @@ class KnowledgeOrchestrator:
         This method is used by REST API where attachment is uploaded separately
         via /api/attachments/upload endpoint.
 
-        Flow: Verify access → Create document → Schedule indexing via Celery
+        Flow: Verify source access → Copy attachment → Create document → Schedule indexing
 
         Args:
             db: Database session
@@ -1771,6 +1728,18 @@ class KnowledgeOrchestrator:
                 "You do not have permission to add documents to this knowledge base"
             )
 
+        from app.services.context import context_service
+
+        source = self._get_import_attachment(db, user, data.attachment_id)
+        attachment = context_service.copy_attachment_for_user(db, source, user.id)
+        data = data.model_copy(
+            update={
+                "attachment_id": attachment.id,
+                "file_extension": attachment.file_extension,
+                "file_size": attachment.file_size,
+            }
+        )
+
         # Get splitter config from data if provided
         splitter_config_dict = None
         if data.splitter_config:
@@ -1786,6 +1755,25 @@ class KnowledgeOrchestrator:
             trigger_summary=trigger_summary,
             splitter_config=splitter_config_dict,
         )
+
+    @staticmethod
+    def _get_import_attachment(
+        db: Session, user: User, attachment_id: Optional[int]
+    ) -> SubtaskContext:
+        """Authorize the caller's source before reading any attachment content."""
+        from app.models.subtask_context import ContextStatus, ContextType
+        from app.services.context import context_service
+
+        source = context_service.get_context_optional(
+            db=db, context_id=attachment_id, user_id=user.id
+        )
+        if source is None:
+            raise ValueError(f"Attachment {attachment_id} not found or access denied")
+        if source.context_type != ContextType.ATTACHMENT.value:
+            raise ValueError(f"Context {attachment_id} is not an attachment")
+        if source.status != ContextStatus.READY.value:
+            raise ValueError(f"Attachment {attachment_id} is not ready")
+        return source
 
     def attach_external_document_content(
         self,
@@ -2057,29 +2045,45 @@ class KnowledgeOrchestrator:
             resolve_dispatch_or_none,
         )
 
-        # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
-        # (model/api_key/download path) BEFORE document creation so a failure
-        # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
-        # Skip when indexing is disabled — callers may store a video/image
-        # document without analyzing it immediately; the gate runs on reindex.
-        multimodal_dispatch_ctx = None
-        if trigger_indexing:
-            multimodal_dispatch_ctx = resolve_dispatch_or_none(
-                db,
-                knowledge_base,
-                settings,
-                file_extension=data.file_extension,
-                attachment_id=data.attachment_id,
-                uploader=user,
-            )
+        attachment_id = data.attachment_id
+        attachment_owner_id = user.id
+        try:
+            # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
+            # (model/api_key/download path) BEFORE document creation so a failure
+            # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
+            # Skip when indexing is disabled — callers may store a video/image
+            # document without analyzing it immediately; the gate runs on reindex.
+            multimodal_dispatch_ctx = None
+            if trigger_indexing:
+                multimodal_dispatch_ctx = resolve_dispatch_or_none(
+                    db,
+                    knowledge_base,
+                    settings,
+                    file_extension=data.file_extension,
+                    attachment_id=data.attachment_id,
+                    uploader=user,
+                )
 
-        # Create document
-        document = KnowledgeService.create_document(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
-            data=data,
-        )
+            # Create document
+            document = KnowledgeService.create_document(
+                db=db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=user.id,
+                data=data,
+            )
+        except Exception:
+            # Creation may commit before refresh fails. Only remove an unlinked
+            # body after rollback and a fresh reference check; dispatch is outside
+            # this cleanup boundary because the document already owns its body.
+            db.rollback()
+            referenced = (
+                db.query(KnowledgeDocument.id)
+                .filter(KnowledgeDocument.attachment_id == attachment_id)
+                .first()
+            )
+            if attachment_id and referenced is None:
+                delete_attachment_best_effort(db, attachment_owner_id, attachment_id)
+            raise
 
         logger.info(
             f"[Orchestrator] Created document {document.id} in KB {knowledge_base_id}"
@@ -2096,6 +2100,7 @@ class KnowledgeOrchestrator:
                 knowledge_base=knowledge_base,
                 document=document,
                 user=user,
+                caller_user_id=user.id,
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
                 multimodal_dispatch_ctx=multimodal_dispatch_ctx,
@@ -2209,6 +2214,7 @@ class KnowledgeOrchestrator:
                 knowledge_base=kb,
                 document=document,
                 user=user,
+                caller_user_id=user.id,
                 trigger_summary=False,  # Don't re-generate summary on update
                 allow_if_success=True,
                 replace_active=True,
@@ -2269,6 +2275,7 @@ class KnowledgeOrchestrator:
         expected_generation: Optional[int] = None,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
+        caller_user_id: int | None = None,
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -2280,7 +2287,8 @@ class KnowledgeOrchestrator:
             db: Database session
             knowledge_base: Knowledge base Kind
             document: Document model
-            user: Current user
+            user: Dispatch metadata user; not necessarily the manual caller
+            caller_user_id: Explicit manual caller; automatic dispatches omit it
             trigger_summary: Whether to trigger summary after indexing
             splitter_config: Optional splitter configuration dict
             allow_if_success: Whether to re-queue a document that already succeeded
@@ -2411,6 +2419,7 @@ class KnowledgeOrchestrator:
                     embedding_model_name=embedding_model_name,
                     embedding_model_namespace=embedding_model_namespace,
                     user_id=index_owner_user_id,
+                    caller_user_id=caller_user_id,
                     user_name=user.user_name,
                     document_id=document.id,
                     index_generation=generation,
@@ -2436,6 +2445,7 @@ class KnowledgeOrchestrator:
                     "embedding_model_name": embedding_model_name,
                     "embedding_model_namespace": embedding_model_namespace,
                     "user_id": index_owner_user_id,
+                    "caller_user_id": caller_user_id,
                     "user_name": user.user_name,
                     "document_id": document.id,
                     "index_generation": generation,
@@ -2502,6 +2512,7 @@ class KnowledgeOrchestrator:
                             "embedding_model_name": embedding_model_name,
                             "embedding_model_namespace": embedding_model_namespace,
                             "user_id": index_owner_user_id,
+                            "caller_user_id": caller_user_id,
                             "user_name": user.user_name,
                             "document_id": document.id,
                             "index_generation": generation,
@@ -2527,6 +2538,7 @@ class KnowledgeOrchestrator:
                     embedding_model_name=embedding_model_name,
                     embedding_model_namespace=embedding_model_namespace,
                     user_id=index_owner_user_id,
+                    caller_user_id=caller_user_id,
                     user_name=user.user_name,
                     document_id=document.id,
                     index_generation=generation,
@@ -2695,6 +2707,7 @@ class KnowledgeOrchestrator:
             knowledge_base=knowledge_base,
             document=document,
             user=user,
+            caller_user_id=user.id,
             # A multimodal re-analyze (force_reconvert) regenerates the document
             # content via Gemini, so the summary must be regenerated too — the old
             # summary no longer matches the new Markdown. The indexing task still
@@ -2870,6 +2883,7 @@ class KnowledgeOrchestrator:
                     knowledge_base=knowledge_base,
                     document=document,
                     user=user,
+                    caller_user_id=user.id,
                     trigger_summary=trigger_summary,
                     allow_if_success=True,
                     replace_active=True,
@@ -3085,6 +3099,7 @@ class KnowledgeOrchestrator:
                         knowledge_base=knowledge_base,
                         document=document,
                         user=user,
+                        caller_user_id=user.id,
                         trigger_summary=trigger_summary,
                         allow_if_success=True,
                         replace_active=True,

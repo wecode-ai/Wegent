@@ -322,6 +322,7 @@ async def test_authorized_references_reach_the_runtime_request(
                 "namespace": "default",
             },
             "explicit_selection": False,
+            "operation": "query",
         }
     ]
 
@@ -336,6 +337,7 @@ async def test_explicit_selection_reaches_the_runtime_request(mocker) -> None:
         user_name="alice",
         authorized_resources=[
             RemoteAuthorizedRetrievalResources(
+                operation="query",
                 knowledge_base_id=7,
                 index_owner_user_id=42,
                 retriever=RemoteRetrievalResourceRef(
@@ -378,6 +380,7 @@ async def test_explicit_selection_reaches_the_runtime_request(mocker) -> None:
                 "namespace": "default",
             },
             "explicit_selection": True,
+            "operation": "query",
         }
     ]
     assert "explicit_resources" not in body

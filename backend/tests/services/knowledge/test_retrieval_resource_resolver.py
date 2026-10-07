@@ -179,3 +179,39 @@ def test_missing_embedding_model_is_not_resolved(
         )
         is None
     )
+
+
+def test_approved_model_uses_receiver_scope_without_source_membership(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.resource_member import ResourceMember
+
+    source = group_namespace(test_db, "model-source", owner_user_id=test_user.id + 1000)
+    model = embedding_model_kind(test_user.id + 1000, "shared-embedding", source.name)
+    test_db.add(model)
+    test_db.flush()
+    grant = ResourceMember.create(
+        resource_type="Model",
+        resource_id=model.id,
+        entity_type="user",
+        entity_id=str(test_user.id),
+        status="approved",
+    )
+    test_db.add(grant)
+    test_db.commit()
+
+    resolved = resolve_embedding_model_resource(
+        test_db, user_id=test_user.id, name=model.name, namespace="default"
+    )
+    assert resolved is not None
+    assert resolved.namespace == "default"
+    assert resolved.category == "embedding"
+
+    grant.status = "rejected"
+    test_db.commit()
+    assert (
+        resolve_embedding_model_resource(
+            test_db, user_id=test_user.id, name=model.name, namespace="default"
+        )
+        is None
+    )

@@ -15,6 +15,7 @@ from app.models.task import TaskResource
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeBaseCreate,
+    KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
     KnowledgeFolderUpdate,
@@ -79,7 +80,7 @@ class TestKnowledgeServiceReadUserResolution:
 
 @pytest.mark.unit
 class TestKnowledgeServiceCreateKnowledgeBase:
-    def test_create_keeps_document_download_setting_absent_when_not_provided(
+    def test_create_leaves_download_setting_absent_when_not_provided(
         self, test_db, test_user
     ) -> None:
         knowledge_base_id = KnowledgeService.create_knowledge_base(
@@ -111,6 +112,28 @@ class TestKnowledgeServiceCreateKnowledgeBase:
             knowledge_base.json["spec"]["allowDocumentDownload"]
             is allow_document_download
         )
+
+    def test_update_null_resets_document_download_to_allowed_default(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(
+                name="download-reset-kb",
+                allow_document_download=True,
+            ),
+        )
+
+        knowledge_base = KnowledgeService.update_knowledge_base(
+            db=test_db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=test_user.id,
+            data=KnowledgeBaseUpdate(allow_document_download=None),
+        )
+
+        assert knowledge_base is not None
+        assert "allowDocumentDownload" not in knowledge_base.json["spec"]
 
     def test_create_knowledge_base_persists_retrieval_config_as_dict(
         self, test_db, test_user

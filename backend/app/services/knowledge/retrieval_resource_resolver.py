@@ -11,8 +11,8 @@ selected reference against the record its owner is authorized to use.
 
 It adds no access rule of its own. Retrievers go through the existing retriever
 service, which owns the group permission check and the public fallback; models go
-through the same caller-visible reference resolution the runtime uses, gated by
-the same group membership the retriever path requires.
+through caller-visible reference resolution, with membership checked only for
+the receiving namespace. Approved references authorize their source records.
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ def resolve_retriever_resource(
         )
     except HTTPException:
         return None
+    if retriever.metadata.name != name:
+        return None
     return RetrievalResource(
         name=retriever.metadata.name,
         namespace=retriever.metadata.namespace or "default",
@@ -60,8 +62,8 @@ def resolve_embedding_model_resource(
 
     The resolved record carries the model's real category, so a model that is
     not an embedding model is reported as such instead of being silently
-    accepted for the embedding slot. A model owned by a group is only reported
-    to callers that may use that group, matching the retriever path.
+    accepted for the embedding slot. Approved references retain the receiving
+    namespace as their logical identity, without requiring source membership.
     """
     requested_namespace = namespace or "default"
     if not _caller_can_use_namespace(db, user_id, requested_namespace):
@@ -71,15 +73,10 @@ def resolve_embedding_model_resource(
     )
     if kind is None:
         return None
-    resolved_namespace = kind.namespace or "default"
-    if resolved_namespace != requested_namespace and not _caller_can_use_namespace(
-        db, user_id, resolved_namespace
-    ):
-        return None
     spec = (kind.json or {}).get("spec", {})
     return RetrievalResource(
         name=kind.name,
-        namespace=resolved_namespace,
+        namespace=requested_namespace,
         kind=MODEL_RESOURCE_KIND,
         category=resolve_model_category(spec),
     )

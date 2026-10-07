@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeDocumentCreate
+from app.services.context import context_service
 from app.services.knowledge import search_execution
 from app.services.knowledge.indexing import run_document_indexing
 from app.services.knowledge.orchestrator import knowledge_orchestrator
@@ -210,6 +212,7 @@ def test_document_index_request_reaches_runtime_with_authorized_resources(
     assert body["authorized_resources"] == {
         "knowledge_base_id": kb.id,
         "index_owner_user_id": test_user.id,
+        "operation": "index",
         "retriever": {
             "kind": "Retriever",
             "name": "retriever-a",
@@ -298,6 +301,30 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     contract, not a process.
     """
     kb, _ = _prepare_indexable_kb(test_db, test_user)
+    source = SubtaskContext(
+        id=23,
+        user_id=test_user.id,
+        subtask_id=0,
+        context_type="attachment",
+        name="release-notes.md",
+        status="ready",
+        type_data={
+            "storage_key": "source",
+            "storage_backend": "mysql",
+            "original_filename": "release-notes.md",
+            "file_extension": "md",
+            "mime_type": "text/markdown",
+            "file_size": 128,
+        },
+    )
+    test_db.add(source)
+    test_db.commit()
+    storage = MagicMock(backend_type="mysql")
+    storage.get.return_value = b"release notes"
+    mocker.patch.dict(
+        context_service.get_attachment_binary_data.__globals__,
+        {"get_storage_backend": lambda db: storage},
+    )
     dispatched: list[dict[str, Any]] = []
 
     def _capture(**kwargs: Any) -> MagicMock:

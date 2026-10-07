@@ -32,6 +32,7 @@ def authorized_for(db: Session, kb_id: int) -> RemoteAuthorizedRetrievalResource
     kb = db.get(Kind, kb_id)
     rc = kb.json["spec"]["retrievalConfig"]
     return RemoteAuthorizedRetrievalResources(
+        operation="query",
         knowledge_base_id=kb_id,
         index_owner_user_id=kb.user_id,
         retriever={

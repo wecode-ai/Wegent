@@ -144,6 +144,7 @@ def test_public_retrieve_executes_caller_selected_resources(
                 "namespace": "default",
             },
             "explicit_selection": True,
+            "operation": "query",
         }
     ]
     assert "explicit_resources" not in body
@@ -208,6 +209,7 @@ def test_public_retrieve_authorizes_an_approved_shared_retriever(
                 "namespace": "default",
             },
             "explicit_selection": True,
+            "operation": "query",
         }
     ]
 

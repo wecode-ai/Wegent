@@ -65,6 +65,7 @@ def test_build_index_runtime_spec_uses_kb_owner_for_group_kb():
     assert spec.index_owner_user_id == 42
     assert spec.source.attachment_id == 11
     assert spec.authorized_resources == RemoteAuthorizedRetrievalResources(
+        operation="index",
         knowledge_base_id=7,
         index_owner_user_id=42,
         retriever=RemoteRetrievalResourceRef(
@@ -213,6 +214,7 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
     resolver = RagRuntimeResolver()
     authorized = [
         RemoteAuthorizedRetrievalResources(
+            operation="query",
             knowledge_base_id=1,
             index_owner_user_id=5,
             retriever=RemoteRetrievalResourceRef(
@@ -252,6 +254,7 @@ def test_build_query_runtime_spec_reuses_provided_rag_configs():
     resolver = RagRuntimeResolver()
     authorized = [
         RemoteAuthorizedRetrievalResources(
+            operation="query",
             knowledge_base_id=1,
             index_owner_user_id=5,
             retriever=RemoteRetrievalResourceRef(
@@ -649,6 +652,7 @@ def test_build_public_query_runtime_spec_carries_only_retrieval_overrides():
     authorize_resources.assert_called_once_with(
         db=db,
         entry=RemoteAuthorizedRetrievalResources(
+            operation="query",
             knowledge_base_id=7,
             index_owner_user_id=7,
             retriever=RemoteRetrievalResourceRef(
@@ -708,6 +712,7 @@ def test_build_public_query_runtime_spec_selects_caller_resources():
 
     authorize_resources.assert_called_once()
     assert spec.authorized_resources[0] == RemoteAuthorizedRetrievalResources(
+        operation="query",
         knowledge_base_id=7,
         index_owner_user_id=42,
         retriever=RemoteRetrievalResourceRef(
@@ -790,6 +795,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
     authorize_resources.assert_called_once_with(
         db=db,
         entry=RemoteAuthorizedRetrievalResources(
+            operation="query",
             knowledge_base_id=7,
             index_owner_user_id=42,
             retriever=RemoteRetrievalResourceRef(

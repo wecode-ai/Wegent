@@ -44,8 +44,11 @@ def _build_response(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("caller_user_id,request_user_id", [(None, 3), (84, 84)])
 async def test_remote_gateway_index_document_posts_reference_mode_request(
     mocker,
+    caller_user_id,
+    request_user_id,
 ) -> None:
     db = MagicMock()
     mocker.patch(
@@ -68,13 +71,23 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
             json_body={"status": "accepted", "knowledge_id": "1"},
         ),
     )
+    timeouts = []
+    original_client = httpx.AsyncClient
+
+    def record_client(*args, **kwargs):
+        timeouts.append(httpx.Timeout(kwargs["timeout"]))
+        return original_client(*args, **kwargs)
+
+    mocker.patch("httpx.AsyncClient", side_effect=record_client)
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
+        timeout=43.0,
     )
     spec = IndexRuntimeSpec(
         knowledge_base_id=1,
         document_id=2,
         index_owner_user_id=3,
+        caller_user_id=caller_user_id,
         retriever_name="retriever-a",
         retriever_namespace="default",
         embedding_model_name="embedding-a",
@@ -84,13 +97,17 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
 
     result = await gateway.index_document(spec, db=db)
 
+    assert timeouts[0].read == 600.0
+    assert timeouts[0].connect == 30.0
+    assert timeouts[0].write == 30.0
+    assert timeouts[0].pool == 30.0
     assert result == {"status": "accepted", "knowledge_id": "1"}
     post_mock.assert_awaited_once()
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/index"
     assert kwargs["json"] == {
         "knowledge_base_id": 1,
-        "user_id": 3,
+        "user_id": request_user_id,
         "document_id": 2,
         "source_file": "release-notes.md",
         "file_extension": ".md",
@@ -138,6 +155,7 @@ async def test_remote_gateway_index_document_sends_authorized_resources(
         embedding_model_name="embedding-a",
         embedding_model_namespace="default",
         authorized_resources=RemoteAuthorizedRetrievalResources(
+            operation="index",
             knowledge_base_id=1,
             index_owner_user_id=3,
             retriever=RemoteRetrievalResourceRef(
@@ -154,6 +172,7 @@ async def test_remote_gateway_index_document_sends_authorized_resources(
 
     _, kwargs = post_mock.await_args
     assert kwargs["json"]["authorized_resources"] == {
+        "operation": "index",
         "knowledge_base_id": 1,
         "index_owner_user_id": 3,
         "retriever": {
@@ -415,6 +434,7 @@ async def test_remote_gateway_query_posts_authorized_resource_references(
         user_id=8,
         authorized_resources=[
             RemoteAuthorizedRetrievalResources(
+                operation="query",
                 knowledge_base_id=1,
                 index_owner_user_id=8,
                 retriever=RemoteRetrievalResourceRef(
@@ -432,6 +452,7 @@ async def test_remote_gateway_query_posts_authorized_resource_references(
     _, kwargs = post_mock.await_args
     assert kwargs["json"]["authorized_resources"] == [
         {
+            "operation": "query",
             "knowledge_base_id": 1,
             "index_owner_user_id": 8,
             "retriever": {
@@ -686,7 +707,15 @@ async def test_remote_gateway_test_connection_posts_storage_config(mocker) -> No
             json_body={"success": True, "message": "Connection successful"},
         ),
     )
-    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    timeouts = []
+    original_client = httpx.AsyncClient
+
+    def record_client(*args, **kwargs):
+        timeouts.append(httpx.Timeout(kwargs["timeout"]))
+        return original_client(*args, **kwargs)
+
+    mocker.patch("httpx.AsyncClient", side_effect=record_client)
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime", timeout=43.0)
 
     result = await gateway.test_connection(
         RemoteTestConnectionRequest(
@@ -698,6 +727,8 @@ async def test_remote_gateway_test_connection_posts_storage_config(mocker) -> No
         )
     )
 
+    assert timeouts[0].read == 43.0
+    assert timeouts[0].connect == 43.0
     assert result == {"success": True, "message": "Connection successful"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/test-connection"

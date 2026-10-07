@@ -26,6 +26,7 @@ from shared.models import (
 def _authorized(knowledge_base_id: int) -> RemoteAuthorizedRetrievalResources:
     """Authorize one knowledge base's stored retrieval resources."""
     return RemoteAuthorizedRetrievalResources(
+        operation="query",
         knowledge_base_id=knowledge_base_id,
         index_owner_user_id=7,
         retriever=RemoteRetrievalResourceRef(
@@ -90,7 +91,10 @@ class TestQueryExecutor:
     """Tests for QueryExecutor."""
 
     @pytest.mark.asyncio
-    async def test_execute_uses_planned_backend_query(self, query_request) -> None:
+    async def test_execute_uses_planned_backend_query(
+        self, query_request, caplog
+    ) -> None:
+        caplog.set_level("INFO", logger="knowledge_runtime.services.query_executor")
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_kb_executor = MagicMock()
@@ -117,6 +121,11 @@ class TestQueryExecutor:
             executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
+
+        assert (
+            "kb_id=1 top_k=5 score_threshold=0.7 retrieval_mode=vector" in caplog.text
+        )
+        assert "test-key" not in caplog.text
 
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",

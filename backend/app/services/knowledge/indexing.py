@@ -235,6 +235,7 @@ def _prepare_indexing_runtime(
     splitter_config_dict: Optional[dict],
     document_id: Optional[int],
     kb_index_info: Optional[KnowledgeBaseIndexInfo],
+    caller_user_id: int | None,
 ) -> _IndexingPreparation:
     file_extension = None
     file_size = None
@@ -319,6 +320,7 @@ def _prepare_indexing_runtime(
         embedding_model_namespace=embedding_model_namespace,
         user_id=user_id,
         user_name=user_name,
+        caller_user_id=caller_user_id,
         document_id=document_id,
         splitter_config_dict=_serialize_splitter_config(
             splitter_config=splitter_config,
@@ -472,6 +474,7 @@ def run_document_indexing(
     kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
     trigger_summary: bool = True,
     db: Optional[Session] = None,
+    caller_user_id: int | None = None,
 ) -> dict:
     """
     Core function for RAG document indexing.
@@ -533,6 +536,7 @@ def run_document_indexing(
             splitter_config=splitter_config,
             splitter_config_dict=splitter_config_dict,
             kb_index_info=kb_index_info,
+            caller_user_id=caller_user_id,
         )
     except Exception as e:
         logger.error(
