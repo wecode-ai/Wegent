@@ -112,6 +112,39 @@ Backend task or API
 `get_rag_gateway().test_connection(...)` to `knowledge_runtime`, which performs
 the connection test using its storage factory.
 
+## 授权与索引恢复
+
+- 检索资源授权必须明确 `operation=index` 或 `operation=query`。Runtime 拒绝用途不匹配；索引只使用知识库保存的资源，不接受临时查询资源覆盖。修改协议时，Backend、Runtime 和共享协议需配套交付。
+- 手动上传、编辑、重建和转移保留 `caller_user_id`，普通 PDF／Word 转换回调也保留该字段。后台执行索引前重新检查调用人的当前权限；自动系统派发可以不提供手动调用人。
+- 调用人、文档／附件创建者和索引所属人是不同身份。索引数据仍属于知识库的 `index_owner_user_id`；远程索引请求的 `user_id` 使用手动调用人，未提供时使用索引所属人。
+- 附件导入先检查调用人对源的访问权限和源的 ready 状态，再创建独立副本。创建失败只清理未被文档引用的副本，不删除原附件或已提交文档的正文。
+- 超时扫描包含尚未激活的首次索引任务，并在持有文档锁后重新判断是否过期，避免旧扫描快照覆盖刚开始执行的任务。
+- 远程索引的读取超时为600秒，其他操作保持原超时。Milvus 清理已存在集合前同步等待加载，超时20秒；失败向上传播，不继续写新索引。
+- Runtime 保留 embedding 的 `additional_input_modalities`，记录实际 Top K、阈值和检索模式。配置优先使用 `KNOWLEDGE_RUNTIME_` 前缀，同时接受已有的通用别名；文档获取地址由 `content_ref` 提供，不再使用独立 Backend URL 配置。
+
+## Authorization and index recovery
+
+Retrieval grants require an explicit `index` or `query` operation. Runtime
+rejects mismatched grants and query resource overrides on indexing. Deliver
+Backend, Runtime and shared protocol updates together.
+
+Manual dispatches retain `caller_user_id`, including ordinary PDF/Word
+conversion callbacks, and recheck current caller permissions before indexing.
+The caller, document author and index owner remain separate identities; system
+dispatches may omit the manual caller. Attachment imports create independent
+bodies after source authorization, and failure cleanup removes only unlinked
+copies.
+
+Stale scans include first attempts that are not retrieval-active and recheck
+expiry under the document lock. Remote indexing has a 600-second read timeout;
+other operations retain their existing timeout. Milvus cleanup waits up to 20
+seconds for an existing collection to load and propagates failures.
+
+Runtime preserves embedding input modalities and logs effective retrieval
+parameters. Prefer `KNOWLEDGE_RUNTIME_` configuration names; existing generic
+aliases remain accepted. Content fetching uses `content_ref`, not a separate
+Backend URL setting.
+
 ## Content Transport
 
 Remote indexing uses `content_ref`, not raw file bytes push.
