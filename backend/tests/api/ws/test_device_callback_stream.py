@@ -121,7 +121,7 @@ async def test_device_lifecycle_event_does_not_publish_callback(device_callback_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode"])
 async def test_device_follow_up_stream_returns_text_and_completes(
-    device_callback_stream, monkeypatch, shell_type
+    device_callback_stream, monkeypatch, shell_type, caplog
 ):
     """Consume the actual OpenAPI SSE body using events from the device handler."""
     stream = device_callback_stream
@@ -206,3 +206,5 @@ async def test_device_follow_up_stream_returns_text_and_completes(
     assert events[-1]["type"] == "response.completed"
     assert events[-1]["response"]["previous_response_id"] == "resp_1"
     stream.pubsub.aclose.assert_awaited_once()
+    if shell_type == "ClaudeCode":
+        assert "route_mode=websocket" in caplog.text

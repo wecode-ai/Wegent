@@ -1500,6 +1500,8 @@ class TestOpenAPIResponsesCreate:
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
+            user={"id": test_user.id},
+            bot=[{"shell_type": "ClaudeCode"}],
             model_config={"modelType": "llm"},
         )
 
