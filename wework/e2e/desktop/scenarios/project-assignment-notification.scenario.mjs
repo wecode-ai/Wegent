@@ -15,6 +15,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
+  inCollaborationSidebar,
   initializeFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -128,6 +129,55 @@ async function waitForValue(load, predicate, message, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
+}
+
+async function verifyCanonicalDeviceCatalog(control, request, timeoutMs) {
+  const resources = await waitForValue(
+    () => request('/api/v1/resources'),
+    value =>
+      value.execution_environments.some(
+        device => device.device_key.startsWith('app-record-') && device.status === 'online'
+      ),
+    'The desktop Runtime did not register its canonical device resource',
+    timeoutMs
+  )
+  await control.command(
+    'click',
+    inCollaborationSidebar('[data-testid="collaboration-primary-devices"]')
+  )
+  for (const device of resources.execution_environments) {
+    await control.command(
+      'waitFor',
+      scoped(`[data-testid="collaboration-devices-row-${device.id}"]`),
+      {
+        timeoutMs,
+      }
+    )
+  }
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid^="collaboration-devices-row-"]')
+      )
+    ),
+    resources.execution_environments.length,
+    'The device page must show each registered resource once without a second local placeholder'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid^="collaboration-devices-row-device:"]')
+      )
+    ),
+    0,
+    'The registered local Runtime was duplicated by a Local Executor placeholder'
+  )
+  await control.command(
+    'click',
+    inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
+  )
 }
 
 async function createWorkspaceAndProject(control, request, uiTimeoutMs) {
@@ -425,6 +475,7 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await selectCollaborationDomain(control, CONTENT, 'cloud')
+      await verifyCanonicalDeviceCatalog(control, ownerRequest, uiTimeoutMs)
 
       project = await createWorkspaceAndProject(control, ownerRequest, uiTimeoutMs)
       assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)

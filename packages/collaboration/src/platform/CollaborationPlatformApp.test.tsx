@@ -3580,6 +3580,102 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-group-form")).toBeTruthy();
   });
 
+  it("uses the canonical resource catalog instead of combining navigation device aliases", async () => {
+    const localDevice = {
+      ...environment,
+      id: "device:current-runtime",
+      device_id: 0,
+      device_key: "current-runtime",
+      name: "Local Executor",
+      owner_type: "workspace" as const,
+      owner_id: localWorkspace.id,
+      coding_tools: ["codex"],
+    };
+    const registeredDevice = {
+      ...environment,
+      id: "1876",
+      device_id: 1876,
+      device_key: "app-record-1876",
+      name: "APB22015038",
+      coding_tools: ["claude_code", "codex"],
+    };
+    const historicalDevice = {
+      ...registeredDevice,
+      id: "1839",
+      device_id: 1839,
+      device_key: "app-record-1839",
+      status: "offline" as const,
+    };
+    const registeredResources = {
+      agents: [],
+      execution_environments: [
+        registeredDevice,
+        historicalDevice,
+        availableEnvironment,
+      ],
+    };
+    const { api } = createApi({ initialResources: registeredResources });
+    const { api: localApi } = createApi({
+      initialResources: { agents: [], execution_environments: [localDevice] },
+    });
+    const { api: cloudApi } = createApi({
+      initialResources: registeredResources,
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        navigationApis={[localApi, cloudApi]}
+        start={{ ...initialLocation, rootView: "devices" }}
+      />,
+    );
+
+    expect(api.resources!.list).toHaveBeenCalledTimes(1);
+    expect(localApi.resources!.list).not.toHaveBeenCalled();
+    expect(cloudApi.resources!.list).not.toHaveBeenCalled();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-devices-row-device:current-runtime"]',
+      ),
+    ).toBeNull();
+    expect(byTestId("collaboration-devices-row-1876").textContent).toContain(
+      "Claude Code",
+    );
+    expect(byTestId("collaboration-devices-row-1839").textContent).toContain(
+      "离线",
+    );
+    expect(
+      byTestId(`collaboration-devices-row-${availableEnvironment.id}`),
+    ).toBeTruthy();
+  });
+
+  it("keeps the canonical local device when cloud navigation fails", async () => {
+    const { api } = createApi({
+      initialResources: { agents: [], execution_environments: [environment] },
+    });
+    const { api: localApi } = createApi();
+    const { api: cloudApi } = createApi();
+    cloudApi.projects.list = vi.fn(async () => {
+      throw new Error("Cloud unavailable");
+    });
+    cloudApi.workspaces!.list = vi.fn(async () => {
+      throw new Error("Cloud unavailable");
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        navigationApis={[localApi, cloudApi]}
+        start={{ ...initialLocation, rootView: "devices" }}
+      />,
+    );
+
+    expect(api.resources!.list).toHaveBeenCalledTimes(1);
+    expect(
+      byTestId(`collaboration-devices-row-${environment.id}`),
+    ).toBeTruthy();
+  });
+
   it("shows local and cloud device resources inside collaboration", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace, workspace, groupWorkspace],
