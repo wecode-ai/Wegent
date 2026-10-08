@@ -1060,7 +1060,9 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      .github/actions/build-wework-core-e2e/* | \
       docker/wework-e2e/* | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \

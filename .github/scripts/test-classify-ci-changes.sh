@@ -348,6 +348,9 @@ assert_case "workflow changes validate all modules" "$all_true" \
 assert_case "shared CI actions validate all modules" "$all_true" \
   ".github/actions/setup-sccache/action.yml"
 
+assert_case "artifact downloader validates its runtime producers and consumers" "$all_true" \
+  ".github/scripts/download-actions-artifact.sh"
+
 assert_case "shared apt helper validates all modules" "$all_true" \
   ".github/scripts/lib/apt-packages.sh"
 
@@ -707,6 +710,14 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Core artifact changes retain full coverage" \
   "$full_desktop_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_desktop_case "Core build action changes retain full coverage" \
+  "$full_desktop_expected" \
+  ".github/actions/build-wework-core-e2e/action.yml"
+
+assert_desktop_case "artifact downloader changes retain full desktop coverage" \
+  "$full_desktop_expected" \
+  ".github/scripts/download-actions-artifact.sh"
 
 assert_desktop_case "skill mention files select plugin and core coverage" \
   'wework_desktop_e2e=true
