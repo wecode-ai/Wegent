@@ -61,6 +61,7 @@ import {
   type SharedIssueDetailTaskExecutionState,
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
+import { issueDraftFromText } from "./issueDraft";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -1335,11 +1336,12 @@ export function TodoEditor(props: TodoEditorProps) {
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null);
+  const createTitle = title.trim() || issueDraftFromText(description).title;
 
   async function submitCreate() {
     if (
       props.mode !== "create" ||
-      !title.trim() ||
+      !createTitle ||
       saving ||
       createBlockedByExecutionEnvironment
     )
@@ -1347,7 +1349,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setSaving(true);
     setSaveError(null);
     const createInput: SharedIssueDetailCreateInput = {
-      title: title.trim(),
+      title: createTitle,
       description,
       priority,
       status,
@@ -3938,7 +3940,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     type="button"
                     data-testid="cloud-todo-create-confirm"
                     disabled={
-                      !title.trim() ||
+                      !createTitle ||
                       saving ||
                       createBlockedByExecutionEnvironment
                     }
