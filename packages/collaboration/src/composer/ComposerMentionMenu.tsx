@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Package,
   Paperclip,
+  PencilLine,
   Target,
   Bot,
   UserRound,
@@ -31,6 +32,7 @@ export type MentionMenuRow<
   | { kind: 'files-action' }
   | { kind: 'goal-action' }
   | { kind: 'plan-action' }
+  | { kind: 'draw-action' }
   | { kind: 'cloud-back-action' }
   | { kind: 'cloud-space-direct-action' }
   | { kind: 'cloud-projects-action' }
@@ -143,15 +145,17 @@ export function ComposerMentionMenu<
                   ? Target
                   : row.kind === 'plan-action'
                     ? ClipboardList
-                    : row.kind === 'cloud-space-direct-action' ||
-                        row.kind === 'cloud-projects-action' ||
-                        candidate?.kind === 'cloud'
-                      ? Cloud
-                      : candidate?.kind === 'conversation'
-                        ? MessageCircle
-                        : row.kind === 'cloud-back-action'
-                          ? ArrowLeft
-                          : Package
+                    : row.kind === 'draw-action'
+                      ? PencilLine
+                      : row.kind === 'cloud-space-direct-action' ||
+                          row.kind === 'cloud-projects-action' ||
+                          candidate?.kind === 'cloud'
+                        ? Cloud
+                        : candidate?.kind === 'conversation'
+                          ? MessageCircle
+                          : row.kind === 'cloud-back-action'
+                            ? ArrowLeft
+                            : Package
           const title = externalCandidate
             ? externalCandidate.title
             : candidate
@@ -162,13 +166,15 @@ export function ComposerMentionMenu<
                   ? t('workbench.mention_files_and_folders', '文件和文件夹')
                   : row.kind === 'goal-action'
                     ? t('workbench.goal_chip', '目标')
-                    : row.kind === 'cloud-back-action'
-                      ? t('workbench.mention_cloud_back', '返回')
-                      : row.kind === 'cloud-space-direct-action'
-                        ? t('workbench.mention_cloud_project_space', '项目空间')
-                        : row.kind === 'cloud-projects-action'
-                          ? t('workbench.mention_cloud_project_space_list', '项目空间列表')
-                          : t('workbench.plan_mode', '计划模式')
+                    : row.kind === 'draw-action'
+                      ? t('workbench.drawing.title', '绘图')
+                      : row.kind === 'cloud-back-action'
+                        ? t('workbench.mention_cloud_back', '返回')
+                        : row.kind === 'cloud-space-direct-action'
+                          ? t('workbench.mention_cloud_project_space', '项目空间')
+                          : row.kind === 'cloud-projects-action'
+                            ? t('workbench.mention_cloud_project_space_list', '项目空间列表')
+                            : t('workbench.plan_mode', '计划模式')
           const description =
             externalCandidate?.metaLabel ??
             candidate?.description ??
@@ -182,9 +188,11 @@ export function ComposerMentionMenu<
                     'workbench.mention_cloud_project_space_list_description',
                     '列出所有可访问的云项目空间'
                   )
-                : pathItem
-                  ? parentComposerPath(pathItem.path)
-                  : undefined)
+                : row.kind === 'draw-action'
+                  ? t('workbench.drawing.description', '绘制草图')
+                  : pathItem
+                    ? parentComposerPath(pathItem.path)
+                    : undefined)
           return (
             <button
               key={

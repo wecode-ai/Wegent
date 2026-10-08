@@ -5,6 +5,7 @@ import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
+import { excalidrawAssets } from './vite/excalidrawAssets'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -105,6 +106,7 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    excalidrawAssets(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
