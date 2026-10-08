@@ -193,6 +193,7 @@ describe('BufferedChatInput', () => {
 
   test('ignores acknowledgements from before a queued draft is restored', async () => {
     const acknowledgements: Array<() => void> = []
+    const publishedValues: string[] = []
 
     function Harness() {
       const [value, setValue] = useState('')
@@ -213,6 +214,7 @@ describe('BufferedChatInput', () => {
             value={value}
             replaceDraftKey={replaceDraftKey}
             onChange={nextValue => {
+              publishedValues.push(nextValue)
               acknowledgements.push(() => setValue(nextValue))
             }}
             onSubmit={message => {
@@ -228,15 +230,18 @@ describe('BufferedChatInput', () => {
     render(<Harness />)
     const input = screen.getByTestId('chat-message-input')
     await userEvent.type(input, 'queued follow-up')
-    await waitFor(() => expect(acknowledgements).toHaveLength(1))
+    await waitFor(() => expect(publishedValues).toContain('queued follow-up'))
     await userEvent.click(screen.getByTestId('send-message-button'))
-    await waitFor(() => expect(acknowledgements).toHaveLength(2))
+    await waitFor(() => expect(publishedValues.at(-1)).toBe(''))
+    // Blur can publish another draft before submit; replay every stale acknowledgement.
+    const staleAcknowledgements = [...acknowledgements]
     await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }))
     expect(input).toHaveValue('queued follow-up')
 
-    act(() => acknowledgements[0]?.())
-    act(() => acknowledgements[1]?.())
-    expect(input).toHaveValue('queued follow-up')
+    for (const acknowledge of staleAcknowledgements) {
+      act(acknowledge)
+      expect(input).toHaveValue('queued follow-up')
+    }
   }, 30_000)
 
   test('keeps the submitted draft when an async send is rejected', async () => {
