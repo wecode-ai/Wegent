@@ -242,6 +242,42 @@
   font-size: var(--text-sm);
 }
 
+.task-detail-assignment-save {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.task-detail-assignment-save:hover {
+  opacity: 0.8;
+}
+
+.task-detail-assignment-save:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
+.task-detail-assignment-save:disabled {
+  opacity: 0.4;
+}
+
+@media (max-width: 767px) {
+  .task-detail-assignment-save {
+    min-height: 44px;
+  }
+}
+
 @keyframes task-conversation-workspace-panel-enter {
   from {
     opacity: 0;

@@ -107,8 +107,28 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
   )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-state-summary"] [data-testid="cloud-todo-save"]'),
+    { text: '保存分配' }
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', scoped('[data-testid="cloud-todo-save"]'))),
+    1,
+    'Assignment must expose exactly one save action next to its owner'
+  )
+  assert.equal(
+    Number(
+      await control.command('getElementCount', scoped('header [data-testid="cloud-todo-save"]'))
+    ),
+    0,
+    'Pending assignment must not require the header save action'
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
+    visible: false,
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: AGENT,

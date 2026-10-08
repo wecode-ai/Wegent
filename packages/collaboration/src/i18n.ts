@@ -394,6 +394,7 @@ const sharedMessages: Record<
     "todo.keep_existing_token": "留空保留当前令牌",
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
+    "todo.save_assignment": "保存分配",
     "todo.token_required": "需要配置令牌",
     "todo.board_layout": "看板布局",
     "todo.board_layout_description": "配置项目状态和任务卡片显示内容。",
@@ -790,6 +791,7 @@ const sharedMessages: Record<
     "todo.keep_existing_token": "Leave empty to keep the current token",
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
+    "todo.save_assignment": "Save assignment",
     "todo.token_required": "A token is required",
     "todo.board_layout": "Board layout",
     "todo.board_layout_description":
