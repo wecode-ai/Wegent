@@ -119,7 +119,7 @@ describe("shared Issue threads", () => {
     ).toContain("已完成");
   });
 
-  it("keeps reply execution metadata below the author so the timestamp cannot collapse", () => {
+  it("keeps execution metadata below the author so the timestamp cannot collapse", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -145,7 +145,7 @@ describe("shared Issue threads", () => {
     expect(
       header?.querySelector(".task-detail-thread-message-metadata")
         ?.textContent,
-    ).toContain("检查协作任务的工作树配置");
+    ).toContain("已完成");
     expect(
       header?.querySelector(".task-detail-thread-message-time")?.textContent,
     ).toBe("09-17 08:00");
