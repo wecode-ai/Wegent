@@ -22,6 +22,45 @@ temporary runtime directories and uploads desktop E2E diagnostics retained for
 seven days. Use those logs to establish the root cause instead of hiding a
 failure through reruns or weaker E2E assertions.
 
+## macOS app icons
+
+macOS bundles include both the existing `wework/resources/icons/icon.icns` and
+an `Assets.car` generated during packaging. `CFBundleIconName=Wework` registers the app
+icon in the catalog. macOS 27 adds another background and shrinks the artwork
+when it adapts an unregistered ICNS icon; registering the catalog prevents this
+extra processing. Every catalog size comes directly from the current ICNS,
+preserving its macOS 15 corners, padding, and artwork. Do not revert the icon or
+use Icon Composer to regenerate the bitmaps for older systems.
+
+Electron Packager local bundles, Electron Builder installers, and online
+updates must place the catalog at `Contents/Resources/Assets.car` and retain
+the ICNS referenced by `CFBundleIconFile`. macOS packaging requires full Xcode.
+Packager compiles the current ICNS before packaging; Builder compiles it in
+`beforePack` for both installers and online updates. Compilation failures stop
+packaging. Generated files live in the ignored
+`wework/electron/resources/macos/` directory and are not committed.
+
+```mermaid
+flowchart LR
+  ICNS[Existing ICNS artwork] --> Compiler[iconutil and actool]
+  Compiler --> Catalog[Generated Assets.car]
+  Catalog --> Packager[Local app bundle]
+  Catalog --> Builder[Installer and online update]
+```
+
+After changing the ICNS, check compilation and output on a Mac with full Xcode:
+
+```bash
+node wework/electron/scripts/compile-macos-app-icon.mjs
+pnpm --dir wework/electron test scripts/macos-app-icon.test.mjs
+```
+
+The script extracts all ten ICNS size representations and compiles a standard
+`.appiconset`. It also updates the source and artifact SHA-256 hashes in
+`app-icon.json` in the generated directory. Atomic replacement prevents parallel
+installer and online-update builds from reading partial files. Regression tests
+compile the catalog and verify all ten representations and both hashes.
+
 ## Version and artifacts
 
 The release version is written to `wework/package.json` and
