@@ -2768,8 +2768,13 @@ def test_claude_code_project_agent_compiles_executor_payload(
 
 @pytest.mark.parametrize("workspace_policy", ["git_worktree", "project"])
 @pytest.mark.parametrize("inherit", [False, True])
+@pytest.mark.parametrize("supplied", [None, "git_worktree", "local_path"])
 def test_project_workspace_policy_does_not_depend_on_robot_concurrency(
-    test_db: Session, test_user: User, workspace_policy: str, inherit: bool
+    test_db: Session,
+    test_user: User,
+    workspace_policy: str,
+    inherit: bool,
+    supplied: str | None,
 ) -> None:
     project = _make_project(test_db, test_user)
     project.metadata_json = {
@@ -2827,16 +2832,31 @@ def test_project_workspace_policy_does_not_depend_on_robot_concurrency(
                 },
             }
             if inherit
-            else {}
+            else (
+                {
+                    "execution": {
+                        "workspace": {"source": supplied},
+                        "setup": {"fingerprint": "caller-setup", "steps": []},
+                    }
+                }
+                if supplied
+                else {}
+            )
         ),
         execution_device_id="local-device",
     )
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
+    expected_execution = (
+        {"setup": {"fingerprint": "caller-setup", "steps": []}}
+        if supplied and not inherit
+        else {}
+    )
     if workspace_policy == "git_worktree" and not inherit:
-        assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
-    else:
-        assert payload.get("execution") is None
+        expected_execution["workspace"] = {"source": "git_worktree"}
+    elif supplied == "local_path" and not inherit:
+        expected_execution["workspace"] = {"source": "local_path"}
+    assert payload.get("execution") == (expected_execution or None)
     if inherit:
         assert payload["workspaceSourceTask"] == {
             "deviceId": "local-device",

@@ -128,6 +128,25 @@ def _merge_environment_execution(
     return merged or None
 
 
+def _apply_project_workspace_intent(
+    execution: object, *, isolated: bool
+) -> dict[str, Any] | None:
+    """Apply the project-owned source without discarding other execution settings."""
+    intent = dict(execution) if isinstance(execution, dict) else {}
+    workspace = (
+        dict(intent["workspace"]) if isinstance(intent.get("workspace"), dict) else {}
+    )
+    if isolated:
+        workspace["source"] = "git_worktree"
+    elif workspace.get("source") == "git_worktree":
+        workspace.pop("source")
+    if workspace:
+        intent["workspace"] = workspace
+    else:
+        intent.pop("workspace", None)
+    return intent or None
+
+
 def native_runtime_contract(runtime: object) -> tuple[RuntimeName, str]:
     """Return the exact Runtime and shell pair for a native project agent."""
 
@@ -658,21 +677,17 @@ class WeworkExecutionProfile:
             and environment_config.get("repositories")
             and project_workspace_policy == "git_worktree"
         )
-        generated_execution = (
-            {"workspace": {"source": "git_worktree"}}
-            if workspace_source_task is None
+        isolated_workspace = (
+            workspace_source_task is None
             and project_workspace_policy == "git_worktree"
             and (
                 environment_uses_worktree
                 or (not environment_configured and has_bound_workspace)
             )
-            else None
         )
         execution = _merge_environment_execution(
-            (
-                configured_execution
-                if isinstance(configured_execution, dict)
-                else generated_execution
+            _apply_project_workspace_intent(
+                configured_execution, isolated=isolated_workspace
             ),
             environment_config,
         )
