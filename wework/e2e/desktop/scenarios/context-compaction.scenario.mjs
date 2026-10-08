@@ -337,6 +337,11 @@ export function createDesktopScenario({
       assert.notEqual(followUpSession.response_id, initialSession.response_id)
       await captureScreenshot(control, 'context-compaction-05-follow-up-verified.png', 'body')
       await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
+      // Run the interrupted-compaction coverage first: it asserts on the
+      // compaction indicators of the whole transcript, so every phase before
+      // it must leave the transcript in the state that checkpoint already
+      // established.
+      await interrupted.verify(control)
 
       // A compaction turn the provider rejects must surface its own failure
       // instead of staying silent until the app-IPC deadline reports a timeout.
@@ -368,7 +373,6 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
       rejectCompaction = false
-      await interrupted.verify(control)
     },
 
     diagnostics() {
