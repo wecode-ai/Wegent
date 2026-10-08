@@ -243,8 +243,24 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(api.myWork).toBeUndefined();
   });
 
-  it("does not wait for the catalog when opening an already loaded project", async () => {
+  it("refreshes project details when opening an already listed project", async () => {
     const api = createApi();
+    const latestProject = {
+      ...projectA,
+      execution_environment: {
+        repositories: [],
+        setup_steps: [],
+        devices: {
+          "device-1": {
+            status: "ready" as const,
+            workspace_path: "/workspace/project-a",
+            prepared_at: "2026-10-08T00:00:00Z",
+            error: "",
+          },
+        },
+      },
+    };
+    vi.mocked(api.projects.get).mockResolvedValue(latestProject);
     const location = {
       projectId: projectA.id,
       issueId: null,
@@ -253,11 +269,11 @@ describe("useCollaborationWorkspaceController location effects", () => {
     renderController(api, location, false, projectA);
     await vi.waitFor(() => {
       const controller = renderController(api, location, false, projectA);
-      expect(controller.state.project).toEqual(projectA);
+      expect(controller.state.project).toEqual(latestProject);
       expect(controller.state.loading).toBe(false);
     });
     expect(api.projects.list).not.toHaveBeenCalled();
-    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(projectA.id);
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
       projectA.id,
     );

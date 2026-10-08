@@ -1292,6 +1292,7 @@ describe("collaboration workspace controller", () => {
     state = { ...state, projects: [statusProject], project: statusProject };
     const api = createApi();
     api.projects.update = vi.fn().mockResolvedValue(assigneeProject);
+    api.projects.get = vi.fn().mockResolvedValue(assigneeProject);
     const { commands } = createController(api);
 
     await commands.changeProjectGroup({
@@ -1301,7 +1302,7 @@ describe("collaboration workspace controller", () => {
     });
     await commands.loadProject(project.id, false);
 
-    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
     expect(state.project).toEqual(assigneeProject);
   });
 
