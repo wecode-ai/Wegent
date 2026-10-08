@@ -3,10 +3,20 @@ import assert from 'node:assert/strict'
 const COMPOSER =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
 const INDICATOR = '[data-testid="context-compaction-indicator"]'
+const COMPACTING_LABEL = '正在自动压缩上下文'
+const INCOMPLETE_LABEL = '上下文压缩未完成'
+const COMPACTED_LABEL = '上下文已自动压缩'
 const SEED = 'WEWORK_E2E_INTERRUPTED_COMPACTION_SEED'
 const FOLLOW_UP = 'WEWORK_E2E_INTERRUPTED_COMPACTION_FOLLOW_UP'
 const SUMMARY = 'WEWORK_E2E_INTERRUPTED_COMPACTION_SUMMARY'
 const COMPLETE = 'WEWORK_E2E_INTERRUPTED_COMPACTION_RECOVERED'
+
+// The indicator element also renders a compaction that was cancelled or rejected,
+// so counting elements cannot tell how many compactions actually completed.
+async function completedCompactions(control) {
+  const text = await control.command('getText', INDICATOR)
+  return text.split(COMPACTED_LABEL).length - 1
+}
 
 function finish(response, id, text, inputTokens) {
   response.end(
@@ -109,10 +119,10 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
           timeoutMs: modelResponseTimeoutMs,
         })
         await waitIdle(control)
-        const previousIndicators = Number(await control.command('getElementCount', INDICATOR))
+        const previousCompactions = await completedCompactions(control)
         await send(control, FOLLOW_UP)
         await control.command('waitFor', INDICATOR, {
-          text: '正在自动压缩上下文',
+          text: COMPACTING_LABEL,
           timeoutMs: modelResponseTimeoutMs,
         })
         await Promise.race([
@@ -128,11 +138,11 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         await control.command('click', '[data-testid="pause-response-button"]')
         await waitIdle(control)
         await control.command('waitFor', INDICATOR, {
-          text: '上下文压缩未完成',
+          text: INCOMPLETE_LABEL,
           timeoutMs: uiTimeoutMs,
         })
         const indicators = await control.command('getText', INDICATOR)
-        assert.ok(indicators.includes('上下文压缩未完成'))
+        assert.ok(indicators.includes(INCOMPLETE_LABEL))
         const readyCount = control.readyCount
         await control.command('reloadMainWindow', 'body')
         await Promise.race([
@@ -148,8 +158,7 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         })
         await waitIdle(control)
         // A cancelled attempt may be absent from Codex history, but must never become a success.
-        const texts = await control.command('getText', INDICATOR)
-        assert.equal(texts.split('上下文已自动压缩').length - 1, previousIndicators)
+        assert.equal(await completedCompactions(control), previousCompactions)
         await send(control, FOLLOW_UP)
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: COMPLETE,
@@ -163,8 +172,7 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
           'click',
           '[data-testid="final-processing-toggle"][aria-expanded="false"]'
         )
-        const recoveredText = await control.command('getText', INDICATOR)
-        assert.equal(recoveredText.split('上下文已自动压缩').length - 1, previousIndicators + 1)
+        assert.equal(await completedCompactions(control), previousCompactions + 1)
       } finally {
         heldResponse?.destroy()
         active = false
