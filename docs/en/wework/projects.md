@@ -109,6 +109,12 @@ The default project space belongs to the local project's settings and is stored 
 
 Project-space lists, default-space selection, and current-task links are resolved in the background. The composer, image and file paste, attachment upload, and message sending remain available while a lookup or link is pending. Wework adds the project context or completes the task link after the result arrives instead of blocking the conversation with a linking state.
 
+### Initialize the project execution environment
+
+Before creating an issue, Wework verifies that the project execution environment has been initialized on at least one online device. If the collaboration home reports that the environment is not initialized, choose **Configure execution environment**, initialize an available device in project settings, and then return to the collaboration home.
+
+After initialization, the collaboration home reads the latest project configuration and device status again; reloading the page or reopening the project is not required. If the device is marked complete but the warning remains, confirm that the device is still online and reopen the execution-environment settings to check the initialization result.
+
 ## Board quick start
 
 The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
