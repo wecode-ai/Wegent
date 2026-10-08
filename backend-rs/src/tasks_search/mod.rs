@@ -161,6 +161,7 @@ impl SearchTaskRow {
             json: self.json.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            project_id: self.project_id,
             client_origin: self.client_origin.clone(),
             is_group_chat: self.is_group_chat,
         }
@@ -317,7 +318,11 @@ async fn search_tasks(
         .flatten()
         .map(|user| user.user_name)
         .unwrap_or_default();
-    let group_chat = batch_group_chat(&state.mysql, &ordered).await?;
+    let group_chat = crate::tasks_lite_personal::lite_repository::approved_group_chat_members(
+        &state.mysql,
+        &ordered.iter().map(|row| row.id).collect::<Vec<_>>(),
+    )
+    .await?;
 
     // `convert_to_task_dict_optimized` restricted to the `TaskInDB` fields.
     let mut items = Vec::with_capacity(ordered.len());
@@ -446,35 +451,6 @@ impl WorkspaceGit {
             branch_name: text("branchName"),
         }
     }
-}
-
-/// `_add_group_chat_info`: the task ids that carry approved group-chat members.
-async fn batch_group_chat(
-    mysql: &brz_mysql::MysqlService,
-    rows: &[SearchTaskRow],
-) -> brz_mysql::MysqlResult<std::collections::HashSet<i64>> {
-    if rows.is_empty() {
-        return Ok(std::collections::HashSet::new());
-    }
-    let ids = rows
-        .iter()
-        .map(|row| row.id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT resource_members.resource_id AS resource_members_resource_id, \
-         count(resource_members.id) AS count \nFROM resource_members \nWHERE \
-         resource_members.resource_type = 'Task' AND resource_members.resource_id IN ({ids}) AND \
-         resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \
-         GROUP BY resource_members.resource_id"
-    );
-    #[derive(Debug, brz_mysql::FromMysqlRow)]
-    struct GroupRow {
-        #[mysql(rename = "resource_members_resource_id")]
-        resource_id: i64,
-    }
-    let rows: Vec<GroupRow> = mysql.fetch_all(sql.as_str(), ()).await?;
-    Ok(rows.into_iter().map(|row| row.resource_id).collect())
 }
 
 /// `convert_to_task_dict_optimized` restricted to the `TaskInDB` fields.

@@ -85,6 +85,11 @@ pub async fn build() -> Result<AppState> {
         erp: Arc::new(NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
+        skill_market: crate::skill_market::SkillMarketRegistry::default(),
         executor_version,
+        executor_manager: crate::executor_manager::ExecutorManager::from_env()
+            .context("failed to build the executor-manager client")?,
+        sites: crate::sites::SitesClient::from_env()
+            .context("failed to build the Sites HTTP client")?,
     })
 }

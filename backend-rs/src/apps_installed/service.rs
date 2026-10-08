@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use brz_mysql::Mysql;
 use serde::Deserialize;
 
+use crate::json_compat::{JsonField, OpaqueJson};
+
 use super::db::{KindRow, UserRow};
 use super::mcp::{self, UpstreamTool};
 use super::models::{
@@ -37,6 +39,13 @@ pub struct ConnectorApp {
     pub transport: String,
     pub mcp_url: String,
     pub tool_allowlist: Vec<String>,
+    /// `spec["providerHeadersEncrypted"]`; the administrator view decrypts it.
+    pub provider_headers_encrypted: Option<String>,
+    pub forward_user_context_headers: bool,
+    /// `list(spec.get("httpTools") or [])`; the administrator view echoes it.
+    pub http_tools: Vec<OpaqueJson>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 /// The `spec` object of one `kinds` row (`ConnectorAppService._spec`).
@@ -67,6 +76,17 @@ struct AppSpec {
     mcp_url: String,
     #[serde(rename = "toolAllowlist", deserialize_with = "text_list_or_default")]
     tool_allowlist: Vec<String>,
+    /// `spec.get("providerHeadersEncrypted")`: only a string is kept.
+    #[serde(rename = "providerHeadersEncrypted")]
+    provider_headers_encrypted: JsonField<String>,
+    /// `bool(spec.get("forwardUserContextHeaders", False))`: only a JSON
+    /// boolean is truthy here.
+    #[serde(rename = "forwardUserContextHeaders")]
+    forward_user_context_headers: JsonField<bool>,
+    /// `list(spec.get("httpTools") or [])`: a JSON array of opaque tool
+    /// definitions is kept, every other shape is empty.
+    #[serde(rename = "httpTools")]
+    http_tools: JsonField<Vec<OpaqueJson>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -155,6 +175,11 @@ pub fn row_to_app(row: &KindRow) -> ConnectorApp {
         },
         mcp_url: spec.mcp_url,
         tool_allowlist: spec.tool_allowlist,
+        provider_headers_encrypted: spec.provider_headers_encrypted.value,
+        forward_user_context_headers: spec.forward_user_context_headers.value.unwrap_or(false),
+        http_tools: spec.http_tools.value.unwrap_or_default(),
+        created_at: row.kinds_created_at,
+        updated_at: row.kinds_updated_at,
     }
 }
 

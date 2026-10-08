@@ -23,22 +23,46 @@ pub struct Query {
 #[derive(Clone, Default)]
 pub struct KindQueryCapture {
     queries: std::sync::Arc<std::sync::Mutex<Vec<Query>>>,
+    writes: std::sync::Arc<std::sync::Mutex<Vec<Query>>>,
+    /// Whether `execute` records the write instead of rejecting it.
+    allow_writes: bool,
 }
 
 impl KindQueryCapture {
+    /// Capture `execute` writes instead of rejecting them. The default capture
+    /// still panics on an unexpected write so a read-only test cannot silently
+    /// accept one.
+    pub fn writing() -> Self {
+        Self {
+            allow_writes: true,
+            ..Self::default()
+        }
+    }
+
     pub fn queries(&self) -> Vec<Query> {
         self.queries.lock().unwrap().clone()
     }
 
-    fn capture(&self, sql: &str, args: impl MysqlArgs) {
-        self.queries.lock().unwrap().push(Query {
-            sql: sql.split_whitespace().collect::<Vec<_>>().join(" "),
+    /// The captured `execute` writes, in call order.
+    pub fn writes(&self) -> Vec<Query> {
+        self.writes.lock().unwrap().clone()
+    }
+
+    fn capture(&self, sql: &str, args: impl MysqlArgs) -> Query {
+        Query {
+            sql: normalize_sql(sql),
             args: args.len(),
             first_integer: args
                 .first_route_value()
                 .and_then(|value| value.as_i64().ok()),
-        });
+        }
     }
+}
+
+/// Collapse SQL whitespace so captured statements compare independent of the
+/// exact rendering line breaks.
+fn normalize_sql(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 impl Mysql for KindQueryCapture {
@@ -58,7 +82,10 @@ impl Mysql for KindQueryCapture {
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
-        self.capture(sql.as_ref(), args);
+        self.queries
+            .lock()
+            .unwrap()
+            .push(self.capture(sql.as_ref(), args));
         Ok(None)
     }
 
@@ -68,16 +95,29 @@ impl Mysql for KindQueryCapture {
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
-        self.capture(sql.as_ref(), args);
+        self.queries
+            .lock()
+            .unwrap()
+            .push(self.capture(sql.as_ref(), args));
         Ok(Vec::new())
     }
 
-    async fn execute<S, A>(&self, _: S, _: A) -> MysqlResult<MysqlExecution>
+    async fn execute<S, A>(&self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
     {
-        panic!("unexpected write")
+        if !self.allow_writes {
+            panic!("unexpected write");
+        }
+        self.writes
+            .lock()
+            .unwrap()
+            .push(self.capture(sql.as_ref(), args));
+        Ok(MysqlExecution {
+            rows_affected: 0,
+            last_insert_id: 0,
+        })
     }
 
     async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>

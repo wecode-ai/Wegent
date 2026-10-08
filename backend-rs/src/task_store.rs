@@ -21,6 +21,16 @@ use crate::tasks_search::statements::{
     owned_task_count_statement, owned_task_ids_statement, tasks_by_ids_statement,
 };
 
+pub use crate::task_store_listing::{OwnedTaskPage, SubtaskListing, subtask_context_columns};
+pub use crate::task_store_project::{
+    active_project_task_statement, fetch_active_project_task, task_project_update_statement,
+    update_task_project_and_json,
+};
+pub use crate::task_store_projects::{
+    clear_project_ids_statement, clear_project_update_statement, project_tasks_statement,
+    task_update_timestamp,
+};
+
 /// How `list_subtasks_by_task` treats the batched subtask-context load that
 /// follows the row read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,396 +43,7 @@ pub enum ContextPolicy {
     OnlyWhenResolved,
 }
 
-/// The `tasks` table the single-table store reads.
-pub const TASKS_TABLE: &str = "tasks";
-
-/// `task_store.list_by_ids` (`db.query(TaskResource).filter(TaskResource.id.in_(task_ids))`):
-/// the 12-column `tasks` projection read from `table`, with one `?` per id in
-/// the source's textual order. The caller issues no statement at all for an
-/// empty id list.
-pub fn running_tasks_by_ids_statement(table: &str, task_ids: usize) -> String {
-    let placeholders = vec!["?"; task_ids].join(", ");
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-         created_at, updated_at, project_id, client_origin, is_group_chat \nFROM `{table}` \nWHERE id IN ({placeholders})"
-    )
-}
-
-/// `task_store.get_active_task`
-/// (`db.query(TaskResource).filter(id == task_id, kind == 'Task', is_active.in_((1, 2))).first()`):
-/// the 12-column `tasks` projection read from `table`.
-pub fn active_task_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-         created_at, updated_at, project_id, client_origin, is_group_chat \
-         \nFROM `{table}` \nWHERE id = ? \
-         AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1"
-    )
-}
-
-/// `task_access_store.get_runtime_state` (`sqlalchemy_access_store.py`): the
-/// authorized runtime checkpoint for one task, read from `table`.
-///
-/// The projection keeps SQLAlchemy's labels (the two JSON status projections
-/// become `anon_1` / `anon_2`, the row timestamp keeps the task table's
-/// `_updated_at` label) and inlines the owner/approved-member visibility
-/// policy. Parameters bind in the source's literal order: the task id, the
-/// viewer user id, the task id again for the membership probe, then the viewer
-/// id as the membership record's text `entity_id`.
-///
-/// Both projections read `status.updatedAt` through the *same* rendered parent
-/// value: SQLAlchemy reuses the cached SQL of `TaskResource.json["status"]` for
-/// the inner `JSON_EXTRACT` of the second column, so the recorded statement
-/// repeats `$."status"` as the inner path and uses `$."updatedAt"` only for the
-/// outer one. Extracting the top-level `updatedAt` instead would drop the
-/// status object's microsecond timestamp and fall back to the row timestamp.
-pub fn runtime_state_statement(table: &str) -> String {
-    format!(
-        "SELECT \
-        CASE JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"status\"') \
-        WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"status\"')) END AS anon_1, \
-        CASE JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"updatedAt\"') \
-        WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"updatedAt\"')) END AS anon_2, \
-        `{table}`.updated_at AS `{table}_updated_at` \
-        FROM `{table}` \
-        WHERE `{table}`.id = ? AND `{table}`.kind = 'Task' AND `{table}`.is_active IN (1, 2) \
-        AND CASE JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"status\"') \
-        WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(`{table}`.json, '$.\"status\"'), '$.\"status\"')) END != 'DELETE' \
-        AND (`{table}`.user_id = ? OR (EXISTS (SELECT 1 \
-        FROM resource_members \
-        WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
-        AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
-        AND resource_members.status = 'approved' AND resource_members.copied_resource_id = 0))) \
-        LIMIT 1"
-    )
-}
-
-/// The `subtasks` table the single-table store reads.
-pub const SUBTASKS_TABLE: &str = "subtasks";
-
-/// `_get_accessible_task`'s owner projection of an active task, read from
-/// `table`: the membership pre-check.
-pub fn task_owner_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id \nFROM `{table}` \n\
-         WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1"
-    )
-}
-
-/// `subtask_store.list_by_task_ordered` with `order_by="id"` and the optional
-/// `message_ids` filter, read from `table`. The ids are inlined as literals,
-/// as the source's own rendering does.
-pub fn subtasks_ordered_statement(table: &str, message_ids: &[i64]) -> String {
-    let mut sql = format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, \
-         executor_namespace, executor_name, executor_deleted_at, prompt, \
-         message_id, parent_id, status, progress, result, error_message, \
-         created_at, updated_at, completed_at, sender_type, sender_user_id, \
-         reply_to_subtask_id \
-         FROM `{table}` \
-         WHERE task_id = ?"
-    );
-    if !message_ids.is_empty() {
-        let list = message_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        sql.push_str(&format!(" AND message_id IN ({list})"));
-    }
-    sql.push_str(" ORDER BY id ASC");
-    sql
-}
-
-/// `task_store.list_recent_owner_only_tasks`: the owner's task table with the
-/// approved-member exclusion, ordered `updated_at DESC, id DESC`, limited to
-/// one page.
-///
-/// The labels keep the table's own name (`<table>_<column>`), as the source's
-/// labeled rendering does, and every predicate is table-qualified.
-pub fn recent_owner_only_tasks_statement(table: &str) -> String {
-    format!(
-        "SELECT `{table}`.id AS `{table}_id`, `{table}`.user_id AS `{table}_user_id`, \
-         `{table}`.kind AS `{table}_kind`, `{table}`.name AS `{table}_name`, \
-         `{table}`.namespace AS `{table}_namespace`, `{table}`.json AS `{table}_json`, \
-         `{table}`.is_active AS `{table}_is_active`, \
-         `{table}`.created_at AS `{table}_created_at`, \
-         `{table}`.updated_at AS `{table}_updated_at`, \
-         `{table}`.project_id AS `{table}_project_id`, \
-         `{table}`.client_origin AS `{table}_client_origin`, \
-         `{table}`.is_group_chat AS `{table}_is_group_chat` \nFROM `{table}` \n\
-         WHERE `{table}`.user_id = ? AND `{table}`.kind = 'Task' \
-         AND `{table}`.is_active = 1 AND `{table}`.is_group_chat IS false \
-         AND NOT (EXISTS (SELECT * \nFROM resource_members \n\
-         WHERE resource_members.resource_type = 'Task' \
-         AND resource_members.resource_id = `{table}`.id \
-         AND resource_members.status = 'approved')) \
-         ORDER BY `{table}`.updated_at DESC, `{table}`.id DESC \n LIMIT ?"
-    )
-}
-
-pub use crate::sql_support::StatementArg;
-pub(crate) use crate::sql_support::quote_sql_literal;
-
-/// `_batch_query_workspaces`: workspace rows by `(user_id, namespace, name)`
-/// reference, read from `table`.
-///
-/// The source renders the tuples as inline literals in one text `COM_QUERY`
-/// rather than as a prepared parameter list, so the values are inlined with
-/// the same escaping.
-pub fn workspaces_by_ref_statement(table: &str, user_id: i64, refs: &[(String, String)]) -> String {
-    let conditions = refs
-        .iter()
-        .map(|(name, namespace)| {
-            format!(
-                "({user_id}, {}, {})",
-                quote_sql_literal(namespace),
-                quote_sql_literal(name)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-                created_at, updated_at, project_id, client_origin, is_group_chat \
-         FROM `{table}` \
-         WHERE kind = 'Workspace' AND is_active = 1 \
-         AND (user_id, namespace, name) IN ({conditions})"
-    )
-}
-
-/// `list_personal_task_candidates_after`: the owner's task table read from
-/// `table`, ordered `created_at DESC, id DESC`, with the keyset cursor and the
-/// optional client-origin filter. The predicate order matches the source.
-pub fn personal_task_candidates_statement(
-    table: &str,
-    client_origin: bool,
-    cursor: bool,
-) -> String {
-    let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, \
-                updated_at, project_id, client_origin, is_group_chat \
-         FROM `{table}` \
-         WHERE user_id = ? AND kind = 'Task' AND is_active = 1 \
-         AND namespace != 'system' AND is_group_chat = false"
-    );
-    if client_origin {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" AND project_id = 0");
-    if cursor {
-        sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
-    }
-    sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
-    sql
-}
-
-/// `task_store.get_workspace_by_ref`: one workspace row by
-/// `(owner, name, namespace)`, read from `table`.
-pub fn workspace_by_ref_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \n    FROM `{table}` \n    \
-        WHERE user_id = ? AND kind = 'Workspace' AND name = ? AND namespace = ? AND is_active = 1 \n    \
-        LIMIT 1"
-    )
-}
-
-/// `SubtaskStore.list_by_task_for_user_ordered`: the rows of `table` filtered
-/// by `task_id` and `user_id`, ordered by `message_id`.
-pub fn subtasks_by_owner_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
-        FROM `{table}` \n    \
-        WHERE task_id = ? AND user_id = ? \n    \
-        ORDER BY message_id ASC"
-    )
-}
-
-/// `task_store.get_task_by_states` with `states = [STATE_ACTIVE]` and an
-/// explicit owner, read from `table`.
-pub fn active_task_owned_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \n    FROM `{table}` \n    \
-        WHERE id = ? AND kind = 'Task' AND is_active IN (1) AND user_id = ? \n    \
-        LIMIT 1"
-    )
-}
-
-/// `subtask_store.get_by_id`: one subtask's ownership columns, read from
-/// `table`.
-pub fn subtask_ref_statement(table: &str) -> String {
-    format!("SELECT id, user_id, task_id FROM `{table}` WHERE id = ? LIMIT 1")
-}
-
-/// `subtask_store.list_by_user` (limit 1): the newest subtask of one user,
-/// read from `table`.
-pub fn latest_subtask_ref_statement(table: &str) -> String {
-    format!("SELECT id, user_id, task_id FROM `{table}` WHERE user_id = ? ORDER BY id DESC LIMIT 1")
-}
-
-/// `task_store.get_by_id`: one task's ownership columns, read from `table`.
-pub fn task_ref_statement(table: &str) -> String {
-    format!("SELECT id, user_id, kind FROM `{table}` WHERE id = ? LIMIT 1")
-}
-
-/// `task_store.get_by_id`: the full task projection, read from `table`.
-pub fn task_by_id_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-                       created_at, updated_at, project_id, client_origin, is_group_chat \
-                       \nFROM {table} \nWHERE id = ? \n LIMIT 1"
-    )
-}
-
-/// `subtask_store.list_by_task` (`query.all()`, no ordering): the full subtask
-/// projection, read from `table`.
-pub fn subtasks_by_task_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, \
-                       `role`, executor_namespace, executor_name, \
-                       executor_deleted_at, prompt, message_id, \
-                       parent_id, status, progress, result, \
-                       error_message, created_at, updated_at, completed_at, \
-                       sender_type, sender_user_id, reply_to_subtask_id \
-                       \nFROM {table} \n\
-                       WHERE task_id = ?"
-    )
-}
-
-/// `SqlAlchemyTaskStore.list_active_project_tasks`: the active project tasks
-/// owned by `owner_user_id`, newest `updated_at` first, read from `table`.
-///
-/// The recorded rendering qualifies every column with the table name and binds
-/// the project id and owner as integers; the optional origin binds as a string.
-pub fn project_tasks_statement(table: &str, client_origin: bool) -> String {
-    let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {table}
-         WHERE project_id = ? AND kind = 'Task' AND is_active = 1 AND user_id = ?"
-    );
-    if client_origin {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" ORDER BY updated_at DESC");
-    sql
-}
-
-/// `task_store.get_by_id` restricted to one owner, read from `table`: the full
-/// task projection of that owner's task.
-pub fn task_by_id_owned_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, \
-                       created_at, updated_at, project_id, client_origin, is_group_chat \
-                       \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1"
-    )
-}
-
-/// `task_store.get_active_non_deleted_task` on `table`: the active task of one
-/// id. `json_delete_filter` adds the base store's `text()` JSON deletion
-/// predicate, which the sharded store applies in Rust instead; `client_origin`
-/// adds the endpoint's optional origin filter.
-pub fn active_task_by_id_statement(
-    table: &str,
-    json_delete_filter: bool,
-    client_origin: bool,
-) -> String {
-    let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {table}
-         WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)"
-    );
-    if json_delete_filter {
-        sql.push_str(" AND JSON_EXTRACT(json, '$.status.status') != 'DELETE'");
-    }
-    if client_origin {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" LIMIT 1");
-    sql
-}
-
-/// `ShardedSubtaskStore._owner_matches_task_id`'s task-table probe on `table`.
-pub fn owner_matches_task_id_statement(table: &str) -> String {
-    format!("SELECT id \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1")
-}
-
-/// `_owner_matches_task_id`'s subtask-owner fallback on `table`: the distinct
-/// owners of the task's subtasks, capped at two so the caller can tell "one
-/// owner" from "several".
-pub fn distinct_subtask_owners_statement(table: &str) -> String {
-    format!("SELECT DISTINCT user_id \nFROM {table} \nWHERE task_id = ? \n LIMIT 2")
-}
-
-/// `subtask_store.list_ids_by_task`: the task's subtask ids, read from
-/// `table`.
-pub fn subtask_ids_by_task_statement(table: &str) -> String {
-    format!("SELECT id \nFROM {table} \nWHERE task_id = ?")
-}
-
-/// `subtask_store.list_by_task_ordered` with the source's default `order_by`,
-/// read from `table`: ordered `message_id ASC, created_at ASC`.
-pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
-    format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
-        FROM {table} \n    \
-        WHERE task_id = ? \n    \
-        ORDER BY message_id ASC, created_at ASC"
-    )
-}
-
-/// The `subtask_contexts` labeling projection the context reads share
-/// (`context_columns`): every column labelled with its own table name, in the
-/// recorded order.
-pub fn subtask_context_columns() -> String {
-    [
-        "id",
-        "subtask_id",
-        "user_id",
-        "context_type",
-        "name",
-        "status",
-        "error_message",
-        "binary_data",
-        "image_base64",
-        "extracted_text",
-        "text_length",
-        "type_data",
-        "created_at",
-        "updated_at",
-    ]
-    .iter()
-    .map(|column| format!("subtask_contexts.{column} AS subtask_contexts_{column}"))
-    .collect::<Vec<_>>()
-    .join(", ")
-}
-
-/// One subtask listing from `subtask_store.list_by_task_ordered`.
-///
-/// The source attaches the subtask contexts to a listing whose rows came from
-/// a table the deployment resolved itself, so `contexts` carries that batch
-/// there and is `None` on the path where the source leaves the contexts to be
-/// loaded later. A caller that only reads the rows ignores it.
-#[derive(Debug)]
-pub struct SubtaskListing {
-    pub rows: Vec<MysqlRow>,
-    pub contexts: Option<Vec<MysqlRow>>,
-}
-
-/// One `task_store.list_owned_task_ids` page: the source total and the page's
-/// task ids in the store's own order.
-#[derive(Debug)]
-pub struct OwnedTaskPage {
-    pub total: i64,
-    pub ids: Vec<i64>,
-}
+pub use crate::task_store_statements::*;
 
 #[async_trait]
 pub trait TaskStore: Send + Sync {
@@ -504,6 +125,32 @@ pub trait TaskStore: Send + Sync {
     /// no owner filter. An empty `task_ids` issues no statement.
     async fn list_tasks_by_ids(&self, task_ids: &[i64]) -> MysqlResult<Vec<MysqlRow>>;
 
+    /// `task_store.list_group_task_ids_for_accessible_user`: the ids of the
+    /// user's active non-system group-chat tasks they own or hold an approved
+    /// membership in. The single-table store reads the owner rows and the
+    /// joined member rows; the sharded store resolves the member rows through
+    /// `list_by_ids` and filters them in Rust.
+    async fn list_group_task_ids_for_accessible_user(&self, user_id: i64) -> MysqlResult<Vec<i64>>;
+
+    /// `task_store.count_non_deleted_by_ids`: how many of `task_ids` are not
+    /// JSON-deleted. An empty `task_ids` issues no statement and counts zero.
+    async fn count_non_deleted_by_ids(&self, task_ids: &[i64]) -> MysqlResult<i64>;
+
+    /// `task_store.list_by_ids_ordered`: the page of `task_ids` after the
+    /// optional `DELETE` exclusion, ordered by `order_field` (`id`,
+    /// `created_at`, or `updated_at`, validated by the caller), then bounded by
+    /// `skip`/`limit`. The single-table store orders in SQL; the sharded store
+    /// re-orders by the caller's `task_ids` order.
+    async fn list_by_ids_ordered(
+        &self,
+        task_ids: &[i64],
+        order_field: &str,
+        descending: bool,
+        skip: i64,
+        limit: Option<i64>,
+        exclude_deleted: bool,
+    ) -> MysqlResult<Vec<MysqlRow>>;
+
     /// `task_store.get_workspace_by_ref`: the owner's workspace row for that
     /// reference, or no row when the deployment resolves none.
     async fn get_workspace_by_ref(
@@ -554,6 +201,41 @@ pub trait TaskStore: Send + Sync {
         client_origin: Option<&str>,
     ) -> MysqlResult<Vec<MysqlRow>>;
 
+    /// `task_store.get_active_project_task`: the active task of one project
+    /// owned by `owner_user_id`, optionally scoped to a client origin.
+    async fn get_active_project_task(
+        &self,
+        task_id: i64,
+        project_id: i64,
+        owner_user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `task_store.update_fields(project_id = 0)` followed by
+    /// `task_store.update_json`: one committed update that clears the task's
+    /// project link and rewrites its CRD JSON. `owner_user_id` lets a
+    /// deployment resolve the same table `get_active_project_task` read.
+    async fn set_task_project_and_json(
+        &self,
+        task_id: i64,
+        project_id: i64,
+        owner_user_id: i64,
+        json: &str,
+        updated_at: chrono::NaiveDateTime,
+    ) -> MysqlResult<()>;
+
+    /// `task_store.clear_project_for_owned_tasks`: detach one project's tasks
+    /// owned by `owner_user_id` by setting `project_id = 0`, returning the
+    /// number of rows the store updated. A single-table deployment runs one
+    /// update; a sharded deployment clears the base table and the owner's
+    /// shard.
+    async fn clear_project_for_owned_tasks(
+        &self,
+        project_id: i64,
+        owner_user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<u64>;
+
     /// `task_store.get_by_id` restricted to one owner: the full task
     /// projection of that owner's task.
     async fn get_task_owned(
@@ -586,6 +268,73 @@ pub trait TaskStore: Send + Sync {
     /// `_owner_matches_task_id`: whether `owner_user_id` owns the task, or is
     /// the only user its subtasks belong to.
     async fn task_owner_matches(&self, task_id: i64, owner_user_id: i64) -> MysqlResult<bool>;
+
+    /// `task_store.get_active_or_archived_task`: the task row for `task_id`
+    /// when it is an active or archived `Task`, optionally scoped to a client
+    /// origin. This read carries no owner filter; the delete path checks the
+    /// owner itself.
+    async fn get_active_or_archived_task(
+        &self,
+        task_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `_handle_member_leave`'s `task_store.get_active_task`: the active task
+    /// for `task_id`, optionally scoped to a client origin, with no owner
+    /// filter.
+    async fn get_active_task_for_origin(
+        &self,
+        task_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `task_store.get_owned_active_task`: the active task of `task_id` owned
+    /// by `user_id`, optionally scoped to a client origin.
+    async fn get_owned_active_task(
+        &self,
+        task_id: i64,
+        user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>>;
+
+    /// `subtask_store.list_by_task_unfiltered`: every subtask of `task_id`,
+    /// with the owner filter the resolved table requires.
+    async fn list_subtasks_by_task_unfiltered(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<Vec<MysqlRow>>;
+
+    /// `_queue_bulk_status_metrics`'s read plus `mark_task_subtasks_deleted`:
+    /// the failed assistant subtasks are read first (for run metrics), then
+    /// the matching subtask ids, then every subtask of `task_id` is set to
+    /// `DELETE`. Returns the number of updated rows.
+    async fn mark_task_subtasks_deleted(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        updated_at: &str,
+    ) -> MysqlResult<u64>;
+
+    /// `task_store.soft_delete_task`: rewrite the task's json, clear its active
+    /// flag, and stamp `updated_at`.
+    async fn soft_delete_task(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64>;
+
+    /// `task_store.update_json` on a task or workspace row: rewrite its json
+    /// and stamp `updated_at`.
+    async fn update_task_json(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64>;
 }
 
 /// The single-table store: every statement reads the base `tasks` /
@@ -757,6 +506,78 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
+    async fn list_group_task_ids_for_accessible_user(&self, user_id: i64) -> MysqlResult<Vec<i64>> {
+        // `_OWNED_GROUP_CHAT_SQL` then `_MEMBER_TASK_IDS_SQL`, unioned as sets;
+        // the id list keeps a stable order so a caller can re-order or count it.
+        let owned: Vec<MysqlRow> = self
+            .mysql
+            .fetch_all(owned_group_chat_ids_statement(TASKS_TABLE), (1i8, user_id))
+            .await?;
+        let members: Vec<MysqlRow> = self
+            .mysql
+            .fetch_all(
+                member_task_ids_statement(TASKS_TABLE),
+                (user_id.to_string(), 1i8),
+            )
+            .await?;
+        let mut ids: Vec<i64> = Vec::new();
+        for row in owned.iter().chain(members.iter()) {
+            let id = row.get_required::<i64>("id")?;
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn count_non_deleted_by_ids(&self, task_ids: &[i64]) -> MysqlResult<i64> {
+        if task_ids.is_empty() {
+            return Ok(0);
+        }
+        let rows: Vec<MysqlRow> = self
+            .mysql
+            .fetch_all(
+                count_non_deleted_tasks_statement(TASKS_TABLE, task_ids.len()),
+                task_ids.to_vec(),
+            )
+            .await?;
+        match rows.first() {
+            Some(row) => row.get_required("count_1"),
+            None => Ok(0),
+        }
+    }
+
+    async fn list_by_ids_ordered(
+        &self,
+        task_ids: &[i64],
+        order_field: &str,
+        descending: bool,
+        skip: i64,
+        limit: Option<i64>,
+        exclude_deleted: bool,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = tasks_by_ids_ordered_statement(
+            TASKS_TABLE,
+            task_ids.len(),
+            order_field,
+            descending,
+            exclude_deleted,
+            skip > 0,
+        );
+        // Argument order follows the statement: the id list, then the page
+        // bounds (the source binds `LIMIT` before `OFFSET`). A missing limit is
+        // the SQLAlchemy unbounded sentinel: every row the page can hold.
+        let mut args: Vec<StatementArg> = task_ids.iter().copied().map(StatementArg::Int).collect();
+        args.push(StatementArg::Int(limit.unwrap_or(i64::MAX)));
+        if skip > 0 {
+            args.push(StatementArg::Int(skip));
+        }
+        self.mysql.fetch_all(sql, args).await
+    }
+
     async fn get_workspace_by_ref(
         &self,
         owner_user_id: i64,
@@ -844,6 +665,68 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         }
     }
 
+    async fn get_active_project_task(
+        &self,
+        task_id: i64,
+        project_id: i64,
+        owner_user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        fetch_active_project_task(
+            &self.mysql,
+            TASKS_TABLE,
+            task_id,
+            project_id,
+            owner_user_id,
+            client_origin,
+        )
+        .await
+    }
+
+    async fn set_task_project_and_json(
+        &self,
+        task_id: i64,
+        project_id: i64,
+        _owner_user_id: i64,
+        json: &str,
+        updated_at: chrono::NaiveDateTime,
+    ) -> MysqlResult<()> {
+        update_task_project_and_json(
+            &self.mysql,
+            TASKS_TABLE,
+            task_id,
+            project_id,
+            json,
+            updated_at,
+        )
+        .await
+    }
+
+    async fn clear_project_for_owned_tasks(
+        &self,
+        project_id: i64,
+        owner_user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<u64> {
+        // `TaskResource.updated_at`'s Python-side `onupdate` binds first; the
+        // single-table store runs the one bulk update the base store issues.
+        let timestamp = task_update_timestamp();
+        let sql = clear_project_update_statement(TASKS_TABLE, client_origin.is_some());
+        let execution = match client_origin {
+            Some(origin) => {
+                self.mysql
+                    .execute(sql, (timestamp.as_str(), project_id, owner_user_id, origin))
+                    .await?
+            }
+            None => {
+                self.mysql
+                    .execute(sql, (timestamp.as_str(), project_id, owner_user_id))
+                    .await?
+            }
+        };
+        Ok(execution.rows_affected)
+    }
+
     async fn get_task_owned(
         &self,
         task_id: i64,
@@ -918,49 +801,117 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         }
         Ok(owners[0].get_required::<i64>("user_id")? == owner_user_id)
     }
+
+    async fn get_active_or_archived_task(
+        &self,
+        task_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        let sql = active_or_archived_task_statement(TASKS_TABLE, client_origin.is_some());
+        match client_origin {
+            Some(origin) => self.mysql.fetch_optional(sql, (task_id, origin)).await,
+            None => self.mysql.fetch_optional(sql, (task_id,)).await,
+        }
+    }
+
+    async fn get_active_task_for_origin(
+        &self,
+        task_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        let sql = active_task_for_origin_statement(TASKS_TABLE, client_origin.is_some());
+        match client_origin {
+            Some(origin) => self.mysql.fetch_optional(sql, (task_id, origin)).await,
+            None => self.mysql.fetch_optional(sql, (task_id,)).await,
+        }
+    }
+
+    async fn get_owned_active_task(
+        &self,
+        task_id: i64,
+        user_id: i64,
+        client_origin: Option<&str>,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        let sql = owned_active_task_statement(TASKS_TABLE, client_origin.is_some());
+        match client_origin {
+            Some(origin) => {
+                self.mysql
+                    .fetch_optional(sql, (task_id, user_id, origin))
+                    .await
+            }
+            None => self.mysql.fetch_optional(sql, (task_id, user_id)).await,
+        }
+    }
+
+    async fn list_subtasks_by_task_unfiltered(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        let sql = subtasks_by_task_unfiltered_statement(SUBTASKS_TABLE, true);
+        self.mysql.fetch_all(sql, (task_id, owner_user_id)).await
+    }
+
+    async fn mark_task_subtasks_deleted(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        updated_at: &str,
+    ) -> MysqlResult<u64> {
+        // `_queue_bulk_status_metrics`: the failed assistant subtasks feeding
+        // the run-metric hook, read before the update.
+        let _metrics: Vec<MysqlRow> = self
+            .mysql
+            .fetch_all(
+                failed_assistant_subtasks_statement(SUBTASKS_TABLE, true),
+                (task_id, owner_user_id),
+            )
+            .await?;
+        // SQLAlchemy runs the `synchronize_session='fetch'` id read before the
+        // bulk update, so the statement order matches the source.
+        let _ids: Vec<MysqlRow> = self
+            .mysql
+            .fetch_all(
+                subtask_ids_for_update_statement(SUBTASKS_TABLE, true),
+                (task_id, owner_user_id),
+            )
+            .await?;
+        let sql = mark_subtasks_deleted_statement(SUBTASKS_TABLE, true);
+        self.mysql
+            .execute(sql, (true, "DELETE", updated_at, task_id, owner_user_id))
+            .await
+            .map(|outcome| outcome.rows_affected)
+    }
+
+    async fn soft_delete_task(
+        &self,
+        task_id: i64,
+        _owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64> {
+        let sql = soft_delete_task_statement(TASKS_TABLE);
+        self.mysql
+            .execute(sql, (json, 0i8, updated_at, task_id))
+            .await
+            .map(|outcome| outcome.rows_affected)
+    }
+
+    async fn update_task_json(
+        &self,
+        task_id: i64,
+        _owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64> {
+        let sql = update_task_json_statement(TASKS_TABLE);
+        self.mysql
+            .execute(sql, (json, updated_at, task_id))
+            .await
+            .map(|outcome| outcome.rows_affected)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The store stays usable behind `Arc<dyn TaskStore>` for any handle.
-    #[test]
-    fn the_store_is_send_and_sync_for_any_handle() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<DefaultTaskStore<brz_mysql::MysqlService>>();
-        assert_send_sync::<MysqlRow>();
-    }
-
-    /// The single-table store's access read resolves no other table, so it
-    /// issues the same active-task statement as `get_active_task`.
-    #[tokio::test]
-    async fn the_single_table_store_reads_the_same_statement_for_both_active_reads() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let store = DefaultTaskStore::new(mysql.clone());
-        assert!(store.get_active_task(7).await.unwrap().is_none());
-        assert!(store.get_accessible_task(7).await.unwrap().is_none());
-        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
-        assert_eq!(queries.len(), 2, "{queries:?}");
-        assert_eq!(queries[0], queries[1]);
-        assert!(queries[0].contains("FROM `tasks`"), "{queries:?}");
-    }
-
-    /// The recorded `get_runtime_state` rendering reads `status.updatedAt`
-    /// through the cached `TaskResource.json["status"]` parent, so the second
-    /// `CASE` repeats `$."status"` as its inner path in both the subject and the
-    /// `JSON_UNQUOTE` branch. Extracting the top-level `updatedAt` instead
-    /// returns SQL NULL for the status timestamp and silently falls back to the
-    /// task row's second-precision `updated_at`.
-    #[test]
-    fn runtime_state_statement_reads_the_status_timestamp_through_the_status_object() {
-        let sql = runtime_state_statement(TASKS_TABLE);
-        assert_eq!(
-            sql.matches(r#"JSON_EXTRACT(`tasks`.json, '$."status"'), '$."updatedAt"'"#)
-                .count(),
-            2,
-            "{sql}"
-        );
-        assert!(!sql.contains(r#"`tasks`.json, '$."updatedAt"'"#), "{sql}");
-    }
-}
+#[path = "task_store_tests.rs"]
+mod tests;

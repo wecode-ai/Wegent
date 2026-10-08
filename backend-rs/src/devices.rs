@@ -88,13 +88,27 @@ pub enum DeviceType {
 }
 
 impl DeviceType {
-    fn from_spec(spec: &DeviceSpecInput) -> Self {
+    pub(crate) fn from_spec(spec: &DeviceSpecInput) -> Self {
         match spec.device_type.as_deref() {
             Some("cloud") => Self::Cloud,
             Some("app") => Self::App,
             Some("remote") => Self::Remote,
             _ => Self::Local,
         }
+    }
+}
+
+impl DeviceSpecInput {
+    /// `spec.deviceType` as persisted, before the `DeviceType` normalization
+    /// the identity helpers apply.
+    pub(crate) fn device_type_value(&self) -> Option<&str> {
+        self.device_type.as_deref()
+    }
+
+    /// `spec.runtimeInstanceId` as the raw JSON the identity checks compare
+    /// against the online-state document's `runtime_instance_id`.
+    pub(crate) fn runtime_instance_id_value(&self) -> Option<serde_json::Value> {
+        self.runtime_instance_id.as_ref().map(OpaqueJson::to_value)
     }
 }
 
@@ -119,7 +133,7 @@ pub fn online_key(user_id: i64, device_id: &str) -> String {
 /// Source `record_route_id`: App devices use `app-record-<id>` as the transport
 /// identity (Redis key, execution_target_id, socket_device_id); all other device
 /// types use the Kind `name` (the logical device_id).
-fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
+pub(crate) fn record_route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
     match device_type {
         DeviceType::App => format!("app-record-{}", row.id),
         _ => row.name.clone(),
@@ -624,7 +638,7 @@ async fn list_mget_devices(
 }
 
 /// Extract the `spec` object from a Kind row's JSON column.
-fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
+pub(crate) fn spec(row: &DeviceKindRow) -> DeviceSpecInput {
     row.json
         .0
         .value
@@ -714,7 +728,7 @@ async fn devices(state: &AppState, user: UserRow) -> Result<DeviceListResponse, 
 }
 
 /// Source `python_exception_handler` 500 response shape.
-fn internal_error() -> FastApiError {
+pub(crate) fn internal_error() -> FastApiError {
     FastApiError::detail(
         brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
         serde_json::json!({"error_code": 500, "detail": "Internal server error"}).to_string(),

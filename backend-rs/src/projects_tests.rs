@@ -271,3 +271,225 @@ async fn the_public_store_reads_project_tasks_from_the_base_table() {
         assert!(!queries[0].sql.contains('{'));
     }
 }
+
+/// `_with_task_project_label(task, None)` drops only
+/// `metadata.labels.projectId`, keeping every other key.
+#[test]
+fn clear_project_label_drops_only_the_project_id_label() {
+    let task = serde_json::json!({
+        "metadata": {"labels": {"projectId": "2180", "keep": "yes"}, "name": "t"},
+        "spec": {"title": "x"}
+    });
+    assert_eq!(
+        clear_project_label(&task),
+        serde_json::json!({
+            "metadata": {"labels": {"keep": "yes"}, "name": "t"},
+            "spec": {"title": "x"}
+        })
+    );
+}
+
+/// The source normalizes each level with `dict(... or {})`, so a task without
+/// metadata or labels renders them as empty objects.
+#[test]
+fn clear_project_label_materializes_missing_metadata_and_labels() {
+    assert_eq!(
+        clear_project_label(&serde_json::json!({"spec": {}})),
+        serde_json::json!({"spec": {}, "metadata": {"labels": {}}})
+    );
+    assert_eq!(
+        clear_project_label(&serde_json::Value::Null),
+        serde_json::json!({"metadata": {"labels": {}}})
+    );
+}
+
+/// The route's declared response type must be the typed model, which the API
+/// adapter converts through its JSON kind (`response_model=
+/// RemoveTaskFromProjectResponse`), so the 200 body renders as
+/// `application/json`.
+#[test]
+fn remove_task_declares_the_json_response_model() {
+    fn assert_json_route<F>(_route: F)
+    where
+        F: for<'a> std::ops::AsyncFn(
+                &'a Arc<AppState>,
+                crate::auth::SessionUser,
+                i64,
+                i64,
+                Option<String>,
+            )
+                -> Result<RemoveTaskFromProjectResponse, FastApiError>,
+    {
+    }
+
+    assert_json_route(remove_task_from_project);
+}
+
+/// The route returns the source's explicit `204` empty response, so the
+/// handler's declared return type is the framework `Response` the adapter
+/// renders directly (a JSON kind would serialize `null` as a body).
+#[test]
+fn delete_project_declares_the_empty_response() {
+    fn assert_response_route<F>(_route: F)
+    where
+        F: for<'a> std::ops::AsyncFn(
+                &'a Arc<AppState>,
+                crate::auth::SessionUser,
+                i64,
+                Option<String>,
+            ) -> Result<Response, FastApiError>,
+    {
+    }
+
+    assert_response_route(delete_project);
+}
+
+/// The clear-project statements keep the recorded SQLAlchemy shapes: the
+/// `synchronize_session="fetch"` primary-key select reads only `id`, and the
+/// bulk update sets `updated_at` (the column's Python-side `onupdate`) before
+/// `project_id=0`; the optional origin predicate binds last.
+#[test]
+fn clear_project_statements_keep_their_recorded_shapes() {
+    use crate::task_store::{clear_project_ids_statement, clear_project_update_statement};
+
+    assert_eq!(
+        clear_project_ids_statement("tasks", true),
+        "SELECT tasks.id \nFROM tasks \n\
+         WHERE tasks.project_id = ? AND tasks.user_id = ? AND tasks.client_origin = ?"
+    );
+    assert_eq!(
+        clear_project_update_statement("tasks", true),
+        "UPDATE tasks SET updated_at = ?, project_id=0 \n\
+         WHERE tasks.project_id = ? AND tasks.user_id = ? AND tasks.client_origin = ?"
+    );
+    assert!(!clear_project_ids_statement("tasks", false).contains("client_origin"));
+    assert!(!clear_project_update_statement("tasks", false).contains("client_origin"));
+}
+
+/// A recording `Mysql` handle that captures write statements and their
+/// parameter counts without a database.
+#[derive(Clone, Default)]
+struct WriteCapture {
+    writes: std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+}
+
+impl WriteCapture {
+    fn writes(&self) -> Vec<(String, usize)> {
+        self.writes.lock().unwrap().clone()
+    }
+}
+
+impl brz_mysql::Mysql for WriteCapture {
+    type Transaction = brz_mysql::MysqlTransactionService;
+
+    fn with_route<R: brz_mysql::MysqlRouting + 'static>(&self, _: R) -> brz_mysql::MysqlService {
+        panic!("plain queries must reuse the configured service")
+    }
+
+    fn route<K: brz_mysql::MysqlRouteKey>(&self, _key: K) -> Self {
+        panic!("these writes carry no routing key")
+    }
+
+    async fn execute<S, A>(&self, sql: S, args: A) -> MysqlResult<brz_mysql::MysqlExecution>
+    where
+        S: AsRef<str> + Send,
+        A: brz_mysql::MysqlArgs + Send,
+    {
+        self.writes.lock().unwrap().push((
+            sql.as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            args.len(),
+        ));
+        Ok(brz_mysql::MysqlExecution {
+            rows_affected: 0,
+            last_insert_id: 0,
+        })
+    }
+
+    async fn fetch_optional<S, A, T>(&self, _: S, _: A) -> MysqlResult<Option<T>>
+    where
+        S: AsRef<str> + Send,
+        A: brz_mysql::MysqlArgs + Send,
+        T: brz_mysql::FromMysqlRow + Send,
+    {
+        panic!("unexpected fetch_optional")
+    }
+
+    async fn fetch_all<S, A, T>(&self, _: S, _: A) -> MysqlResult<Vec<T>>
+    where
+        S: AsRef<str> + Send,
+        A: brz_mysql::MysqlArgs + Send,
+        T: brz_mysql::FromMysqlRow + Send,
+    {
+        panic!("unexpected fetch_all")
+    }
+
+    async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>
+    where
+        S: AsRef<str> + Send,
+        A: brz_mysql::MysqlArgs + Send,
+        T: brz_mysql::FromMysqlRow + Send,
+    {
+        panic!("unexpected fetch_one")
+    }
+
+    fn fetch<'a, S, A, T>(
+        &'a self,
+        _: S,
+        _: A,
+    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
+    where
+        S: AsRef<str> + Send + 'a,
+        A: brz_mysql::MysqlArgs + Send + 'a,
+        T: brz_mysql::FromMysqlRow + Send + 'a,
+    {
+        futures_util::stream::once(async { panic!("unexpected streaming query") })
+    }
+
+    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    where
+        T: Send,
+        F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
+    {
+        panic!("unexpected transaction")
+    }
+}
+
+/// The single-table store detaches the project's tasks with one bulk update,
+/// binding `updated_at` first, then the project id, the owner, and the
+/// optional origin.
+#[tokio::test]
+async fn the_public_store_clears_the_project_with_one_update() {
+    use crate::task_store::{DefaultTaskStore, TaskStore};
+
+    for origin in [None, Some("frontend")] {
+        let mysql = WriteCapture::default();
+        let updated = DefaultTaskStore::new(mysql.clone())
+            .clear_project_for_owned_tasks(11, 7, origin)
+            .await
+            .unwrap();
+        assert_eq!(updated, 0);
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].1, 3 + usize::from(origin.is_some()));
+        assert!(
+            writes[0]
+                .0
+                .starts_with("UPDATE tasks SET updated_at = ?, project_id=0"),
+            "{}",
+            writes[0].0
+        );
+        assert!(
+            writes[0]
+                .0
+                .contains("WHERE tasks.project_id = ? AND tasks.user_id = ?")
+        );
+        assert_eq!(
+            writes[0].0.contains("AND tasks.client_origin = ?"),
+            origin.is_some()
+        );
+        assert!(!writes[0].0.contains('{'));
+    }
+}

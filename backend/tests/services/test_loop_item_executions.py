@@ -2035,6 +2035,76 @@ def test_stall_scan_keeps_runs_with_text_output(
     assert claimed.status == "running"
 
 
+def test_stall_scan_keeps_runs_when_older_activity_contains_text(
+    test_db: Session, test_user: User
+) -> None:
+    """A later empty status row must not hide earlier assistant progress."""
+
+    from datetime import timedelta
+
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    running = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None
+    running.started_at = running.started_at - timedelta(minutes=30)
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    activity.content = "real progress text"
+    test_db.add(
+        ProjectChatMessage(
+            message_id=str(uuid.uuid4()),
+            project_id=activity.project_id,
+            task_id=activity.task_id,
+            sender_type="agent",
+            sender_id=activity.sender_id,
+            sender_name=activity.sender_name,
+            message_type="agent_status",
+            content="",
+            metadata_json={"run_status": "running"},
+            agent_id=activity.agent_id,
+            runtime_device_id=activity.runtime_device_id,
+            runtime_task_id=activity.runtime_task_id,
+            status="streaming",
+        )
+    )
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+
+    assert stalled == []
+    test_db.refresh(claimed)
+    assert claimed.status == "running"
+
+
 def _make_stalled_wegent_execution(
     db: Session, user: User
 ) -> tuple[LoopItemExecution, ProjectChatMessage]:
@@ -5093,11 +5163,11 @@ def test_runtime_catalog_creates_one_default_per_device(
 
 
 @pytest.mark.asyncio
-async def test_cancel_running_automation_requires_runtime_confirmation(
+async def test_cancel_running_automation_requires_runtime_acceptance(
     test_db: Session,
     test_user: User,
 ) -> None:
-    """A pause must not report success while the Runtime task is still active."""
+    """A pause must not report success when Runtime rejects the control RPC."""
 
     from app.services.project_automations import project_automation_service
 
@@ -5117,7 +5187,7 @@ async def test_cancel_running_automation_requires_runtime_confirmation(
             )
 
     assert error.value.status_code == 502
-    assert error.value.detail == "Runtime did not confirm cancellation"
+    assert error.value.detail == "Runtime did not accept cancellation"
     execution = test_db.get(LoopItemExecution, execution_id)
     assert execution is not None
     test_db.refresh(run)

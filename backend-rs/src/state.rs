@@ -61,6 +61,10 @@ pub struct AppState {
     /// (for example with a read-through cache) registers its own
     /// implementation before route construction.
     pub user_reader: Arc<dyn UserByIdReader>,
+    /// Skill market providers for `GET /api/skill-market/search`. The public
+    /// default registers none; an application with a market registers its
+    /// provider before route construction.
+    pub skill_market: crate::skill_market::SkillMarketRegistry,
     /// `GET /api/devices` `runtime_features` projection for the cloud device
     /// group. The public default renders none; an application whose
     /// configured cloud store projects cached Runtime features registers its
@@ -70,4 +74,11 @@ pub struct AppState {
     /// listing reads, plus the process-owned background refresh its cache miss
     /// starts. Built with the process Redis service at startup.
     pub executor_version: crate::executor_version::ExecutorVersionService,
+    /// Retained executor-manager HTTP client for the task delete path's
+    /// sandbox/executor cleanup calls.
+    pub executor_manager: crate::executor_manager::ExecutorManager,
+    /// Retained Sites project-API client for `GET /api/sites`. Built once at
+    /// startup from `SITES_API_BASE_URL` / `SITES_API_TOKEN`; a missing base
+    /// URL is rendered per request as the `503 sites_not_available` body.
+    pub sites: crate::sites::SitesClient,
 }
