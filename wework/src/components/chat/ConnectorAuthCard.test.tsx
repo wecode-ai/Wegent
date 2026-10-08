@@ -177,7 +177,8 @@ describe('ConnectorAuthCard browser oauth', () => {
     const onSuccess = vi.fn()
     render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} />)
     fireEvent.click(screen.getByTestId('github-cli-login'))
-    expect(await screen.findByRole('status')).toHaveTextContent(/gh/)
+    // The status region is already mounted while the asynchronous start is pending.
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/gh/))
     fireEvent.click(screen.getByTestId('connector-auth-retry'))
     await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
     expect(onSuccess).not.toHaveBeenCalled()
