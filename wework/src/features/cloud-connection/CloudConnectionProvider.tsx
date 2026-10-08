@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { TFunction } from 'i18next'
 import { ApiError, createHttpClient } from '@/api/http'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   claimDesktopCloudAuthorization,
   clearDesktopCloudCredentials,
@@ -61,8 +63,11 @@ const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重
 const CLOUD_STARTUP_REQUEST_TIMEOUT_MS = 8000
 const ACCESS_TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_RETRY_MS = 60 * 1000
+const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 45 * 1000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+/** Stable code the main process reports when a cloud credential call times out. */
+const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_CODE = 'request_timeout'
 
 function isLocalBackendSocketMirror(backendUrl: string, socketUrl: string): boolean {
   try {
@@ -82,6 +87,50 @@ function isLocalBackendSocketMirror(backendUrl: string, socketUrl: string): bool
   } catch {
     return false
   }
+}
+/**
+ * Refresh the desktop access token with a bound.
+ *
+ * A request that never settles must not keep the provider waiting forever:
+ * the renderer owns the "one refresh in flight" state, and a hang there blocks
+ * every later trigger (expiry timer, system resume, `online`, retry interval).
+ */
+async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<string> {
+  const startedAt = Date.now()
+  console.info('[CloudConnection] access token refresh started', { apiBaseUrl })
+  try {
+    const refreshed = await raceWithTimeout(
+      refreshDesktopCloudAccessToken(apiBaseUrl),
+      ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
+      timeoutMs =>
+        new DesktopCloudCredentialError(
+          'request_timeout',
+          `Cloud credential refresh timed out after ${Math.round(timeoutMs / 1000)}s`,
+          null
+        )
+    )
+    console.info('[CloudConnection] access token refresh finished', {
+      apiBaseUrl,
+      elapsedMs: Date.now() - startedAt,
+    })
+    return refreshed.accessToken
+  } catch (error) {
+    console.warn('[CloudConnection] access token refresh failed', {
+      apiBaseUrl,
+      elapsedMs: Date.now() - startedAt,
+      error: rawErrorMessage(error),
+    })
+    throw error
+  }
+}
+
+async function resolveAccessToken(
+  apiBaseUrl: string,
+  credentialMode: CloudCredentialMode,
+  existingToken: string | null
+): Promise<string | null> {
+  if (credentialMode === 'legacy_access_token') return existingToken
+  return requestDesktopCloudAccessToken(apiBaseUrl)
 }
 
 function resolveCloudRuntimeConfig(
@@ -390,8 +439,15 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
   })
 }
 
-function getCloudErrorMessage(error: unknown): string {
+function getCloudErrorMessage(error: unknown, t: TFunction): string {
+  // The re-login banner keys off this exact sentinel.
   if (error instanceof ApiError && error.status === 401) return 'Cloud login has expired'
+  if (
+    error instanceof DesktopCloudCredentialError &&
+    error.code === CLOUD_CREDENTIAL_REQUEST_TIMEOUT_CODE
+  ) {
+    return t('workbench.cloud_connection_request_timeout', '云端请求超时，请稍后重试。')
+  }
   return rawErrorMessage(error)
 }
 
@@ -400,11 +456,13 @@ interface CloudConnectionProviderProps {
 }
 
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
+  const { t } = useTranslation('common')
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
+  const refreshAttemptIdRef = useRef(0)
   const refreshGenerationRef = useRef(0)
   const disconnectRequestedRef = useRef(false)
   const terminalDesktopCredentialExpiryRef = useRef(false)
@@ -574,19 +632,21 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
                 ...config,
                 status: 'error',
                 token: null,
-                error: getCloudErrorMessage(error),
+                error: getCloudErrorMessage(error, t),
               }
         )
         throw error
       }
     },
-    [applyConnectedSnapshot]
+    [applyConnectedSnapshot, t]
   )
   const refreshUser = useCallback((): Promise<User | null> => {
     if (disconnectRequestedRef.current) return Promise.resolve(null)
     if (refreshPromiseRef.current) return refreshPromiseRef.current
     if (!snapshot.apiBaseUrl) return Promise.resolve(null)
     const refreshGeneration = refreshGenerationRef.current
+    const refreshAttemptId = refreshAttemptIdRef.current + 1
+    refreshAttemptIdRef.current = refreshAttemptId
     const credentialMode = snapshot.credentialMode ?? 'desktop_refresh'
     const config = {
       backendUrl: snapshot.backendUrl ?? '',
@@ -596,10 +656,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     }
     const refresh = (async () => {
       try {
-        const accessToken =
-          credentialMode === 'legacy_access_token'
-            ? snapshot.token
-            : (await refreshDesktopCloudAccessToken(config.apiBaseUrl)).accessToken
+        // Awaiting a resolved-token helper keeps the first suspension inside the
+        // try block, so the guard below is always assigned before it is cleared.
+        const accessToken = await resolveAccessToken(
+          config.apiBaseUrl,
+          credentialMode,
+          snapshot.token
+        )
         if (!accessToken) {
           throw new DesktopCloudCredentialError(
             'credentials_unavailable',
@@ -652,12 +715,16 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             : {
                 ...current,
                 status: current.status === 'connected' && current.token ? 'connected' : 'error',
-                error: getCloudErrorMessage(error),
+                error: getCloudErrorMessage(error, t),
               }
         )
         return null
       } finally {
-        if (refreshGenerationRef.current === refreshGeneration) {
+        // Release the in-flight guard whenever this attempt settles, whatever
+        // happened to it (timeout, failure, superseded generation). Keeping the
+        // guard would silently disable every later automatic refresh, and a
+        // newer attempt already owns it when it exists.
+        if (refreshAttemptIdRef.current === refreshAttemptId) {
           refreshPromiseRef.current = null
         }
       }
@@ -671,6 +738,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     snapshot.socketBaseUrl,
     snapshot.socketPath,
     snapshot.token,
+    t,
   ])
 
   const refreshAutomatically = useCallback(() => {

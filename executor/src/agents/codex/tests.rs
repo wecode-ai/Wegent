@@ -2128,6 +2128,77 @@ fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
 }
 
 #[test]
+fn binds_an_idle_thread_to_the_task_model_route() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("idle-thread-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "idle-thread-route-task".to_owned(),
+        subtask_id: "idle-thread-route-task-context-compact".to_owned(),
+        model_config: json!({
+            "model_id": "selected-model",
+            "base_url": "https://cloud-model.example/v1",
+            "api_key": "test-cloud-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    assert!(
+        !local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "an idle thread starts without a bound route"
+    );
+
+    let registration = bind_codex_thread_model_route(&request, "idle-thread-route-thread")
+        .expect("binding the task route should succeed")
+        .expect("payload providers must route through the local model proxy");
+    assert!(
+        local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
+        "the thread should resolve the task route"
+    );
+
+    // Action routes share the task scope with the turns that launched them.
+    let launch = build_codex_launch_config(&request).expect("launch config should register");
+    assert_eq!(
+        launch
+            .local_proxy_registration
+            .as_ref()
+            .expect("launch route")
+            .0,
+        registration.0
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn skips_the_local_route_for_providers_that_are_reached_directly() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("direct-provider-route");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
+    env::set_var("WEGENT_EXECUTOR_HOME", &root);
+    let request = ExecutionRequest {
+        task_id: "direct-provider-route-task".to_owned(),
+        model_config: json!({
+            "model": "gpt-5.6-sol",
+            "api_key": "test-cloud-key",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert!(
+        bind_codex_thread_model_route(&request, "direct-provider-thread")
+            .expect("a direct provider needs no local route")
+            .is_none()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
     let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
     let luna_request = ExecutionRequest {
