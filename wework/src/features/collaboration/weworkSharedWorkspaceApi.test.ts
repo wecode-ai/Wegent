@@ -270,6 +270,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
       executionEnvironment: {
+        workspacePolicy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -292,6 +293,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pull_request_automation: { enabled: true },
       workflow_definition: { version: 1 },
       execution_environment: {
+        workspace_policy: 'project',
         repositories: [
           {
             name: 'Wegent',
@@ -677,6 +679,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       location: 'cloud' as const,
       namespace: 'default',
       execution_environment: {
+        workspace_policy: 'git_worktree',
         repositories: [],
         setup_steps: [],
         fingerprint: '',
