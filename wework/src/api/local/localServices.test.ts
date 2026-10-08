@@ -1150,7 +1150,12 @@ describe('createLocalAppServices', () => {
       codexCatalogModelId: String(catalogEntry.slug),
       catalogReady: false,
     })
-    const request = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime.worktrees.capabilities') {
+        return { success: true, runtimeWorktrees: null }
+      }
+      throw new Error('catalog unavailable')
+    })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({
         running: true,
@@ -1166,7 +1171,9 @@ describe('createLocalAppServices', () => {
     await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
     await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
 
-    expect(request).toHaveBeenCalledTimes(1)
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toHaveLength(1)
     expect(request).toHaveBeenCalledWith('runtime.codex.catalog.custom.write', {
       models: [expect.objectContaining({ slug: catalogEntry.slug })],
     })
@@ -1828,15 +1835,18 @@ describe('createLocalAppServices', () => {
       ready: true,
       deviceId: 'device-uuid',
     })
+    const worktreeCapabilities = { version: 1, managed: true, preflight: true }
     const request = vi.fn().mockImplementation(async (method: string) =>
-      method === 'runtime.tasks.list'
-        ? { workspaces: [] }
-        : {
-            success: true,
-            stdout: '/Users/me',
-            stderr: '',
-            exit_code: 0,
-          }
+      method === 'runtime.worktrees.capabilities'
+        ? { success: true, runtimeWorktrees: worktreeCapabilities }
+        : method === 'runtime.tasks.list'
+          ? { workspaces: [] }
+          : {
+              success: true,
+              stdout: '/Users/me',
+              stderr: '',
+              exit_code: 0,
+            }
     )
     const services = createLocalAppServices({
       ensure,
@@ -1844,19 +1854,23 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
-    await services.deviceApi.listDevices()
+    const devices = await services.deviceApi.listDevices()
+    expect(devices[0].runtime_features?.worktrees).toEqual(worktreeCapabilities)
     await services.deviceApi.getHomeDirectory('local-device')
     await services.deviceApi.getHomeDirectory('local-device')
 
     expect(ensure).toHaveBeenCalledTimes(1)
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request).toHaveBeenNthCalledWith(1, 'device.execute_command', {
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenNthCalledWith(1, 'runtime.worktrees.capabilities', {
+      deviceId: 'device-uuid',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
-    expect(request).toHaveBeenNthCalledWith(2, 'device.execute_command', {
+    expect(request).toHaveBeenNthCalledWith(3, 'device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
       timeout_seconds: 10,

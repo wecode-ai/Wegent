@@ -247,7 +247,8 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('click', '[data-testid="settings-nav-worktrees"]')
-      const remove = `[data-testid="delete-worktree-button-${isolated.worktreeId}"]`
+      const remove = `[data-testid="delete-worktree-button-${isolated.taskId}"]`
+      await control.command('waitFor', remove)
       await control.command('click', remove)
       await access(markerPath)
       await control.command(
@@ -257,7 +258,7 @@ export function createDesktopScenario({
       await access(markerPath)
       await control.command('click', remove)
       await control.command('click', '[data-testid="confirm-recycle-worktree-button"]')
-      const restore = `[data-testid="restore-worktree-button-${isolated.worktreeId}"]`
+      const restore = `[data-testid="restore-worktree-button-${isolated.taskId}"]`
       await control.command('waitFor', restore)
       await assert.rejects(access(isolated.workspacePath), { code: 'ENOENT' })
       await captureScreenshot(control, 'worktree-policy-02-restorable.png', 'body')

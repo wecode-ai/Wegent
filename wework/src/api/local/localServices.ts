@@ -3509,7 +3509,18 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const deviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
       try {
-        return [localDeviceFromStatus(await bootstrapStatus())]
+        const device = localDeviceFromStatus(await bootstrapStatus())
+        if (device.status === 'online') {
+          const capabilities = await request<RuntimeWorktreeCapabilitiesResponse>(
+            'runtime.worktrees.capabilities',
+            { deviceId: device.device_id }
+          )
+          device.runtime_features = {
+            schemaVersion: 1,
+            worktrees: capabilities.runtimeWorktrees,
+          }
+        }
+        return [device]
       } catch (error) {
         const fallback = {
           ...localExecutorErrorStatus(error),
