@@ -130,8 +130,16 @@ export function useProjectExecutionEnvironmentReadiness({
         api.projects.get(project.id),
         api.projects.listExecutionEnvironments(project.id),
       ]);
+      const readinessProject =
+        latestProject.version > project.version
+          ? latestProject
+          : latestProject.version < project.version
+            ? project
+            : (latestProject.execution_environment ?? null)
+              ? latestProject
+              : project;
       const nextReadiness = resolveProjectExecutionEnvironmentReadiness(
-        latestProject,
+        readinessProject,
         environments,
       );
       if (revision === requestRevision.current) {

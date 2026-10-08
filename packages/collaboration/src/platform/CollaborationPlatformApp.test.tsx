@@ -2637,7 +2637,6 @@ describe("CollaborationPlatformApp real component flow", () => {
           },
         },
       };
-      projects[0] = initializedProject;
       return initializedProject;
     });
 

@@ -3829,6 +3829,7 @@ export function CollaborationPlatformApp({
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           locale={locale}
+          onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
             capabilities: {

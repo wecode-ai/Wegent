@@ -945,16 +945,17 @@ export function createCollaborationWorkspaceControllerCommands({
     const mutationGeneration = projectMutationGeneration(projectId);
     if (showLoading) dispatch({ type: "loading", value: true });
     try {
-      const project = await api.projects.get(projectId);
+      const project =
+        catalogProjects.find((item) => item.id === projectId) ??
+        (await api.projects.get(projectId));
       if (
         !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
-      catalogProjects = [
-        project,
-        ...catalogProjects.filter((item) => item.id !== project.id),
-      ];
+      if (!catalogProjects.some((item) => item.id === project.id)) {
+        catalogProjects = [...catalogProjects, project];
+      }
       const externalBoardOptions = getExternalBoardOptions();
       const externalBoard = isExternalGitProject(project)
         ? await loadExternalGitBoardSnapshot(
