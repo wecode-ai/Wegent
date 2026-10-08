@@ -300,6 +300,36 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="issue-execution-environment-notice"]'),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'click',
+          scoped('[data-testid="issue-execution-environment-notice-action"]')
+        )
+        await initializeFirstProjectExecutionEnvironment(
+          control,
+          ACTIVE_WORKBENCH_SELECTOR,
+          uiTimeoutMs,
+          remoteDevice.id
+        )
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="issue-execution-environment-notice"]')
+            )
+          ),
+          0,
+          'The execution environment warning remained after initialization and returning home'
+        )
         await control.command(
           'click',
           scoped(
@@ -315,12 +345,6 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
 
-        await initializeFirstProjectExecutionEnvironment(
-          control,
-          ACTIVE_WORKBENCH_SELECTOR,
-          uiTimeoutMs,
-          remoteDevice.id
-        )
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
