@@ -3044,7 +3044,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
     expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-reset-default-button')).toHaveTextContent('重置为默认设置')
+    expect(screen.getByTestId('model-reset-default-button')).toHaveTextContent('重置模型设置')
 
     await userEvent.click(screen.getByTestId('model-reset-default-button'))
 

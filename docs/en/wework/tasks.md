@@ -24,6 +24,8 @@ After enabling Experimental features, open the composer's **+** menu and select 
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
 
+When creating an issue in Collaboration, enter at least a title or content. If you enter content only, Wework preserves the complete content as the description and generates a title using the same rule as the regular task composer. A manually entered title takes precedence when both fields are present.
+
 After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
 
 - **Create board task** creates and links a card using the current task title and execution status.

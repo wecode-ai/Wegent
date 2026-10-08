@@ -163,12 +163,18 @@ describe('EmbeddedBrowserBridge', () => {
         action: 'click',
         label: 'workspace-browser',
         selector: '#run-agent',
+        timeoutMs: 5_000,
       }),
     })
 
     await vi.waitFor(() => {
       expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 100, 50)
     })
+    expect(browser.waitForAgentCursorArrival).toHaveBeenCalledWith(
+      'workspace-browser',
+      expect.any(Number),
+      5_000
+    )
     expect(browser.evaluate).toHaveBeenCalledOnce()
     resolveArrival(true)
 

@@ -109,7 +109,15 @@ The default project space belongs to the local project's settings and is stored 
 
 Project-space lists, default-space selection, and current-task links are resolved in the background. The composer, image and file paste, attachment upload, and message sending remain available while a lookup or link is pending. Wework adds the project context or completes the task link after the result arrives instead of blocking the conversation with a linking state.
 
+### Initialize the project execution environment
+
+Creating and manually handling an issue does not require an initialized execution environment. Starting an AI execution task requires the project's execution environment to be initialized on at least one online device. If the collaboration home reports that the environment is not initialized, choose **Configure execution environment**, initialize an available device in project settings, and then return to the issue to continue execution.
+
+After initialization, the collaboration home reads the latest project configuration and device status again; reloading the page or reopening the project is not required. If the device is marked complete but the warning remains, confirm that the device is still online and reopen the execution-environment settings to check the initialization result.
+
 ## Board quick start
+
+You can create an issue even when no device has been added, the device is offline, or the environment is not initialized. Creating an issue does not redirect to execution environment settings. Manual work can continue; configure the environment when AI execution is needed.
 
 The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
 
@@ -136,6 +144,13 @@ Use **Message AI** in the project-space header for project exploration and tempo
 Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
+
+Comments in the issue activity have two different execution semantics:
+
+- Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.
+- Selecting **Reply** inside an execution activity continues the original execution task and model session owned by that activity. Use it to add requirements, ask follow-up questions, or request corrections without creating another parallel task.
+
+The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
 For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
 

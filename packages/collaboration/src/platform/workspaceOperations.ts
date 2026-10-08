@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CollaborationIssue, CollaborationProject } from "../types";
+import { executionDisplayStatus } from "../issue-detail/executionStatus";
 
 export type WorkspaceOperationState =
   | "failed"
@@ -28,43 +29,36 @@ export interface WorkspaceProjectOperation {
   updatedAt: string;
 }
 
-const ACTIVE_EXECUTION_STATES = new Set([
-  "in_progress",
-  "running",
-  "streaming",
-]);
-
-const PENDING_EXECUTION_STATES = new Set([
-  "pending",
-  "pending_approval",
-  "queued",
-  "starting",
-  "unknown",
-  "waiting_device",
-  "waiting_runtime",
-]);
-
 export function workspaceIssueOperationState(
   issue: CollaborationIssue,
 ): WorkspaceOperationState {
-  const executionState = issue.execution_state?.toLowerCase() ?? null;
+  const executionState = executionDisplayStatus(issue.execution_state);
   if (executionState === "failed" || issue.execution_error) {
     return "failed";
   }
   if (issue.status === "in_review" || executionState === "waiting_approval") {
     return "review";
   }
-  if (
-    issue.status === "in_progress" ||
-    (executionState != null && ACTIVE_EXECUTION_STATES.has(executionState))
-  ) {
-    return "running";
+  switch (executionState) {
+    case "running":
+      return "running";
+    case "queued":
+    case "starting":
+    case "waiting_runtime":
+    case "cancelling":
+    case "unknown":
+    case "succeeded":
+    case "cancelled":
+    case "skipped":
+      return issue.status === "completed" ? "completed" : "pending";
+    case null:
+      if (issue.status === "in_progress") return "running";
+      if (issue.status === "completed") return "completed";
+      return "pending";
+    default:
+      executionState satisfies never;
+      return "pending";
   }
-  if (issue.status === "completed") return "completed";
-  if (executionState == null || PENDING_EXECUTION_STATES.has(executionState)) {
-    return "pending";
-  }
-  return "pending";
 }
 
 export function createWorkspaceOperationsSnapshot({

@@ -342,11 +342,7 @@ describe('AiChatModal', () => {
           modelType: 'user',
           modelOptions: { reasoningEffort: 'high' },
         },
-        workspaceExecution: {
-          workspace: {
-            source: 'git_worktree',
-          },
-        },
+        workspaceExecution: null,
         cloudProjectId: '11',
         origin: {
           type: 'board_task',
@@ -364,7 +360,7 @@ describe('AiChatModal', () => {
     mocks.createProjectRuntimeTask.mockClear()
   })
 
-  it('uses the current workspace when the executor cannot create a worktree', async () => {
+  it('uses the current workspace for a non-Git project', async () => {
     mocks.worktreeAvailable = false
     render(
       <AiChatModal

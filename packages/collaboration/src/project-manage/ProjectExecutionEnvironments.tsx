@@ -155,6 +155,9 @@ export function ProjectExecutionEnvironments({
     useState(false);
   const initialConfig =
     workspace?.execution_environment ?? project?.execution_environment;
+  const [workspacePolicy, setWorkspacePolicy] = useState<
+    "git_worktree" | "project"
+  >(initialConfig?.workspace_policy ?? "git_worktree");
   const [repositories, setRepositories] = useState<RepositoryDraft[]>(() => {
     const configured = initialConfig?.repositories ?? [];
     return configured.map((repository) => ({
@@ -250,13 +253,16 @@ export function ProjectExecutionEnvironments({
   // here.
   useEffect(() => {
     if (initializationInFlight.current || saving) return;
+    if (!configurationDirty) {
+      setWorkspacePolicy(initialConfig?.workspace_policy ?? "git_worktree");
+    }
     setConfigVersion(incomingVersion);
     setDeviceStates(incomingDevices);
     const errorKey = environmentErrorDeviceKey.current;
     setEnvironmentError(
       errorKey ? (incomingDevices[errorKey]?.error ?? "") : "",
     );
-  }, [incomingVersion, incomingDevices]);
+  }, [incomingVersion, incomingDevices, initialConfig?.workspace_policy]);
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi) return;
@@ -592,6 +598,7 @@ export function ProjectExecutionEnvironments({
     setConfigurationSaved(false);
     try {
       const executionEnvironment = {
+        workspacePolicy,
         repositories: configuredRepositories,
         setupSteps: configuredSetupSteps,
       };
@@ -792,6 +799,38 @@ export function ProjectExecutionEnvironments({
                 "定义初始化执行环境时使用的代码来源和初始化命令。",
               )}
             </p>
+
+            <label className="mt-5 block text-sm">
+              {translate("todo.workspace_policy", "任务工作区")}
+              <select
+                className="mt-2 block w-full rounded-md border border-border bg-background px-3 py-2"
+                data-testid={`${testIdPrefix}-workspace-policy`}
+                value={workspacePolicy}
+                disabled={!canManage || saving}
+                onChange={(event) => {
+                  setWorkspacePolicy(
+                    event.target.value as "git_worktree" | "project",
+                  );
+                  setConfigurationDirty(true);
+                }}
+              >
+                <option value="git_worktree">
+                  {translate(
+                    "todo.workspace_policy_isolated",
+                    "独立工作树（推荐）",
+                  )}
+                </option>
+                <option value="project">
+                  {translate("todo.workspace_policy_shared", "共享项目目录")}
+                </option>
+              </select>
+              <span className="mt-2 block text-xs text-text-muted">
+                {translate(
+                  "todo.workspace_policy_description",
+                  "Git 仓库的新任务默认使用独立工作树；无仓库时使用环境目录。共享目录中的并行任务可能相互覆盖。修改仅影响新任务，无需重新初始化环境。",
+                )}
+              </span>
+            </label>
 
             <div className="mt-5">
               <div className="flex items-center justify-between gap-3">

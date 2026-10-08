@@ -66,7 +66,7 @@ describe("my-work model", () => {
         }),
         isExecutionStateActive,
       ),
-    ).toBe("running");
+    ).toBe("action");
     expect(
       myWorkGroupOf(
         item({

@@ -55,12 +55,17 @@ export function IssueActivityMessage({
     <article {...attributes} className="task-detail-thread-message">
       <header className="task-detail-thread-message-header">
         {avatar ?? <IssueActivityAvatar author={author} agent={agent} />}
-        <span className="min-w-0 truncate font-medium text-text-primary">
-          {author}
-        </span>
-        {metadata}
+        <span className="task-detail-thread-message-author">{author}</span>
+        {metadata ? (
+          <span className="task-detail-thread-message-metadata">
+            {metadata}
+          </span>
+        ) : null}
         {hideTime ? null : (
-          <time className="text-sm text-text-muted" dateTime={createdAt}>
+          <time
+            className="task-detail-thread-message-time"
+            dateTime={createdAt}
+          >
             {formatIssueTimestamp(createdAt)}
           </time>
         )}

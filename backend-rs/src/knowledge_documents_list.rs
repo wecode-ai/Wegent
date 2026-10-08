@@ -443,7 +443,7 @@ async fn list_documents_handler(
         offset,
     )?;
 
-    let response = list_documents(state, i64::from(user.id), &params).await?;
+    let response = list_documents(state, user.id, &params).await?;
 
     Ok(response)
 }

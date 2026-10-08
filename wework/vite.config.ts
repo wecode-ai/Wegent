@@ -1,10 +1,12 @@
 import path from 'path'
 import fs from 'fs'
+import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
+import { excalidrawAssets } from './vite/excalidrawAssets'
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -27,6 +29,16 @@ const packageJson = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')
 ) as {
   version?: string
+}
+const sourceSha =
+  process.env.WEWORK_SOURCE_SHA?.trim() ||
+  process.env.GITHUB_SHA?.trim() ||
+  execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: path.resolve(__dirname, '..'),
+    encoding: 'utf8',
+  }).trim()
+if (!/^[0-9a-f]{40,64}$/i.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
 }
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(internalExtensionsDir)
@@ -105,6 +117,7 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    excalidrawAssets(),
     ...internalVitePlugins,
     preserveDshUiEntryExports(),
     fileViewerRenderers({
@@ -116,6 +129,7 @@ export default defineConfig({
   ],
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
+    __WEWORK_COMMIT_SHA__: JSON.stringify(sourceSha.toLowerCase()),
   },
   optimizeDeps: {
     // Test artifacts may contain standalone plugin apps with dependencies that
@@ -223,6 +237,7 @@ export default defineConfig({
     },
   },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@xmldom/xmldom': path.resolve(__dirname, './src/lib/browser-dom-parser.ts'),
       '@': path.resolve(__dirname, './src'),

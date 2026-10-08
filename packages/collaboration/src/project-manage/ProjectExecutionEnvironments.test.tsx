@@ -385,6 +385,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "git_worktree",
         repositories: [
           {
             name: "Wegent",
@@ -472,6 +473,7 @@ describe("ProjectExecutionEnvironments", () => {
       element<HTMLButtonElement>("-add-setup-step").click(),
     );
     await change("-setup-command-0", "mkdir -p generated");
+    await change("-workspace-policy", "project");
     expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(true);
 
     await saveConfiguration();
@@ -479,6 +481,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "project",
         repositories: [],
         setupSteps: [{ command: "mkdir -p generated", workingDirectory: "" }],
       },
@@ -981,6 +984,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "git_worktree",
         repositories: [
           {
             name: "Custom name",
@@ -1162,6 +1166,26 @@ describe("ProjectExecutionEnvironments", () => {
     expect(element("-21").textContent).toContain("环境已就绪");
     expect(element<HTMLButtonElement>("-initialize-21").textContent).toContain(
       "重新初始化",
+    );
+  });
+
+  it("refreshes saved workspace policy without replacing an unsaved selection", async () => {
+    const api = await render({ assigned: [] });
+    const configuration = {
+      workspace_policy: "project" as const,
+      repositories: [],
+      setup_steps: [],
+      fingerprint: "",
+      devices: {},
+    };
+    await rerender(api, { executionEnvironment: configuration });
+    expect(element<HTMLSelectElement>("-workspace-policy").value).toBe(
+      "project",
+    );
+    await change("-workspace-policy", "git_worktree");
+    await rerender(api, { executionEnvironment: configuration, version: 3 });
+    expect(element<HTMLSelectElement>("-workspace-policy").value).toBe(
+      "git_worktree",
     );
   });
 

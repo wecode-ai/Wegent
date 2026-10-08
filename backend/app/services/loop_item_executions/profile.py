@@ -86,6 +86,7 @@ def _execution_environment_config(
     devices = selected_config.get("devices")
     return {
         "repositories": repositories,
+        "workspace_policy": selected_config.get("workspace_policy", "git_worktree"),
         "setup_steps": setup_steps,
         "fingerprint": selected_config.get("fingerprint"),
         "devices": (
@@ -125,6 +126,25 @@ def _merge_environment_execution(
         setup["fingerprint"] = str(environment.get("fingerprint") or "")
         merged["setup"] = setup
     return merged or None
+
+
+def _apply_project_workspace_intent(
+    execution: object, *, isolated: bool
+) -> dict[str, Any] | None:
+    """Apply the project-owned source without discarding other execution settings."""
+    intent = dict(execution) if isinstance(execution, dict) else {}
+    workspace = (
+        dict(intent["workspace"]) if isinstance(intent.get("workspace"), dict) else {}
+    )
+    if isolated:
+        workspace["source"] = "git_worktree"
+    elif workspace.get("source") == "git_worktree":
+        workspace.pop("source")
+    if workspace:
+        intent["workspace"] = workspace
+    else:
+        intent.pop("workspace", None)
+    return intent or None
 
 
 def native_runtime_contract(runtime: object) -> tuple[RuntimeName, str]:
@@ -284,7 +304,6 @@ class WeworkExecutionProfile:
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
-    workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     additional_skills: tuple[Any, ...] = ()
     mcp_servers: dict[str, Any] | None = None
@@ -369,11 +388,6 @@ class WeworkExecutionProfile:
             agent_id=agent.id,
             local_project_id=local_project_id,
             max_concurrent_executions=bot_max_concurrent_executions(agent),
-            workspace_policy=str(
-                profile_metadata.get("workspace_policy")
-                or config.get("workspace_policy")
-                or "project"
-            ),
             plugins=tuple(
                 plugin
                 for plugin in config.get("plugins", [])
@@ -420,7 +434,6 @@ class WeworkExecutionProfile:
                 model_options_override or metadata.get("model_options") or {}
             ),
             local_project_id=local_project_id,
-            workspace_policy=str(metadata.get("workspace_policy") or "project"),
             workspace_binding_override=(
                 ProjectChatWorkspaceBindingView.model_validate(
                     {
@@ -570,7 +583,6 @@ class WeworkExecutionProfile:
                 origin["workflowStageName"] = str(
                     target_stage.get("name") or workflow_stage_id
                 )
-        origin["workspacePolicy"] = workspace_policy or self.workspace_policy
         configured_runtime = origin_context.get("runtime")
         runtime, shell_type = native_runtime_contract(
             configured_runtime if configured_runtime is not None else self.runtime
@@ -640,6 +652,8 @@ class WeworkExecutionProfile:
 
         configured_execution = origin_context.get("execution")
         environment_config = _execution_environment_config(db, project)
+        project_workspace_policy = environment_config["workspace_policy"]
+        origin["workspacePolicy"] = workspace_policy or project_workspace_policy
         device_states = environment_config["devices"]
         # A configured environment only runs on devices that finished preparing
         # it; every other device stops at preflight so it never clones a fresh
@@ -650,7 +664,7 @@ class WeworkExecutionProfile:
             or device_states
         )
         environment_workspace_path = ""
-        if environment_configured:
+        if environment_configured and workspace_source_task is None:
             device_state = device_states.get(execution_device_id)
             device_state = device_state if isinstance(device_state, dict) else {}
             if str(device_state.get("status") or "") != "ready":
@@ -659,25 +673,26 @@ class WeworkExecutionProfile:
                 )
             environment_workspace_path = str(device_state.get("workspace_path") or "")
         environment_uses_worktree = bool(
-            environment_workspace_path and environment_config.get("repositories")
+            environment_workspace_path
+            and environment_config.get("repositories")
+            and project_workspace_policy == "git_worktree"
         )
-        generated_execution = (
-            {"workspace": {"source": "git_worktree"}}
-            if environment_uses_worktree
-            or (
-                (has_bound_workspace or workspace_source_task)
-                and self.workspace_policy == "git_worktree"
+        isolated_workspace = (
+            workspace_source_task is None
+            and project_workspace_policy == "git_worktree"
+            and (
+                environment_uses_worktree
+                or (not environment_configured and has_bound_workspace)
             )
-            else None
         )
         execution = _merge_environment_execution(
-            (
-                configured_execution
-                if isinstance(configured_execution, dict)
-                else generated_execution
+            _apply_project_workspace_intent(
+                configured_execution, isolated=isolated_workspace
             ),
             environment_config,
         )
+        if workspace_source_task is not None:
+            execution = None
         origin["executionEnvironment"] = environment_config
         configured_plugins = origin_context.get("project_plugins")
         configured_system_prompt = origin_context.get("system_prompt")

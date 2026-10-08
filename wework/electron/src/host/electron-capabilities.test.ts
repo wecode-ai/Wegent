@@ -94,6 +94,23 @@ describe('Smart App verification capabilities', () => {
     expect(HOST_CAPABILITIES).toContain('smartApps.inspectVerification')
     expect(HOST_CAPABILITIES).toContain('smartApps.verify')
   })
+
+  test('allows an empty parent and purpose when creating a workbench', async () => {
+    const createDirectory = vi.fn(async () => ({ id: 'created-app' }))
+    const { router } = createIsolatedClipboardRouter(true, undefined, { createDirectory })
+    const input = {
+      parentPath: '',
+      name: 'created-app',
+      displayName: 'Created App',
+      description: '',
+      template: 'web',
+    }
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.createDirectory', input)
+    ).resolves.toEqual({ id: 'created-app' })
+    expect(createDirectory).toHaveBeenCalledWith(input)
+  })
 })
 
 describe('e2eOpenDialogOverride', () => {
@@ -226,7 +243,8 @@ function createIsolatedClipboardRouter(
   popoutHost?: {
     openPopoutTaskInMain: (taskAddressId: string) => void
     setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
-  }
+  },
+  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> }
 ) {
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
@@ -241,7 +259,7 @@ function createIsolatedClipboardRouter(
       state: 'ready',
       updatedAt: '2026-09-12T00:00:00.000Z',
     }),
-    () => null,
+    () => (smartApps ?? null) as never,
     {} as never,
     {} as never,
     {} as never,

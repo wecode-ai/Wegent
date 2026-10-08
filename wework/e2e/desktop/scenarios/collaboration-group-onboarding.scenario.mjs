@@ -187,6 +187,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
+      // An uninitialized project's create action must explain the settings redirect.
+      await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await control.command('waitFor', scoped('[data-testid="transient-notice"]'), {
+        text: '请先完成项目执行环境初始化，再创建 Issue。',
+      })
+      await control.command(
+        'waitFor',
+        scoped('[data-testid="collaboration-project-settings-environments"][aria-current="page"]')
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-issue-create-dialog"]')
+          )
+        ),
+        0,
+        'Issue creation must wait for environment initialization'
+      )
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command(
         'click',

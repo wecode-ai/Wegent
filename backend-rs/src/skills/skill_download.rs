@@ -8,19 +8,20 @@
 //! lookups it composes:
 //!
 //! 1. `get_skill_by_id(user_id=current_user)`
-//! 2. personal-default `SkillBinding` (`list_user_default_skill_ids`)
+//! 2. personal-default `SkillBinding` (`list_user_default_skill_ids`) or
+//!    group-shared `SkillBinding` (`list_user_group_skill_ids`)
 //! 3. group Skill / group binding (Reporter access in the group namespace)
 //! 4. task-authorized lookups (`task_id` query parameter)
 //! 5. system Skill (`user_id=0`), restricted to admins and executor
 //!    credentials
 use super::input::{SkillInput, TeamReference};
 use crate::json_compat::JsonProjection;
-use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
+use brz_mysql::{FromMysqlRow, Json, MysqlResult};
 #[cfg(test)]
 use serde_json::Value;
+use std::collections::HashSet;
 
-use crate::task_routing::TaskPolicy;
-use crate::task_routing::{ByTaskId, ByUserId};
+use crate::teams::group_membership::ErpContext;
 
 use super::entity_resolution::EntityResolution;
 
@@ -79,22 +80,6 @@ impl TaskRow {
             .unwrap_or("default")
             .to_owned()
     }
-}
-
-/// Base-table `tasks` owner row for legacy-id routing
-/// (`_legacy_task_owner_user_id`).
-#[derive(Debug, FromMysqlRow)]
-struct TaskOwnerRow {
-    user_id: i32,
-}
-
-/// Which physical table a legacy-id task lookup resolves to.
-enum TaskLookupTable {
-    /// New-format id or legacy id without a migrated owner: route by task id
-    /// (resolves to the shard table or the base table respectively).
-    Sharded,
-    /// Legacy id with a migrated owner: route by the owner's user id.
-    OwnerShard,
 }
 
 /// `resource_members` row for a task membership check.
@@ -202,14 +187,21 @@ impl SkillBindingFields for GroupBindingRow {
 }
 
 /// Skill lookup repositories for the download path.
-pub struct SkillDownloadRepository<'a, M> {
-    mysql: &'a M,
-    task_policy: TaskPolicy,
+///
+/// The task-authorized lookups read their rows from the injected `TaskStore`,
+/// which owns the physical table choice; every other read stays on this
+/// handle.
+pub struct SkillDownloadRepository<'a> {
+    mysql: &'a brz_mysql::MysqlService,
+    task_store: &'a dyn crate::task_store::TaskStore,
 }
 
-impl<'a, M: Mysql> SkillDownloadRepository<'a, M> {
-    pub fn new(mysql: &'a M, task_policy: TaskPolicy) -> Self {
-        Self { mysql, task_policy }
+impl<'a> SkillDownloadRepository<'a> {
+    pub fn new(
+        mysql: &'a brz_mysql::MysqlService,
+        task_store: &'a dyn crate::task_store::TaskStore,
+    ) -> Self {
+        Self { mysql, task_store }
     }
 
     /// `skill_kinds_service.get_skill_by_id`.
@@ -304,10 +296,16 @@ impl<'a, M: Mysql> SkillDownloadRepository<'a, M> {
             return Ok(None);
         };
         let namespace = kind_row.namespace.clone();
+        // `_get_skill_archive_by_id` resolves the Skill in its own namespace
+        // before loading the archive, so the same `kinds` row is read once
+        // more than the lookup above.
+        let skill = self
+            .get_skill_by_id_in_namespace(skill_id, namespace.as_str())
+            .await?;
         let binary = self
             .get_skill_binary_in_namespace(skill_id, namespace.as_str())
             .await?;
-        Ok(Some((kind_row, binary)))
+        Ok(skill.map(|skill| (skill, binary)))
     }
 
     async fn fetch_binary(&self, skill_id: i32) -> MysqlResult<Option<Vec<u8>>> {
@@ -357,6 +355,38 @@ impl<'a, M: Mysql> SkillDownloadRepository<'a, M> {
             skill_ids.push(skill_id);
         }
         Ok(skill_ids)
+    }
+
+    /// `skill_binding_service.list_user_group_skill_ids`: the Skill ids
+    /// shared with any group the user can access with at least Reporter
+    /// access. Runs the `get_user_groups` resolution (direct, entity-derived
+    /// and inherited memberships), the per-group Reporter gate, then
+    /// `list_group_skill_ids_for_authorized_namespaces`.
+    pub async fn list_user_group_skill_ids(
+        &self,
+        resolution: &EntityResolution<'_>,
+    ) -> MysqlResult<HashSet<i32>> {
+        let erp = ErpContext {
+            erp: resolution.state.erp.as_ref(),
+            redis: resolution.state.redis.as_ref(),
+        };
+        // `check_group_permission` is not called for the personal `default`
+        // namespace, so it stays out of the dependency sequence.
+        let mut authorized: Vec<String> = Vec::new();
+        for group_name in
+            super::skills_unified::get_user_groups(self.mysql, &erp, resolution.user_id).await?
+        {
+            if group_name == "default" {
+                continue;
+            }
+            let role = self
+                .effective_role_in_group(resolution, &group_name)
+                .await?;
+            if role.as_deref().is_some_and(has_reporter_permission) {
+                authorized.push(group_name);
+            }
+        }
+        super::skills_unified::group_skill_ids_for_namespaces(self.mysql, &authorized).await
     }
 
     /// `_get_active_skill`.
@@ -615,106 +645,25 @@ impl<'a, M: Mysql> SkillDownloadRepository<'a, M> {
         Ok(roles)
     }
 
-    /// `task_store.get_task_by_states` over the sharded task tables with the
-    /// active states `[1, 2]`, routing by the task id alone (new-format ids).
-    #[allow(dead_code)]
+    /// `task_store.get_task_by_states` with the active states, for the
+    /// task-authorized download path. The store resolves the row's table, so a
+    /// deployment that shards task storage reads the migrated copy.
     pub async fn get_task_by_states(&self, task_id: i64) -> MysqlResult<Option<TaskRow>> {
-        let sql = "SELECT id, user_id, json FROM {{tasks}} \
-                     WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) LIMIT 1";
-        self.mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(sql, (task_id,))
-            .await
+        let row = self.task_store.get_active_task(task_id).await?;
+        row.map(TaskRow::from_mysql_row).transpose()
     }
 
-    /// `_model_for_task_id_lookup`: resolve the physical task model for a
-    /// lookup. New-format ids route directly to their shard table; legacy ids
-    /// first probe the base `tasks` table for the owner
-    /// (`_legacy_task_owner_user_id`), then confirm the migrated row exists
-    /// in the owner's shard table (`_migrated_legacy_task_model`) before the
-    /// caller queries that shard, falling back to the base table.
-    async fn task_table_for_lookup(&self, task_id: i64) -> MysqlResult<TaskLookupTable> {
-        let task_id_u64 = u64::try_from(task_id).unwrap_or(0);
-        if (self.task_policy.is_scoped_id)(task_id_u64) || !self.task_policy.resolve_migrated_legacy
-        {
-            // New-format id: route directly to the shard table via {{tasks}}.
-            return Ok(TaskLookupTable::Sharded);
-        }
-        // Legacy id: probe the base `tasks` table for the owner. With
-        // `{{tasks}}` + `.route(ByTaskId(...))`, a legacy id resolves to the
-        // base table.
-        let owner: Option<TaskOwnerRow> = self
-            .mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(
-                "SELECT user_id FROM {{tasks}} WHERE id = ? LIMIT 1",
-                (task_id,),
-            )
-            .await?;
-        let Some(owner) = owner else {
-            return Ok(TaskLookupTable::Sharded);
-        };
-        // Confirm the migrated row exists in the owner's shard table.
-        let exists: Option<OwnedRow> = self
-            .mysql
-            .route(ByUserId(owner.user_id as u64))
-            .fetch_optional("SELECT id FROM {{tasks}} WHERE id = ? LIMIT 1", (task_id,))
-            .await?;
-        if exists.is_some() {
-            Ok(TaskLookupTable::OwnerShard)
-        } else {
-            Ok(TaskLookupTable::Sharded)
-        }
-    }
-
-    /// `task_store.get_task_by_states` with legacy-id migration routing.
-    pub async fn get_task_by_states_routed(&self, task_id: i64) -> MysqlResult<Option<TaskRow>> {
-        let table = self.task_table_for_lookup(task_id).await?;
-        let sql = "SELECT id, user_id, json FROM {{tasks}} \
-                     WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) LIMIT 1";
-        let routed = match table {
-            TaskLookupTable::Sharded => self.mysql.route(ByTaskId(task_id as u64)),
-            TaskLookupTable::OwnerShard => {
-                // Legacy id with a migrated owner: we need the owner's shard.
-                // Re-resolve the owner to bind ByUserId.
-                let owner: Option<TaskOwnerRow> = self
-                    .mysql
-                    .route(ByTaskId(task_id as u64))
-                    .fetch_optional(
-                        "SELECT user_id FROM {{tasks}} WHERE id = ? LIMIT 1",
-                        (task_id,),
-                    )
-                    .await?;
-                match owner {
-                    Some(owner) => self.mysql.route(ByUserId(owner.user_id as u64)),
-                    None => self.mysql.route(ByTaskId(task_id as u64)),
-                }
-            }
-        };
-        routed.fetch_optional(sql, (task_id,)).await
-    }
-
-    /// `ShardedTaskAccessStore._get_accessible_task` behind
-    /// `task_member_service.is_member`: legacy ids read the base `tasks`
-    /// table directly (`SqlAlchemyTaskAccessStore._get_accessible_task`);
-    /// new-format ids route to their shard table
-    /// (`ShardedTaskStore.get_active_task`) without the migration probes.
-    async fn get_accessible_task(&self, task_id: i64) -> MysqlResult<Option<TaskRow>> {
-        let sql = "SELECT id, user_id, json FROM {{tasks}} \
-                     WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) LIMIT 1";
-        self.mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(sql, (task_id,))
-            .await
-    }
-
-    /// `task_member_service.is_member`: the task owner or an approved task
-    /// resource member.
+    /// `task_member_service.is_member` -> `task_access_store.is_member`, whose
+    /// `_get_accessible_task` is the id's active task: the access store reads
+    /// the table the id's own encoding selects, so a legacy id reads the base
+    /// table even when the migration copied the row to its owner's shard. The
+    /// owner match admits the user, otherwise an approved task resource
+    /// membership does.
     pub async fn is_task_member(&self, task_id: i64, user_id: i32) -> MysqlResult<bool> {
-        let Some(task) = self.get_accessible_task(task_id).await? else {
+        let Some(task) = self.task_store.get_accessible_task(task_id).await? else {
             return Ok(false);
         };
-        if task.user_id == user_id {
+        if task.get_required::<i32>("user_id")? == user_id {
             return Ok(true);
         }
         let member: Option<MemberRow> = self

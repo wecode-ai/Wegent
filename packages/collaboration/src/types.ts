@@ -205,6 +205,7 @@ export interface CollaborationExecutionEnvironmentDeviceState {
 }
 
 export interface CollaborationExecutionEnvironmentConfig {
+  workspace_policy?: "git_worktree" | "project";
   repositories: CollaborationExecutionEnvironmentRepository[];
   setup_steps: CollaborationExecutionEnvironmentSetupStep[];
   fingerprint?: string;

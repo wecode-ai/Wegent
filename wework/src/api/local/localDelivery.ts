@@ -126,6 +126,7 @@ export interface LocalProjectChatAgent {
   model: string | null
   modelType: ModelType | null
   modelNamespace: string
+  allowedModels?: LocalProjectChatAgentModel[]
   capabilityDescription: string
   capabilityMode: 'follow_device' | 'manual'
   systemPrompt: string
@@ -147,6 +148,12 @@ export interface LocalProjectChatAgent {
   updatedAt: string
 }
 
+export interface LocalProjectChatAgentModel {
+  name: string
+  type?: ModelType | null
+  namespace?: string
+}
+
 export interface LocalProjectChatAgentCreateInput {
   name: string
   displayName?: string
@@ -155,6 +162,7 @@ export interface LocalProjectChatAgentCreateInput {
   model?: string | null
   modelType?: ModelType | null
   modelNamespace?: string
+  allowedModels?: LocalProjectChatAgentModel[]
   capabilityDescription?: string
   capabilityMode?: LocalProjectChatAgent['capabilityMode']
   systemPrompt?: string
@@ -429,6 +437,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   model?: string | null
   model_type?: ModelType | null
   model_namespace?: string
+  allowed_models?: LocalProjectChatAgentModel[]
   capability_description?: string
   capability_mode?: 'follow_device' | 'manual'
   system_prompt?: string
@@ -467,6 +476,23 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     model: record.model ?? null,
     modelType: record.model_type ?? null,
     modelNamespace: record.model_namespace ?? 'default',
+    allowedModels: Array.isArray(record.allowed_models)
+      ? record.allowed_models.filter(
+          candidate =>
+            candidate &&
+            typeof candidate === 'object' &&
+            typeof candidate.name === 'string' &&
+            candidate.name.trim()
+        )
+      : record.model
+        ? [
+            {
+              name: record.model,
+              type: record.model_type ?? null,
+              namespace: record.model_namespace ?? 'default',
+            },
+          ]
+        : [],
     capabilityDescription: record.capability_description ?? '',
     capabilityMode:
       record.capability_mode === 'manual'
@@ -512,6 +538,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
     model: input.model ?? null,
     model_type: input.modelType ?? null,
     model_namespace: input.modelNamespace ?? 'default',
+    allowed_models: input.allowedModels ?? [],
     capability_description: input.capabilityDescription ?? '',
     capability_mode: input.capabilityMode ?? 'follow_device',
     system_prompt: input.systemPrompt ?? '',
@@ -566,6 +593,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         model?: string | null
         modelType?: ModelType | null
         modelNamespace?: string
+        allowedModels?: LocalProjectChatAgentModel[]
         capabilityDescription?: string
         capabilityMode?: LocalProjectChatAgent['capabilityMode']
         systemPrompt?: string
@@ -594,6 +622,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           model: input.model,
           model_type: input.modelType,
           model_namespace: input.modelNamespace,
+          allowed_models: input.allowedModels,
           capability_description: input.capabilityDescription,
           capability_mode: input.capabilityMode,
           system_prompt: input.systemPrompt,

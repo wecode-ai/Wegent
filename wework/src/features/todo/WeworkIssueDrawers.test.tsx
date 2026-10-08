@@ -42,6 +42,7 @@ beforeEach(() => {
   taskBindings = []
   chatMountCount = 0
   latestExecutionEnvironment = undefined
+  issue.human_work = undefined
 })
 afterAll(() => {
   if (originalGetAnimations) {
@@ -81,6 +82,20 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
     <>
       <button onClick={() => props.host.navigate({ ...props.host.location, issueId: issue.id })}>
         Open Issue
+      </button>
+      <button
+        data-testid="create-issue-without-environment"
+        onClick={() => {
+          props.host.notify?.('请先完成项目执行环境初始化，再创建 Issue。', 'error')
+          props.host.navigate({
+            ...props.host.location,
+            issueId: null,
+            view: 'manage',
+            projectSettingsSection: 'environments',
+          })
+        }}
+      >
+        Create Issue without environment
       </button>
       {props.renderBoardIssueCard?.({
         issue,
@@ -202,6 +217,7 @@ vi.mock('./AiChatModal', () => ({
         data-device-id={props.initialTaskRequest?.deviceId}
         data-mount-id={mountId}
         data-workspace-path={props.initialTaskRequest?.workspacePath}
+        data-origin={JSON.stringify(props.initialTaskRequest?.origin)}
       >
         <span>Conversation: {address?.taskId}</span>
         <button data-testid="ai-chat-modal-close" onClick={props.onClose}>
@@ -234,6 +250,10 @@ function Project({
       api={
         {
           projects: {
+            get: vi.fn(async () => ({
+              id: 'project',
+              execution_environment: latestExecutionEnvironment ?? executionEnvironment,
+            })),
             listExecutionEnvironments: vi.fn(async () => [
               {
                 id: 'environment-22',
@@ -258,7 +278,8 @@ function Project({
           id: 'project',
           name: 'Project',
           project_store: 'backend',
-          execution_environment: executionEnvironment,
+          // The shell snapshot can predate settings saved inside CollaborationApp.
+          execution_environment: undefined,
         } as never
       }
       workspace={{ id: 'workspace' } as never}
@@ -280,6 +301,16 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('keeps the missing environment explanation visible after opening environment settings', async () => {
+    render(<Project />)
+
+    await userEvent.click(screen.getByTestId('create-issue-without-environment'))
+
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent(
+      '请先完成项目执行环境初始化，再创建 Issue。'
+    )
+  })
+
   it('opens an editable Issue without the read-first content lock', async () => {
     render(<Project />)
 
@@ -330,7 +361,7 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('cloud-todo-detail-device-name')).toHaveTextContent('Wework 开发设备')
   })
 
-  it('starts manual work in the project prepared execution environment', async () => {
+  it('refreshes the prepared execution environment before starting manual work', async () => {
     taskBindings = [
       {
         id: 'binding-existing',
@@ -409,6 +440,69 @@ describe('Wework Issue conversation drawers', () => {
       'data-workspace-path',
       '/srv/collaboration/fresh-environment'
     )
+  })
+
+  it('can start the first task without an existing task binding', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+    expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+  })
+
+  it('preserves the human AI-assistance binding when refreshing the execution environment', async () => {
+    const binding = {
+      humanAssignmentId: 'human-assignment-1',
+      dispatchId: 'dispatch-1',
+      dispatchRoundId: 'round-1',
+      assignmentId: 'assignment-1',
+    }
+    issue.human_work = {
+      assignment_id: binding.assignmentId,
+      ai_task_binding: binding,
+      assignee_user_id: 1,
+      reviewer_user_id: 2,
+      submission_message_id: null,
+      submitted_by_user_id: null,
+      state: 'none',
+      result: '',
+      return_reason: '',
+      ai_draft_delivery_id: null,
+      can_start: false,
+      can_submit: true,
+      can_review: false,
+    }
+    render(
+      <Project
+        executionEnvironment={{
+          repositories: [],
+          setup_steps: [],
+          devices: {
+            'shared-runtime-device': {
+              status: 'ready',
+              workspace_path: '/srv/collaboration/project',
+            },
+          },
+        }}
+      />
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-device-id',
+      'shared-runtime-device'
+    )
+    expect(JSON.parse(screen.getByTestId('ai-chat-modal').getAttribute('data-origin')!)).toEqual({
+      type: 'issue_dispatch',
+      cloudProjectId: 'project',
+      loopItemId: issue.id,
+      dispatchId: binding.dispatchId,
+      roundId: binding.dispatchRoundId,
+      assignmentId: binding.assignmentId,
+      humanAssignmentId: binding.humanAssignmentId,
+    })
   })
 
   it('can start another task after returning from an existing execution', async () => {
