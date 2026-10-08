@@ -11,6 +11,7 @@ pub(super) fn apply_project_workspace(
     {
         payload.as_object_mut().unwrap().remove("workspacePath");
         payload.as_object_mut().unwrap().remove("execution");
+        set_materialized_workspace_source(payload, false);
         return Ok(());
     }
     let Some(config) = metadata
@@ -46,7 +47,22 @@ pub(super) fn apply_project_workspace(
     } else {
         payload.as_object_mut().unwrap().remove("execution");
     }
+    set_materialized_workspace_source(payload, isolated);
     Ok(())
+}
+
+fn set_materialized_workspace_source(payload: &mut Value, isolated: bool) {
+    let key = if payload.get("executionRequest").is_some() {
+        "executionRequest"
+    } else {
+        "execution_request"
+    };
+    if let Some(request) = payload.get_mut(key).and_then(Value::as_object_mut) {
+        request.remove("workspace_source");
+        if isolated {
+            request.insert("workspace_source".into(), json!("git_worktree"));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -64,12 +80,19 @@ mod tests {
     #[test]
     fn applies_project_policy_instead_of_agent_workspace() {
         for policy in ["project", "git_worktree"] {
-            let mut payload = json!({"projectId": 7, "standaloneChatWorkspace": true});
+            let mut payload = json!({
+                "projectId": 7, "standaloneChatWorkspace": true,
+                "executionRequest": {"workspace_source": "git_worktree"}
+            });
             apply_project_workspace(&mut payload, &metadata(policy), "device").unwrap();
             assert_eq!(payload["workspacePath"], "/prepared/repo");
             assert_eq!(payload["standaloneChatWorkspace"], false);
             assert!(payload.get("projectId").is_none());
             assert_eq!(payload.get("execution").is_some(), policy == "git_worktree");
+            assert_eq!(
+                payload["executionRequest"]["workspace_source"].as_str(),
+                (policy == "git_worktree").then_some("git_worktree")
+            );
         }
     }
 
