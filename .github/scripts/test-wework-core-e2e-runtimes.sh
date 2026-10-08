@@ -36,6 +36,7 @@ cat > "$temp_dir/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 test -z "${GITHUB_TOKEN:-}"
+test ! -f "$DOCKER_CONFIG/config.json"
 echo cargo >> "$TEST_LOG"
 [[ "${FAIL_CARGO:-false}" != true ]] || exit 1
 manifest=""
@@ -50,6 +51,16 @@ done
 sleep 0.2
 mkdir -p "${manifest%/*}/target/release"
 printf '#!/bin/sh\nexit 0\n' > "${manifest%/*}/target/release/$binary"
+EOF
+cat > "$temp_dir/bin/oras" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$#" -eq 2
+test "$1" = logout
+test "$2" = ghcr.io
+echo logout >> "$TEST_LOG"
+[[ "${FAIL_LOGOUT:-false}" != true ]] || exit 1
+rm "$DOCKER_CONFIG/config.json"
 EOF
 cat > "$temp_dir/bin/pnpm" <<'EOF'
 #!/usr/bin/env bash
@@ -75,12 +86,16 @@ chmod +x "$temp_dir/bin/"*
 
 run_case() {
   local mode="$1" failure="$2" expected="$3"
-  local repo="$temp_dir/repo-$mode-$failure"
-  mkdir -p "$repo/.github/scripts"
+  local logout_failure="${4:-false}"
+  local repo="$temp_dir/repo-$mode-$failure-$logout_failure"
+  mkdir -p "$repo/.github/scripts" "$repo/docker-config"
+  printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
+  touch "$repo/log"
   cat > "$repo/.github/scripts/restore-oci-runtime-binary.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 test "${GITHUB_TOKEN:-}" = synthetic-read-token
+test -f "$DOCKER_CONFIG/config.json"
 echo oci >> "$TEST_LOG"
 [[ "$BUILD_RUNTIMES_FROM_SOURCE" != true ]] || exit 1
 mkdir -p "$(dirname "$3")"
@@ -91,6 +106,7 @@ EOF
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
     BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
+    DOCKER_CONFIG="$repo/docker-config" FAIL_LOGOUT="$logout_failure" \
     GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
     BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
   if [[ "$expected" == success ]]; then
@@ -102,8 +118,16 @@ EOF
   fi
   if [[ "$mode" == true ]]; then
     if grep -q oci "$repo/log"; then return 1; fi
-    test "$(grep -c cargo "$repo/log")" -eq 2
+    test "$(grep -c logout "$repo/log")" -eq 1
+    if [[ "$logout_failure" == true ]]; then
+      test -f "$repo/docker-config/config.json"
+      if grep -q cargo "$repo/log"; then return 1; fi
+    else
+      test ! -f "$repo/docker-config/config.json"
+      test "$(grep -c cargo "$repo/log")" -eq 2
+    fi
   else
+    if grep -q logout "$repo/log"; then return 1; fi
     if grep -q cargo "$repo/log"; then return 1; fi
     test "$(grep -c oci "$repo/log")" -eq 2
   fi
@@ -112,4 +136,5 @@ EOF
 run_case true false success
 run_case false false success
 run_case true true failure
+run_case true false failure true
 echo 'Wework runtime source/OCI handoff tests passed'
