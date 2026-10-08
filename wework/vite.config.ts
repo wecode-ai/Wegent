@@ -237,6 +237,7 @@ export default defineConfig({
     },
   },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@xmldom/xmldom': path.resolve(__dirname, './src/lib/browser-dom-parser.ts'),
       '@': path.resolve(__dirname, './src'),
