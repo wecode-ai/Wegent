@@ -44,7 +44,11 @@ export interface RefreshedAccessToken {
 
 export class CloudCredentialError extends Error {
   constructor(
-    readonly code: 'credentials_unavailable' | 'cloud_auth_expired' | 'request_failed',
+    readonly code:
+      | 'credentials_unavailable'
+      | 'cloud_auth_expired'
+      | 'request_failed'
+      | 'request_timeout',
     message: string,
     readonly status: number | null = null
   ) {
