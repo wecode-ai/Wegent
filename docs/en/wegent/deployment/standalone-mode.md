@@ -6,7 +6,9 @@ sidebar_position: 3
 
 ## Overview
 
-Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, MySQL, and Redis into one Docker image. It is intended for quick evaluation and small trusted environments, and only requires Docker. Interactive macOS installs default to a host executor so Claude Code or Codex can execute macOS system commands; Linux and non-interactive installs default to the in-container executor.
+Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, Knowledge Runtime, MySQL, and Redis into one Docker image. It is intended for quick evaluation and small trusted environments, and only requires Docker. Interactive macOS installs default to a host executor so Claude Code or Codex can execute macOS system commands; Linux and non-interactive installs default to the in-container executor.
+
+Knowledge Runtime starts automatically after database migration and listens on `127.0.0.1:8200` inside the container. Backend starts after its health check passes. RAG indexing, retrieval, and deletion use internal HTTP calls; no separate Runtime deployment or public port 8200 is required.
 
 After startup, standalone automatically creates an executor API key for the `admin` user and registers devices according to the selected executor mode: the container executor registers as a built-in cloud device, the host executor registers as a local device, and Wework can use available devices directly for coding tasks. The default container workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees; the host executor uses `~/.wegent-executor/workspace`.
 

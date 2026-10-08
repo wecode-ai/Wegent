@@ -6,7 +6,9 @@ sidebar_position: 3
 
 ## 概述
 
-Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、MySQL 和 Redis 打包在一个 Docker 镜像中运行。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。macOS 交互式安装默认使用宿主机 executor，以便 Claude Code 或 Codex 能执行 macOS 系统命令；Linux 和非交互安装默认沿用容器内 executor。
+Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、Knowledge Runtime、MySQL 和 Redis 打包在一个 Docker 镜像中运行。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。macOS 交互式安装默认使用宿主机 executor，以便 Claude Code 或 Codex 能执行 macOS 系统命令；Linux 和非交互安装默认沿用容器内 executor。
+
+Knowledge Runtime 在数据库迁移完成后自动启动，监听容器内部的 `127.0.0.1:8200`，健康检查通过后才启动 Backend。RAG 索引、检索和删除通过内部 HTTP 调用执行，无需额外部署 Runtime，也无需对外开放 8200 端口。
 
 Standalone 启动后会自动为 `admin` 用户创建 executor API key，并按所选 executor 模式注册设备：容器 executor 注册为内置云设备，宿主机 executor 注册为本地设备，Wework 创建编码任务时可以直接使用可用设备执行任务。默认容器 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree；宿主机 executor 使用 `~/.wegent-executor/workspace`。
 
