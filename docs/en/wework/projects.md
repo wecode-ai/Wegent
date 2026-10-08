@@ -111,6 +111,8 @@ Project-space lists, default-space selection, and current-task links are resolve
 
 ## Board quick start
 
+If the project's execution environment has not been initialized, creating an issue opens the project's execution environment settings and displays a message explaining that initialization is required first. Complete initialization, then return to the board to create the issue.
+
 The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
 
 1. Create the first issue. Choose the **Build feature**, **Fix problem**, or **Research proposal** template to start with a useful description structure.
