@@ -1754,6 +1754,15 @@
     "full_access_permission": "完全访问权限",
     "custom_config_mode": "自定义 (config.toml)",
     "add_photos_files": "添加照片和文件",
+    "drawing": {
+      "title": "绘图",
+      "description": "绘制草图",
+      "loading": "正在加载画布…",
+      "cancel": "取消绘图",
+      "attach": "添加到对话",
+      "load_error": "画布加载失败，请关闭后重新打开。",
+      "export_error": "无法添加绘图，草图已保留，请重试。"
+    },
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "计划模式",
     "permission_mode": "权限模式",

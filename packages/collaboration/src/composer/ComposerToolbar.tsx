@@ -44,6 +44,7 @@ export interface ComposerToolbarProps {
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
+  onDraw?: () => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -90,6 +91,7 @@ export function ComposerToolbar({
   onBlockedModelSelect,
   modelSelectorOverride,
   onFileSelect,
+  onDraw,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -158,6 +160,7 @@ export function ComposerToolbar({
           translate={t}
           disabled={disabled}
           onFileSelect={onFileSelect}
+          onDraw={onDraw}
           onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
           onSetGoal={showExecutionTools ? onSetGoal : undefined}
           onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}

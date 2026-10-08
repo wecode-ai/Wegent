@@ -46,6 +46,7 @@ export const DESKTOP_CHECKPOINTS = [
   'task-board-bulk-actions',
   'core-task-flow',
   'task-attachments',
+  'drawing-attachment',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',
