@@ -525,6 +525,134 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 404
         assert "Previous response" in response.json()["detail"]
 
+    def test_create_response_continuation_routes_to_task_device(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+        test_db: Session,
+    ):
+        """Follow-ups on a device conversation are dispatched to that device."""
+        from app.schemas.openapi_response import ResponseObject
+        from app.services.device_service import device_service
+
+        device_id = "device-continuation"
+        task_json = dict(test_task.json)
+        task_json["spec"] = {**task_json["spec"], "device_id": device_id}
+        test_task.json = task_json
+        test_db.commit()
+
+        mock_response = ResponseObject(
+            id=f"resp_{test_task.id}",
+            created_at=int(datetime.now().timestamp()),
+            status="queued",
+            model="default#test-team",
+            output=[],
+        )
+
+        with (
+            patch.object(
+                device_service,
+                "get_device_online_info",
+                new=AsyncMock(return_value={"status": "online"}),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+                return_value=mock_response,
+            ) as mock_create_sync,
+        ):
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["device_id"] == device_id
+
+    def test_create_response_continuation_rejects_offline_device(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+        test_db: Session,
+    ):
+        """An offline device fails the follow-up instead of the executor manager."""
+        from app.services.device_service import device_service
+
+        task_json = dict(test_task.json)
+        task_json["spec"] = {**task_json["spec"], "device_id": "device-offline"}
+        test_task.json = task_json
+        test_db.commit()
+
+        with (
+            patch.object(
+                device_service,
+                "get_device_online_info",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+            ) as mock_create_sync,
+        ):
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 503
+        assert "offline" in response.json()["detail"]
+        mock_create_sync.assert_not_called()
+
+    def test_create_response_continuation_without_device_keeps_executor_manager(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+    ):
+        """Tasks without a device keep the previous executor manager routing."""
+        from app.schemas.openapi_response import ResponseObject
+
+        mock_response = ResponseObject(
+            id=f"resp_{test_task.id}",
+            created_at=int(datetime.now().timestamp()),
+            status="queued",
+            model="default#test-team",
+            output=[],
+        )
+
+        with patch(
+            "app.api.endpoints.openapi_responses._create_non_streaming_response_unified",
+            return_value=mock_response,
+        ) as mock_create_sync:
+            response = test_client.post(
+                "/api/v1/responses",
+                headers={"X-API-Key": test_api_key[0]},
+                json={
+                    "model": "default#test-team",
+                    "input": "2",
+                    "previous_response_id": f"resp_{test_task.id}",
+                },
+            )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["device_id"] is None
+
     def test_create_response_model_not_found(
         self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):

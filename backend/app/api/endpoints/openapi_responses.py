@@ -381,6 +381,54 @@ async def _persist_terminal_failure(
     )
 
 
+async def _resolve_continuation_device_id(
+    *,
+    db: Session,
+    user: User,
+    task: TaskResource,
+) -> Optional[str]:
+    """Resolve the device runtime a follow-up response must be dispatched to.
+
+    A conversation started on a device runs through the device Runtime and its
+    assistant subtask carries a ``device-*`` executor name. Reusing that name
+    while dispatching through the Kubernetes executor manager fails with
+    "Executor is deleted. Please create a new session.", so device bound tasks
+    have to be routed back to the device Runtime.
+    """
+    from app.services.chat.task_device_resolution import resolve_task_device_id
+    from app.services.device_service import device_service
+
+    device_id = resolve_task_device_id(db, user_id=user.id, task=task)
+    if not device_id:
+        return None
+
+    online_info = await device_service.get_device_online_info(user.id, device_id)
+    if not online_info:
+        logger.warning(
+            "[OPENAPI] Continuation device is offline: caller_user_id=%s, "
+            "task_id=%s, device_id=%s",
+            user.id,
+            task.id,
+            device_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Device '{device_id}' is offline. Bring the device online and "
+                "retry, or start a new conversation."
+            ),
+        )
+
+    logger.info(
+        "[OPENAPI] Continuation routed to device: caller_user_id=%s, "
+        "task_id=%s, device_id=%s",
+        user.id,
+        task.id,
+        device_id,
+    )
+    return device_id
+
+
 @router.post("")
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(
@@ -463,6 +511,7 @@ async def create_response(
     # Determine task_id from previous_response_id if provided
     task_id = None
     previous_task_id = None
+    previous_task = None
     if request_body.previous_response_id:
         # Extract task_id from resp_{task_id} format
         if request_body.previous_response_id.startswith("resp_"):
@@ -487,6 +536,20 @@ async def create_response(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Previous response '{request_body.previous_response_id}' not found",
                 )
+            previous_task = existing_task
+
+    # A follow-up runs on the same runtime as the previous turn. Device
+    # conversations are executed by the device Runtime, so the device recorded
+    # on the task has to reach the dispatcher. Without it the dispatcher falls
+    # back to the executor manager, which cannot host the inherited
+    # ``device-*`` executor.
+    device_id = None
+    if previous_task is not None:
+        device_id = await _resolve_continuation_device_id(
+            db=db,
+            user=current_user,
+            task=previous_task,
+        )
 
     # Verify team exists and user has access
     team = kindReader.get_by_name_and_namespace(
@@ -615,6 +678,7 @@ async def create_response(
             task_id=task_id,
             api_key_name=api_key_name,
             auto_delete_executor=auto_delete_executor,
+            device_id=device_id,
         )
     else:
         # Non-streaming mode: background or sync
@@ -630,6 +694,7 @@ async def create_response(
             api_key_name=api_key_name,
             auto_delete_executor=auto_delete_executor,
             background=request_body.background,
+            device_id=device_id,
         )
 
 
@@ -645,6 +710,7 @@ async def _create_non_streaming_response_unified(
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
     background: bool = False,
+    device_id: Optional[str] = None,
 ) -> ResponseObject:
     """Create non-streaming response using unified trigger architecture.
 
@@ -804,7 +870,11 @@ async def _create_non_streaming_response_unified(
             subtask_id=execution_request.subtask_id,
         )
         dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=emitter)
+            execution_dispatcher.dispatch(
+                execution_request,
+                device_id=device_id,
+                emitter=emitter,
+            )
         )
         accumulated_content, final_event = await emitter.collect()
         dispatch_error = None
@@ -832,8 +902,12 @@ async def _create_non_streaming_response_unified(
         finally:
             query_db.close()
 
-    # Check if SSE mode is supported
-    supports_sse = execution_dispatcher.supports_streaming(execution_request)
+    # Check if SSE mode is supported. Device dispatch always streams its events
+    # through the execution callback channel, never through a direct SSE
+    # connection, so target devices always take the non-SSE path.
+    supports_sse = (
+        execution_dispatcher.supports_streaming(execution_request) and not device_id
+    )
     background = _should_run_in_background(
         requested_background=background,
         execution_request=execution_request,
@@ -843,7 +917,11 @@ async def _create_non_streaming_response_unified(
     if not supports_sse:
         _close_db()
         asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=None)
+            execution_dispatcher.dispatch(
+                execution_request,
+                device_id=device_id,
+                emitter=None,
+            )
         )
         logger.info(
             f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
@@ -972,7 +1050,7 @@ async def _create_non_streaming_response_unified(
 @trace_async(
     span_name="openapi.streaming_response",
     tracer_name="backend.openapi",
-    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None: {
+    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None, device_id=None: {
         "task.id": str(task_id) if task_id else "new",
         "user.id": str(user.id),
         "team.name": model_info.get("team_name"),
@@ -980,6 +1058,7 @@ async def _create_non_streaming_response_unified(
         "model.id": model_info.get("model_id", "default"),
         "stream.enabled": True,
         "task.auto_delete_executor": auto_delete_executor or "default",
+        "task.device_id": device_id or "",
     },
 )
 async def _create_streaming_response_unified(
@@ -993,6 +1072,7 @@ async def _create_streaming_response_unified(
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
+    device_id: Optional[str] = None,
 ) -> StreamingResponse:
     """Create streaming response using unified trigger architecture.
 
@@ -1205,7 +1285,12 @@ async def _create_streaming_response_unified(
                 },
             )
 
-            is_sse = execution_dispatcher.supports_streaming(execution_request)
+            # Device dispatch reports its events through the execution callback
+            # channel, so a device target is never handled by the SSE emitter.
+            is_sse = (
+                execution_dispatcher.supports_streaming(execution_request)
+                and not device_id
+            )
             add_span_event(
                 "sse.mode_determined",
                 {
@@ -1225,7 +1310,11 @@ async def _create_streaming_response_unified(
                     subtask_id=execution_request.subtask_id,
                 )
                 dispatch_task = asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=emitter)
+                    execution_dispatcher.dispatch(
+                        execution_request,
+                        device_id=device_id,
+                        emitter=emitter,
+                    )
                 )
             else:
                 # HTTP+Callback mode (ClaudeCode/Agno/Dify): subscribe to Redis
@@ -1239,7 +1328,11 @@ async def _create_streaming_response_unified(
                     raise RuntimeError("Failed to subscribe to callback stream channel")
                 # Fire-and-forget; executor sends events back via /internal/callback
                 asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=None)
+                    execution_dispatcher.dispatch(
+                        execution_request,
+                        device_id=device_id,
+                        emitter=None,
+                    )
                 )
 
             async def _iter_events():
