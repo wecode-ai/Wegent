@@ -120,7 +120,9 @@ export function ComposerToolbar({
   )
   const activeModelLabel = activeModel?.displayName || activeModel?.name
   const selectedModelLabel =
-    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+    selectedModel?.displayName ||
+    selectedModel?.name ||
+    t('workbench.model_picker_title', 'Select model')
   const displayedSelectedModel =
     selectedModel ?? (activeModel?.compatibilityDisabled ? activeModel : null)
   const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'

@@ -229,7 +229,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     )
     const activeModelLabel = activeModel?.displayName || activeModel?.name
     const selectedModelLabel =
-      selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+      selectedModel?.displayName ||
+      selectedModel?.name ||
+      t('workbench.model_picker_title', '选择模型')
     const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
     const primaryBusyLabel =
       followUpBehavior === 'guide'

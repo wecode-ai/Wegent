@@ -163,7 +163,13 @@ describe('createLocalAppServices', () => {
       priority: 'none',
       metadata: { tags: [] },
     }
-    const agent = (id: string, name: string, mcpCommand: string, projectId = 'project-1') => ({
+    const agent = (
+      id: string,
+      name: string,
+      mcpCommand: string,
+      projectId = 'project-1',
+      allowedModels?: Array<{ name: string; type: string; namespace: string }>
+    ) => ({
       id,
       project_id: projectId,
       name,
@@ -172,6 +178,7 @@ describe('createLocalAppServices', () => {
       model: 'gpt-5.6-sol',
       model_type: 'runtime',
       model_namespace: 'default',
+      allowed_models: allowedModels,
       system_prompt: `${name} developer instructions`,
       additional_skills: [
         { name: `${id}-skill`, namespace: 'default', isPublic: false, skillId: 1 },
@@ -190,7 +197,12 @@ describe('createLocalAppServices', () => {
       if (method === 'todos.get') return task
       if (method === 'chat_agents.list') {
         return params?.project_id === 'project-1'
-          ? [agent('worker', 'Worker', 'worker-mcp')]
+          ? [
+              agent('worker', 'Worker', 'worker-mcp', 'project-1', [
+                { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+                { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
+              ]),
+            ]
           : [agent('leader', 'Manager', 'manager-mcp', 'wework-project-space')]
       }
       if (method === 'todos.update') {
@@ -274,6 +286,10 @@ describe('createLocalAppServices', () => {
         memberIds: string[]
         agentId: string
         runtimePayload: { executionRequest: Record<string, unknown> }
+        modelRuntimeProfiles: Array<{
+          modelId: string
+          runtimePayload: { executionRequest: { model_config: { model_id: string } } }
+        }>
       }>
     }
     expect(groupPayload.memberRuntimeProfiles.map(profile => profile.agentId)).toEqual([
@@ -307,6 +323,20 @@ describe('createLocalAppServices', () => {
           ],
         },
       },
+      modelRuntimeProfiles: [
+        {
+          modelId: 'gpt-5.6-sol',
+          runtimePayload: {
+            executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
+          },
+        },
+        {
+          modelId: 'gpt-5.6-luna',
+          runtimePayload: {
+            executionRequest: { model_config: { model_id: 'gpt-5.6-luna' } },
+          },
+        },
+      ],
     })
     expect(updates[2]).toMatchObject({
       assignee_group_id: 'human-group-1',

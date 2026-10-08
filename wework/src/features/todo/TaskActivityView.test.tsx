@@ -964,7 +964,7 @@ describe('TaskActivityView', () => {
     )
 
     await screen.findByText('Code Reviewer 已进入执行队列，将自动处理并提交结果供你验收。')
-    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('默认')
+    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('选择模型')
   })
 
   it('keeps a manual model choice when the model catalog refreshes', async () => {

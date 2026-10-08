@@ -193,6 +193,7 @@ import {
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
+import { isDefaultLocalAgent } from '@/features/collaboration/defaultLocalAgent'
 import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import type { LocalHarnessId } from '@/lib/local-harness'
@@ -3666,6 +3667,24 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
   const assignmentRequestWithLocalDevice: RequestWithLocalDevice = (method, data) =>
     request(method, data as Record<string, unknown>)
+  const assignmentModels = (agent: LocalProjectChatAgent) => {
+    const configured =
+      (agent.allowedModels?.length ?? 0) > 0
+        ? agent.allowedModels!
+        : agent.model
+          ? [
+              {
+                name: agent.model,
+                type: agent.modelType,
+                namespace: agent.modelNamespace,
+              },
+            ]
+          : []
+    if (isDefaultLocalAgent(agent) && configured.length === 0) {
+      throw new Error('请先在项目智能体配置中为当前设备智能体选择可用模型')
+    }
+    return configured
+  }
   const assignmentRuntimePayload = async (
     projectId: string,
     itemId: string,
@@ -3673,7 +3692,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     role: 'direct' | 'manager' | 'member',
     project: CloudProject,
     task: CloudLoopItem,
-    group?: NonNullable<CloudProject['collaboration_groups']>[number]
+    group?: NonNullable<CloudProject['collaboration_groups']>[number],
+    selectedModel = assignmentModels(agent)[0]
   ) => {
     const preparedEnvironments = Object.entries(project.execution_environment?.devices ?? {})
       .flatMap(([deviceId, state]) => {
@@ -3730,8 +3750,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         workspacePath,
         runtimeProjectName: project.name,
         runtimeWorkspaceRoots: [workspacePath],
-        modelId: agent.model ?? undefined,
-        modelType: agent.modelType,
+        modelId: selectedModel?.name,
+        modelType: selectedModel?.type ?? null,
         additionalSkills: agent.additionalSkills.map(skill => ({
           name: skill.name,
           namespace: skill.namespace,
@@ -3804,19 +3824,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           if (!agent || agent.status !== 'active') {
             throw new Error(`Collaboration member '${memberId}' is unavailable`)
           }
+          const modelRuntimeProfiles = await Promise.all(
+            assignmentModels(agent).map(async selectedModel => ({
+              modelId: selectedModel.name,
+              runtimePayload: await assignmentRuntimePayload(
+                projectId,
+                itemId,
+                agent,
+                'member',
+                project,
+                task,
+                group,
+                selectedModel
+              ),
+            }))
+          )
           return {
             memberIds: [memberId],
             agentId: agent.id,
             agentName: agent.displayName || agent.name,
-            runtimePayload: await assignmentRuntimePayload(
-              projectId,
-              itemId,
-              agent,
-              'member',
-              project,
-              task,
-              group
-            ),
+            runtimePayload: modelRuntimeProfiles[0]?.runtimePayload,
+            modelRuntimeProfiles,
           }
         })
       )
