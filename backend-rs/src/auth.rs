@@ -124,7 +124,7 @@ impl brz_http_server::Authenticator<SessionUser> for AppAuthenticator {
 ///
 /// `AuthFailure` carries only a challenge string, so the distinct outcomes are
 /// tagged with the module's challenge constants and recovered here.
-fn session_auth_detail(failure: brz_http_server::AuthFailure) -> &'static str {
+pub(crate) fn session_auth_detail(failure: brz_http_server::AuthFailure) -> &'static str {
     match failure {
         brz_http_server::AuthFailure::MissingCredentials {
             challenge: NOT_AUTHENTICATED,
@@ -137,7 +137,7 @@ fn session_auth_detail(failure: brz_http_server::AuthFailure) -> &'static str {
 }
 
 /// Map a `get_current_user` failure to the SDK failure that carries it.
-fn session_auth_failure(failure: AuthFailure) -> brz_http_server::AuthFailure {
+pub(crate) fn session_auth_failure(failure: AuthFailure) -> brz_http_server::AuthFailure {
     match failure {
         AuthFailure::NotAuthenticated => {
             brz_http_server::AuthFailure::missing_credentials(NOT_AUTHENTICATED)

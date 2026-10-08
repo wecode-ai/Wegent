@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Task-candidate rows and projections for
-//! `GET /api/tasks/lite/personal` (`TaskQueryMixin.get_user_personal_tasks_lite`,
-//! `get_user_personal_tasks_lite_cursor`, `_filter_personal_tasks`,
-//! `build_lite_task_list`, and their store queries).
-use std::collections::HashMap;
+//! Task-candidate rows and repository reads shared by the personal, group and
+//! search lite lists (`TaskQueryMixin.get_user_personal_tasks_lite`,
+//! `_filter_personal_tasks`, `_batch_query_teams`, `_batch_query_workspaces`,
+//! `_add_group_chat_info` and their store queries). The `TaskLite` projection
+//! itself lives in [`super::lite_projection`].
+use std::collections::{HashMap, HashSet};
 
 use brz_mysql::{FromMysqlRow, Mysql};
 use chrono::NaiveDateTime;
@@ -29,8 +30,9 @@ pub struct TaskCandidateRow {
     pub created_at: NaiveDateTime,
     #[allow(dead_code)]
     pub updated_at: NaiveDateTime,
+    /// `build_lite_task_list`'s `project_id` (`task.project_id or 0`).
+    pub project_id: Option<i64>,
     pub client_origin: Option<String>,
-    #[allow(dead_code)]
     pub is_group_chat: bool,
 }
 
@@ -631,6 +633,39 @@ pub fn filter_personal_tasks(
         .collect()
 }
 
+/// `_add_group_chat_info`: the task ids on the page that carry at least one
+/// approved group-chat member (`resource_members.copied_resource_id = 0`).
+pub async fn approved_group_chat_members<M>(
+    mysql: &M,
+    task_ids: &[i64],
+) -> brz_mysql::MysqlResult<HashSet<i64>>
+where
+    M: Mysql,
+{
+    if task_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let ids = task_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT resource_members.resource_id AS resource_members_resource_id, \
+         count(resource_members.id) AS count \nFROM resource_members \nWHERE \
+         resource_members.resource_type = 'Task' AND resource_members.resource_id IN ({ids}) AND \
+         resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \
+         GROUP BY resource_members.resource_id"
+    );
+    #[derive(Debug, FromMysqlRow)]
+    struct GroupRow {
+        #[mysql(rename = "resource_members_resource_id")]
+        resource_id: i64,
+    }
+    let rows: Vec<GroupRow> = mysql.fetch_all(sql.as_str(), ()).await?;
+    Ok(rows.into_iter().map(|row| row.resource_id).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,6 +683,7 @@ mod tests {
             }),
             created_at: epoch,
             updated_at: epoch,
+            project_id: None,
             client_origin: None,
             is_group_chat: false,
         }

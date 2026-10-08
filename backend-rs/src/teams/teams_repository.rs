@@ -57,8 +57,8 @@ pub const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
 /// Re-export of the team-union query functions for the teams modules'
 /// existing `repo::` call sites.
 pub use super::team_union::{
-    AccessibleTeamsQuery, TeamListFilter, accessible_teams, kinds_by_refs, public_kinds_by_names,
-    team_count, user_by_id, users_by_ids,
+    AccessibleTeamsQuery, TeamListFilter, accessible_default_team, accessible_teams, kinds_by_refs,
+    public_kinds_by_names, team_count, user_by_id, users_by_ids,
 };
 
 /// `namespace` column list rendered by `db.query(Namespace)`.

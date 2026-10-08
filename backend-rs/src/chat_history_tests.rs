@@ -124,6 +124,98 @@ fn empty_extracted_text_has_no_document_prefix() {
     assert!(build_document_text_prefix(&document_context(""), 32_000).is_none());
 }
 
+fn video_context(type_data: Value) -> SubtaskContextRow {
+    SubtaskContextRow {
+        id: 1357985,
+        subtask_id: 116135915839665,
+        user_id: 3396,
+        context_type: "attachment".to_string(),
+        name: "video".to_string(),
+        status: "ready".to_string(),
+        image_base64: None,
+        extracted_text: None,
+        type_data: Some(brz_mysql::Json(type_data)),
+        created_at: None,
+    }
+}
+
+#[test]
+fn video_history_metadata_is_header_only_without_a_fid() {
+    // Recorded case 0610098b: the video header carries no URL or sandbox
+    // segment under the metadata-only (`supports_video == false`) shape.
+    let context = video_context(json!({
+        "original_filename": "f65737b53b2c4fa45edc3ba73c02419c.mp4",
+        "file_extension": ".mp4",
+        "mime_type": "video/mp4",
+        "file_size": 26_528_973,
+    }));
+    assert_eq!(
+        build_video_history_metadata_text(&context),
+        "[Video Attachment: f65737b53b2c4fa45edc3ba73c02419c.mp4 | ID: 1357985 | \
+         Type: video/mp4 | Size: 25.3 MB]\n"
+    );
+}
+
+#[test]
+fn video_history_metadata_appends_the_stored_fid_line() {
+    let context = video_context(json!({
+        "original_filename": "f65737b53b2c4fa45edc3ba73c02419c.mp4",
+        "file_extension": ".mp4",
+        "mime_type": "video/mp4",
+        "file_size": 26_528_973,
+        "fid": 5_349_259_470_176_267_i64,
+    }));
+    assert_eq!(
+        build_video_history_metadata_text(&context),
+        "[Video Attachment: f65737b53b2c4fa45edc3ba73c02419c.mp4 | ID: 1357985 | \
+         Type: video/mp4 | Size: 25.3 MB]\n{\"fid\": 5349259470176267}\n"
+    );
+}
+
+#[test]
+fn video_history_metadata_falls_back_for_missing_name_mime_and_falsy_fid() {
+    let mut context = video_context(json!({"file_extension": ".mp4", "fid": 0}));
+    context.name = String::new();
+    assert_eq!(
+        build_video_history_metadata_text(&context),
+        "[Video Attachment: video | ID: 1357985 | Type: video/mp4 | Size: 0 bytes]\n"
+    );
+}
+
+#[test]
+fn video_context_renders_the_metadata_only_attachment_block() {
+    let context = video_context(json!({
+        "original_filename": "clip.mp4",
+        "file_extension": ".mp4",
+        "mime_type": "video/mp4",
+        "file_size": 26_528_973,
+        "fid": 5_349_259_470_176_267_i64,
+    }));
+    let content = build_user_message_content(
+        vec![context],
+        "hello",
+        Vec::new(),
+        false,
+        false,
+        100_000,
+        32_000,
+        116_135_915_838_007,
+        116_135_915_839_665,
+    );
+    assert_eq!(
+        serde_json::to_value(&content).expect("content serializes"),
+        json!([
+            {
+                "type": "text",
+                "text": "<attachment>[Video Attachment: clip.mp4 | ID: 1357985 | \
+                         Type: video/mp4 | Size: 25.3 MB]\n\
+                         {\"fid\": 5349259470176267}\n</attachment>",
+            },
+            {"type": "text", "text": "hello"},
+        ])
+    );
+}
+
 /// Build one assistant/user subtask row for the message-shaping tests.
 fn subtask(id: i64, role: &str, status: &str, result: Value) -> SubtaskRow {
     SubtaskRow {

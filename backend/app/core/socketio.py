@@ -92,3 +92,13 @@ def get_sio() -> socketio.AsyncServer:
     if _sio_instance is None:
         _sio_instance = create_socketio_server()
     return _sio_instance
+
+
+def initialize_socketio_server() -> socketio.AsyncServer:
+    """Start cross-worker callbacks even without a local Socket.IO client."""
+    sio = get_sio()
+    if not sio.manager_initialized:
+        sio.manager_initialized = True
+        sio.manager.initialize()
+        logger.info("Socket.IO cross-worker callback listener started")
+    return sio

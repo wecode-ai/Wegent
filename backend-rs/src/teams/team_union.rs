@@ -29,6 +29,10 @@ pub enum TeamListFilter {
     HasBindMode,
     /// `mode != "all"`: the bind-mode text carries the mode name.
     BindModeLike(String),
+    /// `resolve_default_team` identity filter: `Kind.name == name`.
+    NameEquals(String),
+    /// `resolve_default_team` identity filter: `Kind.namespace == namespace`.
+    NamespaceEquals(String),
 }
 
 /// `_resource_json_text(db, "$.spec.bind_mode")` on MySQL.
@@ -67,6 +71,8 @@ impl TeamListFilter {
             Self::BindModeLike(_) => {
                 format!("({BIND_MODE_TEXT} IN (?, ?) OR {BIND_MODE_TEXT} LIKE ?)")
             }
+            Self::NameEquals(_) => "kinds.name = ?".to_string(),
+            Self::NamespaceEquals(_) => "kinds.namespace = ?".to_string(),
         }
     }
 
@@ -79,6 +85,8 @@ impl TeamListFilter {
                 BindingArg::Str("null".to_string()),
                 BindingArg::Str(format!("%\"{mode}\"%")),
             ],
+            Self::NameEquals(name) => vec![BindingArg::Str(name.clone())],
+            Self::NamespaceEquals(namespace) => vec![BindingArg::Str(namespace.clone())],
             Self::DefaultNamespace | Self::SystemOwner | Self::HasBindMode => Vec::new(),
         }
     }
@@ -368,19 +376,12 @@ fn union_body(query: &AccessibleTeamsQuery<'_>) -> Option<UnionBody> {
     })
 }
 
-/// The source's `base_query`: the ranked query minus pagination, optionally
-/// restricted to shared or non-default teams (`shared_only`).
-///
-/// `alias` is the ranked subquery's alias: `anon_1` for the page query and
-/// `anon_2` when the whole base query is wrapped by `count(*)`.
-fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
-    let shared_only_filter = if shared_only {
-        format!(" AND ({alias}.team_namespace != 'default' OR {alias}.share_status = 2)")
-    } else {
-        String::new()
-    };
+/// The ranked subquery's projected columns, aliased `{alias}_<column>`
+/// exactly like the recorded SQLAlchemy rendering. Shared by the page, count,
+/// and default-resolve load queries.
+fn ranked_columns_sql(alias: &str) -> String {
     format!(
-        "SELECT {alias}.team_id AS {alias}_team_id, \
+        "{alias}.team_id AS {alias}_team_id, \
          {alias}.team_user_id AS {alias}_team_user_id, \
          {alias}.team_name AS {alias}_team_name, \
          {alias}.team_namespace AS {alias}_team_namespace, \
@@ -390,8 +391,25 @@ fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
          {alias}.share_status AS {alias}_share_status, \
          {alias}.context_user_id AS {alias}_context_user_id, \
          {alias}.restricted_guest_access AS {alias}_restricted_guest_access, \
-         {alias}.access_source AS {alias}_access_source \
-         FROM (SELECT combined_teams.team_id AS team_id, \
+         {alias}.access_source AS {alias}_access_source"
+    )
+}
+
+/// The ranked subquery (deduplicated to `access_row_number = 1`) as the FROM
+/// clause shared by every resolver, aliased `alias`.
+///
+/// `alias` is the ranked subquery's alias: `anon_1` for the page and
+/// default-resolve queries and `anon_2` when the whole base query is wrapped
+/// by `count(*)`. `shared_only` restricts the ranked query to shared or
+/// non-default teams.
+fn ranked_from_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
+    let shared_only_filter = if shared_only {
+        format!(" AND ({alias}.team_namespace != 'default' OR {alias}.share_status = 2)")
+    } else {
+        String::new()
+    };
+    format!(
+        "FROM (SELECT combined_teams.team_id AS team_id, \
          combined_teams.team_user_id AS team_user_id, \
          combined_teams.team_name AS team_name, \
          combined_teams.team_namespace AS team_namespace, \
@@ -411,6 +429,73 @@ fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
          WHERE {alias}.access_row_number = 1{shared_only_filter}",
         body.sql
     )
+}
+
+/// The source's `base_query`: the ranked query minus pagination, optionally
+/// restricted to shared or non-default teams (`shared_only`).
+fn base_query_sql(body: &UnionBody, alias: &str, shared_only: bool) -> String {
+    format!(
+        "SELECT {} {}",
+        ranked_columns_sql(alias),
+        ranked_from_sql(body, alias, shared_only),
+    )
+}
+
+/// The source `resolve_default_team` candidate query:
+/// `base_query.with_entities(ranked.team_id)` ordered by
+/// `(team_user_id == 0) DESC, team_updated_at DESC, team_id DESC LIMIT 1`.
+fn default_candidate_sql(body: &UnionBody) -> String {
+    format!(
+        "SELECT anon_1.team_id AS anon_1_team_id {} \
+         ORDER BY anon_1.team_user_id = 0 DESC, anon_1.team_updated_at DESC, \
+         anon_1.team_id DESC LIMIT 1",
+        ranked_from_sql(body, "anon_1", false),
+    )
+}
+
+/// The source `resolve_default_team` reload query:
+/// `base_query.filter(ranked.team_id == candidate).order_by(...).offset(0).limit(1)`.
+fn default_load_sql(body: &UnionBody) -> String {
+    format!(
+        "SELECT {} {} AND anon_1.team_id = ? \
+         ORDER BY anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 0, 1",
+        ranked_columns_sql("anon_1"),
+        ranked_from_sql(body, "anon_1", false),
+    )
+}
+
+/// The default-team resolution (`resolve_default_team`): run the candidate
+/// query, then reload that single team row.
+///
+/// Returns `None` when the union has no branch or the candidate query finds no
+/// row (the source returns `None` without reloading). The returned vector has
+/// at most one row.
+pub async fn accessible_default_team<M>(
+    mysql: &M,
+    query: AccessibleTeamsQuery<'_>,
+) -> MysqlResult<Option<Vec<TeamRow>>>
+where
+    M: Mysql,
+{
+    let Some(body) = union_body(&query) else {
+        return Ok(None);
+    };
+    #[derive(Debug, FromMysqlRow)]
+    struct TeamIdRow {
+        #[mysql(rename = "anon_1_team_id")]
+        anon_1_team_id: i64,
+    }
+    let candidate: Option<TeamIdRow> = mysql
+        .fetch_optional(default_candidate_sql(&body).as_str(), body.args.clone())
+        .await?;
+    let Some(candidate) = candidate else {
+        return Ok(None);
+    };
+    let load_sql = default_load_sql(&body);
+    let mut args = body.args;
+    args.push(BindingArg::Int(candidate.anon_1_team_id));
+    let rows: Vec<TeamRow> = mysql.fetch_all(load_sql.as_str(), args).await?;
+    Ok(Some(rows))
 }
 
 /// Team-owner user summaries. `ids` must be in the source's Python-set
@@ -774,5 +859,52 @@ mod tests {
         ));
         // The same statement backs the count form.
         assert!(count_sql(&query).contains("CAST(resource_members.entity_id AS SIGNED INTEGER)"));
+    }
+
+    #[test]
+    fn default_identity_filters_render_name_and_namespace() {
+        let filters = vec![
+            TeamListFilter::HasBindMode,
+            TeamListFilter::BindModeLike("chat".to_string()),
+            TeamListFilter::NameEquals("wegent-chat".to_string()),
+            TeamListFilter::NamespaceEquals("default".to_string()),
+        ];
+        let query = query("all", &[], &[], &[], &filters);
+        let body = union_body(&query).unwrap();
+        // The identity predicates append to every branch after the mode ones.
+        assert!(
+            body.sql
+                .ends_with("AND kinds.name = ? AND kinds.namespace = ?")
+        );
+        assert!(
+            body.args
+                .contains(&BindingArg::Str("wegent-chat".to_string()))
+        );
+        assert!(body.args.contains(&BindingArg::Str("default".to_string())));
+    }
+
+    #[test]
+    fn default_team_queries_render_the_source_shapes() {
+        let filters = vec![TeamListFilter::NameEquals("wegent-chat".to_string())];
+        let query = query("all", &[], &[], &[], &filters);
+        let body = union_body(&query).unwrap();
+
+        let candidate = default_candidate_sql(&body);
+        assert!(candidate.starts_with(
+            "SELECT anon_1.team_id AS anon_1_team_id FROM (SELECT combined_teams.team_id"
+        ));
+        assert!(candidate.contains(
+            "WHERE anon_1.access_row_number = 1 ORDER BY anon_1.team_user_id = 0 DESC, \
+             anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 1"
+        ));
+        // The candidate query keys off `team_user_id = 0`, not the page order.
+        assert!(!candidate.contains("LIMIT 0,"));
+
+        let load = default_load_sql(&body);
+        assert!(load.starts_with("SELECT anon_1.team_id AS anon_1_team_id, "));
+        assert!(load.contains(
+            "WHERE anon_1.access_row_number = 1 AND anon_1.team_id = ? ORDER BY \
+             anon_1.team_updated_at DESC, anon_1.team_id DESC LIMIT 0, 1"
+        ));
     }
 }

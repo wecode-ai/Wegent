@@ -42,7 +42,7 @@ struct GitAccount {
 type UserGitInfo = Option<Vec<GitAccount>>;
 
 /// `_get_user_or_raise` (`db.query(User).filter(User.id == ...)`).
-pub(super) async fn user_by_id<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<(i64, String)>>
+pub(crate) async fn user_by_id<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<(i64, String)>>
 where
     M: Mysql,
 {
@@ -89,7 +89,7 @@ where
 }
 
 /// `get_user_group_roles` step 1: all active namespace names.
-pub(super) async fn active_namespace_names<M>(mysql: &M) -> MysqlResult<Vec<String>>
+pub(crate) async fn active_namespace_names<M>(mysql: &M) -> MysqlResult<Vec<String>>
 where
     M: Mysql,
 {
@@ -104,7 +104,7 @@ where
 }
 
 /// `_get_organization_names`.
-pub(super) async fn organization_namespace_names<M>(mysql: &M) -> MysqlResult<Vec<String>>
+pub(crate) async fn organization_namespace_names<M>(mysql: &M) -> MysqlResult<Vec<String>>
 where
     M: Mysql,
 {
@@ -120,7 +120,7 @@ where
 
 /// `_get_accessible_namespace_ids` — ids of the named active namespaces.
 /// The empty-list rendering keeps SQLAlchemy's `(1 != 1)` guard.
-pub(super) async fn accessible_namespace_ids<M>(
+pub(crate) async fn accessible_namespace_ids<M>(
     mysql: &M,
     names: &[String],
 ) -> MysqlResult<Vec<i64>>
