@@ -3197,6 +3197,89 @@ def test_open_execution_activity_never_revives_a_terminal_execution(
         verify_session.close()
 
 
+def test_open_execution_activity_does_not_create_late_placeholder_for_completed_issue(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    item.status = "completed"
+    test_db.commit()
+
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert opened is None
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == item.id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .count()
+        == 0
+    )
+
+
+def test_open_execution_activity_does_not_revive_terminal_activity_from_stale_execution(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    assert opened is not None
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == opened.message_id)
+        .one()
+    )
+    activity.status = "completed"
+    activity.content = "Finished before stale execution metadata was observed"
+    activity.metadata_json = {**activity.metadata_json, "run_status": "completed"}
+    item.status = "completed"
+    test_db.commit()
+
+    reopened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert reopened is not None
+    assert reopened.status == "completed"
+    test_db.refresh(activity)
+    assert activity.status == "completed"
+    assert activity.metadata_json["run_status"] == "completed"
+    assert activity.content == "Finished before stale execution metadata was observed"
+
+
 def test_runtime_event_opens_activity_when_start_report_races_ahead(
     test_db: Session, test_user: User
 ) -> None:

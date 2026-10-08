@@ -2062,7 +2062,29 @@ class LoopItemExecutionService:
             )
         )
         row = self._linked_activity(db, execution)
+        if row is not None and row.status in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            logger.info(
+                "[LoopItemExecution] Activity open preserved terminal projection "
+                "execution=%s message=%s status=%s",
+                execution.id,
+                row.message_id,
+                row.status,
+            )
+            return project_chat_service.to_view(row)
         if row is None:
+            task = db.get(LoopItem, execution.loop_item_id)
+            if task is not None and task.status == "completed":
+                logger.info(
+                    "[LoopItemExecution] Activity open skipped for completed "
+                    "Issue execution=%s task=%s",
+                    execution.id,
+                    execution.loop_item_id,
+                )
+                return None
             message_id = (
                 str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
             )
