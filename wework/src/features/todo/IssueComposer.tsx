@@ -39,6 +39,7 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
@@ -548,9 +549,14 @@ export function IssueComposer({
         }
       : undefined
   const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => {
-    const executionMode: ProjectExecutionMode = resolvedProjectWork?.worktreeAvailability?.available
-      ? 'git_worktree'
-      : 'current_workspace'
+    const executionMode: ProjectExecutionMode =
+      collaborationExecutionMode(
+        selectedLocalProject,
+        selectedWorkItemProject?.execution_environment?.workspace_policy,
+        resolvedProjectWork?.worktreeAvailability
+      ) === 'git_worktree'
+        ? 'git_worktree'
+        : 'current_workspace'
 
     return (
       <div

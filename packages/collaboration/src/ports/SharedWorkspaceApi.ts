@@ -61,6 +61,7 @@ export interface WorkspaceProjectUpdateInput {
   collaborationGroups?: import("../types").CollaborationGroup[];
   automaticProcessingRules?: WorkspaceAutomationRule[];
   executionEnvironment?: {
+    workspacePolicy?: "git_worktree" | "project";
     repositories: Array<{
       name: string;
       url: string;
@@ -183,6 +184,7 @@ export interface WorkspaceUpdateInput {
   name?: string;
   description?: string;
   executionEnvironment?: {
+    workspacePolicy?: "git_worktree" | "project";
     repositories: Array<{
       name: string;
       url: string;

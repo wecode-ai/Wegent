@@ -24,7 +24,7 @@ export interface RuntimeProfileInput {
   model?: string
   modelType?: RuntimeProfile['modelType']
   modelOptions?: Record<string, string>
-  workspacePolicy: RuntimeWorkspacePolicy
+  workspacePolicy?: RuntimeWorkspacePolicy
 }
 
 export function runtimeProfileIsRunnable(profile: RuntimeProfile): boolean {

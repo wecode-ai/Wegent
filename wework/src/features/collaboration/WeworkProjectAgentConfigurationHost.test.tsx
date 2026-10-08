@@ -546,7 +546,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
           executionMode: 'auto',
           executionEnvironment: 'local',
           executionDeviceId: null,
-          workspacePolicy: 'git_worktree',
           capabilityMode: 'manual',
           additionalSkills: [
             {
@@ -609,7 +608,6 @@ describe('weworkProjectAgentConfigurationHost', () => {
         expect.objectContaining({
           version: 3,
           executionMode: 'auto',
-          workspacePolicy: 'git_worktree',
         })
       )
     )
