@@ -76,6 +76,8 @@ runs:
         executor_pid=$!
         (
           if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
+            oras logout ghcr.io
+            unset GITHUB_TOKEN
             cargo build --release --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
             install -m 0755 backend-rs/target/release/wegent-backend-rs .ci-artifacts/wegent-backend-rs.build
             mv .ci-artifacts/wegent-backend-rs.build .ci-artifacts/wegent-backend-rs
@@ -91,7 +93,6 @@ runs:
           if ! wait "$executor_pid"; then status=1; fi
           if ! wait "$backend_pid"; then status=1; fi
           if ((status != 0)); then exit "$status"; fi
-          oras logout ghcr.io
         fi
         unset GITHUB_TOKEN
         pnpm --filter wework ai:verify:electron:build || status=$?

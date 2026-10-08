@@ -9,6 +9,7 @@ ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }
   source = step.fetch("env").fetch("BUILD_RUNTIMES_FROM_SOURCE")
+  artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
   workflow = YAML.safe_load(File.read(ARGV[1]))
   publish = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime").fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
   [["pull_request", "fork/Wegent", true, false],
@@ -22,6 +23,7 @@ ruby -ryaml -e '
       eval(expression)
     end
     raise "wrong runtime source for #{event}/#{head}" unless evaluate.call(source) == expected_source
+    raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_source
     raise "wrong package publication for #{event}/#{head}" unless evaluate.call(publish) == expected_publish
   end
 ' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml"
@@ -87,7 +89,8 @@ chmod +x "$temp_dir/bin/"*
 run_case() {
   local mode="$1" failure="$2" expected="$3"
   local logout_failure="${4:-false}"
-  local repo="$temp_dir/repo-$mode-$failure-$logout_failure"
+  local artifact_failure="${5:-false}"
+  local repo="$temp_dir/repo-$mode-$failure-$logout_failure-$artifact_failure"
   mkdir -p "$repo/.github/scripts" "$repo/docker-config"
   printf '{"auths":{"ghcr.io":{"auth":"synthetic-credential"}}}\n' > "$repo/docker-config/config.json"
   touch "$repo/log"
@@ -102,10 +105,26 @@ mkdir -p "$(dirname "$3")"
 printf '#!/bin/sh\nexit 0\n' > "$3"
 chmod +x "$3"
 EOF
+  cat > "$repo/.github/scripts/download-actions-artifact.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+test "${GITHUB_TOKEN:-}" = synthetic-read-token
+test "$ACTIONS_ARTIFACT_WORKFLOW" = e2e-tests.yml
+test "$ACTIONS_ARTIFACT_HEAD_SHA" = synthetic-head-sha
+test "$ACTIONS_ARTIFACT_WAIT_SECONDS" = 1500
+test "$1" = executor-e2e-binary
+echo artifact >> "$TEST_LOG"
+[[ "${FAIL_ARTIFACT:-false}" != true ]] || exit 1
+mkdir -p "$2"
+printf '#!/bin/sh\nexit 0\n' > "$2/wegent-executor"
+EOF
   chmod +x "$repo/.github/scripts/restore-oci-runtime-binary.sh"
+  chmod +x "$repo/.github/scripts/download-actions-artifact.sh"
   local status=0
   (cd "$repo"; PATH="$temp_dir/bin:$PATH" TEST_LOG="$repo/log" \
     BUILD_RUNTIMES_FROM_SOURCE="$mode" FAIL_CARGO="$failure" \
+    EXECUTOR_ARTIFACT="$mode" EXECUTOR_HEAD_SHA=synthetic-head-sha \
+    FAIL_ARTIFACT="$artifact_failure" \
     DOCKER_CONFIG="$repo/docker-config" FAIL_LOGOUT="$logout_failure" \
     GITHUB_TOKEN=synthetic-read-token EXECUTOR_IMAGE=executor \
     BACKEND_RS_IMAGE=backend bash "$temp_dir/build.sh") || status=$?
@@ -124,8 +143,9 @@ EOF
       if grep -q cargo "$repo/log"; then return 1; fi
     else
       test ! -f "$repo/docker-config/config.json"
-      test "$(grep -c cargo "$repo/log")" -eq 2
+      test "$(grep -c cargo "$repo/log")" -eq 1
     fi
+    test "$(grep -c artifact "$repo/log")" -eq 1
   else
     if grep -q logout "$repo/log"; then return 1; fi
     if grep -q cargo "$repo/log"; then return 1; fi
@@ -137,4 +157,5 @@ run_case true false success
 run_case false false success
 run_case true true failure
 run_case true false failure true
+run_case true false failure false true
 echo 'Wework runtime source/OCI handoff tests passed'
