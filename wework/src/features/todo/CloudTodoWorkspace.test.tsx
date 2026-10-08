@@ -23,7 +23,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
-import { workItemTaskInput } from './workItemTaskInput'
+import { workItemComposerReference, workItemTaskInput } from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import {
   createWeworkSharedWorkspaceApi,
@@ -362,6 +362,15 @@ const item = {
 }
 
 describe('workItemTaskInput', () => {
+  it('creates an Issue composer chip reference', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '本地电脑处理配置' }
+      )
+    ).toBe('[$WORK-806 · 本地电脑处理配置](wework-issue://project/issue)')
+  })
+
   it('sends the original user-authored title without adding an AI instruction wrapper', () => {
     expect(
       workItemTaskInput({
@@ -2872,7 +2881,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
-  it('uses the prepared project environment when starting a task from the Issue detail', async () => {
+  it('lets the personal task composer choose the current computer instead of the project environment', async () => {
     const preparedProject = {
       ...project,
       execution_environment: {
@@ -2908,13 +2917,11 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-workspace-path')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-device-id',
-      'project-runtime-device'
-    )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-workspace-path',
-      '/srv/projects/wegent-v4'
+      'data-initial-task-input',
+      '[$WEG-1 · Implement cloud MCP](wework-issue://11/WEG-1)'
     )
   })
 

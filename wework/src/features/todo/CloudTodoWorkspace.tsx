@@ -205,7 +205,11 @@ import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared
 import { AiChatModal } from './AiChatModal'
 import { BackgroundTaskStarter } from './BackgroundTaskStarter'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
-import { shouldPrepareWorkItemTask, workItemTaskInput } from './workItemTaskInput'
+import {
+  shouldPrepareWorkItemTask,
+  workItemComposerReference,
+  workItemTaskInput,
+} from './workItemTaskInput'
 import {
   isRuntimeMyWorkItem,
   mergeRuntimeMyWorkItems,
@@ -2433,9 +2437,6 @@ export function CloudTodoWorkspace({
           project_store: project.project_store,
         }
         const initialInput = issueDispatchPersonalTaskInput(action)
-        const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
-          project as CollaborationProject
-        )
         selectProject(project)
         setProjectView('board')
         setSelectedTaskBinding(null)
@@ -2446,24 +2447,22 @@ export function CloudTodoWorkspace({
           initialInput,
           backgroundAfterSend: true,
           dispatch: action,
-          taskRequest: preparedEnvironmentTaskRequest
-            ? {
-                ...preparedEnvironmentTaskRequest,
-                message: initialInput,
-                title: action.taskTitle,
-                cloudProjectId: String(project.id),
-                origin: {
-                  type: 'issue_dispatch',
-                  cloudProjectId: String(project.id),
-                  loopItemId: String(item.id),
-                  projectStore: project.project_store,
-                  dispatchId: action.dispatchId,
-                  roundId: action.roundId,
-                  assignmentId: action.assignmentId,
-                  humanAssignmentId: action.humanAssignmentId,
-                },
-              }
-            : undefined,
+          taskRequest: {
+            runtime: 'codex',
+            message: initialInput,
+            title: action.taskTitle,
+            cloudProjectId: String(project.id),
+            origin: {
+              type: 'issue_dispatch',
+              cloudProjectId: String(project.id),
+              loopItemId: String(item.id),
+              projectStore: project.project_store,
+              dispatchId: action.dispatchId,
+              roundId: action.roundId,
+              assignmentId: action.assignmentId,
+              humanAssignmentId: action.humanAssignmentId,
+            },
+          },
         })
       } catch (cause) {
         acceptedDispatchTaskActions.current.delete(action.idempotencyKey)
@@ -5368,7 +5367,7 @@ export function CloudTodoWorkspace({
                   teamApi={services.teamApi}
                   projectChatClient={selectedProjectChatClient}
                   selfManagedExecution={selectedProjectSelfManagedExecution}
-                  currentUserId={user.id}
+                  currentUserId={selectedItemProject?.current_user_id ?? user.id}
                   localProjects={localProjects}
                   aitableApi={
                     selectedItemProject?.task_provider === 'dingtalk_aitable'
@@ -5379,7 +5378,6 @@ export function CloudTodoWorkspace({
                   project={selectedItemProject}
                   allItems={detailAllItems}
                   showChildren={false}
-                  showAdditionalTaskAction={selectedItem.can_edit !== false}
                   initialTaskBindings={activeItemTaskBindings[selectedItem.id]}
                   taskExecutionStates={taskExecutionStatesByBindingId}
                   deviceNamesById={deviceNamesById}
@@ -5398,12 +5396,8 @@ export function CloudTodoWorkspace({
                     if (!selectedItemProject) return
                     openTaskComposer({
                       workItemId: selectedItem.id,
-                      initialInput: workItemTaskInput(selectedItem),
+                      initialInput: workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
-                      taskRequest:
-                        projectExecutionEnvironmentTaskRequest(
-                          selectedItemProject as CollaborationProject
-                        ) ?? undefined,
                     })
                   }}
                   onClose={closeIssuePanelStack}

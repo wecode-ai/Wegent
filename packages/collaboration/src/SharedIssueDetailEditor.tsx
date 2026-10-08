@@ -167,6 +167,10 @@ export interface SharedIssueDetailExtensions {
     onClose(): void;
   }): ReactNode;
   renderCreateOptions?(context: { saving: boolean }): ReactNode;
+  renderPersonalTaskAction?(context: {
+    item: SharedEditorIssue;
+    onCreateTask(): void;
+  }): ReactNode;
 }
 
 type TodoEditorPort = SharedIssueDetailPort;
@@ -3197,6 +3201,13 @@ export function TodoEditor(props: TodoEditorProps) {
                       </button>
                     ) : null}
                   </section>
+
+                  {props.onCreateTask
+                    ? extensions?.renderPersonalTaskAction?.({
+                        item,
+                        onCreateTask: props.onCreateTask,
+                      })
+                    : null}
 
                   <ExecutionConfigurationNotice
                     key={item.id}

@@ -786,6 +786,87 @@
   opacity: 0.84;
 }
 
+.task-detail-personal-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 11px;
+  padding: 10px;
+  background: rgb(var(--color-bg-subtle));
+}
+
+.task-detail-personal-task-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-bg-base));
+}
+
+.task-detail-personal-task-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-detail-personal-task-copy strong {
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.task-detail-personal-task-copy small {
+  overflow: hidden;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-detail-personal-task > button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 0 10px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.task-detail-personal-task > button:hover {
+  background: rgb(var(--color-bg-muted));
+}
+
+.task-detail-personal-task > button:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .task-detail-personal-task {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .task-detail-personal-task > button {
+    min-height: 44px;
+    grid-column: 1 / -1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .task-detail-state-action {
     transition: none;
