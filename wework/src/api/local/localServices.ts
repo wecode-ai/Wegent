@@ -3511,13 +3511,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       try {
         const device = localDeviceFromStatus(await bootstrapStatus())
         if (device.status === 'online') {
-          const capabilities = await request<RuntimeWorktreeCapabilitiesResponse>(
-            'runtime.worktrees.capabilities',
-            { deviceId: device.device_id }
-          )
-          device.runtime_features = {
-            schemaVersion: 1,
-            worktrees: capabilities.runtimeWorktrees,
+          try {
+            const capabilities = await request<RuntimeWorktreeCapabilitiesResponse>(
+              'runtime.worktrees.capabilities',
+              { deviceId: device.device_id }
+            )
+            device.runtime_features = {
+              schemaVersion: 1,
+              worktrees: capabilities.runtimeWorktrees,
+            }
+          } catch (error) {
+            device.error = error instanceof Error ? error.message : String(error)
           }
         }
         return [device]

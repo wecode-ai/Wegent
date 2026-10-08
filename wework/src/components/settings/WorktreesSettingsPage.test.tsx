@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -245,6 +245,74 @@ describe('WorktreesSettingsPage', () => {
     expect(listWorktrees).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('worktrees-auto-cleanup-switch')).toBeInTheDocument()
   })
+
+  test('exposes recycle failures after closing the confirmation dialog', async () => {
+    deleteWorktree.mockResolvedValueOnce({ success: false })
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await userEvent.click(await screen.findByTestId('delete-worktree-button-runtime-1'))
+    await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('confirm-recycle-worktree-button')).not.toBeInTheDocument()
+    )
+    expect(screen.getByText('删除工作树失败')).toBeInTheDocument()
+    expect(screen.getByTestId('delete-worktree-button-runtime-1')).toBeInTheDocument()
+  })
+
+  test.each(['recycle', 'restore'])(
+    'does not reload a previous device after %s completes',
+    async action => {
+      let complete: ((value: unknown) => void) | undefined
+      const pending = new Promise(resolve => {
+        complete = resolve
+      })
+      const operation = action === 'restore' ? restoreWorktree : deleteWorktree
+      operation.mockReturnValueOnce(pending)
+      if (action === 'restore') {
+        const response = await listWorktrees()
+        listWorktrees.mockResolvedValue({
+          ...response,
+          items: response.items.map((item: object) => ({ ...item, state: 'restorable' })),
+        })
+        listWorktrees.mockClear()
+      }
+      getWorktreeSettings.mockImplementation(async ({ deviceId }) => ({
+        deviceId,
+        worktreeRoot: deviceId,
+        resolvedWorktreeRoot: deviceId,
+        autoCleanupEnabled: true,
+        keepCount: deviceId === 'second-device' ? 7 : 15,
+      }))
+      render(
+        <WorktreesSettingsPage
+          api={api}
+          devices={[
+            ...devices,
+            { ...devices[0], device_id: 'second-device', name: 'Second device' },
+          ]}
+        />
+      )
+      await userEvent.click(
+        await screen.findByTestId(
+          `${action === 'restore' ? 'restore' : 'delete'}-worktree-button-runtime-1`
+        )
+      )
+      if (action === 'recycle')
+        await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
+      await userEvent.selectOptions(screen.getByTestId('worktrees-device-select'), 'second-device')
+      await waitFor(() => expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7))
+      await act(async () => {
+        complete?.({ success: true })
+      })
+      await waitFor(() =>
+        expect(screen.queryByTestId('confirm-recycle-worktree-button')).not.toBeInTheDocument()
+      )
+      expect(getWorktreeSettings.mock.calls.map(([arg]) => arg.deviceId)).toEqual([
+        'local-device',
+        'second-device',
+      ])
+      expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
+    }
+  )
 
   test('saves the cleanup limit on Enter without reloading the list', async () => {
     render(<WorktreesSettingsPage api={api} devices={devices} />)

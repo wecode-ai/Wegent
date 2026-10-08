@@ -165,8 +165,17 @@ export function WorktreesSettingsPage({
   const [savedNotice, setSavedNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadSequence = useRef(0)
+  const currentDeviceId = useRef(selectedDeviceId)
+
+  useEffect(() => {
+    currentDeviceId.current = selectedDeviceId
+    return () => {
+      loadSequence.current += 1
+    }
+  }, [selectedDeviceId])
 
   const load = useCallback(async () => {
+    if (currentDeviceId.current !== selectedDeviceId) return
     const sequence = loadSequence.current + 1
     loadSequence.current = sequence
     if (!api || !selectedDeviceId) {
@@ -263,6 +272,7 @@ export function WorktreesSettingsPage({
         await onRefreshWorkLists?.()
         await load()
       } catch (deleteError) {
+        setPendingRecycle(null)
         setError(
           deleteError instanceof Error
             ? deleteError.message

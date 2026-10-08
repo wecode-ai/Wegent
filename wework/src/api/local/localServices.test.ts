@@ -1829,6 +1829,21 @@ describe('createLocalAppServices', () => {
     ])
   })
 
+  test('reports capability errors without changing known device connectivity', async () => {
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request: vi.fn().mockRejectedValue(new Error('Worktree capability discovery failed')),
+      subscribe: vi.fn(),
+    })
+    const [device] = await services.deviceApi.listDevices()
+    expect(device).toMatchObject({
+      device_id: 'device-uuid',
+      status: 'online',
+      error: 'Worktree capability discovery failed',
+    })
+    expect(device.runtime_features).toBeUndefined()
+  })
+
   test('reuses the initialized local device for subsequent device commands', async () => {
     const ensure = vi.fn().mockResolvedValue({
       running: true,

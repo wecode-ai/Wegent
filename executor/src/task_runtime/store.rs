@@ -1613,12 +1613,16 @@ impl LocalTaskStore {
         drop(statement);
         drop(connection);
         let mut payload = local_execution_runtime_payload(&execution);
-        let project = self.get_project(&execution.cloud_project_id)?;
-        if let Err(error) = execution_workspace::apply_project_workspace(
-            &mut payload,
-            &project.metadata,
-            runtime_device_id,
-        ) {
+        let preflight = self
+            .get_project(&execution.cloud_project_id)
+            .and_then(|project| {
+                execution_workspace::apply_project_workspace(
+                    &mut payload,
+                    &project.metadata,
+                    runtime_device_id,
+                )
+            });
+        if let Err(error) = preflight {
             self.fail_runtime_preflight(candidate_id, &error.to_string())?;
             return Err(error);
         }
@@ -7129,6 +7133,51 @@ mod tests {
             .expect("unbound local run must be claimable");
         assert_eq!(claimed.status, "claimed");
         assert_eq!(claimed.execution_device_id.as_deref(), Some("local-device"));
+    }
+
+    #[test]
+    fn claimed_execution_fails_when_project_was_archived() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Archived project".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let execution = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .remove(0);
+        store.archive_project(&project.id, project.version).unwrap();
+        assert!(store
+            .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
+            .is_err());
+        let connection = store.connection().unwrap();
+        let failed = execution_row(&connection, execution.id).unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.termination_reason, "runtime_preflight_failed");
+        assert!(failed.lease_expires_at.is_none());
     }
 
     #[test]

@@ -1118,6 +1118,26 @@ describe("ProjectExecutionEnvironments", () => {
     );
   });
 
+  it("refreshes saved workspace policy without replacing an unsaved selection", async () => {
+    const api = await render({ assigned: [] });
+    const configuration = {
+      workspace_policy: "project" as const,
+      repositories: [],
+      setup_steps: [],
+      fingerprint: "",
+      devices: {},
+    };
+    await rerender(api, { executionEnvironment: configuration });
+    expect(element<HTMLSelectElement>("-workspace-policy").value).toBe(
+      "project",
+    );
+    await change("-workspace-policy", "git_worktree");
+    await rerender(api, { executionEnvironment: configuration, version: 3 });
+    expect(element<HTMLSelectElement>("-workspace-policy").value).toBe(
+      "git_worktree",
+    );
+  });
+
   it("does not clobber in-progress form edits when the project prop refreshes", async () => {
     const api = await render({
       assigned: [environment(21, "Assigned online", "online")],

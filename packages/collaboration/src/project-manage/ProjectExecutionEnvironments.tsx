@@ -241,13 +241,16 @@ export function ProjectExecutionEnvironments({
   // here.
   useEffect(() => {
     if (initializationInFlight.current || saving) return;
+    if (!configurationDirty) {
+      setWorkspacePolicy(initialConfig?.workspace_policy ?? "git_worktree");
+    }
     setConfigVersion(incomingVersion);
     setDeviceStates(incomingDevices);
     const errorKey = environmentErrorDeviceKey.current;
     setEnvironmentError(
       errorKey ? (incomingDevices[errorKey]?.error ?? "") : "",
     );
-  }, [incomingVersion, incomingDevices]);
+  }, [incomingVersion, incomingDevices, initialConfig?.workspace_policy]);
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi) return;
