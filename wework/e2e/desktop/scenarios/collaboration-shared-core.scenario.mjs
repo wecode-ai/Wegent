@@ -25,6 +25,7 @@ const AGENT_ASSIGNMENT_COMMENT = '请处理实现步骤'
 const AGENT_WORKFLOW_STEP = '实现'
 const AGENT_NAME = '协作核心 Codex'
 const TASK_PROMPT = '检查当前 Issue 并开始执行'
+const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -330,22 +331,63 @@ export function createDesktopScenario({
           0,
           'The execution environment warning remained after initialization and returning home'
         )
+        const terminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              title: TERMINAL_STATUS_ISSUE_TITLE,
+              status: 'in_progress',
+              assignee_agent_id: agent.id,
+            }),
+          }
+        )
+        assert.equal(terminalStatusIssue.execution_state, 'waiting_approval')
+        const rejectedTerminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items/${terminalStatusIssue.id}/reject`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              version: terminalStatusIssue.version,
+              reason: 'Desktop E2E terminal status mapping fixture',
+            }),
+          }
+        )
+        assert.equal(rejectedTerminalStatusIssue.status, 'in_progress')
+        assert.equal(rejectedTerminalStatusIssue.execution_state, 'cancelled')
         await control.command(
           'click',
           scoped(
             `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
           )
         )
+        await control.command('waitFor', scoped('[data-testid="collaboration-workspace-home"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-running"]'),
+          { text: '0', timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-pending"]'),
+          { text: '1', timeoutMs: uiTimeoutMs }
+        )
         await control.command(
           'clickWhenEnabled',
           scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
+        await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+          text: project.name,
           timeoutMs: uiTimeoutMs,
         })
-
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,

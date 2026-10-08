@@ -571,11 +571,11 @@ def _agent_text_produced(db: Session, execution: LoopItemExecution) -> bool | No
             *identity,
             ProjectChatMessage.sender_type == "agent",
             loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            func.length(func.trim(ProjectChatMessage.content)) > 0,
         )
-        .order_by(ProjectChatMessage.id.desc())
         .first()
     )
-    return message is not None and bool((message.content or "").strip())
+    return message is not None
 
 
 class LoopItemExecutionService:
@@ -1383,7 +1383,7 @@ class LoopItemExecutionService:
         note: Optional[str] = None,
         commit: bool = True,
     ) -> Optional[LoopItemExecution]:
-        """Commit cancellation after Runtime's stop ACK or cancelled event."""
+        """Commit cancellation after a terminal Runtime event or trusted snapshot."""
 
         current = db.get(LoopItemExecution, execution_id)
         if current is not None and current.termination_reason == "stall_timeout":
