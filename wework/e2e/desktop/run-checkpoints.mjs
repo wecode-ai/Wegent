@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -406,6 +408,89 @@ async function sharedBuildEnvironment(environment = process.env) {
   }
 }
 
+async function fileSha256(path) {
+  const hash = createHash('sha256')
+  await new Promise((resolvePromise, reject) => {
+    const stream = createReadStream(path)
+    stream.on('data', chunk => hash.update(chunk))
+    stream.once('end', resolvePromise)
+    stream.once('error', reject)
+  })
+  return hash.digest('hex')
+}
+
+async function extractArchive(archivePath, destination) {
+  await new Promise((resolvePromise, reject) => {
+    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolvePromise()
+        return
+      }
+      reject(
+        new Error(
+          `Core DSH runtime extraction failed: ${signal ? `signal=${signal}` : `exit=${code}`}`
+        )
+      )
+    })
+  })
+}
+
+async function prepareSharedCoreRuntime(appBinary, parentDirectory) {
+  const resourcesRoot = resolve(
+    dirname(appBinary),
+    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
+  )
+  const resourceRoot = join(resourcesRoot, 'harness-runtime')
+  const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
+  const runtimes = catalog.runtimes?.filter(runtime => runtime.role === 'core') ?? []
+  if (runtimes.length !== 1) {
+    throw new Error('Bundled Electron runtime catalog must contain exactly one Core runtime')
+  }
+
+  const [runtime] = runtimes
+  if (
+    !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
+    !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
+    !Number.isSafeInteger(runtime.archiveBytes) ||
+    runtime.archiveBytes <= 0 ||
+    typeof runtime.assetName !== 'string' ||
+    !runtime.assetName.endsWith('.tar.gz')
+  ) {
+    throw new Error('Bundled Electron Core runtime descriptor is invalid')
+  }
+
+  const archivePath = join(resourceRoot, runtime.assetName)
+  const archiveMetadata = await stat(archivePath)
+  if (archiveMetadata.size !== runtime.archiveBytes) {
+    throw new Error(`Bundled Core DSH runtime size mismatch: ${runtime.assetName}`)
+  }
+  if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
+    throw new Error(`Bundled Core DSH runtime checksum mismatch: ${runtime.assetName}`)
+  }
+
+  const runtimeRoot = join(parentDirectory, 'core-runtime')
+  const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
+  await mkdir(extractedRoot, { recursive: true })
+  const startedAt = Date.now()
+  await extractArchive(archivePath, extractedRoot)
+  const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
+  if (
+    identity.dshVersion !== runtime.dshVersion ||
+    identity.role !== runtime.role ||
+    identity.sourceFingerprint !== runtime.sourceFingerprint
+  ) {
+    throw new Error(`Bundled Core DSH runtime identity is invalid: ${runtime.assetName}`)
+  }
+  console.log(
+    `[desktop-e2e] shared Core runtime ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
+  )
+  return runtimeRoot
+}
+
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
@@ -499,11 +584,16 @@ async function runRequestedArgs() {
 }
 
 async function runParallelCheckpoints(checkpoints) {
-  const portRegistryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-ports-'))
+  const sharedRuntimeDirectory = await mkdtemp(join(tmpdir(), 'wework-e2e-shared-'))
   try {
+    const baseEnvironment = await sharedBuildEnvironment()
+    const sharedCoreRuntime =
+      baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
+      (await prepareSharedCoreRuntime(baseEnvironment.WEWORK_E2E_APP_BIN, sharedRuntimeDirectory))
     const sharedEnv = {
-      ...(await sharedBuildEnvironment()),
-      WEWORK_E2E_PORT_REGISTRY_DIR: portRegistryDir,
+      ...baseEnvironment,
+      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedCoreRuntime,
+      WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
     const workerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
@@ -550,7 +640,7 @@ async function runParallelCheckpoints(checkpoints) {
     }
     process.exitCode = 1
   } finally {
-    await rm(portRegistryDir, { recursive: true, force: true })
+    await rm(sharedRuntimeDirectory, { recursive: true, force: true })
   }
 }
 
