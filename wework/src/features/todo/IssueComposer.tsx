@@ -1,4 +1,5 @@
 import { type MouseEvent, useContext, useEffect, useRef, useState } from 'react'
+import { issueDraftFromText } from '@wegent/collaboration'
 import {
   Bot,
   ChevronDown,
@@ -40,7 +41,6 @@ import type {
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
-import { issueDraftFromText } from './issueComposerDraft'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 interface IssueComposerProps {
