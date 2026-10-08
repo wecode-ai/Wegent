@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path'
 
 import { cloudFetch } from './cloud-http.js'
 
+const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
+
 interface StoredCloudCredential {
   version: 2
   apiBaseUrl: string
@@ -59,6 +61,30 @@ export class CloudCredentialService {
     private readonly request: typeof fetch = cloudFetch
   ) {}
 
+  /**
+   * Cloud credential calls must never hang.
+   *
+   * The service serializes its operations, so one unanswered request keeps
+   * every later refresh queued behind it: the desktop connection then stays on
+   * an expired access token until the workbench is reloaded.
+   */
+  private async requestWithTimeout(endpoint: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.request(endpoint, {
+        ...init,
+        signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
+      })
+    } catch (error) {
+      if ((error as { name?: unknown })?.name === 'TimeoutError') {
+        throw new CloudCredentialError(
+          'request_failed',
+          `云端凭证请求超过 ${Math.round(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS / 1000)}s 未返回`
+        )
+      }
+      throw error
+    }
+  }
+
   devicePublicKey(): Promise<DevicePublicKey> {
     return this.serial(async () => {
       const stored = await this.readCredential()
@@ -75,7 +101,7 @@ export class CloudCredentialService {
       const endpoint = `${apiBaseUrl}/auth/wework/sessions/${encodeURIComponent(
         input.sessionId
       )}/poll?poll_token=${encodeURIComponent(input.pollToken)}`
-      const response = await this.request(endpoint, { method: 'GET' })
+      const response = await this.requestWithTimeout(endpoint, { method: 'GET' })
       const payload = await responseJson(response)
       if (!response.ok) {
         throw requestError(response.status, payload)
@@ -143,7 +169,7 @@ export class CloudCredentialService {
         refreshToken,
         new URL(endpoint).pathname
       )
-      const response = await this.request(endpoint, {
+      const response = await this.requestWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

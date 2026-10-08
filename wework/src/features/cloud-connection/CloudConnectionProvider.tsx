@@ -61,7 +61,53 @@ const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重
 const CLOUD_STARTUP_REQUEST_TIMEOUT_MS = 8000
 const ACCESS_TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_RETRY_MS = 60 * 1000
+const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 45 * 1000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+/**
+ * Refresh the desktop access token with a bound.
+ *
+ * A request that never settles must not keep the provider waiting forever:
+ * the renderer owns the "one refresh in flight" state, and a hang there blocks
+ * every later trigger (expiry timer, system resume, `online`, retry interval).
+ */
+async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<string> {
+  const startedAt = Date.now()
+  console.info('[CloudConnection] access token refresh started', { apiBaseUrl })
+  try {
+    const refreshed = await raceWithTimeout(
+      refreshDesktopCloudAccessToken(apiBaseUrl),
+      ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
+      timeoutMs =>
+        new DesktopCloudCredentialError(
+          'request_failed',
+          `刷新云端登录凭证超过 ${Math.round(timeoutMs / 1000)}s 未返回`,
+          null
+        )
+    )
+    console.info('[CloudConnection] access token refresh finished', {
+      apiBaseUrl,
+      elapsedMs: Date.now() - startedAt,
+    })
+    return refreshed.accessToken
+  } catch (error) {
+    console.warn('[CloudConnection] access token refresh failed', {
+      apiBaseUrl,
+      elapsedMs: Date.now() - startedAt,
+      error: rawErrorMessage(error),
+    })
+    throw error
+  }
+}
+
+async function resolveAccessToken(
+  apiBaseUrl: string,
+  credentialMode: CloudCredentialMode,
+  existingToken: string | null
+): Promise<string | null> {
+  if (credentialMode === 'legacy_access_token') return existingToken
+  return requestDesktopCloudAccessToken(apiBaseUrl)
+}
 
 function resolveCloudRuntimeConfig(
   backendUrl: string,
@@ -380,6 +426,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
+  const refreshAttemptIdRef = useRef(0)
   const refreshGenerationRef = useRef(0)
   const disconnectRequestedRef = useRef(false)
   const terminalDesktopCredentialExpiryRef = useRef(false)
@@ -562,6 +609,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     if (refreshPromiseRef.current) return refreshPromiseRef.current
     if (!snapshot.apiBaseUrl) return Promise.resolve(null)
     const refreshGeneration = refreshGenerationRef.current
+    const refreshAttemptId = refreshAttemptIdRef.current + 1
+    refreshAttemptIdRef.current = refreshAttemptId
     const credentialMode = snapshot.credentialMode ?? 'desktop_refresh'
     const config = {
       backendUrl: snapshot.backendUrl ?? '',
@@ -571,10 +620,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     }
     const refresh = (async () => {
       try {
-        const accessToken =
-          credentialMode === 'legacy_access_token'
-            ? snapshot.token
-            : (await refreshDesktopCloudAccessToken(config.apiBaseUrl)).accessToken
+        // Awaiting a resolved-token helper keeps the first suspension inside the
+        // try block, so the guard below is always assigned before it is cleared.
+        const accessToken = await resolveAccessToken(
+          config.apiBaseUrl,
+          credentialMode,
+          snapshot.token
+        )
         if (!accessToken) {
           throw new DesktopCloudCredentialError(
             'credentials_unavailable',
@@ -632,7 +684,11 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         )
         return null
       } finally {
-        if (refreshGenerationRef.current === refreshGeneration) {
+        // Release the in-flight guard whenever this attempt settles, whatever
+        // happened to it (timeout, failure, superseded generation). Keeping the
+        // guard would silently disable every later automatic refresh, and a
+        // newer attempt already owns it when it exists.
+        if (refreshAttemptIdRef.current === refreshAttemptId) {
           refreshPromiseRef.current = null
         }
       }
