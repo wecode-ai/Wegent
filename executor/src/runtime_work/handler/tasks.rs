@@ -1663,24 +1663,20 @@ impl RuntimeWorkRpcHandler {
         previous_turn_id: Option<&str>,
     ) -> Result<(String, String), String> {
         let mut last_error = None;
-        let deadline = Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
+        let deadline = tokio::time::Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
         loop {
-            match self.read_codex_recent_turns(thread_id).await {
-                Ok(thread) => {
-                    if let Some(completion) =
-                        completed_context_compaction(&thread, previous_turn_id)
-                    {
-                        return Ok(completion);
-                    }
-                    if let Some(failure) = ended_context_compaction(&thread, previous_turn_id) {
-                        return Err(failure);
+            // A single Codex app-server read may wait far longer than the whole
+            // budget, so the read itself has to be bounded by the deadline.
+            match tokio::time::timeout_at(deadline, self.read_codex_recent_turns(thread_id)).await {
+                Ok(Ok(thread)) => {
+                    if let Some(outcome) = context_compaction_outcome(&thread, previous_turn_id) {
+                        return outcome;
                     }
                 }
-                Err(error) => last_error = Some(error),
+                Ok(Err(error)) => last_error = Some(error),
+                Err(_) => break,
             }
-            // The budget covers the Codex app-server reads above too, so a slow
-            // provider cannot push the action past the App-IPC deadline.
-            if Instant::now() >= deadline {
+            if tokio::time::Instant::now() >= deadline {
                 break;
             }
             sleep(Duration::from_millis(CONTEXT_COMPACTION_WAIT_MS)).await;
@@ -2333,41 +2329,33 @@ fn latest_codex_turn_id(thread: &Value) -> Option<String> {
         .and_then(|turn| string_field(turn, "id"))
 }
 
-fn completed_context_compaction(
+/// Reports what the newest turn says about a compaction action.
+///
+/// Only the newest turn can be the compaction turn: while it is still the turn
+/// that preceded the action the provider has not started compacting, and no
+/// older turn may be mistaken for the result. `None` means "keep waiting".
+///
+/// A turn that already ended without producing a compaction item never will -
+/// the provider can fail the compaction turn (a model or route error, for
+/// example) and still report it as completed - so it reports its own reason
+/// instead of letting the caller surface a generic timeout.
+fn context_compaction_outcome(
     thread: &Value,
     previous_turn_id: Option<&str>,
-) -> Option<(String, String)> {
-    thread
-        .get("turns")
-        .and_then(Value::as_array)?
-        .iter()
-        .rev()
-        .filter_map(|turn| Some((turn, string_field(turn, "id")?)))
-        .filter(|(_, turn_id)| Some(turn_id.as_str()) != previous_turn_id)
-        .find_map(|(turn, turn_id)| {
-            turn.get("items")
-                .and_then(Value::as_array)?
-                .iter()
-                .find(|item| is_codex_context_compaction_item_type(&item_type(item)))
-                .map(|item| (turn_id, item_id(item, "context_compaction")))
-        })
-}
-
-/// Reports the compaction turn when it already ended without producing a
-/// compaction item.
-///
-/// The provider can fail the compaction turn (a model or route error, for
-/// example) and still report it as completed. Waiting for the rest of the
-/// compaction budget cannot turn such a turn into a compacted thread, so the
-/// caller reports the failure instead of surfacing a generic timeout.
-fn ended_context_compaction(thread: &Value, previous_turn_id: Option<&str>) -> Option<String> {
-    // Only the newest turn can be the compaction turn. While it is still the
-    // turn that preceded the action, the provider has not started compaction and
-    // an earlier turn must not be mistaken for a result.
+) -> Option<Result<(String, String), String>> {
     let turn = thread.get("turns").and_then(Value::as_array)?.last()?;
     let turn_id = string_field(turn, "id")?;
     if Some(turn_id.as_str()) == previous_turn_id {
         return None;
+    }
+    if let Some(item) = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|item| is_codex_context_compaction_item_type(&item_type(item)))
+    {
+        return Some(Ok((turn_id, item_id(item, "context_compaction"))));
     }
     let status = string_field(turn, "status")?;
     if matches!(
@@ -2376,25 +2364,14 @@ fn ended_context_compaction(thread: &Value, previous_turn_id: Option<&str>) -> O
     ) {
         return None;
     }
-    let compacted = turn
-        .get("items")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| is_codex_context_compaction_item_type(&item_type(item)))
-        });
-    if compacted {
-        return None;
-    }
     let detail = turn
         .get("error")
         .and_then(|error| string_field(error, "message"))
         .or_else(|| string_field(turn, "error"));
-    Some(match detail {
+    Some(Err(match detail {
         Some(detail) => format!("context compaction ended without compacting: {detail}"),
         None => format!("context compaction ended without compacting ({status})"),
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -2404,8 +2381,7 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, completed_context_compaction, ended_context_compaction,
-        normalize_friendly_title,
+        apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
     };
 
     #[test]
@@ -2422,7 +2398,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_a_new_completed_context_compaction() {
+    fn reads_a_completed_context_compaction_from_the_newest_turn() {
         let thread = json!({
             "turns": [
                 {
@@ -2431,17 +2407,18 @@ mod tests {
                 },
                 {
                     "id": "turn-compact",
+                    "status": "completed",
                     "items": [{"id": "compact-1", "type": "contextCompaction"}]
                 }
             ]
         });
 
         assert_eq!(
-            completed_context_compaction(&thread, Some("turn-before")),
-            Some(("turn-compact".to_owned(), "compact-1".to_owned()))
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Ok(("turn-compact".to_owned(), "compact-1".to_owned())))
         );
         assert_eq!(
-            completed_context_compaction(&thread, Some("turn-compact")),
+            context_compaction_outcome(&thread, Some("turn-compact")),
             None
         );
     }
@@ -2461,11 +2438,11 @@ mod tests {
         });
 
         assert_eq!(
-            ended_context_compaction(&thread, Some("turn-before")),
-            Some(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Err(
                 "context compaction ended without compacting: unexpected status 404 Not Found"
                     .to_owned()
-            )
+            ))
         );
     }
 
@@ -2475,7 +2452,10 @@ mod tests {
             "turns": [{"id": "turn-compact", "status": "inProgress", "items": []}]
         });
 
-        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
     }
 
     #[test]
@@ -2484,10 +2464,15 @@ mod tests {
             "turns": [{"id": "turn-before", "status": "completed", "items": []}]
         });
 
-        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
         assert_eq!(
-            ended_context_compaction(&thread, None),
-            Some("context compaction ended without compacting (completed)".to_owned())
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+        assert_eq!(
+            context_compaction_outcome(&thread, None),
+            Some(Err(
+                "context compaction ended without compacting (completed)".to_owned()
+            ))
         );
     }
 
@@ -2500,7 +2485,50 @@ mod tests {
             ]
         });
 
-        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            None
+        );
+    }
+
+    #[test]
+    fn ignores_an_older_compaction_item_while_the_newest_turn_runs() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-older",
+                    "status": "completed",
+                    "items": [{"id": "compact-old", "type": "contextCompaction"}]
+                },
+                {"id": "turn-compact", "status": "inProgress", "items": []}
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-older")),
+            None
+        );
+    }
+
+    #[test]
+    fn reports_the_newest_turn_failure_instead_of_an_older_compaction_item() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-older",
+                    "status": "completed",
+                    "items": [{"id": "compact-old", "type": "contextCompaction"}]
+                },
+                {"id": "turn-compact", "status": "failed", "items": []}
+            ]
+        });
+
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-older")),
+            Some(Err(
+                "context compaction ended without compacting (failed)".to_owned()
+            ))
+        );
     }
 
     #[test]
@@ -2513,7 +2541,10 @@ mod tests {
             }]
         });
 
-        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
+        assert_eq!(
+            context_compaction_outcome(&thread, Some("turn-before")),
+            Some(Ok(("turn-compact".to_owned(), "compact-1".to_owned())))
+        );
     }
 
     #[test]
