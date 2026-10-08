@@ -133,7 +133,7 @@ pub struct ChatAgentCreate {
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
     #[serde(default)]
-    pub allowed_models: Vec<Value>,
+    pub allowed_models: Option<Vec<Value>>,
     pub capability_description: Option<String>,
     #[serde(default)]
     pub capability_mode: Option<String>,

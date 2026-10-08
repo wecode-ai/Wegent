@@ -218,6 +218,8 @@
     "project_chat_agent_model_relation": "Can override the template default",
     "project_chat_agent_allowed_models": "Available models",
     "project_chat_agent_allowed_models_description": "The manager AI chooses from these preconfigured models for each task.",
+    "project_chat_agent_model_unavailable": " (currently unavailable)",
+    "project_chat_agent_remove_model": "Remove model",
     "project_chat_agent_prompt": "Execution prompt",
     "project_chat_agent_capability": "Capabilities",
     "project_chat_agent_capability_placeholder": "Describe what this bot can do so the AI manager can assign suitable tasks",

@@ -625,7 +625,13 @@ describe('weworkProjectAgentConfigurationHost', () => {
       model: null,
       modelType: null,
       modelNamespace: 'default',
-      allowedModels: [],
+      allowedModels: [
+        {
+          name: 'retired-model',
+          type: 'runtime',
+          namespace: 'default',
+        },
+      ],
       capabilityDescription: '使用当前设备的模型、技能和工具。',
       capabilityMode: 'follow_device',
       systemPrompt: '',
@@ -661,6 +667,10 @@ describe('weworkProjectAgentConfigurationHost', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-models')).toBeVisible())
     expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
     expect(screen.queryByText('默认')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('cloud-project-chat-agent-model-unavailable-retired-model')
+    ).toHaveTextContent('retired-model（当前不可用）')
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-remove-retired-model'))
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-sol'))
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-luna'))
     fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))

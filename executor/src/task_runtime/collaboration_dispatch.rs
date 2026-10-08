@@ -448,7 +448,7 @@ fn collaboration_member_runtime_payload(
                 )
             })?
     } else {
-        profile
+        let payload = profile
             .get("runtimePayload")
             .or_else(|| profile.get("runtime_payload"))
             .filter(|payload| payload.is_object())
@@ -457,7 +457,27 @@ fn collaboration_member_runtime_payload(
                 TaskRuntimeError::Invalid(format!(
                     "Collaboration assignment target '{assignee_id}' has no materialized Runtime profile"
                 ))
-            })?
+            })?;
+        if let Some(selected_model_id) = selected_model_id {
+            let configured_model_id = payload
+                .get("executionRequest")
+                .or_else(|| payload.get("execution_request"))
+                .and_then(Value::as_object)
+                .and_then(|request| {
+                    request
+                        .get("model_config")
+                        .or_else(|| request.get("modelConfig"))
+                })
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("model_id").or_else(|| config.get("modelId")))
+                .and_then(Value::as_str);
+            if configured_model_id != Some(selected_model_id) {
+                return Err(TaskRuntimeError::Invalid(format!(
+                    "model '{selected_model_id}' cannot be verified for collaboration agent '{assignee_id}'"
+                )));
+            }
+        }
+        payload
     };
     let system_prompt = crate::task_runtime::collaboration_member_profile_instructions(&payload);
     let execution_request = if payload.get("executionRequest").is_some() {
@@ -899,5 +919,39 @@ mod tests {
             selected["executionRequest"]["model_config"]["model_id"],
             "deep-model"
         );
+    }
+
+    #[test]
+    fn local_member_payload_validates_model_for_a_legacy_profile() {
+        let manager_payload = json!({
+            "memberRuntimeProfiles": [{
+                "memberIds": ["member-1"],
+                "runtimePayload": {
+                    "projectInstructions": "member instructions",
+                    "executionRequest": {
+                        "model_config": {"model_id": "legacy-model"}
+                    }
+                }
+            }]
+        });
+
+        let selected = collaboration_member_runtime_payload(
+            &manager_payload,
+            "member-1",
+            Some("legacy-model"),
+        )
+        .unwrap();
+        assert_eq!(
+            selected["executionRequest"]["model_config"]["model_id"],
+            "legacy-model"
+        );
+
+        let unavailable = collaboration_member_runtime_payload(
+            &manager_payload,
+            "member-1",
+            Some("unverified-model"),
+        )
+        .unwrap_err();
+        assert!(unavailable.to_string().contains("cannot be verified"));
     }
 }

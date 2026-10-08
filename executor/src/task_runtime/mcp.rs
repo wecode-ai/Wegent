@@ -2029,6 +2029,7 @@ async fn call_backend_tool(
                 "assignee_id": assignee_id,
                 "task_title": title,
                 "instructions": instructions,
+                "model_id": item.get("model_id"),
                 "workflow_stage_id": item.get("workflow_stage_id"),
             });
             if assignee_type == "agent" {
@@ -4406,6 +4407,7 @@ mod tests {
                         "assignee_type": "agent",
                         "assignee_id": "collector",
                         "instructions": "Collect evidence",
+                        "model_id": "deep-model",
                         "workflow_stage_id": "investigate"
                     })
                 );
@@ -4444,6 +4446,7 @@ mod tests {
                         "assignee_type": "agent",
                         "assignee_id": "collector",
                         "instructions": "Collect evidence",
+                        "model_id": "deep-model",
                         "workflow_stage_id": "investigate"
                     },
                     {
@@ -4485,6 +4488,7 @@ mod tests {
             commands[0].assignments[0]["workflow_stage_id"],
             "investigate"
         );
+        assert_eq!(commands[0].assignments[0]["model_id"], "deep-model");
         assert_eq!(commands[0].human_assignment_ids, vec!["human-assignment-1"]);
         server.abort();
     }
@@ -4698,7 +4702,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
-                    allowed_models: Vec::new(),
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,

@@ -253,6 +253,23 @@ export function ProjectChatAgentEditor({
     () => new Set(allowedModels.map(modelKey)),
     [allowedModels]
   )
+  const availableModelKeys = useMemo(
+    () =>
+      new Set(
+        models.map(candidate =>
+          modelKey({
+            name: candidate.name,
+            type: candidate.type,
+            namespace: candidate.namespace || 'default',
+          })
+        )
+      ),
+    [models]
+  )
+  const unavailableAllowedModels = useMemo(
+    () => allowedModels.filter(candidate => !availableModelKeys.has(modelKey(candidate))),
+    [allowedModels, availableModelKeys]
+  )
 
   const save = async () => {
     if (busy || loadingAgent) return
@@ -581,6 +598,35 @@ export function ProjectChatAgentEditor({
                     />
                     <span>{candidate.displayName || candidate.name}</span>
                   </label>
+                )
+              })}
+              {unavailableAllowedModels.map(candidate => {
+                const key = modelKey(candidate)
+                return (
+                  <div
+                    className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm text-text-muted"
+                    data-testid={`cloud-project-chat-agent-model-unavailable-${candidate.name}`}
+                    key={key}
+                  >
+                    <span>
+                      {candidate.name}
+                      {t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
+                    </span>
+                    <button
+                      aria-label={`${t(
+                        'workbench.project_chat_agent_remove_model',
+                        '移除模型'
+                      )} ${candidate.name}`}
+                      className="rounded px-2 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                      data-testid={`cloud-project-chat-agent-model-remove-${candidate.name}`}
+                      onClick={() =>
+                        setAllowedModels(current => current.filter(item => modelKey(item) !== key))
+                      }
+                      type="button"
+                    >
+                      {t('workbench.agent_creator_remove', '移除')}
+                    </button>
+                  </div>
                 )
               })}
             </div>
