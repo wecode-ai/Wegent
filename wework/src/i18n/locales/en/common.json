@@ -2828,6 +2828,7 @@
     "about_settings_title": "About",
     "about_settings_subtitle": "View Wework version and product information",
     "about_settings_description": "An AI workbench for office and coding workflows.",
+    "about_commit_id": "Commit",
     "general_settings_title": "General",
     "general_settings_subtitle": "Manage Wework startup and background behavior",
     "general_settings_mode": "Mode",
