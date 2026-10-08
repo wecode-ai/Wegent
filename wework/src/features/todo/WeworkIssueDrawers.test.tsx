@@ -221,6 +221,10 @@ function Project({
       api={
         {
           projects: {
+            get: vi.fn(async () => ({
+              id: 'project',
+              execution_environment: executionEnvironment,
+            })),
             listExecutionEnvironments: vi.fn(async () => [
               {
                 id: 'environment-22',
@@ -245,7 +249,8 @@ function Project({
           id: 'project',
           name: 'Project',
           project_store: 'backend',
-          execution_environment: executionEnvironment,
+          // The shell snapshot can predate settings saved inside CollaborationApp.
+          execution_environment: undefined,
         } as never
       }
       workspace={{ id: 'workspace' } as never}
@@ -317,7 +322,7 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('cloud-todo-detail-device-name')).toHaveTextContent('Wework 开发设备')
   })
 
-  it('starts manual work in the project prepared execution environment', async () => {
+  it('refreshes the prepared execution environment before starting manual work', async () => {
     taskBindings = [
       {
         id: 'binding-existing',
@@ -358,6 +363,14 @@ describe('Wework Issue conversation drawers', () => {
       'data-workspace-path',
       '/srv/collaboration/project'
     )
+  })
+
+  it('can start the first task without an existing task binding', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    await user.click(screen.getByRole('button', { name: 'Add task' }))
+    expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
   })
 
   it('can start another task after returning from an existing execution', async () => {

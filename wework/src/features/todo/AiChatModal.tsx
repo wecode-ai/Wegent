@@ -22,6 +22,7 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
@@ -56,6 +57,7 @@ interface AiChatModalProps {
 }
 
 interface AutomaticIssueTaskComposerProps {
+  workspacePolicy?: 'git_worktree' | 'project'
   project: ProjectWithTasks | null
   deviceWorkspaceId: number | null
   projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']
@@ -74,18 +76,9 @@ const isolatedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] = {
   workspace: { source: 'git_worktree' },
 }
 
-function automaticExecutionMode(
-  projectWork: AutomaticIssueTaskComposerProps['projectWork'],
-  inheritFromTask: RuntimeTaskAddress | null,
-  taskRequest: RuntimeTaskCreateRequest | null
-): ProjectExecutionMode {
-  if (inheritFromTask) return 'current_workspace'
-  if (taskRequest?.execution?.workspace?.source === 'git_worktree') return 'git_worktree'
-  return projectWork?.worktreeAvailability?.available ? 'git_worktree' : 'current_workspace'
-}
-
 function AutomaticIssueTaskComposer({
   project,
+  workspacePolicy,
   deviceWorkspaceId,
   projectWork,
   inheritFromTask,
@@ -95,35 +88,24 @@ function AutomaticIssueTaskComposer({
   onTaskCreated,
   panelProps,
 }: AutomaticIssueTaskComposerProps) {
-  const executionMode = automaticExecutionMode(projectWork, inheritFromTask, taskRequest)
-  const effectiveTaskRequest = taskRequest
-    ? {
-        ...taskRequest,
-        execution:
-          executionMode === 'git_worktree'
-            ? {
-                workspace: {
-                  source: 'git_worktree',
-                  ...(taskRequest.execution?.workspace?.source === 'git_worktree' &&
-                  taskRequest.execution.workspace.branch
-                    ? { branch: taskRequest.execution.workspace.branch }
-                    : {}),
-                },
-              }
-            : undefined,
-      }
-    : null
+  const executionMode: ProjectExecutionMode = inheritFromTask
+    ? 'current_workspace'
+    : taskRequest
+      ? taskRequest.execution?.workspace?.source === 'git_worktree'
+        ? 'git_worktree'
+        : 'current_workspace'
+      : collaborationExecutionMode(project, workspacePolicy, projectWork?.worktreeAvailability)
   const createConversation = useProjectRuntimeTaskComposer({
     project,
     deviceWorkspaceId,
     workspaceExecution:
-      inheritFromTask || effectiveTaskRequest
+      inheritFromTask || taskRequest
         ? undefined
         : executionMode === 'git_worktree'
           ? isolatedWorkspaceExecution
           : null,
     workspaceSource: inheritFromTask,
-    taskRequest: effectiveTaskRequest,
+    taskRequest,
     runtimeContext,
     prepareTask,
     onTaskCreated,
@@ -310,6 +292,7 @@ export function AiChatModal({
       <AutomaticIssueTaskComposer
         key={options.key}
         project={selectedLocalProject}
+        workspacePolicy={project.execution_environment?.workspace_policy}
         deviceWorkspaceId={localDeviceWorkspaceId}
         projectWork={projectWork}
         inheritFromTask={inheritFromTask}

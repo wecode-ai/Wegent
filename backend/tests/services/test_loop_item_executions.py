@@ -2588,6 +2588,7 @@ def test_project_execution_environment_reaches_runtime_request(
         },
     }
     assert payload["origin"]["executionEnvironment"] == {
+        "workspace_policy": "git_worktree",
         "repositories": [
             {
                 "name": "Wegent",
@@ -2765,10 +2766,15 @@ def test_claude_code_project_agent_compiles_executor_payload(
     assert execution_request["preload_skills"] == [{"name": "project-review"}]
 
 
-def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
-    test_db: Session, test_user: User
+@pytest.mark.parametrize("workspace_policy", ["git_worktree", "project"])
+@pytest.mark.parametrize("inherit", [False, True])
+def test_project_workspace_policy_does_not_depend_on_robot_concurrency(
+    test_db: Session, test_user: User, workspace_policy: str, inherit: bool
 ) -> None:
     project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "execution_environment": {"workspace_policy": workspace_policy}
+    }
     _ensure_device(test_db, test_user, "local-device", "local")
     code_project = Project(
         user_id=test_user.id,
@@ -2788,7 +2794,6 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
         model="test-model",
         local_project_id=code_project.id,
         max_concurrent_executions=1,
-        workspace_policy="git_worktree",
     )
 
     request = profile.build_runtime_request(
@@ -2804,12 +2809,40 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
             priority="medium",
         ),
         cloud_project_id=str(project.id),
-        origin_context={},
+        origin_context=(
+            {
+                "execution": {"workspace": {"source": "git_worktree"}},
+                "workflow_stage_input": {
+                    "target_stage": {"workspace_policy": "inherit"},
+                    "dependencies": [
+                        {
+                            "runtime_tasks": [
+                                {
+                                    "device_id": "local-device",
+                                    "task_id": "previous-task",
+                                }
+                            ]
+                        }
+                    ],
+                },
+            }
+            if inherit
+            else {}
+        ),
         execution_device_id="local-device",
     )
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
-    assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
+    if workspace_policy == "git_worktree" and not inherit:
+        assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
+    else:
+        assert payload.get("execution") is None
+    if inherit:
+        assert payload["workspaceSourceTask"] == {
+            "deviceId": "local-device",
+            "taskId": "previous-task",
+        }
+        assert payload.get("workspacePath") is None
 
 
 def test_claim_binds_canonical_runtime_identity(

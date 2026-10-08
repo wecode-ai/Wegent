@@ -336,6 +336,7 @@ describe('IssueComposer', () => {
         runtime: 'codex',
         message: '处理云端项目',
         deviceId: 'cloud-executor',
+        execution: { workspace: { source: 'git_worktree' } },
         runtimeProjectKey: 'remote:docs',
         runtimeProjectName: '文档',
         runtimeWorkspaceRoots: [],

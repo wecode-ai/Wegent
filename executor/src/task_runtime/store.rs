@@ -17,6 +17,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod code_projects;
+mod execution_workspace;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -341,7 +342,10 @@ impl LocalTaskStore {
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
         if let Some(execution_environment) = input.execution_environment {
-            metadata["execution_environment"] = execution_environment;
+            metadata["execution_environment"] = code_projects::merge_execution_environment(
+                &metadata["execution_environment"],
+                execution_environment,
+            );
         }
         let connection = self.connection()?;
         let updated = connection.execute(
@@ -550,8 +554,9 @@ impl LocalTaskStore {
                 None,
             );
         }
+        // Allocating an Issue number does not change editable project configuration.
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, now, project_id],
         )?;
@@ -1605,7 +1610,19 @@ impl LocalTaskStore {
             return Ok(None);
         }
         let mut execution = execution_row(&connection, candidate_id)?;
-        execution.execution_payload = Some(local_execution_runtime_payload(&execution));
+        drop(statement);
+        drop(connection);
+        let mut payload = local_execution_runtime_payload(&execution);
+        let project = self.get_project(&execution.cloud_project_id)?;
+        if let Err(error) = execution_workspace::apply_project_workspace(
+            &mut payload,
+            &project.metadata,
+            runtime_device_id,
+        ) {
+            self.fail_runtime_preflight(candidate_id, &error.to_string())?;
+            return Err(error);
+        }
+        execution.execution_payload = Some(payload);
         Ok(Some(execution))
     }
 
@@ -2437,7 +2454,7 @@ impl LocalTaskStore {
             "source_description": description,
         });
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, timestamp, DEFAULT_WORK_ITEM_PROJECT_ID],
         )?;
@@ -8650,6 +8667,10 @@ mod tests {
                 },
             )
             .unwrap();
+        assert_eq!(
+            store.get_project(&project.id).unwrap().version,
+            project.version
+        );
         let child = store
             .create_task(
                 &project.id,

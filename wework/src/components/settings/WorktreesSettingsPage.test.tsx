@@ -162,7 +162,7 @@ describe('WorktreesSettingsPage', () => {
     expect(screen.queryByText('已管理的工作树')).not.toBeInTheDocument()
     expect(within(screen.getByTestId('worktree-row')).getByText('工作树')).toBeInTheDocument()
     expect(screen.getByText('对话')).toBeInTheDocument()
-    expect(screen.getByTestId('delete-worktree-button-runtime-1')).toHaveTextContent('删除')
+    expect(screen.getByTestId('delete-worktree-button-runtime-1')).toHaveTextContent('归档并回收')
 
     await userEvent.click(screen.getByTestId('worktree-linked-task'))
     await waitFor(() =>
@@ -174,7 +174,7 @@ describe('WorktreesSettingsPage', () => {
     expect(onLeaveSettings).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps restorable snapshots out of the active worktree list', async () => {
+  test('shows restorable snapshots and restores the selected worktree', async () => {
     listWorktrees.mockResolvedValueOnce({
       success: true,
       deviceId: 'local-device',
@@ -193,9 +193,13 @@ describe('WorktreesSettingsPage', () => {
 
     render(<WorktreesSettingsPage api={api} devices={devices} />)
 
-    expect(await screen.findByText('创建的工作树将显示在此处。')).toBeInTheDocument()
-    expect(screen.queryByText(/worktrees\/restorable/)).not.toBeInTheDocument()
-    expect(screen.queryByText('可恢复')).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('restore-worktree-button-runtime-restorable'))
+    await waitFor(() =>
+      expect(restoreWorktree).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        path: '/Users/me/.wework/workspace/worktrees/restorable/repo',
+      })
+    )
   })
 
   test('updates cleanup settings and removes a deleted worktree without reloading the page', async () => {
@@ -221,6 +225,9 @@ describe('WorktreesSettingsPage', () => {
     expect(cleanupSwitch.querySelector('span span')).toHaveClass('translate-x-0.5')
 
     await userEvent.click(screen.getByTestId('delete-worktree-button-runtime-1'))
+    expect(deleteWorktree).not.toHaveBeenCalled()
+    listWorktrees.mockResolvedValueOnce({ success: true, deviceId: 'local-device', items: [] })
+    await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
     await waitFor(() =>
       expect(deleteWorktree).toHaveBeenCalledWith({
         deviceId: 'local-device',
@@ -232,7 +239,7 @@ describe('WorktreesSettingsPage', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('delete-worktree-button-runtime-1')).not.toBeInTheDocument()
     )
-    expect(listWorktrees).toHaveBeenCalledTimes(1)
+    expect(listWorktrees).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('worktrees-auto-cleanup-switch')).toBeInTheDocument()
   })
 

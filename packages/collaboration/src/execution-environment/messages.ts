@@ -9,6 +9,11 @@ export const executionEnvironmentMessages: Record<
   Readonly<Record<string, string>>
 > = {
   "zh-CN": {
+    "todo.workspace_policy": "任务工作区",
+    "todo.workspace_policy_isolated": "独立工作树（推荐）",
+    "todo.workspace_policy_shared": "共享项目目录",
+    "todo.workspace_policy_description":
+      "Git 仓库的新任务默认使用独立工作树；无仓库时使用环境目录。共享目录中的并行任务可能相互覆盖。修改仅影响新任务，无需重新初始化环境。",
     "todo.execution_environment_online": "在线",
     "todo.execution_environment_offline": "离线",
     "todo.execution_environment_provisioning": "准备中",
@@ -104,6 +109,11 @@ export const executionEnvironmentMessages: Record<
     "todo.personal_resource": "我的资源",
   },
   en: {
+    "todo.workspace_policy": "Task workspace",
+    "todo.workspace_policy_isolated": "Isolated worktree (recommended)",
+    "todo.workspace_policy_shared": "Shared project directory",
+    "todo.workspace_policy_description":
+      "New Git tasks use isolated worktrees; environments without a repository use their directory. Parallel tasks in a shared directory may overwrite each other. Changes affect new tasks only and do not require reinitialization.",
     "todo.execution_environment_online": "Online",
     "todo.execution_environment_offline": "Offline",
     "todo.execution_environment_provisioning": "Preparing",

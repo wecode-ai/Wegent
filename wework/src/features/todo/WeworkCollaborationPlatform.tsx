@@ -582,21 +582,16 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
-      const environments = await scopedApi.projects
-        .listExecutionEnvironments(String(project.id))
-        .catch(error => {
-          console.warn('[Wework collaboration] Failed to refresh project execution environments', {
-            projectId: project.id,
-            error,
-          })
-          return null
-        })
+      const [currentProject, environments] = await Promise.all([
+        scopedApi.projects.get(String(project.id)),
+        scopedApi.projects.listExecutionEnvironments(String(project.id)),
+      ])
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         taskRequest: {
-          ...(projectExecutionEnvironmentTaskRequest(project, {
+          ...(projectExecutionEnvironmentTaskRequest(currentProject, {
             workspace,
             environments,
           }) ?? {
@@ -805,7 +800,9 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
-                  showAdditionalTaskAction={taskBindings.length > 0}
+                  showAdditionalTaskAction={
+                    project.project_store === 'local' || issue.can_edit === true
+                  }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   taskExecutionStates={issueTaskExecutionStates(
                     taskBindings,

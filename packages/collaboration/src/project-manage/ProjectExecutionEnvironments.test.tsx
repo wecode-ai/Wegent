@@ -385,6 +385,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "git_worktree",
         repositories: [
           {
             name: "Wegent",
@@ -472,6 +473,7 @@ describe("ProjectExecutionEnvironments", () => {
       element<HTMLButtonElement>("-add-setup-step").click(),
     );
     await change("-setup-command-0", "mkdir -p generated");
+    await change("-workspace-policy", "project");
     expect(element<HTMLButtonElement>("-initialize-21").disabled).toBe(true);
 
     await saveConfiguration();
@@ -479,6 +481,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "project",
         repositories: [],
         setupSteps: [{ command: "mkdir -p generated", workingDirectory: "" }],
       },
@@ -981,6 +984,7 @@ describe("ProjectExecutionEnvironments", () => {
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith("project-1", {
       version: 1,
       executionEnvironment: {
+        workspacePolicy: "git_worktree",
         repositories: [
           {
             name: "Custom name",

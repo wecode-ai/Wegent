@@ -710,6 +710,7 @@ export function createDeliveryApi(client: HttpClient) {
             path: string
             primary: boolean
           }>
+          workspace_policy?: 'git_worktree' | 'project'
           setup_steps: Array<{
             command: string
             working_directory: string

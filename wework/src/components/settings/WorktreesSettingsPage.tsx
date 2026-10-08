@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type {
   DeviceInfo,
   RuntimeManagedWorktree,
@@ -55,12 +56,14 @@ function WorktreeRow({
   busy,
   openingTaskId,
   onDelete,
+  onRestore,
   onOpenConversation,
 }: {
   item: RuntimeManagedWorktree
   busy: boolean
   openingTaskId: string | null
   onDelete: () => void
+  onRestore: () => void
   onOpenConversation?: (conversation: RuntimeWorktreeConversation) => void
 }) {
   const { t } = useTranslation('common')
@@ -80,13 +83,21 @@ function WorktreeRow({
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            data-testid={`delete-worktree-button-${item.worktreeId}`}
-            onClick={onDelete}
+            data-testid={`${item.state === 'restorable' ? 'restore' : 'delete'}-worktree-button-${item.worktreeId}`}
+            onClick={item.state === 'restorable' ? onRestore : onDelete}
             disabled={busy}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:opacity-50"
+            className={
+              item.state === 'restorable'
+                ? 'inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-background disabled:opacity-50'
+                : 'inline-flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:opacity-50'
+            }
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t('workbench.worktrees_delete')}
+            {t(
+              item.state === 'restorable'
+                ? 'workbench.worktrees_restore'
+                : 'workbench.worktrees_delete'
+            )}
           </button>
         </div>
       </div>
@@ -150,6 +161,7 @@ export function WorktreesSettingsPage({
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const [openingTaskId, setOpeningTaskId] = useState<string | null>(null)
   const [pendingDisableCleanup, setPendingDisableCleanup] = useState(false)
+  const [pendingRecycle, setPendingRecycle] = useState<RuntimeManagedWorktree | null>(null)
   const [savedNotice, setSavedNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadSequence = useRef(0)
@@ -241,16 +253,15 @@ export function WorktreesSettingsPage({
       setBusyPath(item.path)
       setError(null)
       try {
-        await api.deleteWorktree({
+        const response = await api.deleteWorktree({
           deviceId: item.deviceId,
           path: item.path,
           preserveSnapshot: true,
         })
-        setItems(currentItems =>
-          currentItems.filter(
-            currentItem => currentItem.deviceId !== item.deviceId || currentItem.path !== item.path
-          )
-        )
+        if (!response.success) throw new Error(t('workbench.worktrees_delete_failed'))
+        setPendingRecycle(null)
+        await onRefreshWorkLists?.()
+        await load()
       } catch (deleteError) {
         setError(
           deleteError instanceof Error
@@ -261,11 +272,32 @@ export function WorktreesSettingsPage({
         setBusyPath(null)
       }
     },
-    [api, t]
+    [api, t, load, onRefreshWorkLists]
   )
 
+  const restoreWorktree = async (item: RuntimeManagedWorktree) => {
+    if (!api) return
+    setBusyPath(item.path)
+    setError(null)
+    try {
+      const response = await api.restoreWorktree({ deviceId: item.deviceId, path: item.path })
+      if (!response.success) throw new Error(t('workbench.worktrees_restore_failed'))
+      await onRefreshWorkLists?.()
+      await load()
+    } catch (restoreError) {
+      setError(
+        restoreError instanceof Error
+          ? restoreError.message
+          : t('workbench.worktrees_restore_failed')
+      )
+    } finally {
+      setBusyPath(null)
+    }
+  }
+
   const groups = useMemo(
-    () => groupWorktrees(items.filter(item => item.state === 'active')),
+    () =>
+      groupWorktrees(items.filter(item => item.state === 'active' || item.state === 'restorable')),
     [items]
   )
   const unavailable = !api || availableDevices.length === 0
@@ -450,7 +482,8 @@ export function WorktreesSettingsPage({
                       item={item}
                       busy={busyPath === item.path}
                       openingTaskId={openingTaskId}
-                      onDelete={() => void deleteWorktree(item)}
+                      onDelete={() => setPendingRecycle(item)}
+                      onRestore={() => void restoreWorktree(item)}
                       onOpenConversation={
                         onOpenRuntimeTask
                           ? conversation => void openConversation(conversation)
@@ -485,6 +518,20 @@ export function WorktreesSettingsPage({
         </div>
       )}
 
+      <ConfirmDialog
+        open={Boolean(pendingRecycle)}
+        title={t('workbench.worktrees_delete')}
+        description={t('workbench.worktrees_recycle_description')}
+        cancelLabel={t('cancel')}
+        confirmLabel={t('workbench.worktrees_delete')}
+        confirmTestId="confirm-recycle-worktree-button"
+        destructive
+        pending={Boolean(busyPath)}
+        onClose={() => setPendingRecycle(null)}
+        onConfirm={() => {
+          if (pendingRecycle) void deleteWorktree(pendingRecycle)
+        }}
+      />
       {pendingDisableCleanup && (
         <div
           className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"

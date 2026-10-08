@@ -297,7 +297,6 @@ export function ProjectChatAgentEditor({
         executionMode: 'auto' as const,
         executionDeviceId: null,
         maxConcurrentExecutions: legacyConfig.maxConcurrentExecutions,
-        workspacePolicy: 'git_worktree' as const,
         plugins: definition.plugins,
       }
       if (editingAgentId) {
