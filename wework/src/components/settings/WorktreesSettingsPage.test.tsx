@@ -226,6 +226,9 @@ describe('WorktreesSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('delete-worktree-button-runtime-1'))
     expect(deleteWorktree).not.toHaveBeenCalled()
+    expect(screen.getByTestId('confirm-recycle-worktree-button-cancel-button')).toHaveTextContent(
+      '取消'
+    )
     listWorktrees.mockResolvedValueOnce({ success: true, deviceId: 'local-device', items: [] })
     await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
     await waitFor(() =>

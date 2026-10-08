@@ -244,26 +244,33 @@ export function createDesktopScenario({
       await access(join(isolatedAgent.workspacePath, '.git'))
       const markerPath = join(isolated.workspacePath, 'restore-evidence.txt')
       await writeFile(markerPath, 'Snapshot recovery evidence\n')
-      await control.command('click', '[data-testid="settings-button"]')
-      await control.command('click', '[data-testid="settings-menu-button"]')
-      await control.command('click', '[data-testid="settings-nav-worktrees"]')
+      await runChecked('git', ['status', '--porcelain', '--untracked-files=all'], {
+        cwd: isolated.workspacePath,
+      })
+      await control.command('click', '[data-testid="settings-button"]', { visible: true })
+      await control.command('click', '[data-testid="settings-menu-button"]', { visible: true })
+      await control.command('click', '[data-testid="settings-nav-worktrees"]', { visible: true })
       const remove = `[data-testid="delete-worktree-button-${isolated.taskId}"]`
-      await control.command('waitFor', remove)
-      await control.command('click', remove)
+      await control.command('waitFor', remove, { visible: true })
+      await control.command('click', remove, { visible: true })
       await access(markerPath)
       await control.command(
         'click',
-        '[data-testid="confirm-recycle-worktree-button-cancel-button"]'
+        '[data-testid="confirm-recycle-worktree-button-cancel-button"]',
+        { visible: true }
       )
       await access(markerPath)
-      await control.command('click', remove)
-      await control.command('click', '[data-testid="confirm-recycle-worktree-button"]')
+      await control.command('click', remove, { visible: true })
+      await control.command('click', '[data-testid="confirm-recycle-worktree-button"]', {
+        visible: true,
+      })
       const restore = `[data-testid="restore-worktree-button-${isolated.taskId}"]`
-      await control.command('waitFor', restore)
+      await control.command('waitFor', restore, { visible: true })
       await assert.rejects(access(isolated.workspacePath), { code: 'ENOENT' })
       await captureScreenshot(control, 'worktree-policy-02-restorable.png', 'body')
-      await control.command('click', restore)
-      await control.command('waitFor', remove)
+      await control.command('click', restore, { visible: true })
+      await control.command('waitFor', `${remove}:not(:disabled)`, { visible: true })
+      await runChecked('git', ['log', '-1', '--stat'], { cwd: isolated.workspacePath })
       assert.equal(await readFile(markerPath, 'utf8'), 'Snapshot recovery evidence\n')
       await captureScreenshot(control, 'worktree-policy-03-restored.png', 'body')
     },

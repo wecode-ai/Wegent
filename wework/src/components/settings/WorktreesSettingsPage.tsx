@@ -522,7 +522,7 @@ export function WorktreesSettingsPage({
         open={Boolean(pendingRecycle)}
         title={t('workbench.worktrees_delete')}
         description={t('workbench.worktrees_recycle_description')}
-        cancelLabel={t('cancel')}
+        cancelLabel={t('common.cancel')}
         confirmLabel={t('workbench.worktrees_delete')}
         confirmTestId="confirm-recycle-worktree-button"
         destructive
