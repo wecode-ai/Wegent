@@ -130,7 +130,12 @@ export interface CollaborationIssue {
   execution_note?: string | null;
   can_approve?: boolean;
   human_work?: CollaborationHumanWork | null;
-  ai_state?: { status?: string | null; last_error?: string | null } | null;
+  ai_state?: {
+    status?: string | null;
+    last_error?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+  } | null;
   title: string;
   description: string;
   status: string;

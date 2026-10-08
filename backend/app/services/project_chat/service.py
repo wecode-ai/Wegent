@@ -15,6 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -749,7 +750,7 @@ class ProjectChatService:
             self._commit(db)
             for row in rows:
                 db.refresh(row)
-        return [self.to_view(row) for row in rows]
+        return [self.to_view(row, db=db) for row in rows]
 
     def send(
         self,
@@ -782,7 +783,7 @@ class ProjectChatService:
                     status.HTTP_409_CONFLICT,
                     "client_message_id already belongs to another project",
                 )
-            return ProjectChatWriteResult(self.to_view(existing), created=False)
+            return ProjectChatWriteResult(self.to_view(existing, db=db), created=False)
 
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         metadata = {
@@ -838,7 +839,7 @@ class ProjectChatService:
                 self._queue_loop_item_change(db, item)
         self._commit(db)
         db.refresh(row)
-        return ProjectChatWriteResult(self.to_view(row), created=True)
+        return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
 
     def _resolve_reply_context(
         self,
@@ -939,7 +940,7 @@ class ProjectChatService:
                 )
                 self._commit(db)
             db.refresh(existing)
-            return self.to_view(existing)
+            return self.to_view(existing, db=db)
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         run_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         metadata = {
@@ -1008,9 +1009,9 @@ class ProjectChatService:
             if existing is None:
                 raise
             db.refresh(existing)
-            return self.to_view(existing)
+            return self.to_view(existing, db=db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     @staticmethod
     def _runtime_activity_key(
@@ -1092,7 +1093,7 @@ class ProjectChatService:
             self._commit(db)
             db.refresh(row)
             return (
-                self.to_view(row).model_copy(
+                self.to_view(row, db=db).model_copy(
                     update={
                         "content": delta,
                         "metadata": {"contentMode": "delta"},
@@ -1139,7 +1140,7 @@ class ProjectChatService:
             return None
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row), "snapshot"
+        return self.to_view(row, db=db), "snapshot"
 
     @staticmethod
     def _project_automation_activity_is_terminal(
@@ -1277,7 +1278,7 @@ class ProjectChatService:
         )
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     def _finish_activity(
         self,
@@ -1489,7 +1490,7 @@ class ProjectChatService:
             existing.message_type = "text"
         self._commit(db)
         db.refresh(existing)
-        return self.to_view(existing), "snapshot"
+        return self.to_view(existing, db=db), "snapshot"
 
     @staticmethod
     def _subagent_name(data: dict) -> str | None:
@@ -1910,7 +1911,7 @@ class ProjectChatService:
         )
         self._commit(db)
         db.refresh(row)
-        return self.to_view(row)
+        return self.to_view(row, db=db)
 
     def _require_scope(
         self,
@@ -2184,7 +2185,7 @@ class ProjectChatService:
         )
 
     @staticmethod
-    def to_view(row: ProjectChatMessage) -> ProjectChatMessageView:
+    def to_view(row: ProjectChatMessage, *, db: Session) -> ProjectChatMessageView:
         runtime_address = None
         if row.runtime_device_id and row.runtime_task_id:
             runtime_address = {
@@ -2211,8 +2212,8 @@ class ProjectChatService:
             agent_id=row.agent_id or None,
             runtime_address=runtime_address,
             status=row.status,
-            created_at=row.created_at.isoformat(),
-            updated_at=row.updated_at.isoformat(),
+            created_at=database_datetime_as_utc(db, row.created_at).isoformat(),
+            updated_at=database_datetime_as_utc(db, row.updated_at).isoformat(),
         )
 
 

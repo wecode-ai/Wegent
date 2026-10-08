@@ -130,7 +130,7 @@ def reconcile_execution_snapshot(
             changed.append(row)
     project_chat_service._commit(db)
     return [
-        project_chat_service.to_view(row).model_dump(mode="json", by_alias=True)
+        project_chat_service.to_view(row, db=db).model_dump(mode="json", by_alias=True)
         for row in changed
     ]
 

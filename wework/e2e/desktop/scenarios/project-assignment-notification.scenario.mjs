@@ -253,6 +253,71 @@ async function createIssue(control, projectId, request, owner, uiTimeoutMs, titl
   )
 }
 
+async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
+  const tag = `验收标签-${process.pid}`
+  const temporaryTag = `临时标签-${process.pid}`
+  const trigger = scoped('[data-testid="cloud-todo-more-properties"]')
+  const popover = '[data-testid="cloud-todo-more-properties-popover"]'
+  const input = `${popover} [data-testid="cloud-todo-detail-tag-input"]`
+  const chip = `${popover} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const assertDismissed = async () => {
+    await waitForValue(
+      () => control.command('getElementCount', popover),
+      value => Number(value) === 0,
+      'More properties did not dismiss',
+      uiTimeoutMs
+    )
+    assert.equal(
+      await control.command('getAttribute', trigger, { value: 'aria-expanded' }),
+      'false'
+    )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', scoped('[data-testid="cloud-todo-detail-title"]'))
+      ),
+      1
+    )
+  }
+  await control.command('click', trigger)
+  assert.equal(
+    await control.command('getComputedStyleValue', input, { value: 'opacity' }),
+    '1',
+    'Issue tag text and caret must not be hidden by a transparent input overlay'
+  )
+  await control.command('fill', input, { value: tag })
+  assert.equal(await control.command('getValue', input), tag)
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertDismissed()
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('fill', input, { value: tag })
+  await control.command('press', input, { key: 'Enter' })
+  assert.equal(Number(await control.command('getElementCount', chip)), 1)
+  await control.command('fill', input, { value: temporaryTag })
+  await control.command('press', input, { key: 'Enter' })
+  await control.command(
+    'click',
+    `${popover} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
+  )
+  await control.command('press', input, { key: 'Escape' })
+  await assertDismissed()
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
+  await assertDismissed()
+  const updated = await waitForValue(
+    () => request(`/api/v1/loop-items/${issue.id}`),
+    value => value.tags?.length === 1 && value.tags[0] === tag,
+    'Issue tags were not persisted after adding, deduplicating and removing tags',
+    uiTimeoutMs
+  )
+  await control.command('click', trigger)
+  await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertDismissed()
+  return updated
+}
+
 async function verifyManualReviewCycle(control, request, projectId, owner, uiTimeoutMs, capture) {
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
   const manualIssue = await createIssue(
@@ -486,6 +551,7 @@ export function createDesktopScenario({
       assert.equal(Object.keys(project.execution_environment?.devices ?? {}).length, 0)
       issue = await createIssue(control, project.id, ownerRequest, owner, uiTimeoutMs)
       assert.equal(String(issue.assignee_user_id), String(owner.id))
+      issue = await verifyIssueTags(control, ownerRequest, issue, uiTimeoutMs)
       await captureScreenshot(control, 'assignment-00-created-without-environment.png', CONTENT)
       await control.command('click', '[data-testid="cloud-todo-detail-close"]')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(

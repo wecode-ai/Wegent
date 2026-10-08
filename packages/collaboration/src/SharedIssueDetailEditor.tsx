@@ -44,6 +44,7 @@ import {
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
+  issueExecutionElapsedMinutes,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
   persistIssueDetailDraft,
@@ -73,6 +74,7 @@ import type {
 } from "./types";
 import { markdownAttachmentRows } from "./issue-detail/attachmentMarkdown";
 import { TagEditor } from "./issue-detail/TagEditor";
+import { IssuePropertiesPopover } from "./issue-detail/IssuePropertiesPopover";
 import { localizeStandardStatuses } from "./i18n";
 import { ExecutionConfigurationNotice } from "./runtime-profile/ExecutionConfigurationNotice";
 
@@ -390,6 +392,7 @@ function RailProp({
   testId,
   clickable = Boolean(control),
   valueClassName,
+  wrapValue = false,
 }: {
   label: string;
   children: ReactNode;
@@ -397,6 +400,7 @@ function RailProp({
   testId?: string;
   clickable?: boolean;
   valueClassName?: string;
+  wrapValue?: boolean;
 }) {
   return (
     <span
@@ -408,7 +412,8 @@ function RailProp({
       </span>
       <span
         className={cn(
-          "task-detail-rail-value flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-medium leading-5 text-text-primary",
+          "task-detail-rail-value flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium leading-5 text-text-primary",
+          wrapValue ? "overflow-visible" : "truncate",
           clickable && "group relative",
           valueClassName,
         )}
@@ -416,7 +421,12 @@ function RailProp({
         {clickable ? (
           <span className="pointer-events-none absolute -inset-x-1.5 -inset-y-[3px] rounded-md transition group-hover:bg-muted" />
         ) : null}
-        <span className="task-detail-rail-value-content relative flex min-w-0 items-center gap-1.5 truncate">
+        <span
+          className={cn(
+            "task-detail-rail-value-content relative flex min-w-0 items-center gap-1.5",
+            wrapValue ? "w-full overflow-visible" : "truncate",
+          )}
+        >
           {children}
         </span>
         {control}
@@ -1216,18 +1226,7 @@ export function TodoEditor(props: TodoEditorProps) {
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
     (showChildren && childItems.length > 0);
-  const executionStartedAt = displayedTasks
-    .map((task) => task.linked_at)
-    .filter(Boolean)
-    .sort()[0];
-  const executionElapsedMinutes = executionStartedAt
-    ? Math.max(
-        1,
-        Math.floor(
-          (Date.now() - new Date(executionStartedAt).getTime()) / 60_000,
-        ),
-      )
-    : null;
+  const executionElapsedMinutes = issueExecutionElapsedMinutes(item?.ai_state);
   const executionElapsedLabel =
     executionElapsedMinutes === null
       ? t("todo.not_started", "未开始")
@@ -2412,50 +2411,20 @@ export function TodoEditor(props: TodoEditorProps) {
           <RailProp
             label={t("todo.project_tags", "标签")}
             clickable={false}
-            valueClassName="overflow-visible"
+            wrapValue
           >
-            <span className="task-detail-workspace-tags">
-              {tags.map((tag) => (
-                <span
-                  key={tag}
-                  data-testid={`cloud-todo-detail-tag-tag-${tag}`}
-                  className="task-detail-workspace-tag"
-                >
-                  {tag}
-                  {editable ? (
-                    <button
-                      type="button"
-                      aria-label={`移除标签 ${tag}`}
-                      data-testid={`cloud-todo-detail-tag-tag-remove-${tag}`}
-                      onClick={() =>
-                        setTags((current) =>
-                          current.filter((candidate) => candidate !== tag),
-                        )
-                      }
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </span>
-              ))}
-              {editable ? (
-                <label className="task-detail-workspace-tag-add">
-                  <Plus className="h-3 w-3" />
-                  <span>{t("todo.add_tag", "添加标签")}</span>
-                  <input
-                    data-testid="cloud-todo-detail-tag-input"
-                    value={tagDraft}
-                    onChange={(event) => setTagDraft(event.target.value)}
-                    onBlur={commitTagDraft}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === ",") {
-                        event.preventDefault();
-                        commitTagDraft();
-                      }
-                    }}
-                  />
-                </label>
-              ) : null}
+            <span className="task-detail-workspace-tags w-full">
+              <TagEditor
+                testIdPrefix="cloud-todo-detail-tag"
+                tags={tags}
+                onChange={setTags}
+                disabled={!editable}
+                suggestions={tagSuggestions}
+                placeholder={t("todo.add_tag", "添加标签")}
+                removeLabel={(tag) =>
+                  t("todo.remove_name", "删除 {{name}}", { name: tag })
+                }
+              />
             </span>
           </RailProp>
           {railProps}
@@ -2580,27 +2549,21 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           ) : null}
           {workspacePanel && item ? (
-            <details className="task-detail-more-menu">
-              <summary
-                aria-label={t("todo.more_properties", "更多信息")}
-                data-testid="cloud-todo-more-properties"
-              >
-                •••
-              </summary>
-              <div className="task-detail-more-menu-popover">
-                {workspaceProperties}
-                {editable && props.onDelete ? (
-                  <button
-                    className="task-detail-more-menu-danger"
-                    data-testid="cloud-todo-detail-delete"
-                    onClick={props.onDelete}
-                    type="button"
-                  >
-                    {t("todo.delete_issue", "删除任务")}
-                  </button>
-                ) : null}
-              </div>
-            </details>
+            <IssuePropertiesPopover
+              label={t("todo.more_properties", "更多信息")}
+            >
+              {workspaceProperties}
+              {editable && props.onDelete ? (
+                <button
+                  className="task-detail-more-menu-danger"
+                  data-testid="cloud-todo-detail-delete"
+                  onClick={props.onDelete}
+                  type="button"
+                >
+                  {t("todo.delete_issue", "删除任务")}
+                </button>
+              ) : null}
+            </IssuePropertiesPopover>
           ) : null}
           {twoColumn && !isCreate ? (
             <>
@@ -2772,6 +2735,10 @@ export function TodoEditor(props: TodoEditorProps) {
                     onChange={setTags}
                     disabled={!editable}
                     suggestions={tagSuggestions}
+                    placeholder={t("todo.add_tag", "添加标签")}
+                    removeLabel={(tag) =>
+                      t("todo.remove_name", "删除 {{name}}", { name: tag })
+                    }
                   />
                 </div>
               ) : null}
@@ -3078,7 +3045,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         </select>
                       ) : null}
                     </span>
-                    {executionTaskCount > 0 || executionStartedAt ? (
+                    {executionTaskCount > 0 ||
+                    executionElapsedMinutes !== null ? (
                       <span className="task-detail-state-metrics">
                         {executionTaskCount > 0 ? (
                           <span title={t("todo.execution_tasks", "执行任务")}>
@@ -3086,12 +3054,14 @@ export function TodoEditor(props: TodoEditorProps) {
                             <strong>{executionTaskCount}</strong>
                           </span>
                         ) : null}
-                        {executionStartedAt ? (
+                        {executionElapsedMinutes !== null ? (
                           <span
                             title={t("todo.execution_duration", "执行时长")}
                           >
                             <History aria-hidden="true" size={15} />
-                            <strong>{executionElapsedLabel}</strong>
+                            <strong data-testid="cloud-todo-execution-duration">
+                              {executionElapsedLabel}
+                            </strong>
                           </span>
                         ) : null}
                       </span>

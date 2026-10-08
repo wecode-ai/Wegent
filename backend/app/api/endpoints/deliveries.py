@@ -145,7 +145,9 @@ async def _human_work_response(
     from app.core.socketio import get_sio
     from app.services.project_chat.service import ProjectChatService
 
-    message_view = ProjectChatService.to_view(message) if message is not None else None
+    message_view = (
+        ProjectChatService.to_view(message, db=db) if message is not None else None
+    )
     if created and message_view is not None:
         try:
             await get_sio().emit(

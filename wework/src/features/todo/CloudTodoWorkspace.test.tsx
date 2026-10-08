@@ -691,7 +691,7 @@ async function expandIssueExecutionDetails() {
 
 async function openIssueMoreProperties() {
   const trigger = screen.getByTestId('cloud-todo-more-properties')
-  if (!trigger.closest('details')?.open) {
+  if (trigger.getAttribute('aria-expanded') !== 'true') {
     await userEvent.click(trigger)
   }
 }

@@ -22,6 +22,7 @@ import {
   IssueActivityThread,
   groupIssueActivityThreads,
   createCollaborationTranslator,
+  compareIssueTimestamps,
   formatIssueTimestamp,
   executionDisplayStatus,
   isExecutionActive,
@@ -582,7 +583,7 @@ export function TaskActivityView({
       })),
       ...comments,
     ].sort((left, right) => {
-      const delta = Date.parse(left.at) - Date.parse(right.at)
+      const delta = compareIssueTimestamps(left.at, right.at)
       if (delta) return delta
       const order = { created: 0, status: 1, comment: 2 }
       return order[left.kind] - order[right.kind] || left.index - right.index

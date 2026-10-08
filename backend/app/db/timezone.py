@@ -4,7 +4,7 @@
 
 """Database-session timezone helpers."""
 
-from datetime import timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -18,3 +18,10 @@ def database_datetime_timezone(db: Session) -> timezone:
     if bind is not None and bind.dialect.name == "sqlite":
         return timezone.utc
     return MYSQL_SESSION_TIMEZONE
+
+
+def database_datetime_as_utc(db: Session, value: datetime) -> datetime:
+    """Normalize a database-generated timestamp without shifting aware values."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=database_datetime_timezone(db))
+    return value.astimezone(UTC)

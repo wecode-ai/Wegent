@@ -19,6 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_as_utc
 from app.models.cloud_project import (
     CloudProject,
     LoopItemTaskBinding,
@@ -209,6 +210,8 @@ class LoopItemService:
         )
         values = {
             **item.__dict__,
+            "created_at": database_datetime_as_utc(db, item.created_at),
+            "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
             "security_level": item_security(item, access.project),
@@ -349,8 +352,9 @@ class LoopItemService:
         if message is not None and message.status in {"completed", "failed"}:
             state["status"] = "succeeded" if message.status == "completed" else "failed"
             state["lease_expires_at"] = None
-            state["completed_at"] = message.updated_at.isoformat()
-            state["updated_at"] = message.updated_at.isoformat()
+            completed_at = database_datetime_as_utc(db, message.updated_at).isoformat()
+            state["completed_at"] = completed_at
+            state["updated_at"] = completed_at
             if message.status == "failed" and message.content:
                 state["last_error"] = message.content[:10_000]
             return state

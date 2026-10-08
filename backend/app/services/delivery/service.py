@@ -195,7 +195,7 @@ class DeliveryService:
         return {
             "selection": selection.model_dump(mode="json"),
             "messages": [
-                project_chat_service.to_view(row).model_dump(mode="json")
+                project_chat_service.to_view(row, db=db).model_dump(mode="json")
                 for row in rows
             ],
         }

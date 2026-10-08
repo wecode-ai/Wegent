@@ -594,7 +594,9 @@ def enqueue_execution_batch(
     if should_push_assignment and assignment_message is not None:
         db.refresh(assignment_message)
         push_project_chat_message(
-            project_chat_service.to_view(assignment_message).model_dump(by_alias=True)
+            project_chat_service.to_view(assignment_message, db=db).model_dump(
+                by_alias=True
+            )
         )
     return {
         "dispatch_id": values.dispatch_id,
@@ -618,7 +620,7 @@ def report_collaboration_assignment_status(
         project_id=project_id,
         values=values,
     )
-    view = project_chat_service.to_view(message).model_dump(by_alias=True)
+    view = project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
     if changed:
         push_project_chat_message(view)
     return {"message": view, "changed": changed}
@@ -660,7 +662,7 @@ def decide_collaboration_issue_status(
             )
         ).model_dump(mode="json"),
         "comment": (
-            project_chat_service.to_view(decision.comment).model_dump(
+            project_chat_service.to_view(decision.comment, db=db).model_dump(
                 mode="json",
                 by_alias=True,
             )

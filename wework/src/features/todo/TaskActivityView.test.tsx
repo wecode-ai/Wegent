@@ -1338,13 +1338,13 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('interleaves Issue status changes with complete comment threads and keeps execution status inside the comment', async () => {
+  it('interleaves UTC-naive comments and offset-aware status changes and keeps execution status inside the comment', async () => {
     const user = userEvent.setup()
     const openTaskConversation = vi.fn()
     const root = {
       ...userMessage,
       content: '请完成接入',
-      createdAt: '2026-08-03T10:00:00Z',
+      createdAt: '2026-08-03T10:00:00',
     }
     const execution = {
       ...agentMessage,
@@ -1414,7 +1414,7 @@ describe('TaskActivityView', () => {
             to_status_name: '进行中',
             trigger: 'user_update',
             by_user_id: 1,
-            at: '2026-08-03T09:00:00Z',
+            at: '2026-08-03T17:00:00+08:00',
           },
           {
             from_status: 'in_progress',
@@ -1462,7 +1462,7 @@ describe('TaskActivityView', () => {
     const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
     expect(within(card).queryByTestId('cloud-task-activity-open-task-message-2')).toBeNull()
     const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
-    expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
+    expect(actions.querySelector('time')).toHaveAttribute('datetime', root.createdAt)
     expect(
       within(card).getByTestId('cloud-task-activity-message-message-1').querySelector('header time')
     ).toBeNull()
