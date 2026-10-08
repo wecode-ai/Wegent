@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { TFunction } from 'i18next'
 import { ApiError, createHttpClient } from '@/api/http'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   claimDesktopCloudAuthorization,
   clearDesktopCloudCredentials,
@@ -63,6 +65,8 @@ const ACCESS_TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000
 const ACCESS_TOKEN_REFRESH_RETRY_MS = 60 * 1000
 const ACCESS_TOKEN_REFRESH_TIMEOUT_MS = 45 * 1000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+/** Stable code the main process reports when a cloud credential call times out. */
+const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_CODE = 'request_timeout'
 
 /**
  * Refresh the desktop access token with a bound.
@@ -80,8 +84,8 @@ async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<strin
       ACCESS_TOKEN_REFRESH_TIMEOUT_MS,
       timeoutMs =>
         new DesktopCloudCredentialError(
-          'request_failed',
-          `刷新云端登录凭证超过 ${Math.round(timeoutMs / 1000)}s 未返回`,
+          'request_timeout',
+          `Cloud credential refresh timed out after ${Math.round(timeoutMs / 1000)}s`,
           null
         )
     )
@@ -411,8 +415,15 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
   })
 }
 
-function getCloudErrorMessage(error: unknown): string {
+function getCloudErrorMessage(error: unknown, t: TFunction): string {
+  // The re-login banner keys off this exact sentinel.
   if (error instanceof ApiError && error.status === 401) return 'Cloud login has expired'
+  if (
+    error instanceof DesktopCloudCredentialError &&
+    error.code === CLOUD_CREDENTIAL_REQUEST_TIMEOUT_CODE
+  ) {
+    return t('workbench.cloud_connection_request_timeout', '云端请求超时，请稍后重试。')
+  }
   return rawErrorMessage(error)
 }
 
@@ -421,6 +432,7 @@ interface CloudConnectionProviderProps {
 }
 
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
+  const { t } = useTranslation('common')
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
   const initialRefreshStartedRef = useRef(false)
@@ -596,13 +608,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
                 ...config,
                 status: 'error',
                 token: null,
-                error: getCloudErrorMessage(error),
+                error: getCloudErrorMessage(error, t),
               }
         )
         throw error
       }
     },
-    [applyConnectedSnapshot]
+    [applyConnectedSnapshot, t]
   )
   const refreshUser = useCallback((): Promise<User | null> => {
     if (disconnectRequestedRef.current) return Promise.resolve(null)
@@ -679,7 +691,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             : {
                 ...current,
                 status: current.status === 'connected' && current.token ? 'connected' : 'error',
-                error: getCloudErrorMessage(error),
+                error: getCloudErrorMessage(error, t),
               }
         )
         return null
@@ -702,6 +714,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     snapshot.socketBaseUrl,
     snapshot.socketPath,
     snapshot.token,
+    t,
   ])
 
   const refreshAutomatically = useCallback(() => {

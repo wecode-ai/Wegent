@@ -972,6 +972,7 @@
     "remote_device_refresh": "我已启动，刷新设备",
     "cloud_connection_attention": "云端连接已失效",
     "cloud_connection_relogin_required": "云端登录已过期，请重新登录。",
+    "cloud_connection_request_timeout": "云端请求超时，请稍后重试。",
     "cloud_connection_manage": "管理云端连接",
     "cloud_connection_add_device": "添加设备",
     "cloud_connection_sidebar_disconnected": "连接云端",

@@ -68,8 +68,8 @@ describe('CloudCredentialService', () => {
 
     await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
       {
-        code: 'request_failed',
-        message: '云端凭证请求超过 30s 未返回',
+        code: 'request_timeout',
+        message: 'Cloud credential request timed out',
       } satisfies Partial<CloudCredentialError>
     )
     expect(request.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)

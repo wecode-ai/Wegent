@@ -76,10 +76,8 @@ export class CloudCredentialService {
       })
     } catch (error) {
       if ((error as { name?: unknown })?.name === 'TimeoutError') {
-        throw new CloudCredentialError(
-          'request_failed',
-          `云端凭证请求超过 ${Math.round(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS / 1000)}s 未返回`
-        )
+        // The host has no locale, so report a stable code the renderer can show.
+        throw new CloudCredentialError('request_timeout', 'Cloud credential request timed out')
       }
       throw error
     }

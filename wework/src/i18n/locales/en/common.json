@@ -973,6 +973,7 @@
     "remote_device_refresh": "Started it, refresh devices",
     "cloud_connection_attention": "Cloud connection expired",
     "cloud_connection_relogin_required": "Cloud login has expired. Please log in again.",
+    "cloud_connection_request_timeout": "The cloud request timed out. Please try again.",
     "cloud_connection_manage": "Manage cloud connection",
     "cloud_connection_add_device": "Add device",
     "cloud_connection_sidebar_disconnected": "Connect cloud",
