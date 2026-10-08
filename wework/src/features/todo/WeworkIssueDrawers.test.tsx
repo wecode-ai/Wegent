@@ -25,6 +25,9 @@ const issue = {
 } as CollaborationIssue
 let taskBindings: WorkspaceTaskBinding[] = []
 let chatMountCount = 0
+let latestExecutionEnvironment: ComponentProps<
+  typeof WeworkSharedProject
+>['project']['execution_environment']
 const getAnimations = vi.fn((): Partial<Animation>[] => [])
 const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, 'getAnimations')
 
@@ -38,6 +41,7 @@ beforeEach(() => {
   getAnimations.mockReset().mockReturnValue([])
   taskBindings = []
   chatMountCount = 0
+  latestExecutionEnvironment = undefined
 })
 afterAll(() => {
   if (originalGetAnimations) {
@@ -96,7 +100,16 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
           assignments: [],
           taskBindings,
           onChange: vi.fn(),
-          onCreateTask: () => props.onCreateTask?.({ id: 'project' } as never, issue),
+          onCreateTask: () =>
+            props.onCreateTask?.(
+              {
+                ...props.initialProject,
+                ...(latestExecutionEnvironment
+                  ? { execution_environment: latestExecutionEnvironment }
+                  : {}),
+              } as never,
+              issue
+            ),
           onClose: () => props.host.navigate({ ...props.host.location, issueId: null }),
         })}
     </>
@@ -357,6 +370,44 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-workspace-path',
       '/srv/collaboration/project'
+    )
+  })
+
+  it('uses the freshly initialized project instead of the stale host project', async () => {
+    taskBindings = [
+      {
+        id: 'binding-existing',
+        projectId: 'project',
+        issueId: issue.id,
+        taskUserId: 1,
+        deviceId: 'previous-device',
+        taskId: 'previous-task',
+        backendTaskId: null,
+        linkedAt: '2026-09-20T00:00:00Z',
+      },
+    ]
+    render(<Project />)
+    latestExecutionEnvironment = {
+      repositories: [],
+      setup_steps: [],
+      devices: {
+        'shared-runtime-device': {
+          status: 'ready',
+          workspace_path: '/srv/collaboration/fresh-environment',
+        },
+      },
+    }
+
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-device-id',
+      'shared-runtime-device'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-workspace-path',
+      '/srv/collaboration/fresh-environment'
     )
   })
 

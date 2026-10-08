@@ -334,6 +334,11 @@ export function createDesktopScenario({
       backendUrl = cloud.backendUrl
       ownerToken = cloud.authToken
       owner = await ownerRequest('/api/users/me')
+      // A provider proxy must never intercept device-to-backend model traffic.
+      await ownerRequest('/api/users/me/proxy-config', {
+        method: 'PUT',
+        body: JSON.stringify({ proxy_url: 'http://127.0.0.1:1' }),
+      })
     },
 
     setCloudEnvironment(environment) {
@@ -516,6 +521,11 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       runtimeTaskId = binding.task_id
+      assert.equal(
+        binding.device_id,
+        remoteDevice.device_id,
+        'AI assistance must use the prepared remote environment, not Local Executor'
+      )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
       assert.equal(binding.task_title, ISSUE)
       await control.command(

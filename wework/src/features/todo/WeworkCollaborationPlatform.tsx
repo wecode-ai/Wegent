@@ -581,7 +581,11 @@ export function WeworkSharedProject({
   }, [detailServices?.projectChatClient, project.id])
 
   const openNewTaskConversation = useCallback(
-    async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
+    async (
+      issue: CollaborationIssue,
+      dispatch?: IssueDispatchPersonalTaskAction,
+      executionProject: CollaborationProject = project
+    ) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
       const humanWorkBinding = issue.human_work?.can_submit
         ? issue.human_work.ai_task_binding
@@ -601,7 +605,7 @@ export function WeworkSharedProject({
         dispatch,
         humanWorkBinding,
         taskRequest: {
-          ...(projectExecutionEnvironmentTaskRequest(project, {
+          ...(projectExecutionEnvironmentTaskRequest(executionProject, {
             workspace,
             environments,
           }) ?? {
@@ -786,7 +790,9 @@ export function WeworkSharedProject({
           issueDeleteEnabled
           onPrepareIssueDelete={prepareIssueDelete}
           onCreateTask={
-            runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
+            runtimePort
+              ? async (taskProject, issue) => openNewTaskConversation(issue, undefined, taskProject)
+              : undefined
           }
           renderIssueDetail={({
             api: issueApi,
