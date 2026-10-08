@@ -5,6 +5,11 @@ import { createBoardReplyModelRegression } from '../modules/board-reply-model.mj
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import {
+  verifyIssueDetailPropertyUi,
+  verifyNewDiscussionComposerUi,
+  verifyReplyComposerUi,
+} from '../modules/collaboration-issue-detail-ui.mjs'
+import {
   verifyIssueActivityTimeline,
   verifyCommentExecutionStatus,
 } from '../modules/issue-activity-timeline.mjs'
@@ -388,6 +393,8 @@ export function createDesktopScenario({
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
         const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
+        await verifyIssueDetailPropertyUi(control, scoped, uiTimeoutMs)
+        await verifyNewDiscussionComposerUi(control, scoped, uiTimeoutMs)
         assert.equal(
           await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
           ISSUE_TITLE,
@@ -407,6 +414,7 @@ export function createDesktopScenario({
           '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
         )
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
+        await verifyReplyComposerUi(control, scoped, uiTimeoutMs)
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })

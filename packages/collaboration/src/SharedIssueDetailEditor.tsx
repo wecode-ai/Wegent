@@ -24,6 +24,7 @@ import {
   Flag,
   Folder,
   History,
+  Eye,
   Link2,
   ListTodo,
   Maximize2,
@@ -44,6 +45,7 @@ import {
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
+  Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
   persistIssueDetailDraft,
@@ -2102,6 +2104,11 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusLabel}
     </>
   );
+  const assigneeDisplayName = assigneeName ?? t("todo.unassigned", "未指派");
+  const issueSecurityLabel =
+    item?.security_level === "related"
+      ? t("todo.issue_security_related", "仅相关人员可见")
+      : t("todo.issue_security_open", "项目可访问者可见");
   const priorityValue = (
     <span
       className={cn(
@@ -3009,95 +3016,160 @@ export function TodoEditor(props: TodoEditorProps) {
                     aria-label={t("todo.current_state", "当前状态")}
                   >
                     <span className="task-detail-state-leading">
-                      <span className="task-detail-state-primary relative">
-                        {statusValue}
-                        {editable ? (
-                          <ChevronDown aria-hidden="true" size={13} />
-                        ) : null}
-                        {statusSelect}
-                      </span>
-                      {showAssignee ? (
-                        <span
-                          className="task-detail-state-assignee"
-                          data-testid="cloud-todo-state-assignee"
-                          title={t("todo.assignee", "负责人")}
-                        >
-                          {assigneeTarget.startsWith("group:") ? (
-                            <UsersRound aria-hidden="true" size={15} />
-                          ) : assigneeTarget.startsWith("agent:") ||
-                            assigneeTarget.startsWith("team:") ? (
-                            <Bot aria-hidden="true" size={15} />
-                          ) : (
-                            <CircleUserRound aria-hidden="true" size={15} />
-                          )}
-                          <strong title={assigneeName ?? undefined}>
-                            {assigneeName ?? t("todo.unassigned", "未指派")}
-                          </strong>
-                          {canAssign ? (
+                      <Tooltip
+                        label={t(
+                          "todo.issue_status_help",
+                          "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
+                          { value: statusLabel },
+                        )}
+                        side="bottom"
+                        align="start"
+                      >
+                        <span className="task-detail-state-primary relative">
+                          {statusValue}
+                          {editable ? (
                             <ChevronDown aria-hidden="true" size={13} />
                           ) : null}
-                          {assigneeSelect}
+                          {statusSelect}
                         </span>
+                      </Tooltip>
+                      {showAssignee ? (
+                        <Tooltip
+                          label={t(
+                            "todo.assignee_help",
+                            "负责人：{{value}}。负责推进并跟进这个 Issue。",
+                            { value: assigneeDisplayName },
+                          )}
+                          side="bottom"
+                          align="start"
+                        >
+                          <span
+                            className="task-detail-state-assignee"
+                            data-testid="cloud-todo-state-assignee"
+                          >
+                            {assigneeTarget.startsWith("group:") ? (
+                              <UsersRound aria-hidden="true" size={15} />
+                            ) : assigneeTarget.startsWith("agent:") ||
+                              assigneeTarget.startsWith("team:") ? (
+                              <Bot aria-hidden="true" size={15} />
+                            ) : (
+                              <CircleUserRound aria-hidden="true" size={15} />
+                            )}
+                            <span className="task-detail-state-property-label">
+                              {t("todo.assignee", "负责人")}
+                            </span>
+                            <strong>{assigneeDisplayName}</strong>
+                            {canAssign ? (
+                              <ChevronDown aria-hidden="true" size={13} />
+                            ) : null}
+                            {assigneeSelect}
+                          </span>
+                        </Tooltip>
                       ) : null}
                       {assigneeSaveButton}
                       {item &&
                       project?.project_store === "backend" &&
                       canAssign ? (
-                        <select
-                          data-testid="cloud-issue-security-level"
-                          aria-label={t("todo.issue_security", "任务可见范围")}
-                          value={item.security_level ?? "open"}
-                          disabled={securityBusy}
-                          onChange={async (event) => {
-                            if (!editProps) return;
-                            setSecurityBusy(true);
-                            setSaveError(null);
-                            try {
-                              const updated = await editorPort.issues.update(
-                                item.id,
-                                {
-                                  version: item.version,
-                                  security_level: event.target.value as
-                                    | "open"
-                                    | "related",
-                                },
-                              );
-                              editProps.onUpdated(updated);
-                            } catch (cause) {
-                              setSaveError(
-                                cause instanceof Error
-                                  ? cause.message
-                                  : t("todo.save_issue_failed", "保存任务失败"),
-                              );
-                            } finally {
-                              setSecurityBusy(false);
-                            }
-                          }}
+                        <Tooltip
+                          label={t(
+                            "todo.issue_security_help",
+                            "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
+                            { value: issueSecurityLabel },
+                          )}
+                          side="bottom"
+                          align="start"
                         >
-                          <option value="open">
-                            {t("todo.issue_security_open", "项目可访问者可见")}
-                          </option>
-                          <option value="related">
-                            {t("todo.issue_security_related", "仅相关人员可见")}
-                          </option>
-                        </select>
+                          <span className="task-detail-state-security">
+                            <Eye aria-hidden="true" size={15} />
+                            <span className="task-detail-state-property-label">
+                              {t("todo.issue_security", "可见范围")}
+                            </span>
+                            <strong>{issueSecurityLabel}</strong>
+                            <ChevronDown aria-hidden="true" size={13} />
+                            <select
+                              data-testid="cloud-issue-security-level"
+                              aria-label={t(
+                                "todo.issue_security",
+                                "任务可见范围",
+                              )}
+                              className={overlayControlClass}
+                              value={item.security_level ?? "open"}
+                              disabled={securityBusy}
+                              onChange={async (event) => {
+                                if (!editProps) return;
+                                setSecurityBusy(true);
+                                setSaveError(null);
+                                try {
+                                  const updated =
+                                    await editorPort.issues.update(item.id, {
+                                      version: item.version,
+                                      security_level: event.target.value as
+                                        | "open"
+                                        | "related",
+                                    });
+                                  editProps.onUpdated(updated);
+                                } catch (cause) {
+                                  setSaveError(
+                                    cause instanceof Error
+                                      ? cause.message
+                                      : t(
+                                          "todo.save_issue_failed",
+                                          "保存任务失败",
+                                        ),
+                                  );
+                                } finally {
+                                  setSecurityBusy(false);
+                                }
+                              }}
+                            >
+                              <option value="open">
+                                {t(
+                                  "todo.issue_security_open",
+                                  "项目可访问者可见",
+                                )}
+                              </option>
+                              <option value="related">
+                                {t(
+                                  "todo.issue_security_related",
+                                  "仅相关人员可见",
+                                )}
+                              </option>
+                            </select>
+                          </span>
+                        </Tooltip>
                       ) : null}
                     </span>
                     {executionTaskCount > 0 || executionStartedAt ? (
                       <span className="task-detail-state-metrics">
                         {executionTaskCount > 0 ? (
-                          <span title={t("todo.execution_tasks", "执行任务")}>
-                            <ListTodo aria-hidden="true" size={15} />
-                            <strong>{executionTaskCount}</strong>
-                          </span>
+                          <Tooltip
+                            label={t(
+                              "todo.execution_tasks_help",
+                              "执行任务：{{count}} 个。点击右侧按钮可查看任务详情。",
+                              { count: executionTaskCount },
+                            )}
+                            side="bottom"
+                          >
+                            <span className="task-detail-state-metric">
+                              <ListTodo aria-hidden="true" size={15} />
+                              <strong>{executionTaskCount}</strong>
+                            </span>
+                          </Tooltip>
                         ) : null}
                         {executionStartedAt ? (
-                          <span
-                            title={t("todo.execution_duration", "执行时长")}
+                          <Tooltip
+                            label={t(
+                              "todo.execution_duration_help",
+                              "执行时长：{{duration}}。从本轮执行开始后持续计时。",
+                              { duration: executionElapsedLabel },
+                            )}
+                            side="bottom"
                           >
-                            <History aria-hidden="true" size={15} />
-                            <strong>{executionElapsedLabel}</strong>
-                          </span>
+                            <span className="task-detail-state-metric">
+                              <History aria-hidden="true" size={15} />
+                              <strong>{executionElapsedLabel}</strong>
+                            </span>
+                          </Tooltip>
                         ) : null}
                       </span>
                     ) : null}

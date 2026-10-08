@@ -1019,6 +1019,9 @@ export function TaskActivityView({
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
                 serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                placeholder={
+                  replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
+                }
               />
             </div>
           ) : (
@@ -1168,7 +1171,7 @@ export function TaskActivityView({
                         <TimelineReply
                           rootId={rootId}
                           createdAt={card.root.createdAt}
-                          replyLabel={t('workbench.task_activity_inline_placeholder')}
+                          replyLabel={t('workbench.task_activity_reply_action')}
                           executionMessage={latestExecution}
                           executionTurnId={
                             latestExecution

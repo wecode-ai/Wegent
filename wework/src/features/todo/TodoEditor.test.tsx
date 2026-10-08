@@ -78,6 +78,33 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('labels compact Issue properties and explains the current status in a tooltip', async () => {
+    const user = userEvent.setup()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    const summary = screen.getByTestId('cloud-todo-state-summary')
+    expect(summary).toHaveTextContent('负责人')
+
+    await user.hover(screen.getByTestId('cloud-todo-detail-status').parentElement!)
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      '状态：进行中。表示 Issue 当前所处的处理阶段。'
+    )
+  })
+
   it('uses collaboration translations for runtime configuration notices', async () => {
     const item = {
       ...baseItem,

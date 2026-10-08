@@ -1478,7 +1478,12 @@ describe('TaskActivityView', () => {
     await user.click(replyToggle)
     expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
-    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('回复 Ada')
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent(
+      '正在回复 Ada · 将继续原执行任务'
+    )
+    expect(
+      within(screen.getByTestId('issue-reply-composer')).getByText('回复此讨论（继续原执行任务）…')
+    ).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-task-activity-card-composer-message-1')
     ).not.toBeInTheDocument()

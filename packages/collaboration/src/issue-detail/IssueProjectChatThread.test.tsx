@@ -119,6 +119,38 @@ describe("shared Issue threads", () => {
     ).toContain("已完成");
   });
 
+  it("keeps reply execution metadata below the author so the timestamp cannot collapse", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{ root: message, replies: [] }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+          taskSummaryForMessage={() => ({
+            title: "检查协作任务的工作树配置",
+            stageName: "实现",
+          })}
+        />,
+      ),
+    );
+
+    const header = container.querySelector(
+      ".task-detail-thread-message-header",
+    );
+    expect(
+      header?.querySelector(".task-detail-thread-message-author")?.textContent,
+    ).toBe("Codex");
+    expect(
+      header?.querySelector(".task-detail-thread-message-metadata")
+        ?.textContent,
+    ).toContain("检查协作任务的工作树配置");
+    expect(
+      header?.querySelector(".task-detail-thread-message-time")?.textContent,
+    ).toBe("09-17 08:00");
+  });
+
   it("renders a manager assignment as a compact dispatch event", () => {
     act(() =>
       root.render(
