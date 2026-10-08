@@ -48,6 +48,7 @@ runs:
       run: |
         mkdir -p .ci-artifacts
         if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
+          oras logout ghcr.io
           unset GITHUB_TOKEN
         fi
         (
