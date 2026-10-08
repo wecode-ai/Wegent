@@ -6,17 +6,20 @@ use std::{
     collections::{HashMap, VecDeque},
     env, fs,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::sync::Notify;
 
+mod metrics;
 mod terminal;
+pub(crate) use metrics::terminal_metrics_snapshot;
 pub use terminal::TerminalEvent;
+
+use metrics::{
+    subtract_metric, TERMINAL_ACK_LAG_BYTES, TERMINAL_BACKPRESSURED_SESSIONS, TERMINAL_REPLAY_BYTES,
+};
 
 use crate::local::{command::build_env, pty::UnixPtyProcess};
 
@@ -26,41 +29,6 @@ const TERMINAL_REPLAY_MAX_BYTES: usize = 512 * 1024;
 const TERMINAL_REPLAY_HIGH_WATERMARK_BYTES: usize = 384 * 1024;
 const TERMINAL_REPLAY_LOW_WATERMARK_BYTES: usize = 128 * 1024;
 const MAX_UTF8_PENDING_BYTES: usize = 3;
-
-static TERMINAL_OUTPUT_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
-static TERMINAL_OUTPUT_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
-static TERMINAL_REPLAYED_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
-static TERMINAL_REPLAY_BYTES: AtomicU64 = AtomicU64::new(0);
-static TERMINAL_ACK_LAG_BYTES: AtomicU64 = AtomicU64::new(0);
-static TERMINAL_BACKPRESSURED_SESSIONS: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TerminalMetricsSnapshot {
-    pub output_batches_total: u64,
-    pub output_bytes_total: u64,
-    pub replayed_batches_total: u64,
-    pub replay_bytes: u64,
-    pub ack_lag_bytes: u64,
-    pub backpressured_sessions: u64,
-}
-
-pub(crate) fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
-    TerminalMetricsSnapshot {
-        output_batches_total: TERMINAL_OUTPUT_BATCHES_TOTAL.load(Ordering::Relaxed),
-        output_bytes_total: TERMINAL_OUTPUT_BYTES_TOTAL.load(Ordering::Relaxed),
-        replayed_batches_total: TERMINAL_REPLAYED_BATCHES_TOTAL.load(Ordering::Relaxed),
-        replay_bytes: TERMINAL_REPLAY_BYTES.load(Ordering::Relaxed),
-        ack_lag_bytes: TERMINAL_ACK_LAG_BYTES.load(Ordering::Relaxed),
-        backpressured_sessions: TERMINAL_BACKPRESSURED_SESSIONS.load(Ordering::Relaxed),
-    }
-}
-
-fn subtract_metric(metric: &AtomicU64, value: usize) {
-    let value = value as u64;
-    let _ = metric.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        Some(current.saturating_sub(value))
-    });
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionType {
