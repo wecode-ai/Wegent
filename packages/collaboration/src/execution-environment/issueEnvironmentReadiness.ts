@@ -126,11 +126,12 @@ export function useProjectExecutionEnvironmentReadiness({
     }
     const revision = ++requestRevision.current;
     try {
-      const environments = await api.projects.listExecutionEnvironments(
-        project.id,
-      );
+      const [latestProject, environments] = await Promise.all([
+        api.projects.get(project.id),
+        api.projects.listExecutionEnvironments(project.id),
+      ]);
       const nextReadiness = resolveProjectExecutionEnvironmentReadiness(
-        project,
+        latestProject,
         environments,
       );
       if (revision === requestRevision.current) {
