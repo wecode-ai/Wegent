@@ -17,6 +17,7 @@ export * from "./i18n";
 export * from "./issue-card";
 export * from "./issue-delete";
 export * from "./issue-detail";
+export * from "./issueDraft";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";
 export * from "./ports/SharedWorkspaceApi";

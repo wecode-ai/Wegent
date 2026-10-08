@@ -37,6 +37,7 @@ import {
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -298,6 +299,15 @@ export function WeworkSharedProject({
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
+  const [notice, setNotice] = useState<{
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const clearNotice = useCallback(() => setNotice(null), [])
+  const notify = useCallback(
+    (message: string, kind: 'success' | 'error' = 'success') => setNotice({ message, tone: kind }),
+    []
+  )
   const [, setTaskBindingRevision] = useState(0)
   const runtimeTaskLifecycleRef = useRef(runtimeTaskLifecycle)
   useEffect(() => {
@@ -370,6 +380,7 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
+      notify,
       ...(onOpenSettings
         ? {
             manageResource: (kind: 'agents' | 'environments', resourceId?: string) => {
@@ -399,6 +410,7 @@ export function WeworkSharedProject({
       location.projectView,
       onFocusedItemHandled,
       onOpenSettings,
+      notify,
       project.id,
       project.project_store,
       services.agentResourceApi,
@@ -746,6 +758,11 @@ export function WeworkSharedProject({
       className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
       data-testid="issue-drawer-workspace"
     >
+      <TransientNotice
+        message={notice?.message ?? null}
+        tone={notice?.tone}
+        onClear={clearNotice}
+      />
       <div className="min-w-0 flex-1">
         <CollaborationApp
           api={scopedApi}

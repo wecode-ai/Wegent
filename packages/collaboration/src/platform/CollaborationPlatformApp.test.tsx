@@ -2617,6 +2617,60 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
+  it("keeps the initialized project ready after returning to the Issue home", async () => {
+    const { api, projects } = createApi();
+    api.projects.initializeExecutionEnvironment = vi.fn(async () => {
+      const initializedProject: CollaborationProject = {
+        ...projects[0],
+        version: projects[0].version + 1,
+        execution_environment: {
+          repositories: [],
+          setup_steps: [],
+          fingerprint: "environment-v1",
+          devices: {
+            "device-21": {
+              status: "ready",
+              workspace_path: "/workspace/project-1",
+              prepared_at: "2026-10-08T00:00:00Z",
+              error: "",
+            },
+          },
+        },
+      };
+      return initializedProject;
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: project.id,
+          projectView: "manage",
+          projectSettingsSection: "environments",
+        }}
+      />,
+    );
+    await waitForUi(0);
+    await click(
+      byTestId("collaboration-project-execution-environment-initialize-21"),
+    );
+    expect(
+      byTestId("collaboration-project-execution-environment-readiness")
+        .textContent,
+    ).toContain("已完成");
+
+    await click(byTestId("collaboration-primary-home"));
+
+    expect(
+      container.querySelector(
+        '[data-testid="issue-execution-environment-notice"]',
+      ),
+    ).toBeNull();
+  });
+
   it("lets read-only members view environment details and tells them to contact a manager", async () => {
     const { api } = createApi({
       initialProjects: [{ ...project, access_role: "Reporter" }],
@@ -3071,7 +3125,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(api.workspaces?.list).toHaveBeenCalledOnce();
     expect(api.projects.list).toHaveBeenCalledOnce();
-    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
       project.id,
     );

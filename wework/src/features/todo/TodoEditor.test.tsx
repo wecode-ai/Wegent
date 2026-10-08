@@ -1252,6 +1252,59 @@ describe('TodoEditor create parent resolution', () => {
     expect(assignLoopItem).not.toHaveBeenCalled()
   })
 
+  it('creates an Issue from content only with a task-style generated title', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'wework-todo-draft:11:inbox',
+      JSON.stringify({
+        title: '',
+        markdown: 'Verify release\nCover creation flow',
+        priority: 'none',
+        parentId: '',
+        dueDate: '',
+        assigneeTarget: '',
+        notifyAssignee: true,
+        tags: [],
+      })
+    )
+    const createLoopItem = vi.fn(async () => ({ ...baseItem, version: 1 }))
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-create-confirm')).toBeEnabled()
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createLoopItem).toHaveBeenCalledWith('11', {
+        title: 'Verify release Cover creation flow',
+        description: 'Verify release\nCover creation flow',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+      })
+    })
+  })
+
   it('lists project collaboration groups and assigns the created task to the selected group', async () => {
     const user = userEvent.setup()
     const createLoopItem = vi.fn(async () => ({ ...baseItem, version: 1 }))
