@@ -1614,10 +1614,19 @@ impl RuntimeWorkRpcHandler {
             Ok(resumed_thread_id) => resumed_thread_id,
             Err(error) => return Ok(task_action_failure(&link, error)),
         };
+        let request = runtime_event_request_from_link(&link);
+        // The compaction turn answers through the local model route, which only
+        // exists while a turn that registered it is alive. Register it for the
+        // duration of this action so compacting an idle thread still reaches a
+        // model instead of failing inside the Codex app-server.
+        let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
+            Ok(route) => route,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
         self.register_thread_event_route(
             &thread_id,
             link.local_task_id.clone(),
-            runtime_event_request_from_link(&link),
+            request,
             true,
         );
         let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
@@ -1666,6 +1675,9 @@ impl RuntimeWorkRpcHandler {
                         completed_context_compaction(&thread, previous_turn_id)
                     {
                         return Ok(completion);
+                    }
+                    if let Some(failure) = ended_context_compaction(&thread, previous_turn_id) {
+                        return Err(failure);
                     }
                 }
                 Err(error) => last_error = Some(error),
@@ -2340,6 +2352,50 @@ fn completed_context_compaction(
         })
 }
 
+/// Reports the compaction turn when it already ended without producing a
+/// compaction item.
+///
+/// The provider can fail the compaction turn (a model or route error, for
+/// example) and still report it as completed. Waiting for the rest of the
+/// compaction budget cannot turn such a turn into a compacted thread, so the
+/// caller reports the failure instead of surfacing a generic timeout.
+fn ended_context_compaction(thread: &Value, previous_turn_id: Option<&str>) -> Option<String> {
+    let turn = thread
+        .get("turns")
+        .and_then(Value::as_array)?
+        .iter()
+        .rev()
+        .filter_map(|turn| Some((turn, string_field(turn, "id")?)))
+        .find(|(_, turn_id)| Some(turn_id.as_str()) != previous_turn_id)?
+        .0;
+    let status = string_field(turn, "status")?;
+    if matches!(
+        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+        "inprogress" | "running" | "active"
+    ) {
+        return None;
+    }
+    let compacted = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| is_codex_context_compaction_item_type(&item_type(item)))
+        });
+    if compacted {
+        return None;
+    }
+    let detail = turn
+        .get("error")
+        .and_then(|error| string_field(error, "message"))
+        .or_else(|| string_field(turn, "error"));
+    Some(match detail {
+        Some(detail) => format!("context compaction ended without compacting: {detail}"),
+        None => format!("context compaction ended without compacting ({status})"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -2347,7 +2403,8 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, completed_context_compaction, normalize_friendly_title,
+        apply_runtime_task_start_failure, completed_context_compaction,
+        ended_context_compaction, normalize_friendly_title,
     };
 
     #[test]
@@ -2386,6 +2443,64 @@ mod tests {
             completed_context_compaction(&thread, Some("turn-compact")),
             None
         );
+    }
+
+    #[test]
+    fn reports_a_compaction_turn_that_ended_without_compacting() {
+        let thread = json!({
+            "turns": [
+                {"id": "turn-before", "status": "completed", "items": []},
+                {
+                    "id": "turn-compact",
+                    "status": "failed",
+                    "error": {"message": "unexpected status 404 Not Found"},
+                    "items": [{"id": "user-1", "type": "userMessage"}]
+                }
+            ]
+        });
+
+        assert_eq!(
+            ended_context_compaction(&thread, Some("turn-before")),
+            Some(
+                "context compaction ended without compacting: unexpected status 404 Not Found"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn waits_while_the_compaction_turn_is_still_running() {
+        let thread = json!({
+            "turns": [{"id": "turn-compact", "status": "inProgress", "items": []}]
+        });
+
+        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
+    }
+
+    #[test]
+    fn ignores_the_turn_that_predates_compaction() {
+        let thread = json!({
+            "turns": [{"id": "turn-before", "status": "completed", "items": []}]
+        });
+
+        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
+        assert_eq!(
+            ended_context_compaction(&thread, None),
+            Some("context compaction ended without compacting (completed)".to_owned())
+        );
+    }
+
+    #[test]
+    fn keeps_a_compacted_turn_out_of_the_failure_path() {
+        let thread = json!({
+            "turns": [{
+                "id": "turn-compact",
+                "status": "completed",
+                "items": [{"id": "compact-1", "type": "contextCompaction"}]
+            }]
+        });
+
+        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
     }
 
     #[test]

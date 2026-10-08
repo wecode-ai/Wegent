@@ -704,6 +704,13 @@ fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
     bound_thread_token_in_registry(&registry, &identity)
 }
 
+/// Reports whether a Codex thread resolves to a local model route.
+#[cfg(test)]
+pub(crate) fn thread_has_bound_route(thread_id: &str) -> bool {
+    let body = serde_json::json!({"client_metadata": {"thread_id": thread_id}}).to_string();
+    bound_thread_token(body.as_bytes()).is_ok()
+}
+
 fn bound_thread_token_in_registry(
     registry: &LocalModelProxyRegistry,
     identity: &RequestThreadIdentity,

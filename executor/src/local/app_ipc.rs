@@ -66,7 +66,7 @@ use crate::{
         format_executor_log, reserve_executor_stdout_for_protocol, write_executor_error_line,
         write_executor_log_line,
     },
-    runtime_work::RuntimeWorkRpcHandler,
+    runtime_work::{RuntimeWorkRpcHandler, CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS},
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
         LocalCommentCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
@@ -87,6 +87,9 @@ fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
         Some("executor.plugin_auth.migrate") => 280,
         Some("executor.plugin_auth.run") => 200,
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
+        // Context compaction waits for the Codex app-server to finish the
+        // compaction turn, so the request deadline must outlive that budget.
+        Some("runtime.tasks.compact") => CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -3591,8 +3594,9 @@ mod tests {
 
     use super::{
         app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
-        local_app_command, AppIpcServer, BlockingSingleFlight,
+        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
+    use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 
     #[test]
     fn transcript_export_allows_large_snapshot_packaging() {
@@ -3603,6 +3607,18 @@ mod tests {
         assert_eq!(
             app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
             75
+        );
+    }
+
+    #[test]
+    fn context_compaction_outlives_the_executor_action_budget() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.compact")),
+            CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS
+        );
+        assert!(
+            CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS > APP_IPC_REQUEST_TIMEOUT_SECONDS,
+            "the compaction deadline must exceed the default request deadline"
         );
     }
 

@@ -23,8 +23,9 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_notification_requires_user_input, codex_runtime_approval_policy,
-        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
+        bind_codex_thread_model_route, codex_notification_requires_user_input,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        AgentCommandPlanner, AgentProcessEngine,
         CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
         CodexAppServerTurnOptions, CodexAuthMutationError, CodexRequestUserInputReceiver,
         CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
@@ -203,6 +204,12 @@ const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(50
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
+/// Wall-clock budget a single context-compaction action may consume: the wait
+/// loop below plus the Codex app-server round trips around it. The App-IPC
+/// deadline for `runtime.tasks.compact` must stay above this budget, otherwise
+/// the frontend reports a timeout for an action that is still running.
+pub(crate) const CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS: u64 =
+    (CONTEXT_COMPACTION_WAIT_ATTEMPTS as u64 * CONTEXT_COMPACTION_WAIT_MS) / 1000 + 60;
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
