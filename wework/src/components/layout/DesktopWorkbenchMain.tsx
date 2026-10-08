@@ -1428,6 +1428,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onRetryMessage: message => paneSession.retryFailedMessage(message),
   })
 
+  const connectorAuthCard = connectorAuthGate.pending ? (
+    <ConnectorAuthCard
+      target={connectorAuthGate.pending.target}
+      title={connectorAuthGate.pending.title}
+      onSuccess={() => {
+        void connectorAuthGate.completePending()
+      }}
+      onCancel={connectorAuthGate.clearPending}
+    />
+  ) : null
+
   const submitPaneInput = useCallback(
     async (
       value?: string,
@@ -5195,16 +5206,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </button>
                               )}
-                              {connectorAuthGate.pending ? (
-                                <ConnectorAuthCard
-                                  target={connectorAuthGate.pending.target}
-                                  title={connectorAuthGate.pending.title}
-                                  onSuccess={() => {
-                                    void connectorAuthGate.completePending()
-                                  }}
-                                  onCancel={connectorAuthGate.clearPending}
-                                />
-                              ) : !displayedRightPanelExpanded ? (
+                              {connectorAuthCard}
+                              {!displayedRightPanelExpanded ? (
                                 <>
                                   {showConversationDeviceBanner ? (
                                     <ConversationDeviceOfflineBanner
@@ -5456,6 +5459,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
+                  connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
                   onOpenProjectSelector={anchorElement => {

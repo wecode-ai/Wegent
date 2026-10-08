@@ -12,6 +12,7 @@ import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import { ComposerCatalogContext } from './composer/ComposerCatalogContext'
 import { desktopComposerCatalogStore } from './composer/desktopComposerCatalog'
+import { registerComposerMentionIcon } from './composer/composerMentions'
 import references from '../../../../packages/chat-core/test-fixtures/prompt-mentions.json'
 import '@/i18n'
 
@@ -6800,6 +6801,35 @@ describe('MessageList', () => {
     fireEvent.click(skillLink)
     expect(onOpenLocalSkillFile).toHaveBeenCalledWith(skillPath)
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
+  })
+
+  test('renders a restored GitHub app reference with its brand icon', () => {
+    const reference = '[$GitHub](app://connector_github_sent_icon_test)'
+    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'github-user-message',
+            role: 'user',
+            content: `${reference} 查看项目列表`,
+            status: 'done',
+            createdAt: '2026-10-08T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('sent-app-token-GitHub')).toHaveAttribute(
+      'href',
+      'app://connector_github_sent_icon_test'
+    )
+    expect(screen.getByTestId('sent-app-icon-GitHub')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
+    expect(screen.getByTestId('message-user')).toHaveTextContent('GitHub 查看项目列表')
+    expect(screen.getByTestId('message-user')).not.toHaveTextContent('$GitHub')
   })
 
   test('renders plugin markdown links in user messages', () => {

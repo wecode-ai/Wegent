@@ -33,6 +33,7 @@ import { getErrorMessage } from '@/lib/error-message'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
+import { remotePluginInstallation } from './codexPluginInstallation'
 import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
@@ -259,10 +260,13 @@ export interface LocalCodexPluginApi {
     q?: string
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
-    marketplaceKinds?: Array<'local' | 'remote'>
+    marketplaceKinds?: Array<'local'>
     refresh?: boolean
   }): Promise<LocalCodexPluginsState>
   readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
+  readRemoteCatalog(options?: {
+    forceRefetch?: boolean
+  }): Promise<PluginMarketplaceListResponse & { deviceId: string }>
   listInstalledPlugins(options?: {
     refresh?: boolean
     /** Start a new membership read when a newer refresh supersedes a pending one. */
@@ -274,6 +278,7 @@ export interface LocalCodexPluginApi {
   listApps(params?: {
     forceRefetch?: boolean
     includeInaccessible?: boolean
+    signal?: AbortSignal
   }): Promise<LocalDeviceApp[]>
   listAvailablePlugins(params?: {
     q?: string
@@ -292,10 +297,7 @@ export interface LocalCodexPluginApi {
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
-  installAvailablePlugin(
-    pluginId: string | number,
-    marketplaceId?: string
-  ): Promise<InstalledPlugin>
+  installAvailablePlugin(item: PluginMarketplaceItem): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
     data: InstalledPluginUpdateRequest
@@ -381,12 +383,14 @@ export function clearLocalCodexPluginsReadStateCache(): void {
 function readStateParamsKey(params: {
   marketplaceId?: string
   mergeAllMarketplaces?: boolean
+  marketplaceKinds?: Array<'local'>
 }): string {
   // Search query is applied in-memory after load; keep it out of the cache key so
   // typing/clearing search reuses the same plugin/list + plugin/installed snapshot.
   return [
     params.marketplaceId?.trim() || '',
     params.mergeAllMarketplaces ? 'all' : 'selected',
+    params.marketplaceKinds ? [...new Set(params.marketplaceKinds)].sort().join(',') : 'all-kinds',
   ].join('|')
 }
 
@@ -761,6 +765,7 @@ export function peekLocalCodexPluginsReadState(
   params: {
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local'>
   } = {}
 ): LocalCodexPluginsState | null {
   const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
@@ -785,6 +790,7 @@ export function isLocalCodexPluginsReadStateFresh(
   params: {
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
+    marketplaceKinds?: Array<'local'>
   } = {}
 ): boolean {
   const peeked = peekLocalCodexPluginsReadState(params)
@@ -881,11 +887,19 @@ async function codexAppServerRequest<T>(
     return result
   } catch (error) {
     const elapsedMs = Date.now() - startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    const isRemoteCatalog = method === 'plugin/list' && params.marketplaceKinds == null
     console.warn('[Wework] codex.app_server_request failed', {
       method,
       elapsedMs,
       marketplaceKinds: params.marketplaceKinds ?? null,
-      error: error instanceof Error ? error.message : String(error),
+      // Challenge pages can contain large HTML payloads and session parameters.
+      ...(isRemoteCatalog
+        ? {
+            httpStatus: message.match(/\b([45]\d{2})\b/)?.[1] ?? null,
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          }
+        : { error: message }),
     })
     throw error
   }
@@ -1904,7 +1918,7 @@ async function readState(
     query?: string
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
-    marketplaceKinds?: Array<'local' | 'remote'>
+    marketplaceKinds?: Array<'local'>
     refresh?: boolean
     skipPersonalReconcile?: boolean
   } = {}
@@ -1966,7 +1980,7 @@ async function loadReadStateSnapshot(
   params: {
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
-    marketplaceKinds?: Array<'local' | 'remote'>
+    marketplaceKinds?: Array<'local'>
     refresh?: boolean
     skipPersonalReconcile?: boolean
   },
@@ -2049,8 +2063,7 @@ async function loadReadStateSnapshot(
       : null,
     loadedState,
     {
-      retainRemoteInstalled:
-        params.marketplaceKinds != null && !params.marketplaceKinds.includes('remote'),
+      retainRemoteInstalled: params.marketplaceKinds?.includes('local') === true,
     }
   )
   if (
@@ -2228,6 +2241,11 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
     },
     detail
   )
+  // Detail projection must retain membership ownership and cloud links.
+  detailed.spec.sourcePayload = {
+    ...payload,
+    ...detailed.spec.sourcePayload,
+  }
   // Write connector/localAuth stubs back into the durable peek so the next send
   // can skip plugin/read (v1 durable cache always emptied components).
   rememberInstalledPluginDetail(detailed)
@@ -2629,6 +2647,29 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         refresh: params.refresh,
       })
     },
+    async readRemoteCatalog(options = {}) {
+      if (!isDesktopRuntime()) return { items: [], deviceId: '' }
+      const status = await ensureLocalExecutorStarted()
+      // Remote discovery does not own membership or local marketplace reconciliation.
+      // The runtime has no "remote" marketplace kind. Omitting the filter includes
+      // its default remote catalog; keep only the official remote rows below.
+      const response = await codexAppServerRequest<{
+        marketplaces: CodexPluginMarketplaceEntry[]
+        featuredPluginIds?: string[]
+      }>('plugin/list', { cwds: null, forceRefetch: options.forceRefetch === true })
+      if (!Array.isArray(response?.marketplaces)) throw new Error('Invalid remote plugin catalog')
+      const featuredIds = featuredPluginIdSet(response.featuredPluginIds)
+      return {
+        deviceId: status.deviceId?.trim() ?? '',
+        items: response.marketplaces
+          .filter(marketplace => isOpenAiOfficialRemoteMarketplaceId(marketplace.name))
+          .flatMap(marketplace =>
+            marketplace.plugins.map(plugin =>
+              toMarketplaceItem(marketplace, plugin, null, featuredIds)
+            )
+          ),
+      }
+    },
     async readMarketplacePluginDetail(marketplaceId, pluginName) {
       if (!isDesktopRuntime()) {
         throw new Error('Reading local plugin detail requires the Wework desktop app')
@@ -2790,37 +2831,39 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
-    async installAvailablePlugin(pluginId, marketplaceId) {
-      const currentState = await readState({ mergeAllMarketplaces: true })
-      const requestedMarketplaceId = marketplaceId?.trim()
-      const item = currentState.marketplaceItems.find(
-        item =>
-          String(item.id) === String(pluginId) &&
-          (!requestedMarketplaceId || item.manifest?.marketplaceId === requestedMarketplaceId)
-      )
-      if (!item) throw new Error('Codex plugin not found in current marketplace')
+    async installAvailablePlugin(item) {
+      // Install the selected shared-catalog entry. A scoped readState cache may
+      // omit remote rows even though remote discovery already painted this item.
+      const pluginId = item.id
       const itemMarketplaceId =
         typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId.trim() : ''
-      const resolvedMarketplaceId = requestedMarketplaceId || itemMarketplaceId
-      if (!resolvedMarketplaceId) throw new Error('Codex plugin marketplace is missing')
-      const marketplace = currentState.marketplaces.find(
-        marketplace => marketplace.id === resolvedMarketplaceId
-      )
-      if (!marketplace) throw new Error('Codex plugin marketplace not found')
+      if (!itemMarketplaceId) throw new Error('Codex plugin marketplace is missing')
+      if (!item.name.trim()) throw new Error('Codex plugin name is missing')
+      const marketplace: LocalCodexMarketplace = {
+        id: itemMarketplaceId,
+        name: itemMarketplaceId,
+        path:
+          (typeof item.manifest?.marketplacePath === 'string' &&
+            item.manifest.marketplacePath.trim()) ||
+          itemMarketplaceId,
+      }
       const localMarketplace = isLocalMarketplacePath(marketplace.path)
       const installNames = localMarketplace
         ? [pluginInstallName(item, true)]
         : await resolveRemoteInstallPluginNames(marketplace, item)
       let installError: unknown = null
+      let installResult: unknown
+      let acceptedPluginName = ''
       for (let index = 0; index < installNames.length; index += 1) {
         const pluginName = installNames[index]
         try {
-          await codexAppServerRequest('plugin/install', {
+          installResult = await codexAppServerRequest('plugin/install', {
             marketplacePath: localMarketplace ? marketplace.path : null,
             remoteMarketplaceName: localMarketplace ? null : marketplace.id,
             pluginName,
           })
           installError = null
+          acceptedPluginName = pluginName
           break
         } catch (error) {
           installError = error
@@ -2833,10 +2876,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       if (installError) throw installError
       clearLocalCodexPluginsReadStateCache()
-      const state = await readState({
-        marketplaceId: resolvedMarketplaceId,
-        refresh: true,
-      })
+      if (!localMarketplace) {
+        return remotePluginInstallation(
+          {
+            ...item,
+            remotePluginId: isCodexRemoteInstallPluginName(acceptedPluginName, item.name)
+              ? acceptedPluginName
+              : item.remotePluginId,
+          },
+          installResult
+        )
+      }
+      // Local package installation still verifies its on-device membership.
+      const state = await loadInstalledPluginsOnly({ shareInflight: false, requireComplete: true })
       const installed = state.installedPlugins.find(plugin => {
         if (String(installedPluginId(plugin)) === String(pluginId)) return true
         const marketplaceName =

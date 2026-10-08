@@ -242,6 +242,76 @@ def test_native_lifecycle_request_cannot_override_identity_or_supply_credentials
             )
 
 
+@pytest.mark.parametrize(
+    "change", ["disabled", "missing_account_auth", "missing_connector"]
+)
+def test_logout_revokes_existing_access_when_current_plugin_cannot_be_used(
+    lifecycle, test_db, test_user, installed, local, change
+):
+    connection = consume(
+        lifecycle,
+        test_db,
+        test_user,
+        reconcile(lifecycle, test_db, test_user, installed)[0]["id"],
+    )
+    payload = deepcopy(installed.json)
+    if change == "disabled":
+        payload["spec"]["enabled"] = False
+    elif change == "missing_account_auth":
+        payload["spec"]["components"]["connectors"][0].pop("accountAuth")
+    else:
+        payload["spec"]["components"]["connectors"] = []
+    installed.json = payload
+    test_db.flush()
+
+    assert call(lifecycle, test_db, test_user, installed, "logout") == {"status": "ok"}
+    assert call(lifecycle, test_db, test_user, installed, "logout") == {"status": "ok"}
+    spec = lifecycle.connections._get(test_db, test_user.id, connection.id).json["spec"]
+    assert spec["status"] == "disconnected"
+    assert spec["credential"] is None
+    assert spec["deviceGrants"] == {}
+    with pytest.raises(PluginAccountAuthError):
+        call(lifecycle, test_db, test_user, installed, "login")
+
+
+def test_logout_without_account_definition_still_fences_future_enrollment(
+    lifecycle, test_db, test_user, installed, local
+):
+    original = deepcopy(installed.json)
+    payload = deepcopy(original)
+    payload["spec"]["components"]["connectors"][0].pop("accountAuth")
+    installed.json = payload
+    test_db.flush()
+
+    assert call(lifecycle, test_db, test_user, installed, "logout") == {"status": "ok"}
+    installed.json = original
+    test_db.flush()
+    assert reconcile(lifecycle, test_db, test_user, installed) == []
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_logout_cannot_revoke_inactive_or_other_users_plugin(
+    lifecycle, test_db, test_user, test_admin_user, installed, local, foreign
+):
+    connection = consume(
+        lifecycle,
+        test_db,
+        test_user,
+        reconcile(lifecycle, test_db, test_user, installed)[0]["id"],
+    )
+    if foreign:
+        installed.user_id = test_admin_user.id
+    else:
+        installed.is_active = False
+    test_db.flush()
+
+    with pytest.raises(PluginAccountAuthError, match="plugin_auth_plugin_not_found"):
+        call(lifecycle, test_db, test_user, installed, "logout")
+    spec = lifecycle.connections._get(test_db, test_user.id, connection.id).json["spec"]
+    assert spec["status"] == "connected"
+    assert spec["credential"] is not None
+
+
 def test_fresh_login_survives_expired_sync_intent_and_is_cleared_after_enrollment(
     lifecycle,
     test_db,

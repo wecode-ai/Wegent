@@ -1,3 +1,4 @@
+import { toInstalledPluginItem } from '../installedPluginPresentation'
 import { createHttpClient } from '@/api/http'
 import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
@@ -20,14 +21,12 @@ import { connectorDisplayName } from '../connectorDisplayName'
 import { formatPluginVersion } from '../plugin-display'
 import { resolvePluginLogo } from '../plugin-assets'
 import {
-  installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
   linkedCloudPluginId,
-  mergeInstalledPlugins,
   storeDirMatchesPluginKey,
 } from '../installedPluginMerge'
 import { isLocalMarketplaceItem, mergeMarketplaceCatalog } from '../marketplaceCatalogMerge'
-import { installedPluginDistribution, marketplaceItemMarketplaceId } from '../pluginDistribution'
+import { marketplaceItemMarketplaceId } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import { sharedRecipientMetaItems } from '../pluginManagementSubtitle'
 
@@ -93,35 +92,7 @@ export function marketplaceSectionRevealLabel(
   return t('workbench.plugins_view_more', '查看 {{names}}', { names })
 }
 
-export function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  const components = item.spec.components
-  return {
-    id: typeof id === 'string' || typeof id === 'number' ? id : '',
-    name: item.spec.displayName || item.spec.source.pluginKey,
-    description: item.spec.description,
-    enabled: item.spec.enabled,
-    version: item.spec.version,
-    origin: item.spec.origin ?? (item.spec.source.type === 'local' ? 'created' : 'market'),
-    sourceLabel: installedPluginSourceLabel(item),
-    distribution: installedPluginDistribution(item),
-    updateAvailable: item.spec.installState === 'update_available',
-    componentCounts: {
-      skills: components.skills.length,
-      commands: components.commands.length,
-      agents: components.agents.length,
-      mcp: components.mcps.length,
-      connectors: components.connectors?.length ?? 0,
-      hooks: components.hooks.length,
-      lsp: components.lsps.length,
-      monitors: components.monitors.length,
-      bin: components.bins.length,
-    },
-    raw: item,
-  }
-}
+export { toInstalledPluginItem } from '../installedPluginPresentation'
 
 export function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): InstalledPluginItem {
   const raw: InstalledPlugin = {
@@ -551,7 +522,7 @@ export function isCodexCatalogItem(item: PluginMarketplaceItem): boolean {
 export function pluginUsesWegentConnectorOAuth(
   plugin?: InstalledPluginItem | PluginMarketplaceItem | null
 ): boolean {
-  // OpenAI/personal connectors authorize in chat. Wegent cloud plugins use
+  // Native Codex connectors use their app authorization URLs or local auth. Cloud plugins use
   // connector-apps OAuth. Missing plugin data stays on the host OAuth path.
   if (!plugin) return true
   if ('raw' in plugin) {
@@ -600,38 +571,7 @@ export function mergeWarmMarketplaceItems(
   return mergeMarketplaceCatalog(
     cachedItems.filter(item => !isCodexCatalogItem(item)),
     [...localItemsById.values()],
-    (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
-  )
-}
-
-export function hasOpenAiOfficialCatalog(items: PluginMarketplaceItem[]): boolean {
-  return items.some(item => {
-    const marketplaceId = marketplaceItemMarketplaceId(item)
-    return marketplaceId != null && isOpenAiOfficialMarketplaceId(marketplaceId)
-  })
-}
-
-function durableLocalStateMatchesCachedDevice(
-  cached: PluginMarketplaceCacheSnapshot | null,
-  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>
-): boolean {
-  const localDeviceId = durablePeek?.deviceId.trim() || ''
-  if (!localDeviceId) return false
-  const cachedDeviceId = cached?.deviceId.trim() || ''
-  return !cachedDeviceId || cachedDeviceId === localDeviceId
-}
-
-export function mergeWarmInstalledPlugins(
-  cached: PluginMarketplaceCacheSnapshot | null,
-  durablePeek: Awaited<ReturnType<typeof peekLocalCodexPluginsReadState>>
-): InstalledPluginItem[] {
-  const cachedRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
-  if (!durablePeek || !durableLocalStateMatchesCachedDevice(cached, durablePeek)) {
-    return cached?.installedPlugins ?? []
-  }
-  const cloudRaw = cachedRaw.filter(isCloudManagedInstalledPlugin)
-  return mergeInstalledPlugins(cloudRaw, durablePeek.installedPlugins, durablePeek.deviceId).map(
-    toInstalledPluginItem
+    cached?.installedPlugins ?? []
   )
 }
 

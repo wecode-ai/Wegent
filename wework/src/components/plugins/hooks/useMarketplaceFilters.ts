@@ -29,14 +29,12 @@ export function useMarketplaceFilters({
   items,
   installedPlugins,
   marketplaces,
-  isOpenAiOfficialCatalogLoading,
   hasMarketplace,
   t,
 }: {
   items: PluginMarketplaceItem[]
   installedPlugins: InstalledPluginItem[]
   marketplaces: MarketplaceOption[]
-  isOpenAiOfficialCatalogLoading: boolean
   hasMarketplace: boolean
   t: (key: string, defaultValue: string, options?: Record<string, unknown>) => string
 }) {
@@ -97,13 +95,6 @@ export function useMarketplaceFilters({
       { forceFlat: Boolean(normalizedQuery) }
     )
   }, [marketplaceDistributionFilter, normalizedQuery, t, visibleMarketplaceItems])
-
-  const isOpenAiOfficialViewLoading =
-    marketplaceDistributionFilter === 'official' &&
-    !marketplaceSourceFilterKey &&
-    !normalizedQuery &&
-    visibleMarketplaceItems.length === 0 &&
-    isOpenAiOfficialCatalogLoading
 
   const browsingCategorySection = useMemo(
     () =>
@@ -198,7 +189,6 @@ export function useMarketplaceFilters({
     visibleSearchResultLimit,
     visibleMarketplaceItems,
     marketplaceCategorySections,
-    isOpenAiOfficialViewLoading,
     browsingCategorySection,
     visibleInstalledPlugins,
     installedStripPlugins,

@@ -4663,6 +4663,17 @@ async function verifyMcpElicitationInFullAccess(control) {
     MCP_ELICITATION_PROMPT,
     'mcp_elicitation'
   )
+  await control.command('waitFor', '[data-testid="mcp-url-authorization-card"]', {
+    text: 'example.com',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The URL elicitation was acknowledged without user consent'
+  )
+  await control.command('click', '[data-testid="mcp-url-authorization-cancel"]')
   await control.command('waitFor', '[data-testid="request-user-input-card"]', {
     text: '访问范围',
     visible: true,
@@ -4679,10 +4690,14 @@ async function verifyMcpElicitationInFullAccess(control) {
     false,
     'The MCP tool call displayed an execution approval card instead of the business form'
   )
-  assert.equal(
-    await pathExists(evidencePath),
-    false,
-    'Codex resolved the MCP elicitation before the user answered the visible form'
+  const urlRecords = (await readFile(evidencePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line))
+  assert.deepEqual(
+    urlRecords,
+    [{ event: 'url_elicitation_result', result: { action: 'cancel' } }],
+    'The real MCP server must receive only cancellation before the business form is answered'
   )
   await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
 

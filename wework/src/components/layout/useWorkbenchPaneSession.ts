@@ -1450,15 +1450,6 @@ export function useWorkbenchPaneSession({
       if (appendedUserMessage) {
         dispatchMessages({ type: 'user_added', message: appendedUserMessage })
       }
-      if (requestUserInputKey) {
-        setAnsweredRequestUserInputIds(current => {
-          if (current.has(requestUserInputKey)) return current
-          const next = new Set(current)
-          next.add(requestUserInputKey)
-          return next
-        })
-      }
-      applyLocalRequestUserInputResponse(response)
       const runtimeModelFields = options.appendUserMessage
         ? getRuntimeModelFields(runtimeModelOverride)
         : {}
@@ -1472,16 +1463,11 @@ export function useWorkbenchPaneSession({
         ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
-        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
-      } else {
         if (requestUserInputKey) {
-          setAnsweredRequestUserInputIds(current => {
-            if (!current.has(requestUserInputKey)) return current
-            const next = new Set(current)
-            next.delete(requestUserInputKey)
-            return next
-          })
+          setAnsweredRequestUserInputIds(current => new Set(current).add(requestUserInputKey))
         }
+        applyLocalRequestUserInputResponse(response)
+        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
       }
       return sent
     },

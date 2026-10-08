@@ -7,12 +7,13 @@ import io
 import json
 import stat
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -2944,7 +2945,7 @@ async def test_install_returns_plugin_when_device_sync_fails(
 
 
 @pytest.mark.asyncio
-async def test_uninstall_succeeds_when_device_sync_fails(
+async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
     test_db, test_user, monkeypatch
 ):
     installed, release = _device_install(test_db, test_user.id)
@@ -2960,27 +2961,31 @@ async def test_uninstall_succeeds_when_device_sync_fails(
     )
     test_db.commit()
 
-    async def sync(*_args, **_kwargs):
-        return DeviceCapabilitySyncResponse(
-            failed=1,
-            synced=0,
-            results=[
-                DeviceCapabilitySyncResult(
-                    device_id="current-device",
-                    success=False,
-                    error="device rejected sync",
-                )
-            ],
+    from unittest.mock import AsyncMock
+
+    from app.services.device import plugin_removal_sync
+
+    @contextmanager
+    def session():
+        yield test_db
+
+    monkeypatch.setattr(plugin_removal_sync, "get_db_session", session)
+    sync = AsyncMock(
+        return_value=DeviceCapabilitySyncResult(
+            device_id="current-device", success=False, error="device rejected sync"
         )
+    )
 
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_user_global_capabilities",
+        "sync_current_device_capabilities",
         sync,
     )
 
+    tasks = BackgroundTasks()
     await uninstall_installed_plugin(
         installed_id=installed.id,
+        background_tasks=tasks,
         device_id="current-device",
         db=test_db,
         current_user=test_user,
@@ -2989,7 +2994,11 @@ async def test_uninstall_succeeds_when_device_sync_fails(
     test_db.refresh(installed)
     assert installed.is_active is False
     assert installed.json["spec"]["installState"] == "uninstalled"
-    assert test_db.query(PluginDeviceInstallation).count() == 0
+    sync.assert_not_awaited()
+    assert test_db.query(PluginDeviceInstallation).one().state == "uninstalling"
+    assert plugin_removal_sync.pending_removal_devices(test_user.id, None) == {
+        "current-device"
+    }
 
     item = (
         PluginMarketplaceService()
@@ -3002,6 +3011,23 @@ async def test_uninstall_succeeds_when_device_sync_fails(
     )
     assert item.installed is False
     assert item.installedPluginId is None
+    assert item.currentDeviceInstallation is None
+
+    await tasks()
+    sync.assert_awaited_once()
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "failed"
+    assert plugin_removal_sync.pending_removal_devices(test_user.id, None) == set()
+    # A later heartbeat retries the durable row, without any new DELETE request.
+    row.last_sync_at = datetime.now() - timedelta(seconds=61)
+    test_db.commit()
+    sync.return_value = DeviceCapabilitySyncResult(
+        device_id="current-device", success=True, acknowledged=True
+    )
+    await plugin_removal_sync.sync_pending_plugin_removals(
+        test_user.id, "current-device"
+    )
+    assert test_db.query(PluginDeviceInstallation).count() == 0
 
 
 @pytest.mark.asyncio
@@ -3025,6 +3051,7 @@ async def test_uninstall_is_idempotent_for_inactive_kind(
 
     await uninstall_installed_plugin(
         installed_id=installed.id,
+        background_tasks=BackgroundTasks(),
         device_id="current-device",
         db=test_db,
         current_user=test_user,
@@ -3058,6 +3085,78 @@ def test_reconnect_sync_clears_materialized_uninstall_state(test_db, test_user):
     )
 
     assert test_db.query(PluginDeviceInstallation).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_uninstall_creates_durable_cleanup_for_legacy_device_without_rows(
+    test_db, test_user, monkeypatch
+):
+    from app.services.device import plugin_removal_sync
+    from app.services.device_service import device_service
+
+    installed, _ = _device_install(test_db, test_user.id)
+    device = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        "legacy-device",
+        "Wework",
+        device_type="app",
+        runtime_instance_id="runtime",
+        app_device_id="electron-app",
+    )
+    route = f"app-record-{device.id}"
+    await uninstall_installed_plugin(
+        installed_id=installed.id,
+        background_tasks=BackgroundTasks(),
+        db=test_db,
+        current_user=test_user,
+    )
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.device_id == route
+    assert row.state == "uninstalling"
+
+    @contextmanager
+    def session():
+        yield test_db
+
+    monkeypatch.setattr(plugin_removal_sync, "get_db_session", session)
+    assert plugin_removal_sync.pending_removal_devices(
+        test_user.id, "electron-app"
+    ) == {route}
+    assert (
+        plugin_removal_sync.pending_removal_devices(test_user.id, "other-device")
+        == set()
+    )
+    assert plugin_removal_sync.pending_removal_devices(test_user.id + 1, None) == set()
+
+    # Reinstall is authoritative even if the previous cleanup task has not run.
+    installed.is_active = True
+    test_db.commit()
+    assert plugin_removal_sync.pending_removal_devices(test_user.id, route) == set()
+
+
+def test_preparing_uninstall_does_not_commit_or_touch_another_users_plugin(
+    test_db, test_user
+):
+    from app.services.device.plugin_removal_sync import prepare_plugin_removal
+
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            user_id=test_user.id,
+            installed_kind_id=installed.id,
+            device_id="device",
+            desired_release_id=release.id,
+            state="installed",
+        )
+    )
+    test_db.commit()
+    prepare_plugin_removal(test_db, test_user.id + 1, installed.id)
+    assert test_db.query(PluginDeviceInstallation).one().state == "installed"
+    prepare_plugin_removal(test_db, test_user.id, installed.id)
+    assert test_db.query(PluginDeviceInstallation).one().state == "uninstalling"
+    test_db.rollback()
+    assert test_db.query(PluginDeviceInstallation).one().state == "installed"
 
 
 def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):

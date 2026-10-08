@@ -60,7 +60,7 @@ pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Va
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .ok_or(AuthError("plugin_auth_broker_unavailable"))?;
-    let Some(id) = installed_id(&home, root, slug)? else {
+    let Some(id) = installed_id(&home, root, slug, action == "logout")? else {
         return Ok(None);
     };
     let sender = super::broker::lifecycle_sender()?;
@@ -83,7 +83,12 @@ pub async fn exchange(root: &Path, slug: &str, action: &str) -> Result<Option<Va
     }
 }
 
-fn installed_id(home: &Path, root: &Path, slug: &str) -> Result<Option<u64>, AuthError> {
+fn installed_id(
+    home: &Path,
+    root: &Path,
+    slug: &str,
+    revoking: bool,
+) -> Result<Option<u64>, AuthError> {
     let root = root
         .canonicalize()
         .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
@@ -123,7 +128,7 @@ fn installed_id(home: &Path, root: &Path, slug: &str) -> Result<Option<u64>, Aut
         if entry["managed"] != true {
             return Ok(None);
         }
-        if entry["enabled"] != true || matched.is_some() {
+        if (!revoking && entry["enabled"] != true) || matched.is_some() {
             return Err(AuthError("plugin_auth_invalid_package"));
         }
         matched = Some(
@@ -217,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_target_requires_an_exact_enabled_installation_and_connector() {
+    fn managed_target_requires_exact_installation_and_only_revokes_disabled_packages() {
         let home = tempfile::tempdir().unwrap();
         let capabilities = home.path().join("capabilities");
         let root = capabilities.join("store/plugins/mail");
@@ -237,12 +242,16 @@ mod tests {
         }}}).to_string()
         };
         fs::write(capabilities.join("manifest.json"), manifest(true)).unwrap();
-        assert_eq!(installed_id(home.path(), &root, "mail"), Ok(Some(42)));
-        assert_eq!(installed_id(home.path(), &root, "legacy"), Ok(None));
+        assert_eq!(
+            installed_id(home.path(), &root, "mail", false),
+            Ok(Some(42))
+        );
+        assert_eq!(installed_id(home.path(), &root, "legacy", false), Ok(None));
         fs::write(capabilities.join("manifest.json"), manifest(false)).unwrap();
         assert_eq!(
-            installed_id(home.path(), &root, "mail"),
+            installed_id(home.path(), &root, "mail", false),
             Err(AuthError("plugin_auth_invalid_package"))
         );
+        assert_eq!(installed_id(home.path(), &root, "mail", true), Ok(Some(42)));
     }
 }

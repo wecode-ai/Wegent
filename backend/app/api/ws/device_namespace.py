@@ -2094,6 +2094,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             ),
             "reconcile unconfirmed executions after device heartbeat",
         )
+        from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
+
+        self._schedule_background_task(
+            sync_pending_plugin_removals(int(user_id), payload.device_id),
+            "reconcile persisted plugin removals after device heartbeat",
+        )
 
         return {"success": True}
 

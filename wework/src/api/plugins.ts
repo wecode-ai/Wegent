@@ -25,6 +25,7 @@ import type {
 import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
 import { resolveApiUrl } from './resolveApiUrl'
+import { uninstallCloudPlugin } from './pluginUninstall'
 
 export interface PluginShareUserSearchItem {
   id: number
@@ -156,7 +157,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
       return client.put(`/plugins/installed/${id}${deviceQuery(deviceId)}`, data)
     },
     uninstallInstalledPlugin(id: string | number, deviceId?: string): Promise<void> {
-      return client.delete(`/plugins/installed/${id}${deviceQuery(deviceId)}`)
+      return uninstallCloudPlugin(client, id, deviceQuery(deviceId))
     },
     listMarketplacePlugins(
       params: { q?: string; source?: string; deviceId?: string } = {}

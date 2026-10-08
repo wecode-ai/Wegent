@@ -48,6 +48,7 @@ interface PluginDetailViewProps {
   onEditAction?: () => void
   onManageConnector?: (slug: string) => void
   connectorAuthBySlug?: Record<string, 'connected' | 'disconnected'>
+  connectorAuthBusySlug?: string | null
   accessRole?: 'catalog' | 'owner' | 'recipient'
   pluginVisibility?: 'personal' | 'workspace' | 'public' | null
   shareGrantUserCount?: number
@@ -459,6 +460,7 @@ export function PluginDetailView({
   onEditAction,
   onManageConnector,
   connectorAuthBySlug,
+  connectorAuthBusySlug,
   accessRole,
   pluginVisibility = null,
   shareGrantUserCount = 0,
@@ -946,6 +948,7 @@ export function PluginDetailView({
           connectors={plugin.raw.spec.components.connectors ?? []}
           installed={isInstalled}
           authBySlug={connectorAuthBySlug}
+          busySlug={connectorAuthBusySlug}
           onManage={onManageConnector}
         />
 

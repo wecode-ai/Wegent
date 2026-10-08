@@ -563,6 +563,27 @@ fn codex_app_server_uses_codex_home_as_working_directory() {
 }
 
 #[test]
+fn codex_app_server_uses_native_desktop_http_identity() {
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE".to_owned(),
+        "untrusted".to_owned(),
+    );
+    let command = codex_app_server_command("codex", Path::new("/tmp/codex"), &config);
+    let identity = command
+        .as_std()
+        .get_envs()
+        .find(|(key, _)| *key == "CODEX_INTERNAL_ORIGINATOR_OVERRIDE");
+    assert_eq!(
+        identity
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str()),
+        Some("Codex")
+    );
+    assert_eq!(initialize_params()["clientInfo"]["name"], "wegent_executor");
+}
+
+#[test]
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {
@@ -660,6 +681,101 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
             {"label": "仅自己", "description": "owner"},
             {"label": "指定人", "description": "custom"}
         ])
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_is_visible_and_requires_explicit_consent() {
+    let params = json!({
+        "serverName": "codex_apps", "mode": "url",
+        "message": "Connect GitHub", "elicitationId": "github-auth-1",
+        "url": "https://chatgpt.com/connect/github?state=secret"
+    });
+    let message = json!({"id": 0, "method": "mcpServer/elicitation/request", "params": params});
+    let payload = mcp_server_elicitation_request_user_input_params(&message["params"]).unwrap();
+    assert_eq!(payload["interactionKind"], "mcp_url");
+    assert_eq!(payload["elicitationId"], "github-auth-1");
+    assert_eq!(payload["url"], message["params"]["url"]);
+    assert!(codex_notification_requires_user_input(&message));
+    assert!(!is_mcp_tool_call_approval_request(&message));
+    for action in ["accept", "cancel", "decline"] {
+        let result = mcp_server_elicitation_response(
+            &message,
+            Some(&json!({
+                "requestId": 0, "answers": {"__mcp_url": {"answers": [action]}}
+            })),
+        )
+        .unwrap();
+        assert_eq!(result, json!({"action": action}));
+    }
+    assert_eq!(
+        url_elicitation::response_result(&json!({"answers": {"other": {"answers": ["accept"]}}})),
+        json!({"action": "cancel"})
+    );
+}
+
+#[test]
+fn mcp_url_elicitation_rejects_unsafe_or_incomplete_requests() {
+    for address in [
+        "javascript:alert(1)",
+        "file:///tmp/auth",
+        "http://example.com/login",
+        "https://user:password@example.com",
+        "not-a-url",
+    ] {
+        let params = json!({"mode": "url", "url": address, "elicitationId": "1"});
+        assert!(mcp_server_elicitation_request_user_input_params(&params).is_none());
+        let result = mcp_server_elicitation_response(&json!({"params": params}), None).unwrap();
+        assert_eq!(result["action"], "decline");
+    }
+    for address in ["http://127.0.0.1:1234/auth", "http://[::1]:1234/auth"] {
+        assert!(
+            url_elicitation::request_params(&json!({"url": address, "elicitationId": "1"}))
+                .is_some()
+        );
+    }
+    assert!(url_elicitation::request_params(&json!({"url": "https://example.com"})).is_none());
+}
+
+#[tokio::test]
+async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() {
+    let (_sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {"mode": "unsupported"}});
+    let result = timeout(
+        Duration::from_secs(1),
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(result["action"], "decline");
+}
+
+#[tokio::test]
+async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
+    let (sender, receiver) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(receiver);
+    let message = json!({"id": 0, "params": {
+        "mode": "url", "url": "https://chatgpt.com/connect/github", "elicitationId": "1",
+        "_meta": {"codex_approval_kind": "mcp_tool_call"}
+    }});
+    assert!(!is_mcp_tool_call_approval(&message["params"]));
+    let task = tokio::spawn(async move {
+        url_elicitation::shared_response(&message, Some(router), "0".to_owned(), true).await
+    });
+    sender
+        .send(json!({"requestId": 0, "answers": {"__mcp_url": {"answers": ["cancel"]}}}))
+        .await
+        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Some(json!({"action": "cancel"}))
     );
 }
 
@@ -4046,6 +4162,38 @@ fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
             }),
         ]
     );
+}
+
+#[test]
+fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
+    for marketplace in ["openai-bundled", "openai-curated-remote"] {
+        let input = turn_input(&json!(format!(
+            "[$GitHub](plugin://github@{marketplace}) list repositories"
+        )));
+        assert_eq!(
+            input,
+            vec![text_input("GitHub (gh) list repositories".to_owned())]
+        );
+    }
+    assert_eq!(
+        turn_input(&json!([{"type":"mention", "name":"GitHub", "path":"app://github"}])),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    assert_eq!(
+        turn_input(&json!(
+            "[$GitHub](app://connector_account_specific_id) list repositories"
+        )),
+        vec![text_input("GitHub (gh) list repositories".to_owned())]
+    );
+    assert_eq!(
+        turn_input(
+            &json!([{"type":"mention", "name":"GitHub", "path":"app://connector_account_specific_id"}])
+        ),
+        vec![text_input("GitHub (gh)".to_owned())]
+    );
+    let instructions = codex_thread_developer_instructions("user settings", "task settings");
+    assert!(instructions.contains(github_cli::INSTRUCTIONS));
+    assert!(instructions.contains("connectorSlug=wework-github-cli"));
 }
 
 #[test]

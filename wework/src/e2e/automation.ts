@@ -2720,11 +2720,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getComposerDiagnosticsSnapshot':
       return JSON.stringify(getComposerDiagnosticsSnapshot())
     case 'getComposerPluginInventoryDiagnostics': {
+      const { getPluginInventoryDiagnostics } =
+        await import('@/features/plugins/pluginMarketplaceCache')
       const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
       const installed =
         peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
         peekLocalCodexPluginsReadState()
       return JSON.stringify({
+        sharedInventory: getPluginInventoryDiagnostics(),
         composerApps: getComposerApps().map(app => ({
           id: app.id,
           isAccessible: app.isAccessible,
@@ -2742,6 +2745,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           skillCount: plugin.spec.components.skills.length,
         })),
       })
+    }
+    case 'reconcileLocalPluginCatalog': {
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const state = await createLocalCodexPluginApi().readState({
+        mergeAllMarketplaces: true,
+        marketplaceKinds: ['local'],
+        refresh: true,
+      })
+      return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
     }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement

@@ -155,6 +155,7 @@ pub(crate) use home::{
 };
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod github_cli;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -3028,20 +3029,17 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
-            if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(&message)) {
-                let result = mcp_server_tool_call_approval_response(&message)?;
-                return client.send_response(request_id, result).await;
+            if let Some(result) = url_elicitation::shared_response(
+                &message,
+                request_user_input_answers,
+                correlation_key,
+                auto_approve_mcp_tool_calls,
+            )
+            .await?
+            {
+                client.send_response(request_id, result).await?;
             }
-            let has_response_router = request_user_input_answers.is_some();
-            let response = match request_user_input_answers {
-                Some(receiver) => receiver.receive(correlation_key).await?,
-                None => None,
-            };
-            if response.is_none() && has_response_router {
-                return Ok(());
-            }
-            let result = mcp_server_elicitation_response(&message, response.as_ref())?;
-            client.send_response(request_id, result).await
+            Ok::<(), String>(())
         }
         .await;
         if let Err(error) = result {
@@ -3169,6 +3167,9 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    // Use the native Codex desktop HTTP identity. Authentication and the actual
+    // runtime version remain owned by Codex; never synthesize browser cookies.
+    command.env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "Codex");
     command.env(CODEX_HOME_ENV, codex_home);
     command.current_dir(codex_home);
     command.env(
@@ -3194,6 +3195,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        github_cli::INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())
@@ -3338,6 +3340,9 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
+#[path = "codex/url_elicitation.rs"]
+mod url_elicitation;
+
 use json_rpc::JsonRpcConnection;
 
 #[path = "codex/run_state.rs"]
@@ -3441,6 +3446,15 @@ fn build_codex_launch_config_with_route_scope(
     launch_config
         .config_overrides
         .push(shell_path_config_override());
+    // Native authorization and agent tools must use the same gh profile.
+    if let Ok(config_dir) = env::var("GH_CONFIG_DIR") {
+        if !config_dir.is_empty() {
+            launch_config.config_overrides.push(format!(
+                "shell_environment_policy.set.GH_CONFIG_DIR={}",
+                toml_value(&config_dir)
+            ));
+        }
+    }
     launch_config
         .config_overrides
         .extend(task_identity_config_overrides(request));
@@ -5925,6 +5939,9 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             item.get("name").and_then(Value::as_str),
             item.get("path").and_then(Value::as_str),
         ) {
+            (Some(name), Some(path)) if github_cli::is_mention(name, path) => {
+                Some(vec![text_input("GitHub (gh)".to_owned())])
+            }
             (Some(name), Some(path)) => Some(vec![mention_input(name, path)]),
             _ => None,
         },
@@ -5991,6 +6008,13 @@ fn extract_structured_mentions(
         let start = reference.start;
         let uri_end = reference.end - 1;
         let uri = reference.href.as_str();
+        if github_cli::is_mention(name, uri) {
+            // Do not activate the official plugin/apps skill alongside CLI mode.
+            output.push_str(&text[cursor..start]);
+            output.push_str("GitHub (gh)");
+            cursor = reference.end;
+            continue;
+        }
         if let Some(path) = composer_file_reference_path(uri) {
             output.push_str(&text[cursor..start]);
             if path.chars().any(char::is_whitespace) && !path.contains('"') {
@@ -6184,10 +6208,15 @@ async fn receive_mcp_server_elicitation_response(
     let Some(receiver) = request_user_input_answers else {
         return mcp_server_elicitation_response(message, None);
     };
-    let response = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
+    let response = if message_params(message).get("mode").and_then(Value::as_str) == Some("url") {
+        match timeout(Duration::from_secs(600), receiver.recv()).await {
+            Ok(response) => response,
+            Err(_) => return Ok(json!({"action": "cancel"})),
+        }
+    } else {
+        receiver.recv().await
+    }
+    .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
     mcp_server_elicitation_response(message, Some(&response))
 }
 
@@ -6203,6 +6232,9 @@ fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, Stri
 }
 
 fn is_mcp_tool_call_approval(params: &Value) -> bool {
+    if params.get("mode").and_then(Value::as_str) == Some("url") {
+        return false;
+    }
     params
         .get("_meta")
         .and_then(Value::as_object)
@@ -6225,14 +6257,9 @@ fn mcp_server_elicitation_response(
             ("turn_id", json_string_field(params, "turnId")),
             ("server_name", json_string_field(params, "serverName")),
             ("mode", mode.to_owned()),
-            (
-                "raw",
-                serde_json::to_string(message)
-                    .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>")),
-            ),
         ],
     );
-    if !matches!(mode, "form" | "openai/form") {
+    if !matches!(mode, "form" | "openai/form" | "url") {
         log_executor_event(
             "codex mcp elicitation declined",
             &[
@@ -6266,11 +6293,6 @@ fn mcp_server_elicitation_response(
             ("request_id", json_scalar_field(message, "id")),
             ("server_name", json_string_field(params, "serverName")),
             ("action", json_string_field(&result, "action")),
-            (
-                "raw",
-                serde_json::to_string(&result)
-                    .unwrap_or_else(|error| format!("<failed to serialize response: {error}>")),
-            ),
         ],
     );
     Ok(result)
@@ -6278,6 +6300,9 @@ fn mcp_server_elicitation_response(
 
 pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -> Option<Value> {
     let mode = params.get("mode").and_then(Value::as_str)?;
+    if mode == "url" {
+        return url_elicitation::request_params(params);
+    }
     if !matches!(mode, "form" | "openai/form") {
         return None;
     }
@@ -6403,6 +6428,9 @@ fn mcp_elicitation_property_options(property: &Value) -> Vec<Value> {
 }
 
 fn mcp_server_elicitation_result(params: &Value, response: &Value) -> Value {
+    if params.get("mode").and_then(Value::as_str) == Some("url") {
+        return url_elicitation::response_result(response);
+    }
     let answers = response.get("answers").and_then(Value::as_object);
     if answers.map_or(true, serde_json::Map::is_empty) {
         return mcp_server_elicitation_cancel_result();

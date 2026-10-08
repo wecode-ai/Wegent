@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 
@@ -7,7 +7,10 @@ const authMocks = vi.hoisted(() => ({
   start: vi.fn(),
   poll: vi.fn(),
   cancel: vi.fn(),
+  open: vi.fn(),
 }))
+
+vi.mock('@/lib/external-links', () => ({ openExternalUrl: authMocks.open }))
 
 vi.mock('@/api/local/localConnectorAuth', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/local/localConnectorAuth')>()
@@ -20,6 +23,7 @@ vi.mock('@/api/local/localConnectorAuth', async importOriginal => {
 })
 
 import { ConnectorAuthCard } from './ConnectorAuthCard'
+import { GITHUB_CLI_TARGET } from '@/api/local/githubCli'
 
 const browserTarget = {
   pluginKey: 'gitlab-intra',
@@ -43,6 +47,7 @@ describe('ConnectorAuthCard browser oauth', () => {
     authMocks.start.mockReset()
     authMocks.poll.mockReset()
     authMocks.cancel.mockReset().mockResolvedValue({ status: 'cancelled' })
+    authMocks.open.mockReset().mockResolvedValue(true)
   })
 
   test('polls browser sessions with sessionId until authorization succeeds', async () => {
@@ -107,5 +112,74 @@ describe('ConnectorAuthCard browser oauth', () => {
     )
     expect(await screen.findByTestId('connector-auth-qr')).toBeInTheDocument()
     expect(screen.queryByText(/does not support local authentication/i)).not.toBeInTheDocument()
+  })
+
+  test('GitHub CLI waits for consent, displays a device code, and opens GitHub in the system browser', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'gh-session',
+      userCode: 'ABCD-1234',
+      verificationUrl: 'https://github.com/login/device',
+    })
+    authMocks.poll.mockResolvedValue({ status: 'ok', sessionId: 'gh-session' })
+    const onSuccess = vi.fn()
+    render(
+      <ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} onCancel={vi.fn()} />
+    )
+    expect(authMocks.start).not.toHaveBeenCalled()
+    expect(authMocks.open).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    expect(await screen.findByTestId('github-cli-device-code')).toHaveTextContent('ABCD-1234')
+    expect(authMocks.open).not.toHaveBeenCalled()
+    authMocks.open.mockRejectedValueOnce(new Error('sensitive internal error'))
+    fireEvent.click(screen.getByTestId('github-cli-open-browser'))
+    expect(await screen.findByRole('alert')).not.toHaveTextContent('sensitive internal error')
+    fireEvent.click(screen.getByTestId('github-cli-open-browser'))
+    await waitFor(() =>
+      expect(authMocks.open).toHaveBeenLastCalledWith('https://github.com/login/device', {
+        target: 'system',
+      })
+    )
+    expect(onSuccess).not.toHaveBeenCalled()
+    await waitFor(
+      () =>
+        expect(onSuccess).toHaveBeenCalledExactlyOnceWith({
+          status: 'ok',
+          sessionId: 'gh-session',
+        }),
+      { timeout: 2000 }
+    )
+  })
+
+  test('GitHub CLI rejects foreign authorization URLs and cancels the native session', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'gh-unsafe',
+      verificationUrl: 'https://evil.test/login/device',
+    })
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+    const onCancel = vi.fn()
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={vi.fn()} onCancel={onCancel} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('github-cli-open-browser')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('connector-auth-cancel'))
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(authMocks.open).not.toHaveBeenCalled()
+    expect(authMocks.cancel).toHaveBeenCalledWith(
+      { pluginKey: 'github', connectorSlug: 'wework-github-cli' },
+      'gh-unsafe'
+    )
+  })
+
+  test('GitHub CLI shows missing CLI errors and allows retry without reporting success', async () => {
+    authMocks.start.mockResolvedValue({ status: 'error', errorCode: 'gh_missing' })
+    const onSuccess = vi.fn()
+    render(<ConnectorAuthCard target={GITHUB_CLI_TARGET} onSuccess={onSuccess} />)
+    fireEvent.click(screen.getByTestId('github-cli-login'))
+    expect(await screen.findByRole('status')).toHaveTextContent(/gh/)
+    fireEvent.click(screen.getByTestId('connector-auth-retry'))
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
+    expect(onSuccess).not.toHaveBeenCalled()
   })
 })

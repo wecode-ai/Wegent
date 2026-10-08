@@ -6,6 +6,7 @@ export const COMPOSER_APPS_REQUEST_SYNC_EVENT = 'wework:composer-apps-request-sy
 type ComposerAppsListener = () => void
 
 type ComposerAppsStore = {
+  source?: () => LocalDeviceApp[]
   memoryApps: LocalDeviceApp[]
   listeners: Set<ComposerAppsListener>
   suppressEmptySync: boolean
@@ -35,8 +36,22 @@ function getStore(): ComposerAppsStore {
   return window.__weworkComposerAppsStore
 }
 
-function notifyComposerAppsListeners() {
+export function notifyComposerAppsListeners() {
   getStore().listeners.forEach(listener => listener())
+}
+
+/** Desktop membership is a read-only projection, never a second writable inventory. */
+export function bindComposerAppsSource(source: () => LocalDeviceApp[]): () => void {
+  const store = getStore()
+  store.source = source
+  store.memoryApps = []
+  notifyComposerAppsListeners()
+  return () => {
+    if (store.source !== source) return
+    delete store.source
+    store.memoryApps = []
+    notifyComposerAppsListeners()
+  }
 }
 
 /** Legacy durable snapshot. Composer membership now reloads from the shared inventory. */
@@ -64,13 +79,15 @@ export function clearComposerAppsSnapshot(): void {
  * must read the same list or it briefly shows “no plugins” while `/` still works.
  */
 export function getComposerApps(): LocalDeviceApp[] {
-  return getStore().memoryApps
+  const store = getStore()
+  return store.source ? store.source() : store.memoryApps
 }
 
 /** Publish a non-empty composer app list to shared renderer memory. */
 export function publishComposerApps(apps: LocalDeviceApp[]): void {
   if (apps.length === 0) return
   const store = getStore()
+  if (store.source) return
   store.memoryApps = apps
   store.suppressEmptySync = false
   clearComposerAppsSnapshot()
@@ -80,44 +97,16 @@ export function publishComposerApps(apps: LocalDeviceApp[]): void {
 /** Replace the shared list, including clearing it after the last uninstall. */
 export function replaceComposerApps(apps: LocalDeviceApp[]): void {
   const store = getStore()
+  if (store.source) return
   store.memoryApps = apps
   store.suppressEmptySync = apps.length === 0
   clearComposerAppsSnapshot()
   notifyComposerAppsListeners()
 }
 
-function normalizedComposerAppIdentities(app: LocalDeviceApp): Set<string> {
-  return new Set(
-    [
-      app.id,
-      app.id.replace(/^(plugin:|wegent:)/, ''),
-      app.pluginKey,
-      app.name,
-      ...(app.pluginDisplayNames ?? []),
-    ]
-      .map(value => value?.trim().toLowerCase() ?? '')
-      .filter(Boolean)
-  )
-}
-
-/** Remove successfully uninstalled plugins before the slower inventory refresh finishes. */
-export function removeComposerAppsByPluginIdentity(identities: readonly string[]): void {
-  const normalizedIdentities = new Set(
-    identities.map(value => value.trim().toLowerCase()).filter(Boolean)
-  )
-  if (normalizedIdentities.size === 0) return
-
-  const current = getComposerApps()
-  const next = current.filter(app => {
-    const appIdentities = normalizedComposerAppIdentities(app)
-    return ![...normalizedIdentities].some(identity => appIdentities.has(identity))
-  })
-  if (next.length === current.length) return
-  replaceComposerApps(next)
-}
-
 export function shouldSuppressComposerAppsSync(): boolean {
   const store = getStore()
+  if (store.source) return true
   return store.suppressEmptySync && store.memoryApps.length === 0
 }
 

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
+import { localConnectorAuthHealth } from '@/api/local/localConnectorAuth'
+import { GITHUB_CLI_TARGET } from '@/api/local/githubCli'
+import { parseComposerReferences } from '@wegent/collaboration/composer/composerMentions'
 import {
   enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
@@ -68,6 +71,21 @@ function hasOnlyOpenAiOfficialPluginMentions(input: string): boolean {
   )
 }
 
+function hasGithubCliMention(input: string): boolean {
+  return (
+    listMentionedPluginReferences(input).some(
+      ref =>
+        ref.pluginName.toLowerCase() === 'github' &&
+        isOpenAiOfficialMarketplaceId(ref.marketplaceName)
+    ) ||
+    parseComposerReferences(input).some(
+      ref =>
+        ref.href === 'app://github' ||
+        (ref.href.startsWith('app://') && ref.label.replace(/^[@$]/, '').toLowerCase() === 'github')
+    )
+  )
+}
+
 export function useLocalConnectorAuthGate(options: {
   messages: WorkbenchMessage[]
   onResumeSend: (input: string) => Promise<void> | void
@@ -79,12 +97,20 @@ export function useLocalConnectorAuthGate(options: {
   const enrichedPluginNamesRef = useRef(new Set<string>())
   const handledResumeKeysRef = useRef<Set<string>>(new Set())
   const pendingRef = useRef(pending)
+  const preflightVersionRef = useRef(0)
   const optionsRef = useRef(options)
 
   useEffect(() => {
-    pendingRef.current = pending
     optionsRef.current = options
-  }, [options, pending])
+  }, [options])
+
+  const updatePending = useCallback((next: PendingConnectorAuth | null) => {
+    // Consume synchronously so cancellation and repeated success callbacks
+    // cannot send an obsolete draft before React commits the next render.
+    pendingRef.current = next
+    if (!next) preflightVersionRef.current += 1
+    setPending(next)
+  }, [])
 
   const refreshPlugins = useCallback(async (pluginNames?: string[]) => {
     const names = pluginNames ?? []
@@ -112,11 +138,33 @@ export function useLocalConnectorAuthGate(options: {
 
   const gateBeforeSend = useCallback(
     async (input: string): Promise<'send' | 'blocked'> => {
+      if (!messageNeedsConnectorPreflight(input) && !hasGithubCliMention(input)) {
+        updatePending(null)
+        return 'send'
+      }
       if (pendingRef.current) return 'blocked'
-      if (!messageNeedsConnectorPreflight(input)) return 'send'
+      const version = ++preflightVersionRef.current
       try {
         const mentioned = listMentionedPluginNames(input)
-        if (hasOnlyOpenAiOfficialPluginMentions(input)) return 'send'
+        const githubCli = hasGithubCliMention(input)
+        if (githubCli) {
+          const health = await localConnectorAuthHealth(GITHUB_CLI_TARGET)
+          if (version !== preflightVersionRef.current) return 'blocked'
+          if (health.status !== 'ok') {
+            updatePending({
+              target: GITHUB_CLI_TARGET,
+              title: t('workbench.github_cli_login_title'),
+              mode: 'preflight',
+              pendingInput: input,
+            })
+            return 'blocked'
+          }
+        }
+        if (
+          hasOnlyOpenAiOfficialPluginMentions(input) ||
+          (githubCli && !messageNeedsConnectorPreflight(input))
+        )
+          return 'send'
         const pluginNames = mentioned
         const cached = pluginsRef.current
         const cachedCoversMentions =
@@ -153,13 +201,15 @@ export function useLocalConnectorAuthGate(options: {
             plugins = await refreshPlugins(pluginNames.length > 0 ? pluginNames : undefined)
           }
         }
+        if (version !== preflightVersionRef.current) return 'blocked'
         const requirements = findLocalConnectorsForMessage(input, plugins)
         if (requirements.length === 0) {
           return 'send'
         }
         const needing = await findFirstLocalNeedingLogin(requirements)
+        if (version !== preflightVersionRef.current) return 'blocked'
         if (!needing) return 'send'
-        setPending({
+        updatePending({
           target: toLocalConnectorAuthTarget(needing),
           title: requirementTitle(needing, t),
           mode: 'preflight',
@@ -167,11 +217,21 @@ export function useLocalConnectorAuthGate(options: {
         })
         return 'blocked'
       } catch {
+        if (version !== preflightVersionRef.current) return 'blocked'
+        if (hasGithubCliMention(input)) {
+          updatePending({
+            target: GITHUB_CLI_TARGET,
+            title: t('workbench.github_cli_login_title'),
+            mode: 'preflight',
+            pendingInput: input,
+          })
+          return 'blocked'
+        }
         // If health gate fails unexpectedly, allow send and rely on mid-task resume.
         return 'send'
       }
     },
-    [refreshPlugins, t]
+    [refreshPlugins, t, updatePending]
   )
 
   useEffect(() => {
@@ -180,12 +240,32 @@ export function useLocalConnectorAuthGate(options: {
     if (!candidate) return
     const key = candidate.message.id
     if (handledResumeKeysRef.current.has(key)) return
+    const version = preflightVersionRef.current
 
     void (async () => {
       try {
         const { message: latest, text } = candidate
         const pluginKey = extractConnectorAuthPluginKey(text)
         const connectorSlug = extractConnectorAuthConnectorSlug(text)
+        if (pluginKey === 'github' && connectorSlug === GITHUB_CLI_TARGET.connectorSlug) {
+          const health = await localConnectorAuthHealth(GITHUB_CLI_TARGET)
+          if (
+            version !== preflightVersionRef.current ||
+            pendingRef.current ||
+            handledResumeKeysRef.current.has(key)
+          )
+            return
+          if (health.status !== 'ok') {
+            handledResumeKeysRef.current.add(key)
+            updatePending({
+              target: GITHUB_CLI_TARGET,
+              title: t('workbench.github_cli_login_title'),
+              mode: 'resume',
+              retryMessage: latest,
+            })
+          }
+          return
+        }
         const hint = resolveLocalConnectorAuthHint(text)
         const pluginNames = [
           ...(pluginKey ? [pluginKey] : []),
@@ -207,7 +287,7 @@ export function useLocalConnectorAuthGate(options: {
         const needing = await findFirstLocalNeedingLogin(requirements)
         if (needing) {
           handledResumeKeysRef.current.add(key)
-          setPending({
+          updatePending({
             target: toLocalConnectorAuthTarget(needing),
             title: requirementTitle(needing, t),
             mode: 'resume',
@@ -224,7 +304,7 @@ export function useLocalConnectorAuthGate(options: {
         const hintedNeeding = await findFirstLocalNeedingLogin(hintedRequirements)
         if (hintedNeeding) {
           handledResumeKeysRef.current.add(key)
-          setPending({
+          updatePending({
             target: toLocalConnectorAuthTarget(hintedNeeding),
             title: requirementTitle(hintedNeeding, t),
             mode: 'resume',
@@ -238,13 +318,13 @@ export function useLocalConnectorAuthGate(options: {
         // ignore detection failures; leave unhandled so a later refresh can retry
       }
     })()
-  }, [options.messages, pending, refreshPlugins, t])
+  }, [options.messages, pending, refreshPlugins, t, updatePending])
 
-  const clearPending = useCallback(() => setPending(null), [])
+  const clearPending = useCallback(() => updatePending(null), [updatePending])
 
   const completePending = useCallback(async () => {
     const current = pendingRef.current
-    setPending(null)
+    updatePending(null)
     if (!current) return
     if (current.mode === 'preflight' && current.pendingInput) {
       await optionsRef.current.onResumeSend(current.pendingInput)
@@ -262,7 +342,7 @@ export function useLocalConnectorAuthGate(options: {
         await optionsRef.current.onResumeSend(lastUser.content)
       }
     }
-  }, [])
+  }, [updatePending])
 
   return useMemo(
     () => ({
