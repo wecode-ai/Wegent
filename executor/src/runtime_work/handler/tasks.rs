@@ -1623,12 +1623,7 @@ impl RuntimeWorkRpcHandler {
             Ok(route) => route,
             Err(error) => return Ok(task_action_failure(&link, error)),
         };
-        self.register_thread_event_route(
-            &thread_id,
-            link.local_task_id.clone(),
-            request,
-            true,
-        );
+        self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
         let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
             Ok(thread) => latest_codex_turn_id(&thread),
             Err(error) => return Ok(task_action_failure(&link, error)),
@@ -1668,7 +1663,8 @@ impl RuntimeWorkRpcHandler {
         previous_turn_id: Option<&str>,
     ) -> Result<(String, String), String> {
         let mut last_error = None;
-        for _ in 0..CONTEXT_COMPACTION_WAIT_ATTEMPTS {
+        let deadline = Instant::now() + CONTEXT_COMPACTION_WAIT_BUDGET;
+        loop {
             match self.read_codex_recent_turns(thread_id).await {
                 Ok(thread) => {
                     if let Some(completion) =
@@ -1681,6 +1677,11 @@ impl RuntimeWorkRpcHandler {
                     }
                 }
                 Err(error) => last_error = Some(error),
+            }
+            // The budget covers the Codex app-server reads above too, so a slow
+            // provider cannot push the action past the App-IPC deadline.
+            if Instant::now() >= deadline {
+                break;
             }
             sleep(Duration::from_millis(CONTEXT_COMPACTION_WAIT_MS)).await;
         }
@@ -2360,14 +2361,14 @@ fn completed_context_compaction(
 /// compaction budget cannot turn such a turn into a compacted thread, so the
 /// caller reports the failure instead of surfacing a generic timeout.
 fn ended_context_compaction(thread: &Value, previous_turn_id: Option<&str>) -> Option<String> {
-    let turn = thread
-        .get("turns")
-        .and_then(Value::as_array)?
-        .iter()
-        .rev()
-        .filter_map(|turn| Some((turn, string_field(turn, "id")?)))
-        .find(|(_, turn_id)| Some(turn_id.as_str()) != previous_turn_id)?
-        .0;
+    // Only the newest turn can be the compaction turn. While it is still the
+    // turn that preceded the action, the provider has not started compaction and
+    // an earlier turn must not be mistaken for a result.
+    let turn = thread.get("turns").and_then(Value::as_array)?.last()?;
+    let turn_id = string_field(turn, "id")?;
+    if Some(turn_id.as_str()) == previous_turn_id {
+        return None;
+    }
     let status = string_field(turn, "status")?;
     if matches!(
         status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
@@ -2403,8 +2404,8 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, completed_context_compaction,
-        ended_context_compaction, normalize_friendly_title,
+        apply_runtime_task_start_failure, completed_context_compaction, ended_context_compaction,
+        normalize_friendly_title,
     };
 
     #[test]
@@ -2488,6 +2489,18 @@ mod tests {
             ended_context_compaction(&thread, None),
             Some("context compaction ended without compacting (completed)".to_owned())
         );
+    }
+
+    #[test]
+    fn ignores_older_turns_while_the_compaction_turn_has_not_started() {
+        let thread = json!({
+            "turns": [
+                {"id": "turn-older", "status": "failed", "items": []},
+                {"id": "turn-before", "status": "completed", "items": []}
+            ]
+        });
+
+        assert_eq!(ended_context_compaction(&thread, Some("turn-before")), None);
     }
 
     #[test]

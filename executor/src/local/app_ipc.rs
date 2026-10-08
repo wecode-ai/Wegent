@@ -3616,11 +3616,15 @@ mod tests {
             app_ipc_request_timeout_seconds(Some("runtime.tasks.compact")),
             CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS
         );
+    }
+
+    /// The compaction deadline must stay above the default request deadline.
+    const _: () = {
         assert!(
             CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS > APP_IPC_REQUEST_TIMEOUT_SECONDS,
             "the compaction deadline must exceed the default request deadline"
         );
-    }
+    };
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {

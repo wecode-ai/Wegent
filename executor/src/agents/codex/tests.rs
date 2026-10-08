@@ -2190,9 +2190,11 @@ fn skips_the_local_route_for_providers_that_are_reached_directly() {
         ..ExecutionRequest::default()
     };
 
-    assert!(bind_codex_thread_model_route(&request, "direct-provider-thread")
-        .expect("a direct provider needs no local route")
-        .is_none());
+    assert!(
+        bind_codex_thread_model_route(&request, "direct-provider-thread")
+            .expect("a direct provider needs no local route")
+            .is_none()
+    );
     let _ = fs::remove_dir_all(root);
 }
 
