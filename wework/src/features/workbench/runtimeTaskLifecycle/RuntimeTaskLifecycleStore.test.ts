@@ -954,6 +954,40 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isBusy).toBe(false)
   })
 
+  test('does not revive a completed turn from its unchanged millisecond start snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const running = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_473_979_351,
+    })
+    store.syncRuntimeWork(runtimeWork(running))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [
+          {
+            id: 'turn-1',
+            items: [],
+            status: 'completed',
+            completedAt: 1_791_473_979_000,
+          },
+        ],
+      })
+    )
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+
+    store.syncRuntimeWork(runtimeWork(running))
+
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.task?.running).toBe(false)
+  })
+
   test('ignores a stale streaming transcript after the current turn settles', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
