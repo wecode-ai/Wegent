@@ -26,7 +26,6 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQuery,
     VectorStoreQueryMode,
 )
-from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 
@@ -38,6 +37,9 @@ from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.qdrant_vector_store import (
+    ReadyQdrantVectorStore as QdrantVectorStore,
+)
 from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
