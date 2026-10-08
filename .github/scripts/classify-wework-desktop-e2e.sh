@@ -39,6 +39,7 @@ core_segments=(
   task-board-bulk-actions
   core-task-flow
   task-attachments
+  drawing-attachment
   window-lifecycle
   goal-lifecycle
   supervisor-lifecycle
@@ -157,7 +158,7 @@ core_shards=(
   window-lifecycle,browser-toolbar-actions,browser-annotation-anchors
   project-automation,collaboration-first-use,collaboration-group-onboarding,collaboration-local-agent-dispatch,collaboration-local-group-coordinate,collaboration-human-round-resume
   resilience,environment-panel-scroll,collaboration-shared-core,collaboration-local-group-cancellation
-  workspace-attachments,automation-lifecycle
+  workspace-attachments,automation-lifecycle,drawing-attachment
   project-assignment-notification,split-workbench,priority-filter,collaboration-issue-comment-mention
   rendering-extensions,transcript-sync
   runtime-task-queue,codex-invalid-launch-cwd,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
@@ -320,6 +321,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/chat/composer/Drawing* | \
+      wework/src/components/chat/composer/useComposerDrawing* | \
+      wework/src/components/chat/composer/drawing-canvas.css | \
+      wework/vite/excalidrawAssets* | \
+      wework/e2e/desktop/scenarios/drawing-attachment.scenario.mjs)
+      select_target "core:drawing-attachment"
+      return
+      ;;
     # System proxy resolution spans Electron, local runtime request routing,
     # and the proxy settings surface.
     wework/electron/src/host/system-proxy* | \
@@ -900,6 +909,11 @@ classify_wework_path() {
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:model-routing"
+      if [[ "$path" == wework/src/components/chat/composer/ComposerToolbar* || \
+        "$path" == wework/src/components/chat/composer/ComposerTextarea* || \
+        "$path" == wework/src/components/chat/composer/CompactChatComposer* ]]; then
+        select_target "core:drawing-attachment"
+      fi
       return
       ;;
 
@@ -1026,6 +1040,9 @@ classify_path() {
       select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
+      if [[ "$path" == packages/collaboration/src/composer/* ]]; then
+        select_target "core:drawing-attachment"
+      fi
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-first-use"
       select_target "core:collaboration-group-onboarding"
@@ -1043,7 +1060,9 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      .github/actions/build-wework-core-e2e/* | \
       docker/wework-e2e/* | \
+      .github/scripts/download-actions-artifact.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \

@@ -1755,6 +1755,15 @@
     "full_access_permission": "Full access permission",
     "custom_config_mode": "Custom (config.toml)",
     "add_photos_files": "Add photos and files",
+    "drawing": {
+      "title": "Draw",
+      "description": "Sketch an idea",
+      "loading": "Loading canvas…",
+      "cancel": "Cancel drawing",
+      "attach": "Add to chat",
+      "load_error": "The canvas could not load. Close and reopen it to try again.",
+      "export_error": "The drawing could not be attached. Your sketch is preserved; try again."
+    },
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "Plan mode",
     "permission_mode": "Permission mode",

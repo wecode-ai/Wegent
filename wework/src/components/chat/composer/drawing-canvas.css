@@ -1,0 +1,6 @@
+.drawing-canvas .excalidraw {
+  --color-primary: rgb(var(--color-text-primary));
+  --color-primary-darker: rgb(var(--color-text-primary));
+  --color-primary-darkest: rgb(var(--color-text-primary));
+  --color-primary-light: rgb(var(--color-muted));
+}
