@@ -196,6 +196,9 @@ export function createDesktopScenario({
         'click',
         inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${PROJECT_ID}"]`)
       )
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 1280, height: 800 }),
+      })
       await initializeFirstProjectExecutionEnvironment(control, CONTENT, modelResponseTimeoutMs)
       const sharedConfig = await configurePolicy(control, 'project')
       const shared = await createTask(control, 'Shared directory', modelResponseTimeoutMs)

@@ -149,11 +149,10 @@ export async function initializeFirstProjectExecutionEnvironment(
       { timeoutMs }
     )
   }
-  await control.command(
-    'waitFor',
-    `${contentSelector} [data-testid^="collaboration-project-execution-environment-initialize-"]`,
-    { visible: true, timeoutMs }
-  )
+  const initializeSelector = `${contentSelector} [data-testid^="collaboration-project-execution-environment-initialize-"]`
+  await control.command('waitFor', initializeSelector, { timeoutMs })
+  await control.command('scrollIntoView', initializeSelector)
+  await control.command('waitFor', initializeSelector, { visible: true, timeoutMs })
   const snapshot = JSON.parse(await control.command('snapshot', contentSelector))
   const initializeTestId = snapshot.testIds.find(testId =>
     testId.startsWith('collaboration-project-execution-environment-initialize-')
