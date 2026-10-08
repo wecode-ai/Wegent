@@ -83,6 +83,9 @@ assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
 assert_warmup_case "Wework source" \
   "${warmup_all_false/wework_target=false/wework_target=true}" \
   "wework/src/main.ts"
+assert_warmup_case "Wework runtime artifact downloader" \
+  "${warmup_all_false/wework_target=false/wework_target=true}" \
+  ".github/scripts/download-actions-artifact.sh"
 assert_warmup_case "Chat Core source" "$node_and_wework_target" \
   "packages/chat-core/src/index.ts"
 assert_warmup_case "Claude CLI lock" "$node_and_wework_target" \
@@ -545,6 +548,9 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   [[ "$desktop_build_section" != *'uses: actions/upload-artifact@v4'* ]] ||
   ! grep -Fq 'BUILD_RUNTIMES_FROM_SOURCE:' "$desktop_build_action" ||
   ! grep -Fq 'restore-oci-runtime-binary.sh' "$desktop_build_action" ||
+  ! grep -Fq 'ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml' "$desktop_build_action" ||
+  ! grep -Fq 'ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA"' "$desktop_build_action" ||
+  ! grep -Fq 'executor-e2e-binary "$artifact_directory"' "$desktop_build_action" ||
   ! grep -Fq 'WEWORK_E2E_PREBUILT_EXECUTOR_PATH' "$desktop_build_action" ||
   ! grep -Fq 'pnpm --filter wework ai:verify:electron:build' \
     "$desktop_build_action" ||
@@ -574,5 +580,6 @@ bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"
 bash "$script_dir/test-restore-oci-runtime-binary.sh"
+bash "$script_dir/test-download-actions-artifact.sh"
 
 printf 'CI cache policy tests passed\n'

@@ -107,8 +107,28 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-agent:${agentId}"]`
   )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-state-summary"] [data-testid="cloud-todo-save"]'),
+    { text: '保存分配' }
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', scoped('[data-testid="cloud-todo-save"]'))),
+    1,
+    'Assignment must expose exactly one save action next to its owner'
+  )
+  assert.equal(
+    Number(
+      await control.command('getElementCount', scoped('header [data-testid="cloud-todo-save"]'))
+    ),
+    0,
+    'Pending assignment must not require the header save action'
+  )
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
+    visible: false,
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: AGENT,
@@ -274,6 +294,24 @@ export async function createDesktopScenario({
         false,
         'Execution activity incorrectly used the Agent name as the task title'
       )
+      const activityId = taskSummaryTestId.slice('cloud-task-activity-task-summary-'.length)
+      const activityMessage = `[data-testid="cloud-task-activity-message-${activityId}"]`
+      const activityHeader = `${activityMessage} header`
+      const activityBody = `${activityMessage} .task-detail-thread-message-body`
+      const openTask = `[data-testid="cloud-task-activity-open-task-${activityId}"]`
+      assert.equal(
+        (await control.command('getText', activityHeader)).includes(ASSIGNED_TASK),
+        false,
+        'Execution activity mixed the assigned task title into the Agent author row'
+      )
+      assert.ok(
+        (await control.command('getText', activityBody)).includes(RESULT),
+        'Execution activity did not render the Agent reply in its own body row'
+      )
+      assert.ok(
+        (await control.command('getText', openTask)).includes(ASSIGNED_TASK),
+        'Execution activity did not expose the assigned task as an inline task entry'
+      )
 
       const executionBadgeTestId = await waitForTestIdPrefix(
         control,
@@ -301,6 +339,17 @@ export async function createDesktopScenario({
       )
       assert.equal(modelRequests, 1, 'Direct Agent assignment did not complete exactly one run')
       await captureScreenshot(control, 'local-agent-dispatch-02-in-review.png', CONTENT)
+      await control.command('click', openTask, { visible: true, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="work-item-task-chat-panel"]', {
+        text: ASSIGNED_TASK,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'local-agent-dispatch-03-inline-task-entry.png', CONTENT)
     },
 
     diagnostics() {

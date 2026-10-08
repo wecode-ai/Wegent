@@ -147,22 +147,24 @@ async fn teams_list(
     list_user_teams(state, current_user.users_id as i64, &params).await
 }
 
-/// The source `list_teams` flow after authentication.
-async fn list_user_teams(
+/// The group/namespace context resolved before the accessible-team union is
+/// built (`_build_accessible_teams_query`'s namespace prelude), shared by the
+/// team list and the default-team lookups.
+pub(super) struct NamespaceContext {
+    pub group_namespaces: Vec<String>,
+    pub authorized_namespace_ids: Vec<i64>,
+    pub restricted_namespaces: Vec<String>,
+}
+
+/// Resolve the group namespaces a scope expands to, the namespace-
+/// authorization ids, and the restricted group namespaces
+/// (`_build_accessible_teams_query` prelude).
+pub(super) async fn resolve_namespace_context(
     state: &AppState,
     user_id: i64,
-    params: &ListTeamsParams,
-) -> Result<TeamsResponse, HttpError> {
-    let ListTeamsParams {
-        page,
-        limit,
-        scope,
-        group_name,
-        filters,
-        shared_only,
-    } = params;
-    let skip = (page - 1) * limit;
-
+    scope: &str,
+    group_name: Option<&str>,
+) -> Result<NamespaceContext, HttpError> {
     // Resolve group namespaces by scope. `personal` queries only the default
     // namespace; `group` uses the requested group (or all the user's groups
     // when unnamed); `all` adds every group the user can access.
@@ -187,11 +189,11 @@ async fn list_user_teams(
         Some(resolved) => (resolved.memberships, resolved.active_names),
         None => (Vec::new(), Vec::new()),
     };
-    let (group_namespaces, effective) = match scope.as_str() {
+    let (group_namespaces, effective) = match scope {
         "personal" => (Vec::new(), HashMap::new()),
         "group" => {
             let names = match group_name {
-                Some(name) => vec![name.clone()],
+                Some(name) => vec![name.to_string()],
                 None => {
                     let mut names: Vec<String> = effective_roles(&memberships, &active_names)
                         .into_keys()
@@ -232,12 +234,37 @@ async fn list_user_teams(
         .collect();
     restricted_namespaces.sort();
 
+    Ok(NamespaceContext {
+        group_namespaces,
+        authorized_namespace_ids,
+        restricted_namespaces,
+    })
+}
+
+/// The source `list_teams` flow after authentication.
+async fn list_user_teams(
+    state: &AppState,
+    user_id: i64,
+    params: &ListTeamsParams,
+) -> Result<TeamsResponse, HttpError> {
+    let ListTeamsParams {
+        page,
+        limit,
+        scope,
+        group_name,
+        filters,
+        shared_only,
+    } = params;
+    let skip = (page - 1) * limit;
+
+    let resolved = resolve_namespace_context(state, user_id, scope, group_name.as_deref()).await?;
+
     let query = repo::AccessibleTeamsQuery {
         user_id,
         scope,
-        group_namespaces: &group_namespaces,
-        authorized_namespace_ids: &authorized_namespace_ids,
-        restricted_namespaces: &restricted_namespaces,
+        group_namespaces: &resolved.group_namespaces,
+        authorized_namespace_ids: &resolved.authorized_namespace_ids,
+        restricted_namespaces: &resolved.restricted_namespaces,
         filters,
         shared_only: *shared_only,
         skip,
@@ -282,6 +309,108 @@ async fn list_user_teams(
         .collect();
 
     Ok(TeamsResponse { total, items })
+}
+
+/// The `mode` query values allowed by the source `Literal`
+/// (`Literal["chat", "code", "knowledge", "task"]`, default `chat`).
+const DEFAULT_TEAM_MODES: &[&str] = &["chat", "code", "knowledge", "task"];
+
+/// Query parameters for `GET /api/teams/default` (`mode`).
+#[derive(Debug, Default, Deserialize)]
+pub struct DefaultTeamQuery {
+    pub mode: Option<String>,
+}
+
+/// GET /api/teams/default: the configured accessible default, or `null`
+/// (`teams.get_default_team`).
+#[brz_http_server::get("/api/teams/default")]
+async fn get_default_team(
+    #[inject(state)] state: &AppState,
+    #[auth] current_user: crate::teams::auth::TeamsUser,
+    query: brz_http_server::Query<DefaultTeamQuery>,
+) -> Result<Option<TeamItem>, HttpError> {
+    default_team(state, &current_user, &query).await
+}
+
+/// Handler body for `GET /api/teams/default`.
+async fn default_team(
+    state: &AppState,
+    current_user: &crate::teams::auth::TeamsUser,
+    query: &DefaultTeamQuery,
+) -> Result<Option<TeamItem>, HttpError> {
+    let mode = validate_default_mode(query.mode.as_deref())?;
+    let defaults = DefaultTeamsConfig::from_env().parsed();
+    // `defaults.get(mode)`: an unconfigured mode resolves to `null`.
+    let Some((_, name, namespace)) = defaults.iter().find(|(key, _, _)| *key == mode) else {
+        return Ok(None);
+    };
+    resolve_default_team(
+        state,
+        current_user.users_id as i64,
+        mode,
+        name,
+        namespace,
+        &defaults,
+    )
+    .await
+}
+
+/// Validate the `mode` query literal.
+fn validate_default_mode(value: Option<&str>) -> Result<&'static str, HttpError> {
+    match value.unwrap_or("chat") {
+        "chat" => Ok("chat"),
+        "code" => Ok("code"),
+        "knowledge" => Ok("knowledge"),
+        "task" => Ok("task"),
+        _ => Err(HttpError::invalid_literal_parameter(
+            "mode",
+            DEFAULT_TEAM_MODES,
+        )),
+    }
+}
+
+/// The source `resolve_default_team`: build the accessible-team union with the
+/// mode plus configured-identity filters, select the preferred candidate, and
+/// reload it through the same conversion the list endpoint uses.
+async fn resolve_default_team(
+    state: &AppState,
+    user_id: i64,
+    mode: &str,
+    name: &str,
+    namespace: &str,
+    default_config: &[(&'static str, String, String)],
+) -> Result<Option<TeamItem>, HttpError> {
+    // `build_team_list_filters(db, user_id, None, mode)` then `Kind.name` /
+    // `Kind.namespace` identity predicates appended by `resolve_default_team`.
+    let mut filters = repo::TeamListFilter::for_query(None, Some(mode));
+    filters.push(repo::TeamListFilter::NameEquals(name.to_string()));
+    filters.push(repo::TeamListFilter::NamespaceEquals(namespace.to_string()));
+
+    let resolved = resolve_namespace_context(state, user_id, "all", None).await?;
+    let query = repo::AccessibleTeamsQuery {
+        user_id,
+        scope: "all",
+        group_namespaces: &resolved.group_namespaces,
+        authorized_namespace_ids: &resolved.authorized_namespace_ids,
+        restricted_namespaces: &resolved.restricted_namespaces,
+        filters: &filters,
+        shared_only: false,
+        skip: 0,
+        limit: 1,
+    };
+    let Some(teams) = repo::accessible_default_team(&state.mysql, query)
+        .await
+        .map_err(|error| HttpError::internal(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let Some(team) = teams.first() else {
+        return Ok(None);
+    };
+    let preloaded = preload_related(&state.mysql, user_id, &teams)
+        .await
+        .map_err(|error| HttpError::internal(error.to_string()))?;
+    Ok(Some(team_item(team, &preloaded, default_config)))
 }
 
 #[cfg(test)]
@@ -401,6 +530,40 @@ mod tests {
         assert_eq!(
             bad_mode.validate().unwrap_err().status(),
             StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+
+    #[test]
+    fn default_mode_defaults_to_chat_and_rejects_unknown_values() {
+        // The source `mode` query parameter defaults to `chat`.
+        assert_eq!(validate_default_mode(None).unwrap(), "chat");
+        assert_eq!(validate_default_mode(Some("code")).unwrap(), "code");
+        assert_eq!(validate_default_mode(Some("task")).unwrap(), "task");
+        // `wework` is a config-only mode; it is not a valid route literal.
+        assert_eq!(
+            validate_default_mode(Some("wework")).unwrap_err().status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            validate_default_mode(Some("bogus")).unwrap_err().status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+
+    #[test]
+    fn default_identity_filters_follow_the_mode_filters() {
+        // `build_team_list_filters(None, mode)` then the two identity filters.
+        let mut filters = repo::TeamListFilter::for_query(None, Some("chat"));
+        filters.push(repo::TeamListFilter::NameEquals("wegent-chat".to_string()));
+        filters.push(repo::TeamListFilter::NamespaceEquals("default".to_string()));
+        assert_eq!(
+            filters,
+            vec![
+                repo::TeamListFilter::HasBindMode,
+                repo::TeamListFilter::BindModeLike("chat".to_string()),
+                repo::TeamListFilter::NameEquals("wegent-chat".to_string()),
+                repo::TeamListFilter::NamespaceEquals("default".to_string()),
+            ]
         );
     }
 }

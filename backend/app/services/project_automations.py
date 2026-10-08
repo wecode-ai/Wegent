@@ -717,14 +717,14 @@ class ProjectAutomationService:
                 execution_id = execution.id
                 db.expunge(execution)
                 db.rollback()
-                confirmed_execution_ids = await asyncio.to_thread(
+                accepted_execution_ids = await asyncio.to_thread(
                     emit_runtime_cancels,
                     [execution],
                 )
-                if execution_id not in confirmed_execution_ids:
+                if execution_id not in accepted_execution_ids:
                     raise HTTPException(
                         status.HTTP_502_BAD_GATEWAY,
-                        "Runtime did not confirm cancellation",
+                        "Runtime did not accept cancellation",
                     )
             db.refresh(run)
             return self._run_view_from_db(db, run)

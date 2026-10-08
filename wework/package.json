@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.5.6-beta.3",
+  "version": "0.5.6-beta.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -72,6 +72,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@excalidraw/excalidraw": "0.18.1",
     "@file-viewer/preset-engineering": "2.1.26",
     "@file-viewer/preset-lite": "2.1.26",
     "@file-viewer/preset-office": "2.1.26",

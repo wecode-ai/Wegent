@@ -35,7 +35,7 @@
 /// can be overridden with the `PYTHONHASHSEED` environment variable; a future
 /// recording with a different source-process seed renders a different draw
 /// and needs the override.
-pub(super) struct PyStrSetOrder {
+pub(crate) struct PyStrSetOrder {
     table: Vec<Option<String>>,
 }
 
@@ -48,32 +48,51 @@ impl PyStrSetOrder {
         siphash13(k0, k1, value.as_bytes())
     }
 
+    /// `set_add_entry` probe: after the initial slot, CPython walks a
+    /// `LINEAR_PROBES`-long run but only while that run fits inside the table
+    /// (`i + LINEAR_PROBES <= mask`); otherwise it jumps with
+    /// `perturb >>= PERTURB_SHIFT`. The fit guard is load-bearing: a run that
+    /// would wrap the table is skipped, which reorders colliding keys versus a
+    /// perturb-only probe.
     fn place(table: &mut [Option<String>], value: String, hash: i64) -> bool {
+        const LINEAR_PROBES: usize = 9;
+        const PERTURB_SHIFT: u32 = 5;
         let mask = table.len() - 1;
         let mut index = (hash as usize) & mask;
         let mut perturb = hash as u64;
         loop {
-            match table[index] {
+            match &table[index] {
                 None => {
                     table[index] = Some(value);
                     return true;
                 }
-                Some(ref existing) if existing == &value => return false,
-                Some(_) => {
-                    perturb >>= 5;
-                    index = (index
-                        .wrapping_mul(5)
-                        .wrapping_add(perturb as usize)
-                        .wrapping_add(1))
-                        & mask;
+                Some(existing) if existing == &value => return false,
+                Some(_) => {}
+            }
+            if index + LINEAR_PROBES <= mask {
+                for offset in 1..=LINEAR_PROBES {
+                    match &table[index + offset] {
+                        None => {
+                            table[index + offset] = Some(value);
+                            return true;
+                        }
+                        Some(existing) if existing == &value => return false,
+                        Some(_) => {}
+                    }
                 }
             }
+            perturb >>= PERTURB_SHIFT;
+            index = index
+                .wrapping_mul(5)
+                .wrapping_add(perturb as usize)
+                .wrapping_add(1)
+                & mask;
         }
     }
 
     /// `frozenset(str(id) for id in rows)` — the generator-insertion order
     /// of the source's `_get_accessible_namespace_ids` comprehension.
-    pub(super) fn from_row_order(rows: &[i64]) -> Self {
+    pub(crate) fn from_row_order(rows: &[i64]) -> Self {
         let seed = std::env::var("PYTHONHASHSEED")
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
@@ -116,7 +135,7 @@ impl PyStrSetOrder {
     }
 
     /// `list(the_set)` — the slot-ascending iteration order.
-    pub(super) fn order(&self) -> Vec<String> {
+    pub(crate) fn order(&self) -> Vec<String> {
         self.table.iter().flatten().cloned().collect()
     }
 }

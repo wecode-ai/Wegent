@@ -61,6 +61,7 @@ import {
   type SharedIssueDetailTaskExecutionState,
 } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
+import { issueDraftFromText } from "./issueDraft";
 import type {
   CollaborationAssignment,
   CollaborationAttachment,
@@ -1328,6 +1329,8 @@ export function TodoEditor(props: TodoEditorProps) {
         (project.access_role === "Owner" ||
           project.access_role === "Maintainer"),
       ));
+  const assigneeChanged =
+    item !== null && assigneeTarget !== issueAssigneeTarget(item);
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -1335,11 +1338,12 @@ export function TodoEditor(props: TodoEditorProps) {
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null);
+  const createTitle = title.trim() || issueDraftFromText(description).title;
 
   async function submitCreate() {
     if (
       props.mode !== "create" ||
-      !title.trim() ||
+      !createTitle ||
       saving ||
       createBlockedByExecutionEnvironment
     )
@@ -1347,7 +1351,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setSaving(true);
     setSaveError(null);
     const createInput: SharedIssueDetailCreateInput = {
-      title: title.trim(),
+      title: createTitle,
       description,
       priority,
       status,
@@ -2033,6 +2037,20 @@ export function TodoEditor(props: TodoEditorProps) {
       />
     </>
   );
+  const assigneeSaveButton =
+    assigneeChanged && (editable || canAssign) ? (
+      <button
+        type="button"
+        data-testid="cloud-todo-save"
+        disabled={!title.trim() || saving}
+        onClick={() => void saveDetails()}
+        className="task-detail-assignment-save"
+      >
+        {saving
+          ? t("todo.saving", "保存中…")
+          : t("todo.save_assignment", "保存分配")}
+      </button>
+    ) : null;
   const parentSelect = (
     <IssueDetailSearchableSelect
       testId={
@@ -2218,6 +2236,7 @@ export function TodoEditor(props: TodoEditorProps) {
           {assigneeSelect}
         </span>
       ) : null}
+      {!twoColumn ? assigneeSaveButton : null}
       {item && (
         <span
           data-testid="cloud-todo-detail-creator"
@@ -2593,7 +2612,9 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
           {twoColumn && !isCreate ? (
             <>
-              {(editable || canAssign) && (dirty || saving) ? (
+              {(editable || canAssign) &&
+              (dirty || saving) &&
+              !assigneeChanged ? (
                 <button
                   type="button"
                   data-testid="cloud-todo-save"
@@ -2806,6 +2827,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                     </span>
                   ) : null}
+                  {assigneeSaveButton}
                   <span className="task-detail-meta-item relative cursor-pointer">
                     <Calendar className="h-3.5 w-3.5" />
                     {t("todo.due_date", "截止时间")}
@@ -3017,6 +3039,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           {assigneeSelect}
                         </span>
                       ) : null}
+                      {assigneeSaveButton}
                       {item &&
                       project?.project_store === "backend" &&
                       canAssign ? (
@@ -3938,7 +3961,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     type="button"
                     data-testid="cloud-todo-create-confirm"
                     disabled={
-                      !title.trim() ||
+                      !createTitle ||
                       saving ||
                       createBlockedByExecutionEnvironment
                     }
@@ -3952,7 +3975,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </>
               ) : (
                 <>
-                  {(editable || canAssign) && dirty && (
+                  {(editable || canAssign) && dirty && !assigneeChanged && (
                     <button
                       type="button"
                       data-testid="cloud-todo-save"

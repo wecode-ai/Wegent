@@ -13,6 +13,7 @@ on:
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
       - ".github/scripts/archive-wework-core-e2e-build.sh"
+      - ".github/scripts/download-actions-artifact.sh"
       - ".github/scripts/publish-wework-core-e2e-build-oci.sh"
       - ".github/scripts/resolve-wework-core-e2e-build-ref.sh"
       - ".github/scripts/resolve-executor-e2e-runtime.sh"

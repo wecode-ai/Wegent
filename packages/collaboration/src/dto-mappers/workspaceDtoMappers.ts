@@ -252,6 +252,11 @@ export function mapCollaborationWorkspaceDto(
       row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
     ),
     execution_environment: {
+      workspace_policy:
+        (executionEnvironment.workspace_policy ??
+          executionEnvironment.workspacePolicy) === "project"
+          ? "project"
+          : "git_worktree",
       repositories: Array.isArray(repositories)
         ? repositories.map((value) => {
             const repository = asRecord(value);

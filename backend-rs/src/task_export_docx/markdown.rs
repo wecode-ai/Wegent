@@ -6,6 +6,7 @@
 //! mirroring `app.services.export.docx_generator`'s line parser, inline
 //! formatter, and code/table/list rendering.
 
+use super::emoji::split_by_emoji;
 use super::xml::{escape_text, text_element};
 
 const PRIMARY_COLOR: &str = "14B8A6";
@@ -13,6 +14,8 @@ const TEXT_COLOR: &str = "24292E";
 const LATIN_FONT: &str = "Arial";
 const EAST_ASIA_FONT: &str = "Microsoft YaHei";
 const MONOSPACE_FONT: &str = "Courier New";
+/// `_set_emoji_font`: python-docx gives emoji runs this font on every slot.
+const EMOJI_FONT: &str = "Segoe UI Emoji";
 
 /// An `xml:space="preserve"` `<w:t>` for labels that keep edge whitespace.
 fn text_preserve(text: &str) -> String {
@@ -227,16 +230,38 @@ fn size_el(size: Option<u32>) -> String {
 /// `_add_text_with_emoji_support` run shape: standard fonts, the requested
 /// character formatting, then language.
 fn styled_run(text: &str, extras: &RunExtras) -> String {
-    format!(
-        "<w:r><w:rPr>{}{}{}{}{}{}</w:rPr>{}</w:r>",
-        r_fonts(LATIN_FONT, EAST_ASIA_FONT),
+    let formatting = format!(
+        "{}{}{}{}",
         bool_el(extras.bold, "<w:b/>"),
         bool_el(extras.italic, "<w:i/>"),
         color_el(extras.color),
         size_el(extras.size),
-        lang(),
-        text_element(text)
-    )
+    );
+    emoji_aware_runs(text, &formatting)
+}
+
+/// `_add_text_with_emoji_support`: one run per emoji or non-emoji segment.
+/// `formatting` is the run-property markup that follows `w:rFonts`; non-emoji
+/// runs append the document language after it, emoji runs do not.
+fn emoji_aware_runs(text: &str, formatting: &str) -> String {
+    let mut out = String::new();
+    for (is_emoji, segment) in split_by_emoji(text) {
+        if is_emoji {
+            out.push_str(&format!(
+                "<w:r><w:rPr>{}{formatting}</w:rPr>{}</w:r>",
+                r_fonts(EMOJI_FONT, EMOJI_FONT),
+                text_element(segment)
+            ));
+        } else {
+            out.push_str(&format!(
+                "<w:r><w:rPr>{}{formatting}{}</w:rPr>{}</w:r>",
+                r_fonts(LATIN_FONT, EAST_ASIA_FONT),
+                lang(),
+                text_element(segment)
+            ));
+        }
+    }
+    out
 }
 
 /// `_add_horizontal_rule`.
@@ -552,11 +577,10 @@ fn render_line(out: &mut String, kind: LineKind, links: &mut Vec<String>) {
 /// Message header paragraph: bold sender label plus gray timestamp.
 pub(crate) fn message_header(sender_name: &str, timestamp: &str, is_user: bool) -> String {
     let color = if is_user { TEXT_COLOR } else { PRIMARY_COLOR };
+    let label_formatting = format!("<w:b/><w:color w:val=\"{color}\"/><w:sz w:val=\"22\"/>");
+    let label_runs = emoji_aware_runs(&format!("{sender_name}: "), &label_formatting);
     format!(
-        "<w:p><w:r><w:rPr>{}<w:b/><w:color w:val=\"{color}\"/><w:sz w:val=\"22\"/>{}</w:rPr>{}</w:r><w:r><w:rPr><w:color w:val=\"A0A0A0\"/><w:sz w:val=\"18\"/></w:rPr>{}</w:r></w:p>",
-        r_fonts(LATIN_FONT, EAST_ASIA_FONT),
-        lang(),
-        text_preserve(&format!("{sender_name}: ")),
+        "<w:p>{label_runs}<w:r><w:rPr><w:color w:val=\"A0A0A0\"/><w:sz w:val=\"18\"/></w:rPr>{}</w:r></w:p>",
         text_element(timestamp)
     )
 }
@@ -743,5 +767,34 @@ mod tests {
     #[test]
     fn sanitize_removes_xml_invalid_characters() {
         assert_eq!(sanitize_xml_text("a\u{0008}b\u{0009}c"), "ab\tc");
+    }
+
+    #[test]
+    fn styled_run_splits_emoji_into_its_own_font_run() {
+        assert_eq!(
+            styled_run("Hello! 👋", &RunExtras::default()),
+            concat!(
+                "<w:r><w:rPr>",
+                "<w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Microsoft YaHei\" w:cs=\"Arial\"/>",
+                "<w:lang w:val=\"en-US\" w:eastAsia=\"zh-CN\"/>",
+                "</w:rPr><w:t xml:space=\"preserve\">Hello! </w:t></w:r>",
+                "<w:r><w:rPr>",
+                "<w:rFonts w:ascii=\"Segoe UI Emoji\" w:hAnsi=\"Segoe UI Emoji\" w:eastAsia=\"Segoe UI Emoji\" w:cs=\"Segoe UI Emoji\"/>",
+                "</w:rPr><w:t>👋</w:t></w:r>",
+            )
+        );
+    }
+
+    #[test]
+    fn styled_run_keeps_emoji_free_text_in_a_single_run() {
+        assert_eq!(
+            styled_run("plain text", &RunExtras::default()),
+            concat!(
+                "<w:r><w:rPr>",
+                "<w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Microsoft YaHei\" w:cs=\"Arial\"/>",
+                "<w:lang w:val=\"en-US\" w:eastAsia=\"zh-CN\"/>",
+                "</w:rPr><w:t>plain text</w:t></w:r>",
+            )
+        );
     }
 }

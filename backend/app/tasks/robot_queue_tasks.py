@@ -232,11 +232,16 @@ def _robot_queue_internal_url() -> str:
 
 
 def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
-    """Stop Runtime tasks and commit cancellation only after its ACK."""
+    """Request Runtime cancellation and return executions whose RPC was accepted.
+
+    The RPC ACK proves only that Runtime accepted the control request. The
+    execution remains ``cancel_requested`` until a terminal Runtime event or a
+    trusted transcript snapshot proves that the task actually stopped.
+    """
 
     import httpx
 
-    confirmed_execution_ids: set[int] = set()
+    accepted_execution_ids: set[int] = set()
     for execution in executions:
         runtime_task_id = execution.runtime_task_id or ""
         runtime_device_id = execution.runtime_device_id or ""
@@ -272,21 +277,13 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
                 result = response.json() if response.status_code == 200 else {}
                 if response.status_code != 200 or not result.get("accepted"):
                     continue
-            from app.db.session import get_db_session
-
-            with get_db_session() as db:
-                loop_item_execution_service.confirm_runtime_cancelled(
-                    db,
-                    execution_id=execution.id,
-                    note="Runtime confirmed cancellation",
-                )
-            confirmed_execution_ids.add(execution.id)
+            accepted_execution_ids.add(execution.id)
         except Exception:
             logger.exception(
                 "[RobotQueue] Runtime cancel failed execution=%s",
                 execution.id,
             )
-    return confirmed_execution_ids
+    return accepted_execution_ids
 
 
 async def reconcile_device_executions(

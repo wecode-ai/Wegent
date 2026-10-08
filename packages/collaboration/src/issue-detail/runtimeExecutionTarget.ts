@@ -2,6 +2,7 @@ import type { ProjectChatMessage } from "@wegent/chat-core";
 import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { CollaborationExecution } from "../types";
 import { resolveMessageRunStatus } from "./activityMessageUtils";
+import { reconcileExecutionStatus } from "./executionStatus";
 
 export interface RuntimeExecutionTarget {
   activityMessage?: ProjectChatMessage;
@@ -51,6 +52,9 @@ export function messageRuntimeExecutionTarget(
       typeof message.metadata.model === "string"
         ? message.metadata.model
         : null,
-    runStatus: resolveMessageRunStatus(undefined, message),
+    runStatus: reconcileExecutionStatus(
+      execution?.display_state,
+      resolveMessageRunStatus(undefined, message),
+    ),
   };
 }

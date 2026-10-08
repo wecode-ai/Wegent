@@ -40,6 +40,8 @@ runs:
         BACKEND_RS_IMAGE: ${{ inputs.backend-rs-image }}
         GITHUB_TOKEN: ${{ github.token }}
         BUILD_RUNTIMES_FROM_SOURCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        EXECUTOR_ARTIFACT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        EXECUTOR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         OCI_RUNTIME_WAIT_SECONDS: "420"
         CI: true
         WEWORK_E2E_PREBUILT_EXECUTOR_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-executor
@@ -47,20 +49,30 @@ runs:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
       run: |
         mkdir -p .ci-artifacts
-        if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
-          oras logout ghcr.io
-          unset GITHUB_TOKEN
+        # Fork runtime producers have a 25-minute job deadline.
+        if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
+          export WEWORK_E2E_PREBUILT_EXECUTOR_WAIT_SECONDS=1500
         fi
-        (
-          if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
-            cargo build --release --locked --manifest-path executor/Cargo.toml --bin wegent-executor
-            install -m 0755 executor/target/release/wegent-executor .ci-artifacts/wegent-executor.build
-            mv .ci-artifacts/wegent-executor.build .ci-artifacts/wegent-executor
+        restore_executor() {
+          if [[ "$EXECUTOR_ARTIFACT" == "true" ]]; then
+            artifact_directory="$(mktemp -d .ci-artifacts/executor-download.XXXXXX)"
+            trap 'rm -rf "$artifact_directory"' EXIT
+            ACTIONS_ARTIFACT_WORKFLOW=e2e-tests.yml \
+              ACTIONS_ARTIFACT_HEAD_SHA="$EXECUTOR_HEAD_SHA" \
+              ACTIONS_ARTIFACT_WAIT_SECONDS=1500 \
+              .github/scripts/download-actions-artifact.sh \
+                executor-e2e-binary "$artifact_directory"
+            test -f "$artifact_directory/wegent-executor"
+            chmod 0755 "$artifact_directory/wegent-executor"
+            mv "$artifact_directory/wegent-executor" .ci-artifacts/wegent-executor
           else
             .github/scripts/restore-oci-runtime-binary.sh \
-              "$EXECUTOR_IMAGE" /app/executor .ci-artifacts/wegent-executor
+              "$EXECUTOR_IMAGE" \
+              /app/executor \
+              .ci-artifacts/wegent-executor
           fi
-        ) &
+        }
+        restore_executor &
         executor_pid=$!
         (
           if [[ "$BUILD_RUNTIMES_FROM_SOURCE" == "true" ]]; then
@@ -79,6 +91,7 @@ runs:
           if ! wait "$executor_pid"; then status=1; fi
           if ! wait "$backend_pid"; then status=1; fi
           if ((status != 0)); then exit "$status"; fi
+          oras logout ghcr.io
         fi
         unset GITHUB_TOKEN
         pnpm --filter wework ai:verify:electron:build || status=$?

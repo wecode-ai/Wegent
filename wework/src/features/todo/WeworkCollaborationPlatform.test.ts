@@ -2326,6 +2326,7 @@ describe('Wework collaboration workspace API', () => {
 
   it('persists local workspace execution configuration through its backing project', async () => {
     const executionEnvironment = {
+      workspace_policy: 'git_worktree',
       repositories: [],
       setup_steps: [{ command: 'pnpm install', working_directory: '' }],
     }

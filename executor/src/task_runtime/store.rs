@@ -17,6 +17,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod code_projects;
+mod execution_workspace;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -341,7 +342,10 @@ impl LocalTaskStore {
             metadata["automatic_processing_rules"] = automatic_processing_rules;
         }
         if let Some(execution_environment) = input.execution_environment {
-            metadata["execution_environment"] = execution_environment;
+            metadata["execution_environment"] = code_projects::merge_execution_environment(
+                &metadata["execution_environment"],
+                execution_environment,
+            );
         }
         let connection = self.connection()?;
         let updated = connection.execute(
@@ -550,8 +554,9 @@ impl LocalTaskStore {
                 None,
             );
         }
+        // Allocating an Issue number does not change editable project configuration.
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, now, project_id],
         )?;
@@ -1605,7 +1610,23 @@ impl LocalTaskStore {
             return Ok(None);
         }
         let mut execution = execution_row(&connection, candidate_id)?;
-        execution.execution_payload = Some(local_execution_runtime_payload(&execution));
+        drop(statement);
+        drop(connection);
+        let mut payload = local_execution_runtime_payload(&execution);
+        let preflight = self
+            .get_project(&execution.cloud_project_id)
+            .and_then(|project| {
+                execution_workspace::apply_project_workspace(
+                    &mut payload,
+                    &project.metadata,
+                    runtime_device_id,
+                )
+            });
+        if let Err(error) = preflight {
+            self.fail_runtime_preflight(candidate_id, &error.to_string())?;
+            return Err(error);
+        }
+        execution.execution_payload = Some(payload);
         Ok(Some(execution))
     }
 
@@ -2437,7 +2458,7 @@ impl LocalTaskStore {
             "source_description": description,
         });
         transaction.execute(
-            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+            "UPDATE loop_items SET next_item_number = ?1,
                     updated_at = ?2 WHERE id = ?3",
             params![sequence + 1, timestamp, DEFAULT_WORK_ITEM_PROJECT_ID],
         )?;
@@ -7115,6 +7136,51 @@ mod tests {
     }
 
     #[test]
+    fn claimed_execution_fails_when_project_was_archived() {
+        let (_directory, store, project) = chat_agent_store();
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Archived project".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "run"}),
+                None,
+            )
+            .unwrap();
+        let execution = store
+            .list_executions(&project.id, None, None, false)
+            .unwrap()
+            .remove(0);
+        store.archive_project(&project.id, project.version).unwrap();
+        assert!(store
+            .claim_next_execution_for_runtime(Some("local-device"), "runtime-1", 300)
+            .is_err());
+        let connection = store.connection().unwrap();
+        let failed = execution_row(&connection, execution.id).unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.termination_reason, "runtime_preflight_failed");
+        assert!(failed.lease_expires_at.is_none());
+    }
+
+    #[test]
     fn local_fail_and_reject_close_agent_comment() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
@@ -8650,6 +8716,10 @@ mod tests {
                 },
             )
             .unwrap();
+        assert_eq!(
+            store.get_project(&project.id).unwrap().version,
+            project.version
+        );
         let child = store
             .create_task(
                 &project.id,

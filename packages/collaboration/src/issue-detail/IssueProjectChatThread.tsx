@@ -25,15 +25,19 @@ import {
 
 function ActivityMessage({
   singleExecution,
+  persistedStatus,
   ...props
 }: ComponentProps<typeof IssueChatMessage> & {
   singleExecution: boolean;
+  persistedStatus?: string | null;
 }) {
   const { status } = useIssueActivityExecutionStatus(
     props.message,
     singleExecution,
+    undefined,
+    persistedStatus,
   );
-  return <IssueChatMessage {...props} executionStatus={status} />;
+  return <IssueChatMessage {...props} executionStatus={status ?? undefined} />;
 }
 
 export function IssueProjectChatThread({
@@ -115,6 +119,7 @@ export function IssueProjectChatThread({
         key={message.messageId}
         message={target?.activityMessage ?? message}
         singleExecution={singleExecution}
+        persistedStatus={execution?.display_state}
         mine={false}
         compact
         plain

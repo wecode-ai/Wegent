@@ -220,7 +220,7 @@ const GROUP_ENTITY_PURPOSE: ResolutionPurpose = ResolutionPurpose::ResourceAcces
 /// row order mapped through the namespace query), then entity-derived
 /// memberships (`get_user_groups_with_roles` preserves this order for the
 /// `groups` section rendering).
-pub(super) async fn user_group_role_map<M, R: brz_redis::Redis>(
+pub(crate) async fn user_group_role_map<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
@@ -355,7 +355,7 @@ where
 
 /// `get_effective_roles_in_groups`: direct/entity roles plus parent-group
 /// inheritance for groups without their own roles.
-pub(super) fn effective_roles(
+pub(crate) fn effective_roles(
     role_map: &[(String, Vec<String>)],
     group_names: &[String],
 ) -> HashMap<String, String> {
@@ -392,7 +392,7 @@ pub(super) fn effective_roles(
 /// the list `get_effective_roles_in_groups` consumes for `context.group_roles`
 /// — so parent-group inheritance contributes the descendant groups the direct
 /// membership batch never reports.
-pub(super) fn user_groups(
+pub(crate) fn user_groups(
     role_map: &[(String, Vec<String>)],
     active_names: &[String],
 ) -> Vec<String> {
@@ -405,7 +405,7 @@ pub(super) fn user_groups(
 
 /// `get_effective_role_in_group` (used by `get_view_role_in_group`):
 /// direct role, entity-derived roles, then parent inheritance.
-pub(super) async fn effective_role_in_group<M, R: brz_redis::Redis>(
+pub(crate) async fn effective_role_in_group<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,

@@ -9,6 +9,7 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  PencilLine,
   Square,
   ShieldCheck,
   Target,
@@ -58,6 +59,7 @@ import {
 } from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import { useComposerDrawing } from './useComposerDrawing'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
@@ -169,6 +171,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     ref
   ) {
     const { t } = useTranslation('common')
+    const { openDrawing, drawingDialog } = useComposerDrawing(onFileSelect, disabled)
     const imageInputRef = useRef<HTMLInputElement>(null)
     const cameraInputRef = useRef<HTMLInputElement>(null)
     const composerRef = useRef<ComposerTextareaHandle>(null)
@@ -318,6 +321,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
 
     return (
       <div className="w-full">
+        {drawingDialog}
         <ComposerErrorBanner error={phraseError} />
         <AttachmentBadges
           workspacePath={workspaceTarget?.path}
@@ -580,6 +584,20 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 <Image className="h-6 w-6 shrink-0 text-text-secondary" />
                 <span>{t('workbench.upload_image', '上传文件')}</span>
               </button>
+              {openDrawing && (
+                <button
+                  type="button"
+                  data-testid="mobile-draw-attachment-button"
+                  onClick={() => {
+                    setContextSheetOpen(false)
+                    openDrawing()
+                  }}
+                  className="flex h-14 w-full items-center gap-4 rounded-2xl px-4 text-left text-base text-text-primary hover:bg-muted"
+                >
+                  <PencilLine className="h-6 w-6 shrink-0 text-text-secondary" />
+                  <span>{t('workbench.drawing.title')}</span>
+                </button>
+              )}
               {onSetPlanMode && !planModeActive && (
                 <button
                   type="button"

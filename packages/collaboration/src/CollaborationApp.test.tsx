@@ -381,6 +381,7 @@ describe("CollaborationApp API boundary", () => {
       controllerWithProject(project),
     );
     const api = createApi();
+    api.projects.get = vi.fn(async () => project);
     api.projects.listExecutionEnvironments = vi.fn(async () => [
       {
         id: "environment-21",

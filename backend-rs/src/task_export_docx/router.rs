@@ -121,10 +121,12 @@ async fn export(
             }
         }
     } else {
-        // `get_current_user_optional`: a missing or invalid token yields
-        // `None`, and the member check below turns that into 404.
+        // `get_current_user_optional` yields `None` when the request carries
+        // no valid bearer session; the source maps that to
+        // `401 {"detail": "Not authenticated"}` before any member check
+        // (`app/api/endpoints/adapter/tasks.py`).
         let Some(user) = current_user else {
-            return Err(not_found().into());
+            return Err(FastApiError::unauthorized("Not authenticated").into());
         };
         i64::from(user.id)
     };
