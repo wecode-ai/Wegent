@@ -285,9 +285,10 @@ function didStartNewerTurn(
   current: ReturnType<RuntimeTaskLifecycleStore['getTask']>,
   terminalTurnId: string | null | undefined
 ): boolean {
-  if (!current || current.turn.phase !== 'streaming') return false
+  // A newly submitted action is active before its first stream event arrives.
+  if (!current || !current.turn.active) return false
   if (terminalTurnId && current.turn.id === terminalTurnId) return false
-  return expected?.turn.phase !== 'streaming' || expected.turn.id !== current.turn.id
+  return expected?.turn.phase !== current.turn.phase || expected.turn.id !== current.turn.id
 }
 
 function runtimeRecoveryAddresses(

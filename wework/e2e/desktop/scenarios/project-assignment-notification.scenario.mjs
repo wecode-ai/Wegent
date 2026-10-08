@@ -286,7 +286,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   )
   await control.command('fill', input, { value: tag })
   assert.equal(await control.command('getValue', input), tag)
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await assertDismissed()
   await control.command('click', trigger)
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
@@ -303,7 +303,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await assertDismissed()
   await control.command('click', trigger)
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'))
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-save"]'))
   await assertDismissed()
   const updated = await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
@@ -313,7 +313,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   )
   await control.command('click', trigger)
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await assertDismissed()
   return updated
 }

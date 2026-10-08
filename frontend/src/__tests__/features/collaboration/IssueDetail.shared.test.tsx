@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 
 if (typeof globalThis.structuredClone !== 'function') {
@@ -20,6 +21,11 @@ function writeComposer(testId: string, value: string) {
     composer.value = value
     composer.dispatchEvent(new KeyboardEvent('keyup', { key: value.at(-1) ?? '', bubbles: true }))
   })
+}
+
+async function openIssueProperties() {
+  await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+  expect(await screen.findByTestId('cloud-todo-more-properties-popover')).toBeInTheDocument()
 }
 
 import {
@@ -587,10 +593,11 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
+    await openIssueProperties()
     fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
       target: { value: 'high' },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith('issue-1', {
@@ -924,6 +931,7 @@ describe('shared IssueDetail', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-detail-status')).toBeDisabled()
+    await openIssueProperties()
     expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
     expect(screen.getByTestId('cloud-todo-detail-parent')).toBeDisabled()
@@ -938,7 +946,8 @@ describe('shared IssueDetail', () => {
     fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledWith()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '移除参与者 张三' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '移除参与者 张三' })).toBeDisabled()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     expect(await screen.findByText('readonly.txt')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-attachment-input')).not.toBeInTheDocument()
     expect(
@@ -1030,7 +1039,9 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api, { issue: dateOnlyIssue, allIssues: [dateOnlyIssue] })
 
+    await openIssueProperties()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue('2026-09-12T00:00')
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     fireEvent.change(screen.getByTestId('cloud-todo-detail-title'), {
       target: { value: '仅修改标题' },
     })
@@ -1063,13 +1074,14 @@ describe('shared IssueDetail', () => {
 
     renderDetail(api, { issue: timestampIssue, allIssues: [timestampIssue] })
 
+    await openIssueProperties()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toHaveValue(
       dueDateTimeLocalFromSource(timestampIssue.due_at)
     )
     fireEvent.change(screen.getByTestId('cloud-todo-detail-due-date'), {
       target: { value: editedLocalValue },
     })
-    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
 
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith(
@@ -1179,7 +1191,6 @@ describe('shared IssueDetail', () => {
 
     fireEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('实现任务')).toBeInTheDocument()
-    expect(document.querySelector('[title="张三"]')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-1'))
     await waitFor(() => expect(api.attachments.access).toHaveBeenCalledWith('attachment-1'))
@@ -1195,6 +1206,8 @@ describe('shared IssueDetail', () => {
     expect(anchorClick).toHaveBeenCalled()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://example.test/attachment')
 
+    await openIssueProperties()
+    expect(await screen.findByTitle('张三')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
     fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
       target: { value: '6' },
