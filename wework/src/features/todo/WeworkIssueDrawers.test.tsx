@@ -78,6 +78,20 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
       <button onClick={() => props.host.navigate({ ...props.host.location, issueId: issue.id })}>
         Open Issue
       </button>
+      <button
+        data-testid="create-issue-without-environment"
+        onClick={() => {
+          props.host.notify?.('请先完成项目执行环境初始化，再创建 Issue。', 'error')
+          props.host.navigate({
+            ...props.host.location,
+            issueId: null,
+            view: 'manage',
+            projectSettingsSection: 'environments',
+          })
+        }}
+      >
+        Create Issue without environment
+      </button>
       {props.renderBoardIssueCard?.({
         issue,
         taskBindings,
@@ -267,6 +281,16 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
+  it('keeps the missing environment explanation visible after opening environment settings', async () => {
+    render(<Project />)
+
+    await userEvent.click(screen.getByTestId('create-issue-without-environment'))
+
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent(
+      '请先完成项目执行环境初始化，再创建 Issue。'
+    )
+  })
+
   it('opens an editable Issue without the read-first content lock', async () => {
     render(<Project />)
 

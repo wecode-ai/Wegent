@@ -35,7 +35,11 @@ const project = {
   current_user_id: 1,
 } as CloudProject
 
-function setup(overrides: Partial<CloudLoopItem> = {}, accessRole = 'Owner') {
+function setup(
+  overrides: Partial<CloudLoopItem> = {},
+  accessRole = 'Owner',
+  presentation: 'modal' | 'workspace-panel' = 'workspace-panel'
+) {
   const initialItem = { ...item, ...overrides }
   const api = {
     listDeliveries: vi.fn(async () => ({ items: [] })),
@@ -60,7 +64,7 @@ function setup(overrides: Partial<CloudLoopItem> = {}, accessRole = 'Owner') {
     return (
       <TodoEditor
         mode="edit"
-        presentation="workspace-panel"
+        presentation={presentation}
         readFirst
         item={current}
         project={{ ...project, access_role: accessRole } as CloudProject}
@@ -77,6 +81,34 @@ function setup(overrides: Partial<CloudLoopItem> = {}, accessRole = 'Owner') {
 }
 
 describe('workspace Issue assignee', () => {
+  it('keeps one inline save action in the read-first two-column layout', async () => {
+    setup({}, 'Owner', 'modal')
+    const user = userEvent.setup()
+    await user.click(screen.getAllByTestId('cloud-todo-detail-assignee')[0])
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-empty'))
+    const save = screen.getByTestId('cloud-todo-save')
+    expect(save.closest('.task-detail-meta-line')).not.toBeNull()
+    expect(save).toHaveTextContent('保存分配')
+  })
+
+  it('retains the inline save action and draft after a rejected assignment', async () => {
+    const api = setup()
+    api.assignLoopItem.mockRejectedValueOnce(new Error('Assignment rejected'))
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    await user.click(screen.getByTestId('wework-assignment-notify-confirm'))
+    await user.click(screen.getByTestId('cloud-todo-save'))
+    expect(await screen.findByText('Assignment rejected')).toBeVisible()
+    const save = within(screen.getByTestId('cloud-todo-state-summary')).getByTestId(
+      'cloud-todo-save'
+    )
+    expect(save).toBeEnabled()
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('张三')
+    await user.click(save)
+    await vi.waitFor(() => expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument())
+  })
+
   it.each([true, false])('switches the completed automation owner with notify=%s', async notify => {
     const api = setup()
     const user = userEvent.setup()
@@ -94,7 +126,14 @@ describe('workspace Issue assignee', () => {
           : 'wework-assignment-notify-confirm-cancel-button'
       )
     )
-    await user.click(screen.getByTestId('cloud-todo-save'))
+    const inlineSave = within(summary).getByTestId('cloud-todo-save')
+    expect(inlineSave).toHaveTextContent('保存分配')
+    expect(
+      screen
+        .getByTestId('cloud-todo-detail')
+        .querySelector('header [data-testid="cloud-todo-save"]')
+    ).toBeNull()
+    await user.click(inlineSave)
     await vi.waitFor(() => {
       expect(api.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
         version: 2,

@@ -152,20 +152,28 @@ export function apply(ctx) {
 }
 
 async function assertReleasePackageResources() {
-  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') return
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const resourcesRoot =
+    process.platform === 'darwin'
+      ? resolve(appBinary, '..', '..', 'Resources')
+      : resolve(appBinary, '..', 'resources')
+  const components = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
+  assert.match(
+    components.sourceSha,
+    /^[0-9a-f]{40,64}$/i,
+    'The packaged component manifest must identify its source commit'
+  )
+
+  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') {
+    return components
+  }
   assert.match(
     appBinary,
     /release-installer/,
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
   if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
-  const resourcesRoot =
-    process.platform === 'darwin'
-      ? resolve(appBinary, '..', '..', 'Resources')
-      : resolve(appBinary, '..', 'resources')
-  const [components] = await Promise.all([
-    readFile(join(resourcesRoot, 'components.json'), 'utf8').then(JSON.parse),
+  await Promise.all([
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
@@ -216,6 +224,7 @@ async function assertReleasePackageResources() {
       )
     ),
   ])
+  return components
 }
 
 async function assertMacosMicrophoneSigning(appBinary) {
@@ -256,7 +265,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
-  await assertReleasePackageResources()
+  const packagedComponents = await assertReleasePackageResources()
   await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
@@ -273,6 +282,37 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await control.command('navigate', 'body', { value: '/settings/about' })
+      await control.command('waitFor', '[data-testid="about-commit-id"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const displayedCommit = (
+        await control.command('getText', '[data-testid="about-commit-id"]')
+      ).trim()
+      const fullCommit = await control.command('getAttribute', '[data-testid="about-commit-id"]', {
+        value: 'title',
+      })
+      assert.ok(
+        displayedCommit.endsWith(packagedComponents.sourceSha.slice(0, 12)),
+        `About displayed ${displayedCommit} instead of packaged commit ${packagedComponents.sourceSha}`
+      )
+      assert.equal(
+        fullCommit,
+        packagedComponents.sourceSha.toLowerCase(),
+        'About did not expose the complete packaged source commit'
+      )
+      await writeFile(
+        join(resultDir, 'about-build-identity.json'),
+        `${JSON.stringify(
+          {
+            displayedCommit,
+            fullCommit,
+            packagedSourceSha: packagedComponents.sourceSha,
+          },
+          null,
+          2
+        )}\n`
+      )
       await verifyWindowsProfileDirectoryLinks(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {

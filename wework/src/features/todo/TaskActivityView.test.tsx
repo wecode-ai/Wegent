@@ -1440,9 +1440,13 @@ describe('TaskActivityView', () => {
     const card = screen.getByTestId('cloud-task-activity-card-message-1')
     expect(card).toHaveTextContent('请完成接入')
     expect(card).toHaveTextContent('CPU 验证智能体')
-    expect(within(card).getByTestId('cloud-task-activity-task-title-message-2')).toHaveTextContent(
-      '验证 CPU 检查项'
-    )
+    const agentMessageCard = within(card).getByTestId('cloud-task-activity-message-message-2')
+    const agentMessageHeader = agentMessageCard.querySelector('header')
+    expect(agentMessageHeader).toHaveTextContent('CPU 验证智能体')
+    expect(agentMessageHeader).not.toHaveTextContent('验证 CPU 检查项')
+    expect(
+      within(agentMessageCard).getByTestId('cloud-task-activity-task-title-message-2')
+    ).toHaveTextContent('验证 CPU 检查项')
     expect(within(card).queryByTestId('cloud-task-activity-role-message-2')).not.toBeInTheDocument()
     expect(card).not.toHaveTextContent('执行成员')
     expect(card).toHaveTextContent('请补充验证')
@@ -1454,13 +1458,16 @@ describe('TaskActivityView', () => {
       'cloud-task-activity-execution-badge-message-2'
     )
     expect(executionButton).toHaveAttribute('data-status', 'succeeded')
-    await user.click(executionButton)
+    const taskLink = within(card).getByTestId('cloud-task-activity-open-task-message-2')
+    expect(taskLink).toHaveTextContent('验证 CPU 检查项')
+    await user.click(taskLink)
     expect(openTaskConversation).toHaveBeenCalledWith(
       expect.objectContaining({ device_id: 'device-1', task_id: 'runtime-task-1' })
     )
+    await user.click(executionButton)
+    expect(openTaskConversation).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('runtime-execution-detail-overlay')).toBeNull()
     const replyToggle = within(card).getByTestId('cloud-task-activity-reply-toggle-message-1')
-    expect(within(card).queryByTestId('cloud-task-activity-open-task-message-2')).toBeNull()
     const actions = replyToggle.closest('.task-detail-thread-actions') as HTMLElement
     expect(actions.querySelector('time')).toHaveAttribute('datetime', '2026-08-03T10:00:00Z')
     expect(
@@ -3845,7 +3852,7 @@ describe('TaskActivityView', () => {
       )
 
       await act(async () => {
-        vi.advanceTimersByTime(2500)
+        await vi.advanceTimersByTimeAsync(2500)
       })
       expect(comment).not.toHaveAttribute('data-flash')
     } finally {
