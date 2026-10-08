@@ -303,7 +303,7 @@ export function ModelSelector({
       )
     : familyGroups.length === 0
       ? emptyModelLabel
-      : t('workbench.default_model', 'Default')
+      : t('workbench.model_picker_title', 'Select model')
   const buttonLabel = nextTurn
     ? t('workbench.next_turn_model', 'Next · {{model}}', {
         model: selectedButtonLabel,
@@ -601,7 +601,7 @@ export function ModelSelector({
     ? getModelDisplayLabel(selectedModel, {}, resolveControlLabel)
     : familyGroups.length === 0
       ? emptyModelLabel
-      : t('workbench.default_model', 'Default')
+      : t('workbench.model_picker_title', 'Select model')
   const modelRowActive = activeDesktopSubmenu?.type === 'models'
 
   return (

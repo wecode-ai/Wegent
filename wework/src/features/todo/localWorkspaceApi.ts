@@ -344,6 +344,7 @@ export function createLocalWorkspaceApi(
         model: agent.model,
         modelType: agent.modelType,
         modelNamespace: agent.modelNamespace,
+        allowedModels: agent.allowedModels ?? [],
         capabilityDescription: agent.capabilityDescription,
         capabilityMode: agent.capabilityMode,
         systemPrompt: agent.systemPrompt,

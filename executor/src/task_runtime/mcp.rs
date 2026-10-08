@@ -1176,6 +1176,7 @@ async fn call_tool_with_runtime_context(
                                     "id": agent.id,
                                     "name": agent.display_name,
                                     "capability": agent.capability_description,
+                                    "models": agent.allowed_models,
                                 })).collect::<Vec<_>>(),
                                 "groups": groups.into_iter().map(|group| json!({
                                     "id": group["id"],
@@ -2735,6 +2736,11 @@ fn normalize_assignment_candidates(members: Value, robots: Value, teams: Value) 
                     .get("capabilityDescription")
                     .cloned()
                     .unwrap_or_else(|| json!("")),
+                "models": robot
+                    .get("allowedModels")
+                    .or_else(|| robot.get("allowed_models"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
             })
         })
         .collect::<Vec<_>>();
@@ -2900,7 +2906,7 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "submit_workflow_plan",
-            "Dispatch one concurrent collaboration round. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. Agent items start separate Executor runs, while human items wait for delivery. After every item finishes, the Executor starts a fresh manager run with the batch results.",
+            "Dispatch one concurrent collaboration round. Assign each item to a non-leader group agent or human member; the leader only coordinates and cannot execute an item. For an agent with multiple models from get_assignment_candidates, choose one allowed model and set model_id. Agent items start separate Executor runs, while human items wait for delivery. After every item finishes, the Executor starts a fresh manager run with the batch results.",
             json!({
                 "type": "object",
                 "properties": {
@@ -2920,6 +2926,7 @@ fn tools() -> Vec<Value> {
                                         "instructions": {"type": "string", "minLength": 1},
                                         "assignee_type": {"enum": ["agent", "human"]},
                                         "assignee_id": {"type": "string", "minLength": 1},
+                                        "model_id": {"type": "string", "minLength": 1},
                                         "workflow_stage_id": {"type": "string", "minLength": 1}
                                     },
                                     "required": ["assignment_id", "title", "instructions", "assignee_type", "assignee_id"],
@@ -4691,6 +4698,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -4852,7 +4860,12 @@ mod tests {
             json!([{
                 "id": "agent-9",
                 "name": "Review bot",
-                "capabilityDescription": "Code review and release checks"
+                "capabilityDescription": "Code review and release checks",
+                "allowedModels": [{
+                    "name": "fast-model",
+                    "type": "runtime",
+                    "namespace": "default"
+                }]
             }]),
             json!({
                 "items": [{
@@ -4875,7 +4888,12 @@ mod tests {
                 "robots": [{
                     "id": "agent-9",
                     "name": "Review bot",
-                    "capability": "Code review and release checks"
+                    "capability": "Code review and release checks",
+                    "models": [{
+                        "name": "fast-model",
+                        "type": "runtime",
+                        "namespace": "default"
+                    }]
                 }],
                 "groups": [{
                     "id": "group-3",

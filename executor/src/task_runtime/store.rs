@@ -1015,6 +1015,9 @@ impl LocalTaskStore {
         if let Some(model_namespace) = input.model_namespace.as_ref() {
             metadata["model_namespace"] = json!(model_namespace);
         }
+        if let Some(allowed_models) = input.allowed_models.as_ref() {
+            metadata["allowed_models"] = json!(allowed_models);
+        }
         if let Some(description) = input.capability_description.as_ref() {
             metadata["capability_description"] = json!(description);
         }
@@ -2801,6 +2804,7 @@ fn insert_chat_agent(
         "model": input.model,
         "model_type": input.model_type,
         "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "allowed_models": input.allowed_models,
         "capability_description": input.capability_description.unwrap_or_default(),
         "capability_mode": capability_mode,
         "system_prompt": input.system_prompt.unwrap_or_default(),
@@ -4077,6 +4081,26 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
         model_namespace: text("model_namespace", "default"),
+        allowed_models: metadata
+            .get("allowed_models")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| {
+                metadata
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(|model| {
+                        vec![json!({
+                            "name": model,
+                            "type": metadata.get("model_type"),
+                            "namespace": metadata
+                                .get("model_namespace")
+                                .and_then(Value::as_str)
+                                .unwrap_or("default"),
+                        })]
+                    })
+                    .unwrap_or_default()
+            }),
         capability_description: text("capability_description", ""),
         capability_mode: metadata
             .get("capability_mode")
@@ -4941,6 +4965,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
@@ -4969,6 +4994,7 @@ mod tests {
             model: Some("gpt-5".to_owned()),
             model_type: Some("public".to_owned()),
             model_namespace: Some("default".to_owned()),
+            allowed_models: Vec::new(),
             capability_description: None,
             capability_mode: Some("follow_device".to_owned()),
             system_prompt: Some(String::new()),
@@ -5834,6 +5860,7 @@ mod tests {
                     model: Some("gpt-6-mini".to_owned()),
                     model_type: Some("runtime".to_owned()),
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: Some("Collect evidence".to_owned()),
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Only collect verifiable evidence.".to_owned()),
@@ -5867,6 +5894,7 @@ mod tests {
                     model: Some("gpt-6-mini".to_owned()),
                     model_type: Some("runtime".to_owned()),
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: Some("Review evidence".to_owned()),
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Only review submitted evidence.".to_owned()),
@@ -6541,6 +6569,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
@@ -6709,6 +6738,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6743,6 +6773,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6775,6 +6806,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6810,6 +6842,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6838,6 +6871,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6952,6 +6986,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7038,6 +7073,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7184,6 +7220,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7257,6 +7294,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7966,6 +8004,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Vec::new(),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,

@@ -615,4 +615,71 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
     expect(onSaved).toHaveBeenCalledOnce()
   })
+
+  it('configures an allowed model range for the current device agent', async () => {
+    const agent = {
+      id: 'device-agent',
+      name: 'current-device-agent',
+      displayName: '当前设备智能体',
+      runtime: 'codex',
+      model: null,
+      modelType: null,
+      modelNamespace: 'default',
+      allowedModels: [],
+      capabilityDescription: '使用当前设备的模型、技能和工具。',
+      capabilityMode: 'follow_device',
+      systemPrompt: '',
+      additionalSkills: [],
+      mcpServers: {},
+      plugins: [],
+      executionMode: 'auto',
+      maxConcurrentExecutions: 1,
+      visibility: 'creator_admin',
+      version: 4,
+    }
+    const update = vi.fn(async () => agent)
+    const host = createWeworkProjectAgentConfigurationHost(
+      { listSkills: vi.fn(async () => []) } as never,
+      { list: vi.fn(async () => [agent]), create: vi.fn(), update, archive: vi.fn() } as never,
+      {
+        listModels: vi.fn(async () => ({
+          data: [
+            { name: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', type: 'runtime' },
+            { name: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna', type: 'runtime' },
+          ],
+        })),
+      } as never
+    )
+    render(
+      host.renderLocalAgentEditor!({
+        resourceId: agent.id,
+        onClose: vi.fn(),
+        onSaved: vi.fn(async () => undefined),
+      })
+    )
+
+    await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-models')).toBeVisible())
+    expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
+    expect(screen.queryByText('默认')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-sol'))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-model-gpt-5.6-luna'))
+    fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        DEFAULT_WORK_ITEM_PROJECT_ID,
+        agent.id,
+        expect.objectContaining({
+          version: 4,
+          model: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          modelNamespace: 'default',
+          allowedModels: [
+            { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+            { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
+          ],
+        })
+      )
+    )
+  })
 })

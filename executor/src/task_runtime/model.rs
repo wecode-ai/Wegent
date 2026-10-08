@@ -132,6 +132,8 @@ pub struct ChatAgentCreate {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
+    #[serde(default)]
+    pub allowed_models: Vec<Value>,
     pub capability_description: Option<String>,
     #[serde(default)]
     pub capability_mode: Option<String>,
@@ -166,6 +168,7 @@ pub struct ChatAgentUpdate {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: Option<String>,
+    pub allowed_models: Option<Vec<Value>>,
     pub capability_description: Option<String>,
     pub capability_mode: Option<String>,
     pub system_prompt: Option<String>,
@@ -195,6 +198,7 @@ pub struct ChatAgent {
     pub model: Option<String>,
     pub model_type: Option<String>,
     pub model_namespace: String,
+    pub allowed_models: Vec<Value>,
     pub capability_description: String,
     pub capability_mode: String,
     pub system_prompt: String,

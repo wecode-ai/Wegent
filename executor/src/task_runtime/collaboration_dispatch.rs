@@ -77,13 +77,18 @@ impl LocalTaskStore {
                     validate_group_agent(group, assignee_id)?;
                     let agent =
                         collaboration_agent(&transaction, &manager.cloud_project_id, assignee_id)?;
-                    let runtime_payload =
-                        collaboration_member_runtime_payload(manager_payload, assignee_id)?;
+                    let selected_model_id = assignment.get("model_id").and_then(Value::as_str);
+                    let runtime_payload = collaboration_member_runtime_payload(
+                        manager_payload,
+                        assignee_id,
+                        selected_model_id,
+                    )?;
                     let payload = json!({
                         "runtimePayload": runtime_payload,
                         "message": collaboration_assignment_prompt(title, instructions),
                         "workflow_task_title": title,
                         "workflow_node_id": assignment.get("workflow_stage_id"),
+                        "model_id": selected_model_id,
                         "assignment_id": assignment_id,
                         "dispatch_id": manager_payload.get("dispatch_id"),
                         "dispatch_role": "member",
@@ -111,6 +116,7 @@ impl LocalTaskStore {
                         "assignee_id": assignee_id,
                         "assignee_name": agent_display_name(&agent),
                         "workflow_stage_id": assignment.get("workflow_stage_id"),
+                        "model_id": selected_model_id,
                     }));
                 }
                 "human" => {
@@ -381,8 +387,9 @@ fn collaboration_assignment_prompt(title: &str, instructions: &str) -> String {
 fn collaboration_member_runtime_payload(
     manager_payload: &Value,
     assignee_id: &str,
+    selected_model_id: Option<&str>,
 ) -> Result<Value, TaskRuntimeError> {
-    let mut payload = manager_payload
+    let profile = manager_payload
         .get("memberRuntimeProfiles")
         .or_else(|| manager_payload.get("member_runtime_profiles"))
         .and_then(Value::as_array)
@@ -398,18 +405,60 @@ fn collaboration_member_runtime_payload(
                 .filter_map(Value::as_str)
                 .any(|member_id| member_id == assignee_id)
         })
-        .and_then(|profile| {
-            profile
-                .get("runtimePayload")
-                .or_else(|| profile.get("runtime_payload"))
-        })
-        .filter(|payload| payload.is_object())
-        .cloned()
         .ok_or_else(|| {
             TaskRuntimeError::Invalid(format!(
                 "Collaboration assignment target '{assignee_id}' has no materialized Runtime profile"
             ))
         })?;
+    let model_profiles = profile
+        .get("modelRuntimeProfiles")
+        .or_else(|| profile.get("model_runtime_profiles"))
+        .and_then(Value::as_array)
+        .filter(|profiles| !profiles.is_empty());
+    let mut payload = if let Some(model_profiles) = model_profiles {
+        let selected = match selected_model_id {
+            Some(model_id) => model_profiles.iter().find(|candidate| {
+                candidate
+                    .get("modelId")
+                    .or_else(|| candidate.get("model_id"))
+                    .and_then(Value::as_str)
+                    == Some(model_id)
+            }),
+            None if model_profiles.len() == 1 => model_profiles.first(),
+            None => {
+                return Err(TaskRuntimeError::Invalid(format!(
+                    "workflow plan must choose model_id for collaboration agent '{assignee_id}'"
+                )));
+            }
+        }
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid(format!(
+                "model '{}' is not allowed for collaboration agent '{assignee_id}'",
+                selected_model_id.unwrap_or_default()
+            ))
+        })?;
+        selected
+            .get("runtimePayload")
+            .or_else(|| selected.get("runtime_payload"))
+            .filter(|payload| payload.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid(
+                    "Collaboration model Runtime profile has no runtime payload".to_owned(),
+                )
+            })?
+    } else {
+        profile
+            .get("runtimePayload")
+            .or_else(|| profile.get("runtime_payload"))
+            .filter(|payload| payload.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid(format!(
+                    "Collaboration assignment target '{assignee_id}' has no materialized Runtime profile"
+                ))
+            })?
+    };
     let system_prompt = crate::task_runtime::collaboration_member_profile_instructions(&payload);
     let execution_request = if payload.get("executionRequest").is_some() {
         payload.get_mut("executionRequest")
@@ -795,7 +844,8 @@ mod tests {
             }]
         });
 
-        let payload = collaboration_member_runtime_payload(&manager_payload, "member-1").unwrap();
+        let payload =
+            collaboration_member_runtime_payload(&manager_payload, "member-1", None).unwrap();
         let system_prompt = payload["executionRequest"]["system_prompt"]
             .as_str()
             .expect("member system prompt");
@@ -803,5 +853,51 @@ mod tests {
         assert!(system_prompt.starts_with("member system instructions"));
         assert!(!system_prompt.contains("manager system instructions"));
         assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
+    }
+
+    #[test]
+    fn local_member_payload_requires_and_validates_a_preconfigured_model() {
+        let manager_payload = json!({
+            "memberRuntimeProfiles": [{
+                "memberIds": ["member-1"],
+                "modelRuntimeProfiles": [{
+                    "modelId": "fast-model",
+                    "runtimePayload": {
+                        "projectInstructions": "member instructions",
+                        "executionRequest": {
+                            "model_config": {"model_id": "fast-model"}
+                        }
+                    }
+                }, {
+                    "modelId": "deep-model",
+                    "runtimePayload": {
+                        "projectInstructions": "member instructions",
+                        "executionRequest": {
+                            "model_config": {"model_id": "deep-model"}
+                        }
+                    }
+                }]
+            }]
+        });
+
+        let missing =
+            collaboration_member_runtime_payload(&manager_payload, "member-1", None).unwrap_err();
+        assert!(missing.to_string().contains("must choose model_id"));
+
+        let unavailable = collaboration_member_runtime_payload(
+            &manager_payload,
+            "member-1",
+            Some("unconfigured-model"),
+        )
+        .unwrap_err();
+        assert!(unavailable.to_string().contains("is not allowed"));
+
+        let selected =
+            collaboration_member_runtime_payload(&manager_payload, "member-1", Some("deep-model"))
+                .unwrap();
+        assert_eq!(
+            selected["executionRequest"]["model_config"]["model_id"],
+            "deep-model"
+        );
     }
 }
