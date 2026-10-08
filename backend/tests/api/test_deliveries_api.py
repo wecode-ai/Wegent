@@ -384,6 +384,11 @@ def test_board_snapshot_returns_first_screen_dependencies(
         "modelType": "public",
         "options": {"reasoning": "high"},
     }
+    bindings = test_client.get(
+        f"/api/v1/loop-items/{item['id']}/tasks", headers=headers
+    )
+    assert bindings.status_code == 200
+    assert bindings.json() == [binding.json()]
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",

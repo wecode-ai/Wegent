@@ -26,6 +26,8 @@ import {
   type CollaborationProject,
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
+  type WeworkWorkspaceRuntimePort,
+  type WorkspaceRuntimeTaskAddress,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import {
@@ -64,6 +66,8 @@ import type {
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 import { getNewChatModelSelection } from '@/features/workbench/workbenchProviderHelpers'
+import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
+import { toRuntimeTaskAddress } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import {
   defaultNewChatModelSelection,
   modelSelectionIdentityOptions,
@@ -176,20 +180,7 @@ export function toWeworkIssueTaskBinding(binding: WorkspaceTaskBinding): LoopIte
   }
 }
 
-interface IssueRuntimeBindingPort {
-  bindTask(
-    issueId: string,
-    task: RuntimeTaskAddress,
-    taskTitle?: string | null,
-    dispatch?: {
-      humanAssignmentId: string
-      dispatchId: string
-      dispatchRoundId: string
-      assignmentId: string
-    } | null
-  ): Promise<void>
-  unbindTask(issueId: string, task: RuntimeTaskAddress): Promise<void>
-}
+type IssueRuntimeBindingPort = Pick<WeworkWorkspaceRuntimePort, 'bindTask' | 'unbindTask'>
 
 export interface WeworkCollaborationPlatformProps {
   user: User
@@ -736,9 +727,10 @@ export function WeworkSharedProject({
         }}
         onOpenRuntimeTask={onOpenRuntimeTask}
         prepareTask={async address => {
+          const sharedTask = toWorkspaceRuntimeTaskAddress(address)
           await runtimePort.bindTask(
             taskComposer.issue.id,
-            address,
+            sharedTask,
             taskComposer.dispatch?.taskTitle ?? taskComposer.issue.title,
             taskComposer.dispatch
               ? {
@@ -759,7 +751,7 @@ export function WeworkSharedProject({
             type: 'bound',
           })
           return async () => {
-            await runtimePort.unbindTask(taskComposer.issue.id, address)
+            await runtimePort.unbindTask(taskComposer.issue.id, sharedTask)
             publishProjectSpaceTaskBindingChanged({
               task: address,
               project: projectRef,
@@ -1447,7 +1439,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               ? {
                   bindTask: (
                     issueId: string,
-                    task: RuntimeTaskAddress,
+                    task: WorkspaceRuntimeTaskAddress,
                     taskTitle?: string | null,
                     dispatch?: {
                       humanAssignmentId: string
@@ -1455,8 +1447,16 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
                       dispatchRoundId: string
                       assignmentId: string
                     } | null
-                  ) => localDeliveryApi.bindTask(issueId, task, taskTitle, null, dispatch),
-                  unbindTask: localDeliveryApi.unbindTask,
+                  ) =>
+                    localDeliveryApi.bindTask(
+                      issueId,
+                      toRuntimeTaskAddress(task),
+                      taskTitle,
+                      null,
+                      dispatch
+                    ),
+                  unbindTask: (issueId: string, task: WorkspaceRuntimeTaskAddress) =>
+                    localDeliveryApi.unbindTask(issueId, toRuntimeTaskAddress(task)),
                 }
               : props.services.workspaceRuntimePort
           return (

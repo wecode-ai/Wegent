@@ -16,6 +16,9 @@ import type { CloudTodoBoardCard } from './CloudTodoBoardCard'
 const chatCallbacks = vi.hoisted(
   () => new Map<string, ComponentProps<typeof AiChatModal>['onAddressChange']>()
 )
+const chatPreparations = vi.hoisted(
+  () => new Map<string, ComponentProps<typeof AiChatModal>['prepareTask']>()
+)
 
 const issue = {
   id: 'TEST-1',
@@ -210,6 +213,7 @@ vi.mock('./AiChatModal', () => ({
     const [address] = useState(props.initialAddress)
     const [mountId] = useState(() => ++chatMountCount)
     chatCallbacks.set(address?.taskId ?? 'new', props.onAddressChange)
+    chatPreparations.set(address?.taskId ?? 'new', props.prepareTask)
     return (
       <aside
         data-testid="ai-chat-modal"
@@ -231,11 +235,13 @@ vi.mock('./AiChatModal', () => ({
 function Project({
   executionEnvironment,
   runtimeWork,
+  runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() },
 }: {
   executionEnvironment?: ComponentProps<
     typeof WeworkSharedProject
   >['project']['execution_environment']
   runtimeWork?: ComponentProps<typeof WeworkSharedProject>['runtimeWork']
+  runtimePort?: ComponentProps<typeof WeworkSharedProject>['runtimePort']
 } = {}) {
   const [location, setLocation] = useState<ComponentProps<typeof WeworkSharedProject>['location']>({
     platformView: 'spaces',
@@ -293,7 +299,7 @@ function Project({
         } as never
       }
       runtimeWork={runtimeWork}
-      runtimePort={{ bindTask: vi.fn(), unbindTask: vi.fn() }}
+      runtimePort={runtimePort}
       sendRuntimePaneMessage={vi.fn(async () => true)}
       userId={1}
     />
@@ -448,6 +454,36 @@ describe('Wework Issue conversation drawers', () => {
     await user.click(screen.getByText('Open Issue'))
     await user.click(screen.getByRole('button', { name: 'Add task' }))
     expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+  })
+
+  it('preserves the selected model across the shared Issue task-binding port', async () => {
+    const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
+    const modelSelection = {
+      modelName: 'selected-cloud-model',
+      modelType: 'public' as const,
+      options: { reasoning: 'high' },
+    }
+    render(<Project runtimePort={runtimePort} />)
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+
+    let rollback: Awaited<
+      ReturnType<NonNullable<ComponentProps<typeof AiChatModal>['prepareTask']>>
+    >
+    await act(async () => {
+      rollback = await chatPreparations.get('new')?.({
+        deviceId: 'remote-device',
+        taskId: 'selected-model-task',
+        runtimeHandle: { modelSelection },
+      })
+    })
+
+    const task = { deviceId: 'remote-device', taskId: 'selected-model-task', modelSelection }
+    expect(runtimePort.bindTask).toHaveBeenCalledWith(issue.id, task, issue.title, null)
+    await act(async () => {
+      if (typeof rollback === 'function') await rollback()
+    })
+    expect(runtimePort.unbindTask).toHaveBeenCalledWith(issue.id, task)
   })
 
   it('preserves the human AI-assistance binding when refreshing the execution environment', async () => {

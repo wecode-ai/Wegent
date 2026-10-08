@@ -183,7 +183,7 @@ function toIssue(issue: CloudLoopItem): CollaborationIssue {
   }
 }
 
-function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
+export function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
   return {
     deviceId: task.deviceId,
     taskId: task.taskId,
