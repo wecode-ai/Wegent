@@ -15,6 +15,7 @@ import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './sett
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
 const DISCORD_URL = 'https://discord.gg/MVzJzyqEUp'
+const SHORT_COMMIT_SHA_LENGTH = 12
 
 function AboutLink({ label, url }: { label: string; url: string }) {
   return (
@@ -121,6 +122,14 @@ export function AboutSettingsPage() {
       <h1 className="heading-lg mt-6 tracking-normal text-text-primary">Wework</h1>
       <div data-testid="about-app-version" className="mt-2 text-sm font-medium text-text-secondary">
         {appVersion ? `v${appVersion}` : '—'}
+      </div>
+      <div
+        data-testid="about-commit-id"
+        title={__WEWORK_COMMIT_SHA__}
+        className="mt-1 font-mono text-xs text-text-muted"
+      >
+        {t('workbench.about_commit_id', '提交')}{' '}
+        {__WEWORK_COMMIT_SHA__.slice(0, SHORT_COMMIT_SHA_LENGTH)}
       </div>
       <p className="mt-4 max-w-[420px] text-sm leading-6 text-text-secondary">
         {t('workbench.about_settings_description', '面向产研场景的 AI 工作台。')}
