@@ -29,6 +29,7 @@ import {
   stoppedTaskNeedsAttention,
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { Archive, CircleCheck } from 'lucide-react'
 
 export interface BoardCardDisplaySettings {
@@ -290,13 +291,12 @@ function RuntimeTaskProgressSummary({
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () => ({
-      deviceId: binding.device_id,
-      taskId: binding.task_id,
-      ...(binding.modelSelection
-        ? { runtimeHandle: { modelSelection: binding.modelSelection } }
-        : {}),
-    }),
+    () =>
+      runtimeTaskBindingAddress({
+        device_id: binding.device_id,
+        task_id: binding.task_id,
+        modelSelection: binding.modelSelection,
+      }),
     [binding.device_id, binding.modelSelection, binding.task_id]
   )
   useEffect(() => {

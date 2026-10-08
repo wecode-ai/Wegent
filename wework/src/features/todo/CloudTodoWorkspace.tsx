@@ -1,5 +1,6 @@
 import { RuntimeConfigurationProvider } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { useIssueDispatchNotificationActionRegistration } from '@/features/notifications/useIssueDispatchNotificationActionRegistration'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
@@ -412,11 +413,8 @@ function selectedTaskBindingAddress(
   devices: DeviceInfo[]
 ): RuntimeTaskAddress {
   return hydrateRuntimeTaskAddress(runtimeWork, {
+    ...runtimeTaskBindingAddress(binding),
     deviceId: resolveWorkbenchDeviceId(devices, binding.device_id) ?? binding.device_id,
-    taskId: binding.task_id,
-    ...(binding.modelSelection
-      ? { runtimeHandle: { modelSelection: binding.modelSelection } }
-      : {}),
   })
 }
 type TaskComposerRequest = {

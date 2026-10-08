@@ -92,6 +92,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
@@ -863,17 +864,10 @@ export function WeworkSharedProject({
                           setTaskComposer({
                             issue,
                             conversationKey: `${issue.id}:${task.device_id}:${task.task_id}`,
-                            address: {
-                              deviceId: task.device_id,
-                              taskId: task.task_id,
-                            },
+                            address: runtimeTaskBindingAddress(task),
                           })
                       : onOpenRuntimeTask
-                        ? task =>
-                            onOpenRuntimeTask({
-                              deviceId: task.device_id,
-                              taskId: task.task_id,
-                            })
+                        ? task => onOpenRuntimeTask(runtimeTaskBindingAddress(task))
                         : undefined
                   }
                   onEscape={

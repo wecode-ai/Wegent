@@ -13,7 +13,12 @@ import {
   responseCreated,
   selectMcpTool,
 } from '../modules/response-protocol.mjs'
-import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  REMOTE_DOCKER_DEVICE_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import {
   inCollaborationSidebar,
   initializeFirstProjectExecutionEnvironment,
@@ -617,6 +622,35 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'assignment-04-ai-draft-attached-to-issue.png', CONTENT)
 
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      assert.equal(binding.modelSelection?.modelName, MODEL)
+      // Change the new-chat default without sending, then reopen the bound remote
+      // task through the Issue drawer. Its model must come from the binding.
+      await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
+      await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      await control.command('click', '[data-testid="cloud-todo-toggle-tasks"]', { visible: true })
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`,
+        { visible: true }
+      )
+      const boundModelSelector =
+        '[data-testid="work-item-task-chat-panel"] [data-testid="model-selector-button"]'
+      await control.command('waitFor', boundModelSelector, {
+        text: MODEL_LABEL,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        (await control.command('getText', boundModelSelector, { visible: true })).includes(
+          DEFAULT_MODEL_LABEL
+        ),
+        false,
+        'The bound remote task inherited the unrelated new-chat default'
+      )
+      await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
+      await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      await control.command('click', '[data-testid="cloud-todo-toggle-tasks"]', { visible: true })
       await control.command('waitFor', '[data-testid="human-issue-use-ai-draft"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
