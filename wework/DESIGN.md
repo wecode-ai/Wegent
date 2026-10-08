@@ -644,6 +644,12 @@ Dropdown and popover surfaces use:
 - `4px` default trigger offset and `6px–8px` viewport collision padding;
 - maximum width and height constrained to the viewport minus `16px`.
 
+Anchor the menu edge facing its trigger: the bottom edge when opening above,
+the top edge when opening below. A `max-height` is only a size limit, never the
+rendered height used to calculate an offset. Content filtering and resizing
+must keep the trigger gap stable. Portal regressions must check that geometry,
+in addition to checking that the menu escapes clipping ancestors.
+
 Menu items use `14px` text, an `8px` radius, `8px–10px` horizontal padding,
 `4px` vertical padding, a `6px` icon gap, and a neutral hover/focus surface.
 Icons default to `16px` at `75%` opacity and become fully visible on hover or
