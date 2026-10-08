@@ -3376,7 +3376,7 @@ struct CodexLaunchConfig {
 }
 
 #[derive(Debug)]
-struct LocalProxyRegistration(String);
+pub(crate) struct LocalProxyRegistration(String);
 
 impl LocalProxyRegistration {
     fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
@@ -3398,6 +3398,55 @@ fn bind_local_proxy_thread(
         registration.bind_thread(thread_id)?;
     }
     Ok(())
+}
+
+/// Registers the local model route that serves a Codex thread and binds it to
+/// that thread.
+///
+/// A Codex thread reaches its model through the local `codex-router` route, and
+/// that route only exists while a turn that registered it is alive. Actions that
+/// drive an existing thread without spawning a turn must establish the route
+/// themselves, otherwise the thread cannot reach any model at all.
+///
+/// Returns `None` when the task talks to its provider directly instead of going
+/// through the local route, and a registration that must stay alive for as long
+/// as the thread needs the model otherwise.
+pub(crate) fn bind_codex_thread_model_route(
+    request: &ExecutionRequest,
+    thread_id: &str,
+) -> Result<Option<LocalProxyRegistration>, String> {
+    // Mirrors the launch-config decision so an existing thread resolves the same
+    // upstream it was started with.
+    let upstream = if use_user_runtime_config(&request.model_config) {
+        configured_codex_provider(
+            &inference_model_provider(&request.model_config),
+            runtime_proxy_url(&request.model_config),
+        )
+    } else {
+        local_model_proxy::upstream_from_model_config(&request.model_config)
+    };
+    let Some(upstream) = upstream else {
+        return Ok(None);
+    };
+    let mut upstream = upstream;
+    upstream.routing_model_id = codex_request_model(request);
+    inject_session_headers(&mut upstream.default_headers, &request.task_id);
+    let vision_sidecar =
+        vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?;
+    let registration = LocalProxyRegistration(local_model_proxy::register_with_vision_sidecar(
+        &request.task_id,
+        upstream,
+        vision_sidecar,
+    ));
+    registration.bind_thread(thread_id)?;
+    log_executor_event(
+        "codex thread model route bound",
+        &[
+            ("task_id", request.task_id.clone()),
+            ("thread_id", thread_id.to_owned()),
+        ],
+    );
+    Ok(Some(registration))
 }
 
 struct PreparedCodexExecutionRequest {

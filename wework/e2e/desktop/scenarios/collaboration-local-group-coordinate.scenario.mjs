@@ -21,10 +21,12 @@ import {
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'wework-custom-desktop-e2e-responses'
+const ALTERNATE_MODEL = 'wework-custom-desktop-e2e-chat'
+const UPSTREAM_MODEL = 'desktop-e2e-responses-model'
 const PROJECT = `本地协作调度-${process.pid}`
 const LEADER = `负责人智能体-${process.pid}`
 const COLLECTOR = `采集智能体-${process.pid}`
-const REVIEWER = `复核智能体-${process.pid}`
+const REVIEWER = '当前设备智能体'
 const GROUP = `并发执行小组-${process.pid}`
 const ISSUE = `核验本地协作调度-${process.pid}`
 const FIRST_TASK = '采集运行证据'
@@ -80,6 +82,7 @@ function firstRoundPlan(collectorAgentId, reviewerAgentId) {
           instructions: `${MARKER}。${SECOND_INSTRUCTIONS}。`,
           assignee_type: 'agent',
           assignee_id: reviewerAgentId,
+          model_id: MODEL,
         },
       ],
     },
@@ -98,6 +101,7 @@ function secondRoundPlan(reviewerAgentId) {
           instructions: `${MARKER}。${THIRD_INSTRUCTIONS}。`,
           assignee_type: 'agent',
           assignee_id: reviewerAgentId,
+          model_id: MODEL,
         },
       ],
     },
@@ -135,6 +139,50 @@ async function addAgent(control, name, prompt, timeoutMs) {
     visible: false,
     timeoutMs,
   })
+}
+
+async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs) {
+  const rowTestId = await waitForTestIdByText(
+    control,
+    scoped('[data-testid="project-agent-list"]'),
+    'project-agent-row-',
+    REVIEWER,
+    timeoutMs
+  )
+  const agentId = rowTestId.slice('project-agent-row-'.length)
+  await control.command('click', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
+    text: 'Desktop E2E Responses',
+    timeoutMs,
+  })
+  await control.command('click', `[data-testid="cloud-project-chat-agent-model-${MODEL}"]`)
+  await control.command(
+    'click',
+    `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
+  )
+  await control.command(
+    'scrollIntoView',
+    `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
+  )
+  await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
+    value: `${REVIEWER_ROLE_MARKER}。你是当前设备上的执行成员，只完成负责人分配的复核任务并返回证据。`,
+  })
+  await captureScreenshot(
+    control,
+    'local-coordinate-01-default-device-model-range.png',
+    '[data-testid="cloud-project-chat-agent-editor"]'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-chat-agent-save"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+    visible: false,
+    timeoutMs,
+  })
+  return agentId
 }
 
 async function createCoordinateGroup(control, timeoutMs) {
@@ -377,6 +425,13 @@ export async function createDesktopScenario({
               ? 3
               : 0
         assert.notEqual(childOrdinal, 0, '执行成员请求没有包含负责人分配的任务标题')
+        if (isReviewerRequest) {
+          assert.equal(
+            body.model,
+            UPSTREAM_MODEL,
+            '负责人没有从当前设备智能体预配置的可用模型中选择 Responses 模型'
+          )
+        }
         if (childRequests === 2) resolveBothChildrenStarted()
         if (childOrdinal === 3) resolveThirdChildStarted()
         await (childOrdinal === 1
@@ -516,15 +571,11 @@ export async function createDesktopScenario({
         `${COLLECTOR_ROLE_MARKER}。你是执行成员，只完成负责人分配的采集任务并返回证据。`,
         uiTimeoutMs
       )
-      await addAgent(
-        control,
-        REVIEWER,
-        `${REVIEWER_ROLE_MARKER}。你是执行成员，只完成负责人分配的复核任务并返回证据。`,
-        uiTimeoutMs
-      )
+      await configureDefaultDeviceAgent(control, captureScreenshot, uiTimeoutMs)
       const group = await createCoordinateGroup(control, uiTimeoutMs)
       collectorAgentId = group.collectorId
       reviewerAgentId = group.reviewerId
+      await captureScreenshot(control, 'local-coordinate-02-default-device-in-group.png', CONTENT)
       await createIssueAndAssignGroup(control, uiTimeoutMs)
 
       await waitForPromise(
@@ -553,7 +604,7 @@ export async function createDesktopScenario({
         'in_progress',
         '第一轮执行期间 Issue 没有保持进行中'
       )
-      await captureScreenshot(control, 'local-coordinate-01-two-member-tasks-running.png', CONTENT)
+      await captureScreenshot(control, 'local-coordinate-03-two-member-tasks-running.png', CONTENT)
 
       releaseFirstChild()
       await waitForCondition(
@@ -568,7 +619,7 @@ export async function createDesktopScenario({
         'in_progress',
         '只完成一个子任务时 Issue 状态被错误迁移'
       )
-      await captureScreenshot(control, 'local-coordinate-02-one-member-task-finished.png', CONTENT)
+      await captureScreenshot(control, 'local-coordinate-04-one-member-task-finished.png', CONTENT)
 
       releaseSecondChild()
       await waitForPromise(
@@ -584,7 +635,15 @@ export async function createDesktopScenario({
         '第二轮执行完成前 Issue 状态被错误迁移'
       )
       assert.equal(parentStage, 'second-round-dispatched', '负责人没有进入第二轮 barrier')
-      await captureScreenshot(control, 'local-coordinate-03-manager-second-round.png', CONTENT)
+      const secondRoundEventTestId = await waitForTestIdByText(
+        control,
+        scoped('[data-testid="cloud-task-activity-list"]'),
+        'cloud-task-manager-event-',
+        THIRD_TASK,
+        modelResponseTimeoutMs
+      )
+      await control.command('scrollIntoView', `[data-testid="${secondRoundEventTestId}"]`)
+      await captureScreenshot(control, 'local-coordinate-05-manager-second-round.png', CONTENT)
 
       releaseThirdChild()
       await waitForCompletedMemberTasks(control, 3, modelResponseTimeoutMs)
@@ -600,7 +659,7 @@ export async function createDesktopScenario({
       assert.equal(managerRuns, 3, 'Executor 没有为两次 barrier 各启动一次新的负责人运行')
       assert.equal(childRequests, 3, '负责人没有按两轮启动三个子任务')
       assert.equal(childCompletions, 3, '两轮三个子任务没有全部完成')
-      await captureScreenshot(control, 'local-coordinate-04-manager-status-decision.png', CONTENT)
+      await captureScreenshot(control, 'local-coordinate-06-manager-status-decision.png', CONTENT)
     },
 
     diagnostics() {

@@ -440,6 +440,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               execution_environment: input.executionEnvironment
                 ? {
                     repositories: input.executionEnvironment.repositories,
+                    workspace_policy: input.executionEnvironment.workspacePolicy ?? 'git_worktree',
                     setup_steps: input.executionEnvironment.setupSteps.map(step => ({
                       command: step.command,
                       working_directory: step.workingDirectory,

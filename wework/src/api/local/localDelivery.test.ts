@@ -470,6 +470,10 @@ describe('local delivery API', () => {
       model: 'gpt-5',
       modelType: 'public',
       modelNamespace: 'default',
+      allowedModels: [
+        { name: 'gpt-5', type: 'public', namespace: 'default' },
+        { name: 'gpt-5-mini', type: 'public', namespace: 'default' },
+      ],
       executionDeviceId: 'local-device',
     })
     expect(request).toHaveBeenCalledWith('chat_agents.create', {
@@ -481,6 +485,10 @@ describe('local delivery API', () => {
         model: 'gpt-5',
         model_type: 'public',
         model_namespace: 'default',
+        allowed_models: [
+          { name: 'gpt-5', type: 'public', namespace: 'default' },
+          { name: 'gpt-5-mini', type: 'public', namespace: 'default' },
+        ],
       }),
     })
   })
@@ -494,6 +502,10 @@ describe('local delivery API', () => {
       displayName: '当前设备助手',
       runtime: 'codex',
       model: 'gpt-5',
+      allowedModels: [
+        { name: 'gpt-5', type: 'public', namespace: 'default' },
+        { name: 'gpt-5-mini', type: 'public', namespace: 'default' },
+      ],
       capabilityMode: 'follow_device',
     })
 
@@ -503,6 +515,10 @@ describe('local delivery API', () => {
         name: 'current-device-assistant',
         display_name: '当前设备助手',
         model: 'gpt-5',
+        allowed_models: [
+          { name: 'gpt-5', type: 'public', namespace: 'default' },
+          { name: 'gpt-5-mini', type: 'public', namespace: 'default' },
+        ],
         capability_mode: 'follow_device',
         created_by_user_id: 7,
       }),

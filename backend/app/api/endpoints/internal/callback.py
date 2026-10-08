@@ -268,9 +268,11 @@ async def handle_batch_callback(
             await emitter.emit(event)
             await emitter.close()
 
-            # Note: batch callback events are typically terminal (DONE/ERROR).
-            # Terminal events are handled by TaskCompletedEvent via
-            # StatusUpdatingEmitter, so no need to forward to channels here.
+            # Publish to the callback stream channel so active OpenAI
+            # v1/responses SSE consumers receive the device events. Without
+            # this, a batch reporting executor updates the database while the
+            # response stream stalls after its first events.
+            await session_manager.publish_callback_event(request.subtask_id, event)
 
             processed += 1
 

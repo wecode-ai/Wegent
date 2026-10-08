@@ -5,6 +5,11 @@ import { createBoardReplyModelRegression } from '../modules/board-reply-model.mj
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import {
+  verifyIssueDetailPropertyUi,
+  verifyNewDiscussionComposerUi,
+  verifyReplyComposerUi,
+} from '../modules/collaboration-issue-detail-ui.mjs'
+import {
   verifyIssueActivityTimeline,
   verifyCommentExecutionStatus,
 } from '../modules/issue-activity-timeline.mjs'
@@ -25,6 +30,7 @@ const AGENT_ASSIGNMENT_COMMENT = '请处理实现步骤'
 const AGENT_WORKFLOW_STEP = '实现'
 const AGENT_NAME = '协作核心 Codex'
 const TASK_PROMPT = '检查当前 Issue 并开始执行'
+const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -300,28 +306,93 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
         await control.command(
-          'click',
-          scoped(
-            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-          )
-        )
-        await control.command(
-          'clickWhenEnabled',
-          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          'waitFor',
+          scoped('[data-testid="issue-execution-environment-notice"]'),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-
+        await control.command(
+          'click',
+          scoped('[data-testid="issue-execution-environment-notice-action"]')
+        )
         await initializeFirstProjectExecutionEnvironment(
           control,
           ACTIVE_WORKBENCH_SELECTOR,
           uiTimeoutMs,
           remoteDevice.id
         )
+        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              scoped('[data-testid="issue-execution-environment-notice"]')
+            )
+          ),
+          0,
+          'The execution environment warning remained after initialization and returning home'
+        )
+        const terminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              title: TERMINAL_STATUS_ISSUE_TITLE,
+              status: 'in_progress',
+              assignee_agent_id: agent.id,
+            }),
+          }
+        )
+        assert.equal(terminalStatusIssue.execution_state, 'waiting_approval')
+        const rejectedTerminalStatusIssue = await request(
+          `/api/v1/cloud-projects/${project.id}/loop-items/${terminalStatusIssue.id}/reject`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              version: terminalStatusIssue.version,
+              reason: 'Desktop E2E terminal status mapping fixture',
+            }),
+          }
+        )
+        assert.equal(rejectedTerminalStatusIssue.status, 'in_progress')
+        assert.equal(rejectedTerminalStatusIssue.execution_state, 'cancelled')
+        await control.command(
+          'click',
+          scoped(
+            `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+          )
+        )
+        await control.command('waitFor', scoped('[data-testid="collaboration-workspace-home"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-running"]'),
+          { text: '0', timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-metric-pending"]'),
+          { text: '1', timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`),
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+          text: project.name,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
           timeoutMs: uiTimeoutMs,
@@ -364,6 +435,8 @@ export function createDesktopScenario({
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
         const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
+        await verifyIssueDetailPropertyUi(control, scoped, uiTimeoutMs)
+        await verifyNewDiscussionComposerUi(control, scoped, uiTimeoutMs)
         assert.equal(
           await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
           ISSUE_TITLE,
@@ -383,6 +456,7 @@ export function createDesktopScenario({
           '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
         )
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
+        await verifyReplyComposerUi(control, scoped, uiTimeoutMs)
         await control.command('fill', replyComposerSelector, {
           value: '在动态卡片内回复',
         })

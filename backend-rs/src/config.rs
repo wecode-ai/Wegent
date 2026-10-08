@@ -34,13 +34,15 @@ pub struct AuthConfig {
     pub algorithm: String,
 }
 
-/// Database configuration (`DATABASE_URL` and optional `DATABASE_SLAVE_URL`).
+/// Shared database URLs and the Rust-only `RS_DATABASE_URL_COLLATION` setting.
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
     /// Raw source-compatible `mysql+pymysql://...` URL.
     pub url: String,
     /// Optional read-only database URL. Missing and blank values use master.
     pub slave_url: Option<String>,
+    /// Optional connection collation applied to both master and slave.
+    pub collation: Option<String>,
 }
 
 /// Errors while resolving configuration.
@@ -269,7 +271,7 @@ impl AuthConfig {
 }
 
 impl DatabaseConfig {
-    /// Reads the source-compatible `DATABASE_URL`.
+    /// Reads shared database URLs and the optional Rust connection collation.
     ///
     /// # Errors
     ///
@@ -278,7 +280,12 @@ impl DatabaseConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         let url = env_or_dotenv("DATABASE_URL").ok_or(ConfigError::Missing("DATABASE_URL"))?;
         let slave_url = optional_env_or_dotenv("DATABASE_SLAVE_URL");
-        Ok(Self { url, slave_url })
+        let collation = optional_env_or_dotenv("RS_DATABASE_URL_COLLATION");
+        Ok(Self {
+            url,
+            slave_url,
+            collation,
+        })
     }
 
     /// Converts the SQLAlchemy `mysql+pymysql://` scheme to the plain
@@ -290,27 +297,41 @@ impl DatabaseConfig {
     /// TLS when the server offers it.
     #[must_use]
     pub fn mysql_url(&self) -> String {
-        mysql_driver_url(&self.url)
+        mysql_driver_url(&self.url, self.collation.as_deref())
     }
 
     /// Converts the optional slave URL to SQLx syntax.
     #[must_use]
     pub fn mysql_slave_url(&self) -> Option<String> {
-        self.slave_url.as_deref().map(mysql_driver_url)
+        self.slave_url
+            .as_deref()
+            .map(|url| mysql_driver_url(url, self.collation.as_deref()))
     }
 }
 
-fn mysql_driver_url(url: &str) -> String {
+fn mysql_driver_url(url: &str, collation: Option<&str>) -> String {
     let base = if let Some(rest) = url.strip_prefix("mysql+pymysql://") {
         format!("mysql://{rest}")
     } else {
         url.to_owned()
     };
-    match base.split_once('?') {
+    let mut base = match base.split_once('?') {
         Some((_head, query)) if query.contains("ssl-mode=") => base,
         Some((head, query)) => format!("{head}?{query}&ssl-mode=disabled"),
         None => format!("{base}?ssl-mode=disabled"),
+    };
+    // Preserve an explicit URL collation; the Rust setting supplies the default.
+    let has_collation = base.split_once('?').is_some_and(|(_, query)| {
+        url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "collation")
+    });
+    if let Some(collation) = collation.filter(|_| !has_collation) {
+        let parameter = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("collation", collation)
+            .finish();
+        base.push('&');
+        base.push_str(&parameter);
     }
+    base
 }
 
 /// Redis configuration (`settings.REDIS_URL`, `redis://:secret@host:port/db`).
@@ -594,6 +615,7 @@ mod tests {
         let config = DatabaseConfig {
             url: "mysql+pymysql://user:pw@host:7831/task_manager".to_string(),
             slave_url: None,
+            collation: None,
         };
         assert_eq!(
             config.mysql_url(),
@@ -606,6 +628,7 @@ mod tests {
         let with_query = DatabaseConfig {
             url: "mysql+pymysql://user:pw@host:7831/db?charset=utf8mb4".to_string(),
             slave_url: None,
+            collation: None,
         };
         assert_eq!(
             with_query.mysql_url(),
@@ -617,6 +640,7 @@ mod tests {
             slave_url: Some(
                 "mysql+pymysql://reader:other@slave:7831/db?charset=utf8mb4".to_string(),
             ),
+            collation: None,
         };
         assert_eq!(
             explicit.mysql_url(),
@@ -625,6 +649,32 @@ mod tests {
         assert_eq!(
             explicit.mysql_slave_url().as_deref(),
             Some("mysql://reader:other@slave:7831/db?charset=utf8mb4&ssl-mode=disabled")
+        );
+    }
+
+    #[test]
+    fn applies_rust_collation_to_both_connections_without_changing_shared_urls() {
+        let master = "mysql+pymysql://user:pw@host/db?charset=utf8mb4";
+        let config = DatabaseConfig {
+            url: master.to_owned(),
+            slave_url: Some("mysql://reader:pw@slave/db?ssl-mode=required".to_owned()),
+            collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+        };
+        assert_eq!(config.url, master);
+        assert_eq!(
+            config.mysql_url(),
+            "mysql://user:pw@host/db?charset=utf8mb4&ssl-mode=disabled&collation=utf8mb4_0900_ai_ci"
+        );
+        assert_eq!(
+            config.mysql_slave_url().as_deref(),
+            Some("mysql://reader:pw@slave/db?ssl-mode=required&collation=utf8mb4_0900_ai_ci")
+        );
+        assert_eq!(
+            mysql_driver_url(
+                "mysql://user:pw@host/db?collation=utf8mb4_bin",
+                config.collation.as_deref()
+            ),
+            "mysql://user:pw@host/db?collation=utf8mb4_bin&ssl-mode=disabled"
         );
     }
 

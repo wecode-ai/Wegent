@@ -29,6 +29,8 @@
 //!    (`mysql` binary_data or the MinIO/S3 object store), decrypt when
 //!    `is_encrypted`, and stream with
 //!    `Content-Disposition`/`Content-Length`/`X-Accel-Buffering: no` headers.
+//!    `Content-Type` is rendered through `content_type.rs`, which applies the
+//!    Starlette `Response.init_headers` charset rule.
 //!
 //! The download-token, share-token, and anonymous-browser-redirect methods
 //! share steps 2-8; the recorded case uses the JWT method.
@@ -38,11 +40,15 @@
 //! parameter replaces user authentication and ownership checks entirely.
 
 pub mod auth;
+pub(crate) mod content_type;
 pub mod context_store;
+pub(crate) mod crypto;
 pub mod detail;
 pub mod detail_response;
 pub mod download_policy;
+pub mod download_token;
 pub mod executor_download;
+pub mod external_media;
 pub mod handler;
 pub mod minio_client;
 pub mod public_link;

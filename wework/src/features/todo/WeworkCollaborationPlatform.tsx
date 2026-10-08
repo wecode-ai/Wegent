@@ -37,6 +37,7 @@ import {
 import { loopItemLocalProject } from '@/api/localProjectAssociation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -298,6 +299,15 @@ export function WeworkSharedProject({
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
+  const [notice, setNotice] = useState<{
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const clearNotice = useCallback(() => setNotice(null), [])
+  const notify = useCallback(
+    (message: string, kind: 'success' | 'error' = 'success') => setNotice({ message, tone: kind }),
+    []
+  )
   const [, setTaskBindingRevision] = useState(0)
   const runtimeTaskLifecycleRef = useRef(runtimeTaskLifecycle)
   useEffect(() => {
@@ -370,6 +380,7 @@ export function WeworkSharedProject({
         }))
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
+      notify,
       ...(onOpenSettings
         ? {
             manageResource: (kind: 'agents' | 'environments', resourceId?: string) => {
@@ -399,6 +410,7 @@ export function WeworkSharedProject({
       location.projectView,
       onFocusedItemHandled,
       onOpenSettings,
+      notify,
       project.id,
       project.project_store,
       services.agentResourceApi,
@@ -582,21 +594,16 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
-      const environments = await scopedApi.projects
-        .listExecutionEnvironments(String(project.id))
-        .catch(error => {
-          console.warn('[Wework collaboration] Failed to refresh project execution environments', {
-            projectId: project.id,
-            error,
-          })
-          return null
-        })
+      const [currentProject, environments] = await Promise.all([
+        scopedApi.projects.get(String(project.id)),
+        scopedApi.projects.listExecutionEnvironments(String(project.id)),
+      ])
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         taskRequest: {
-          ...(projectExecutionEnvironmentTaskRequest(project, {
+          ...(projectExecutionEnvironmentTaskRequest(currentProject, {
             workspace,
             environments,
           }) ?? {
@@ -746,6 +753,11 @@ export function WeworkSharedProject({
       className="issue-drawer-workspace flex h-full min-h-0 min-w-0"
       data-testid="issue-drawer-workspace"
     >
+      <TransientNotice
+        message={notice?.message ?? null}
+        tone={notice?.tone}
+        onClear={clearNotice}
+      />
       <div className="min-w-0 flex-1">
         <CollaborationApp
           api={scopedApi}
@@ -805,7 +817,9 @@ export function WeworkSharedProject({
                       .at(-1) ?? null
                   }
                   localProjects={localProjects}
-                  showAdditionalTaskAction={taskBindings.length > 0}
+                  showAdditionalTaskAction={
+                    project.project_store === 'local' || issue.can_edit === true
+                  }
                   initialTaskBindings={taskBindings.map(toWeworkIssueTaskBinding)}
                   taskExecutionStates={issueTaskExecutionStates(
                     taskBindings,

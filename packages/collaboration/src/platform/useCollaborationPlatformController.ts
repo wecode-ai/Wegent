@@ -135,6 +135,19 @@ function mergeByKey<T>(collections: T[][], keyFor: (item: T) => string): T[] {
   return [...merged.values()];
 }
 
+function reconcileNavigationProjects(
+  incoming: CollaborationProject[],
+  cached: CollaborationProject[],
+): CollaborationProject[] {
+  const cachedById = new Map(cached.map((project) => [project.id, project]));
+  return incoming.map((project) => {
+    const cachedProject = cachedById.get(project.id);
+    return cachedProject && cachedProject.version >= project.version
+      ? cachedProject
+      : project;
+  });
+}
+
 function mergeRootNavigationSnapshots(
   snapshots: RootNavigationSnapshot[],
 ): RootNavigationSnapshot {
@@ -286,8 +299,8 @@ export function useCollaborationPlatformController({
       let workspaceId = location.workspaceId;
       if (!workspaceId && location.projectId) {
         try {
-          workspaceId = (await api.projects.get(location.projectId))
-            .workspace_id ?? null;
+          workspaceId =
+            (await api.projects.get(location.projectId)).workspace_id ?? null;
         } catch {
           workspaceId = null;
         }
@@ -321,12 +334,15 @@ export function useCollaborationPlatformController({
           if (revision !== loadRevisionRef.current) return;
           const snapshot = mergeRootNavigationSnapshots(snapshots);
           const navigationProjects = primaryNavigationSettled
-            ? snapshot.projects
+            ? reconcileNavigationProjects(
+                snapshot.projects,
+                navigationCacheRef.current.projects,
+              )
             : undefined;
           if (primaryNavigationSettled) {
             navigationCacheRef.current = {
               workspaces: snapshot.workspaces,
-              projects: snapshot.projects,
+              projects: navigationProjects!,
             };
           }
           setState((current) => ({
@@ -519,11 +535,11 @@ export function useCollaborationPlatformController({
               navigationApis?.length ? navigationApis : [api],
             );
         if (revision !== loadRevisionRef.current) return;
-        const {
-          workspaces,
-          projects: navigationProjects,
-          complete,
-        } = navigationCollections;
+        const { workspaces, complete } = navigationCollections;
+        const navigationProjects = reconcileNavigationProjects(
+          navigationCollections.projects,
+          cachedNavigation.projects,
+        );
         setState((current) => ({
           ...current,
           navigationIncomplete: !complete,

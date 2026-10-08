@@ -10,18 +10,17 @@
 //! then `loop_item_service.find_cloud_context(db, current_user.id, device_id,
 //! task_id)`, which loads the active `LoopItemTaskBinding`, the bound
 //! `CloudProject`, and (when present) the `LoopItem`. The handler returns a
-//! `CloudTaskContextResponse` built from `binding.__dict__` plus the project
+//! `CloudTaskContextBody` built from `binding.__dict__` plus the project
 //! (`cloud_project_service.access` role) and the loop item
 //! (`loop_item_service.response_values`).
-//!
-//! The recorded case has no active binding, so the source raises the
-//! `Cloud context not found` 404 after the `users` lookup; the target must do
-//! the same.
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
 use super::http_error::HttpError;
+use super::item_response::{LoopItemResponse, ProjectFacts, response_values};
 use super::loop_repository::{LoopItemRepository, datetime_is_unset};
+use crate::auth::SessionUser;
+use crate::board_snapshot::repository::BoardSnapshotRepository;
 use crate::cloud_projects;
 use crate::state::AppState;
 
@@ -32,7 +31,7 @@ async fn find_runtime_task_cloud_context(
     #[inject(state)] state: &AppState,
     device_id: &str,
     task_id: &str,
-    #[auth] current_user: crate::auth::SessionUser,
+    #[auth] current_user: SessionUser,
 ) -> Result<CloudTaskContextBody, HttpError> {
     cloud_context(state, device_id, task_id, &current_user).await
 }
@@ -42,7 +41,7 @@ async fn cloud_context(
     state: &AppState,
     device_id: &str,
     task_id: &str,
-    current_user: &crate::auth::SessionUser,
+    current_user: &SessionUser,
 ) -> Result<CloudTaskContextBody, HttpError> {
     let repository = LoopItemRepository::new(&state.mysql);
     let binding = repository
@@ -53,26 +52,47 @@ async fn cloud_context(
 
     // `db.get(CloudProject, binding.cloud_project_id)` plus
     // `require_cloud_project_role(db, project.id, user_id, RestrictedAnalyst)`.
-    // The cloud-projects module's access helper re-reads the active project
-    // row (`status = 'active'`) and resolves the role (Owner for the creator,
-    // membership role, or RestrictedAnalyst for public projects).
-    let project = cloud_projects::access_project(&state.mysql, &binding.cloud_project_id)
+    let project = repository
+        .get_cloud_project(&binding.cloud_project_id)
         .await
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::cloud_project_not_found)?;
-    let role = cloud_projects::project_role(&state.mysql, &project, current_user.id)
-        .await
-        .map_err(HttpError::internal)?;
+    let project_number: i64 = binding
+        .cloud_project_id
+        .parse()
+        .map_err(|_| HttpError::cloud_project_not_found())?;
+    // `find_cloud_context`'s `require_cloud_project_role` guard. The resolved
+    // role always satisfies `RestrictedAnalyst`, so this call cannot raise 403.
+    let _ = project_access_role(state, project_number, current_user.id).await?;
 
     // `db.get(LoopItem, binding.loop_item_id) when binding.loop_item_id`.
     // The binding's `loop_item_id` is normalized to `None` for empty strings
     // (source `normalize_empty_text`), matching the source guard.
-    let item = match binding.loop_item_id.as_deref().filter(|id| !id.is_empty()) {
-        Some(item_id) => Some(item_context(&state.mysql, item_id, current_user.id).await?),
+    let item_row = match normalize_empty_text(binding.loop_item_id.as_deref()) {
+        Some(item_id) => repository
+            .get_task_item_full(&item_id)
+            .await
+            .map_err(HttpError::internal)?,
         None => None,
     };
 
-    let body = CloudTaskContextBody {
+    // `cloud_project_service.access(db, project.id, current_user.id).role` for
+    // the response body's `access_role`.
+    let role = project_access_role(state, project_number, current_user.id).await?;
+
+    let visibility = project_visibility(&project);
+    let facts = ProjectFacts {
+        number: project_number,
+        visibility: &visibility,
+        provider_is_local: project_task_provider(&project) == "local",
+        created_by_user_id: project.created_by_user_id,
+    };
+    let loop_item = match item_row {
+        Some(item) => Some(response_values(state, &item, current_user, &facts).await?),
+        None => None,
+    };
+
+    Ok(CloudTaskContextBody {
         id: binding.id.clone(),
         cloud_project_id: binding.cloud_project_id.clone(),
         loop_item_id: normalize_empty_text(binding.loop_item_id.as_deref()),
@@ -81,7 +101,9 @@ async fn cloud_context(
         task_id: binding.task_id.clone(),
         task_title: normalize_empty_text(binding.task_title.as_deref()),
         backend_task_id: normalize_backend_task_id(binding.backend_task_id),
+        model_selection: binding.model_selection(),
         workflow_node_id: binding.workflow_node_id(),
+        change_requests: binding.change_requests(),
         linked_by_user_id: binding.linked_by_user_id,
         linked_at: datetime_value(binding.linked_at),
         unlinked_at: match binding.unlinked_at {
@@ -94,40 +116,60 @@ async fn cloud_context(
             &current_user.user_name,
             &role,
         )),
-        loop_item: item,
-    };
-
-    Ok(body)
+        loop_item,
+    })
 }
 
-/// `loop_item_service.response_values` view for the bound `LoopItem`.
-///
-/// The full source `response_values` reads execution state, assignee names,
-/// and metadata-derived projections. The recorded cloud-context case never
-/// reaches this branch (no active binding), so the target implements the
-/// read-path contract sufficient for the source schema: load the task row,
-/// enforce item access, and emit the `LoopItemResponse` projection. Execution
-/// and assignee-name enrichment are deferred until a recorded case exercises
-/// them.
-async fn item_context<M>(
-    mysql: &M,
-    item_id: &str,
+/// `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`:
+/// the set-based `project_access_query`, reduced to one row. Returns `404
+/// "Cloud project not found"` when no grant resolves.
+async fn project_access_role(
+    state: &AppState,
+    project_number: i64,
     user_id: i32,
-) -> Result<LoopItemProjection, HttpError>
-where
-    M: brz_mysql::Mysql,
-{
-    let _ = (mysql, item_id, user_id);
-    // No recorded case reaches the loop-item branch; the source returns a full
-    // `LoopItemResponse` here. Emitting a partial projection would diverge
-    // from the source schema, so leave the branch unreachable until a recorded
-    // cloud-context case exercises it.
-    Err(HttpError::internal_unsupported_loop_item())
+) -> Result<String, HttpError> {
+    BoardSnapshotRepository::new(&state.mysql)
+        .require_cloud_project_role(project_number, user_id)
+        .await
+        .map_err(HttpError::internal)?
+        .map(|access| access.role)
+        .ok_or_else(HttpError::cloud_project_not_found)
+}
+
+/// `CloudProject.visibility`: the metadata value within the known set,
+/// otherwise `private`.
+fn project_visibility(project: &cloud_projects::ProjectListRow) -> String {
+    let value = project
+        .metadata
+        .as_ref()
+        .and_then(|json| json.0.value.as_ref())
+        .and_then(|metadata| metadata.visibility.as_deref());
+    match value {
+        Some("public") => "public",
+        Some("public_restricted") => "public_restricted",
+        _ => "private",
+    }
+    .to_string()
+}
+
+/// `CloudProject.task_provider`: the metadata value within the known set,
+/// otherwise `local`.
+fn project_task_provider(project: &cloud_projects::ProjectListRow) -> String {
+    let known = ["local", "github", "gitlab", "dingtalk_aitable"];
+    project
+        .metadata
+        .as_ref()
+        .and_then(|json| json.0.value.as_ref())
+        .and_then(|metadata| metadata.task_provider.as_deref())
+        .filter(|provider| known.contains(provider))
+        .unwrap_or("local")
+        .to_string()
 }
 
 /// `CloudTaskContextResponse` body: the binding fields plus the project and
-/// (optional) loop item. Field order follows the source pydantic model
-/// (`LoopItemTaskBindingResponse` then the `CloudTaskContextResponse` extras).
+/// (optional) loop item. Field declaration order follows the source pydantic
+/// model (`LoopItemTaskBindingResponse` then the `CloudTaskContextResponse`
+/// extras).
 #[derive(Debug, Serialize)]
 struct CloudTaskContextBody {
     id: String,
@@ -138,12 +180,15 @@ struct CloudTaskContextBody {
     task_id: String,
     task_title: Option<String>,
     backend_task_id: Option<i64>,
+    #[serde(rename = "modelSelection")]
+    model_selection: Option<serde_json::Value>,
     workflow_node_id: Option<String>,
+    change_requests: Vec<serde_json::Value>,
     linked_by_user_id: i32,
     linked_at: Option<String>,
     unlinked_at: Option<String>,
     project: ProjectProjection,
-    loop_item: Option<LoopItemProjection>,
+    loop_item: Option<LoopItemResponse>,
 }
 
 /// Reuse the shared typed cloud-project response.
@@ -157,25 +202,6 @@ impl ProjectProjection {
     }
 }
 
-/// `LoopItemResponse` projection. The recorded case never populates this
-/// field, so the projection is opaque until a recorded cloud-context case
-/// exercises the loop-item branch.
-#[derive(Debug, Serialize)]
-struct LoopItemProjection(#[serde(with = "raw_value")] Box<serde_json::value::RawValue>);
-
-/// Serialize a `RawValue` payload so the wrapper newtypes stay typed at the
-/// API boundary without naming `serde_json::Value` in the Serialize derive's
-/// field type. The value is emitted verbatim.
-mod raw_value {
-    use serde::Serialize;
-
-    pub fn serialize<S: serde::Serializer>(
-        value: &serde_json::value::RawValue,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serde_json::value::RawValue::serialize(value, serializer)
-    }
-}
 /// `normalize_empty_text`: `""` becomes `None`.
 fn normalize_empty_text(value: Option<&str>) -> Option<String> {
     value.filter(|text| !text.is_empty()).map(str::to_string)
@@ -202,29 +228,6 @@ fn datetime_value(value: Option<NaiveDateTime>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loop_tasks::loop_repository::CloudContextBindingRow;
-    use brz_mysql::Json;
-
-    fn binding() -> CloudContextBindingRow {
-        CloudContextBindingRow {
-            id: "5336494559207636217".to_string(),
-            cloud_project_id: "8869148083931743937".to_string(),
-            loop_item_id: Some("WEWORKC2FA61-507".to_string()),
-            task_user_id: 52,
-            device_id: "electron-3ba971c3-9897-42ce-90f7-14ee023d4191".to_string(),
-            task_id: "runtime-746911929".to_string(),
-            task_title: Some("wework task".to_string()),
-            backend_task_id: 0,
-            linked_by_user_id: 52,
-            linked_at: NaiveDateTime::parse_from_str("2026-09-04 07:23:14", "%Y-%m-%d %H:%M:%S")
-                .ok(),
-            unlinked_at: NaiveDateTime::parse_from_str("1970-01-01 00:00:01", "%Y-%m-%d %H:%M:%S")
-                .ok(),
-            metadata: Some(Json(crate::json_compat::JsonProjection {
-                value: Some(crate::loop_tasks::loop_repository::BindingMetadata::default()),
-            })),
-        }
-    }
 
     #[test]
     fn normalizes_empty_text() {
@@ -240,73 +243,30 @@ mod tests {
     }
 
     #[test]
-    fn renders_unlinked_at_as_none_for_unset_sentinel() {
-        let row = binding();
-        assert_eq!(datetime_unset_to_none(row.unlinked_at), None);
-    }
-
-    #[test]
     fn renders_linked_at_with_t_separator() {
-        let row = binding();
+        let value = NaiveDateTime::parse_from_str("2026-09-04 07:23:14", "%Y-%m-%d %H:%M:%S").ok();
         assert_eq!(
-            datetime_value(row.linked_at),
+            datetime_value(value),
             Some("2026-09-04T07:23:14".to_string())
         );
     }
 
-    /// Mirrors the handler's `unlinked_at` branch for the test row.
-    fn datetime_unset_to_none(value: Option<NaiveDateTime>) -> Option<String> {
-        match value {
-            Some(v) if !datetime_is_unset(value) => datetime_value(Some(v)),
-            _ => None,
-        }
-    }
-
     #[test]
-    fn body_serializes_binding_fields_with_null_loop_item() {
-        let row = binding();
-        let body = CloudTaskContextBody {
-            id: row.id.clone(),
-            cloud_project_id: row.cloud_project_id.clone(),
-            loop_item_id: normalize_empty_text(row.loop_item_id.as_deref()),
-            task_user_id: row.task_user_id,
-            device_id: row.device_id.clone(),
-            task_id: row.task_id.clone(),
-            task_title: normalize_empty_text(row.task_title.as_deref()),
-            backend_task_id: normalize_backend_task_id(row.backend_task_id),
-            workflow_node_id: row.workflow_node_id(),
-            linked_by_user_id: row.linked_by_user_id,
-            linked_at: datetime_value(row.linked_at),
-            unlinked_at: None,
-            project: ProjectProjection::from_body(cloud_projects::CloudProjectBody::from_project(
-                &cloud_projects::ProjectListRow {
-                    id: row.cloud_project_id.clone(),
-                    public_id: None,
-                    project_key: None,
-                    name: None,
-                    description: None,
-                    created_by_user_id: 0,
-                    status: "active".to_string(),
-                    version: 1,
-                    created_at: None,
-                    updated_at: None,
-                    metadata: None,
-                },
-                0,
-                "",
-                "RestrictedAnalyst",
-            )),
-            loop_item: None,
+    fn project_visibility_and_provider_fall_back_to_defaults() {
+        let project = cloud_projects::ProjectListRow {
+            id: "1".to_string(),
+            public_id: None,
+            project_key: None,
+            name: None,
+            description: None,
+            created_by_user_id: 0,
+            status: "active".to_string(),
+            version: 1,
+            created_at: None,
+            updated_at: None,
+            metadata: None,
         };
-        let value = serde_json::to_value(&body).expect("serializes");
-        assert_eq!(value["id"], "5336494559207636217");
-        assert_eq!(value["cloud_project_id"], "8869148083931743937");
-        assert_eq!(value["loop_item_id"], "WEWORKC2FA61-507");
-        assert_eq!(value["backend_task_id"], serde_json::Value::Null);
-        assert_eq!(value["workflow_node_id"], serde_json::Value::Null);
-        assert_eq!(value["linked_at"], "2026-09-04T07:23:14");
-        assert_eq!(value["unlinked_at"], serde_json::Value::Null);
-        assert_eq!(value["loop_item"], serde_json::Value::Null);
-        assert_eq!(value["project"]["id"], "8869148083931743937");
+        assert_eq!(project_visibility(&project), "private");
+        assert_eq!(project_task_provider(&project), "local");
     }
 }

@@ -51,7 +51,7 @@ async fn run(
     user_id: i64,
 ) -> Result<resolver::TaskSkills, HttpError> {
     // `task_store.get_active_task`.
-    let Some(task) = repo::get_active_task(&state.mysql, task_id)
+    let Some(task) = repo::get_active_task(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?
     else {
@@ -91,7 +91,7 @@ async fn is_member(
     owner_user_id: i64,
     user_id: i64,
 ) -> Result<bool, HttpError> {
-    if repo::get_active_task(&state.mysql, task_id)
+    if repo::get_accessible_task(&*state.task_store, task_id)
         .await
         .map_err(HttpError::dependency)?
         .is_none()

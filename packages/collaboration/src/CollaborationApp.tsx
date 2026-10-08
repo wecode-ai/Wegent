@@ -81,6 +81,7 @@ interface CollaborationAppProps {
   showProjectBack?: boolean;
   /** Enables the per-Issue delete action across board, table, and detail. */
   issueDeleteEnabled?: boolean;
+  onProjectChange?(project: CollaborationProject): void;
   /**
    * Host work that must succeed before the Issue is deleted, such as stopping
    * an in-flight run on the device that owns it. A rejection aborts the delete
@@ -129,6 +130,7 @@ export function CollaborationApp({
   refreshProjectRequestKey = 0,
   showProjectBack = true,
   issueDeleteEnabled = false,
+  onProjectChange,
   onCreateTask,
   onPrepareIssueDelete,
   renderBoardIssueCard,
@@ -817,7 +819,10 @@ export function CollaborationApp({
                                 ? () => host.manageResource?.("environments")
                                 : undefined
                             }
-                            onProjectChange={commands.replaceProject}
+                            onProjectChange={(nextProject) => {
+                              commands.replaceProject(nextProject);
+                              onProjectChange?.(nextProject);
+                            }}
                             project={project}
                             translate={translate}
                           />

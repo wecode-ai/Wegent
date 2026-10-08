@@ -113,4 +113,9 @@ printf 'changed source\n' >"$repo/wework/src/app.ts"
 reference_after_source="$(resolve_reference)"
 test "$reference_before" != "$reference_after_source"
 
+printf 'artifact downloader\n' >"$repo/.github/scripts/download-actions-artifact.sh"
+(cd "$repo" && git add .github/scripts/download-actions-artifact.sh)
+reference_after_downloader="$(resolve_reference)"
+test "$reference_after_source" != "$reference_after_downloader"
+
 echo "Wework Core E2E OCI build tests passed"

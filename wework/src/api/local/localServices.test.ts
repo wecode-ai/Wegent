@@ -163,7 +163,13 @@ describe('createLocalAppServices', () => {
       priority: 'none',
       metadata: { tags: [] },
     }
-    const agent = (id: string, name: string, mcpCommand: string, projectId = 'project-1') => ({
+    const agent = (
+      id: string,
+      name: string,
+      mcpCommand: string,
+      projectId = 'project-1',
+      allowedModels?: Array<{ name: string; type: string; namespace: string }>
+    ) => ({
       id,
       project_id: projectId,
       name,
@@ -172,6 +178,7 @@ describe('createLocalAppServices', () => {
       model: 'gpt-5.6-sol',
       model_type: 'runtime',
       model_namespace: 'default',
+      allowed_models: allowedModels,
       system_prompt: `${name} developer instructions`,
       additional_skills: [
         { name: `${id}-skill`, namespace: 'default', isPublic: false, skillId: 1 },
@@ -190,7 +197,12 @@ describe('createLocalAppServices', () => {
       if (method === 'todos.get') return task
       if (method === 'chat_agents.list') {
         return params?.project_id === 'project-1'
-          ? [agent('worker', 'Worker', 'worker-mcp')]
+          ? [
+              agent('worker', 'Worker', 'worker-mcp', 'project-1', [
+                { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+                { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
+              ]),
+            ]
           : [agent('leader', 'Manager', 'manager-mcp', 'wework-project-space')]
       }
       if (method === 'todos.update') {
@@ -274,6 +286,10 @@ describe('createLocalAppServices', () => {
         memberIds: string[]
         agentId: string
         runtimePayload: { executionRequest: Record<string, unknown> }
+        modelRuntimeProfiles: Array<{
+          modelId: string
+          runtimePayload: { executionRequest: { model_config: { model_id: string } } }
+        }>
       }>
     }
     expect(groupPayload.memberRuntimeProfiles.map(profile => profile.agentId)).toEqual([
@@ -307,6 +323,20 @@ describe('createLocalAppServices', () => {
           ],
         },
       },
+      modelRuntimeProfiles: [
+        {
+          modelId: 'gpt-5.6-sol',
+          runtimePayload: {
+            executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
+          },
+        },
+        {
+          modelId: 'gpt-5.6-luna',
+          runtimePayload: {
+            executionRequest: { model_config: { model_id: 'gpt-5.6-luna' } },
+          },
+        },
+      ],
     })
     expect(updates[2]).toMatchObject({
       assignee_group_id: 'human-group-1',
@@ -1150,7 +1180,12 @@ describe('createLocalAppServices', () => {
       codexCatalogModelId: String(catalogEntry.slug),
       catalogReady: false,
     })
-    const request = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime.worktrees.capabilities') {
+        return { success: true, runtimeWorktrees: null }
+      }
+      throw new Error('catalog unavailable')
+    })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({
         running: true,
@@ -1166,7 +1201,9 @@ describe('createLocalAppServices', () => {
     await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
     await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
 
-    expect(request).toHaveBeenCalledTimes(1)
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toHaveLength(1)
     expect(request).toHaveBeenCalledWith('runtime.codex.catalog.custom.write', {
       models: [expect.objectContaining({ slug: catalogEntry.slug })],
     })
@@ -1822,21 +1859,39 @@ describe('createLocalAppServices', () => {
     ])
   })
 
+  test('reports capability errors without changing known device connectivity', async () => {
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request: vi.fn().mockRejectedValue(new Error('Worktree capability discovery failed')),
+      subscribe: vi.fn(),
+    })
+    const [device] = await services.deviceApi.listDevices()
+    expect(device).toMatchObject({
+      device_id: 'device-uuid',
+      status: 'online',
+      error: 'Worktree capability discovery failed',
+    })
+    expect(device.runtime_features).toBeUndefined()
+  })
+
   test('reuses the initialized local device for subsequent device commands', async () => {
     const ensure = vi.fn().mockResolvedValue({
       running: true,
       ready: true,
       deviceId: 'device-uuid',
     })
+    const worktreeCapabilities = { version: 1, managed: true, preflight: true }
     const request = vi.fn().mockImplementation(async (method: string) =>
-      method === 'runtime.tasks.list'
-        ? { workspaces: [] }
-        : {
-            success: true,
-            stdout: '/Users/me',
-            stderr: '',
-            exit_code: 0,
-          }
+      method === 'runtime.worktrees.capabilities'
+        ? { success: true, runtimeWorktrees: worktreeCapabilities }
+        : method === 'runtime.tasks.list'
+          ? { workspaces: [] }
+          : {
+              success: true,
+              stdout: '/Users/me',
+              stderr: '',
+              exit_code: 0,
+            }
     )
     const services = createLocalAppServices({
       ensure,
@@ -1844,19 +1899,23 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
-    await services.deviceApi.listDevices()
+    const devices = await services.deviceApi.listDevices()
+    expect(devices[0].runtime_features?.worktrees).toEqual(worktreeCapabilities)
     await services.deviceApi.getHomeDirectory('local-device')
     await services.deviceApi.getHomeDirectory('local-device')
 
     expect(ensure).toHaveBeenCalledTimes(1)
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request).toHaveBeenNthCalledWith(1, 'device.execute_command', {
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenNthCalledWith(1, 'runtime.worktrees.capabilities', {
+      deviceId: 'device-uuid',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
-    expect(request).toHaveBeenNthCalledWith(2, 'device.execute_command', {
+    expect(request).toHaveBeenNthCalledWith(3, 'device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'home_dir',
       timeout_seconds: 10,

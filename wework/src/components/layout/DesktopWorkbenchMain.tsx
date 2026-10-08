@@ -2155,6 +2155,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null)
+  const conversationImageTarget = currentRuntimeConversationSource?.workspacePath
+    ? {
+        deviceId: currentRuntimeConversationSource.deviceId,
+        workspacePath: currentRuntimeConversationSource.workspacePath,
+      }
+    : composerWorkspaceTarget
+      ? { deviceId: composerWorkspaceTarget.deviceId, workspacePath: composerWorkspaceTarget.path }
+      : null
+  const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
+  const remoteImageTarget =
+    conversationImageTarget &&
+    (!isElectronRuntime() ||
+      (conversationImageDevice?.device_type !== 'local' &&
+        conversationImageDevice?.device_type !== 'app'))
+      ? conversationImageTarget
+      : null
   const selectedFileWorkspaceTarget =
     fileWorkspaceTargets.find(
       target => `${target.deviceId}:${target.path}` === selectedFileWorkspaceTargetKey
@@ -5114,6 +5130,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 >
                   <ScrollableMessageArea
                     workspacePath={composerWorkspaceTarget?.path}
+                    imageTarget={remoteImageTarget}
                     messages={paneMessages}
                     turns={paneSession.turns}
                     loading={paneSession.transcriptLoading}

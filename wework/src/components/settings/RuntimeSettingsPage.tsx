@@ -5,8 +5,6 @@ import type { CloudProject } from '@/api/deliveries'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
-import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
@@ -27,9 +25,6 @@ export function RuntimeSettingsPage({
   modelApi,
 }: RuntimeSettingsPageProps) {
   const { t } = useTranslation('common')
-  const workspacePolicies = useDshSlotEntries<WeworkDshSlotEntry>(
-    WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy
-  )
   const [profiles, setProfiles] = useState<RuntimeProfile[]>([])
   const [projects, setProjects] = useState<CloudProject[]>([])
   const [projectDefaults, setProjectDefaults] = useState<Record<string, string>>({})
@@ -43,11 +38,6 @@ export function RuntimeSettingsPage({
   const [name, setName] = useState('')
   const [deviceId, setDeviceId] = useState('')
   const [model, setModel] = useState('')
-  const [workspacePolicy, setWorkspacePolicy] = useState('project')
-  const effectiveWorkspacePolicy =
-    workspacePolicy === 'project' || workspacePolicies.some(option => option.id === workspacePolicy)
-      ? workspacePolicy
-      : 'project'
 
   const load = useCallback(async () => {
     if (!runtimeProfileApi) return
@@ -103,7 +93,6 @@ export function RuntimeSettingsPage({
     setName('')
     setDeviceId(devices[0]?.device_id ?? '')
     setModel(models[0]?.name ?? '')
-    setWorkspacePolicy('project')
     setCreating(true)
   }
 
@@ -117,7 +106,6 @@ export function RuntimeSettingsPage({
         executionEnvironment: environment,
         executionDeviceId: deviceId,
         model,
-        workspacePolicy: effectiveWorkspacePolicy,
       })
       await load()
       setCreating(false)
@@ -284,23 +272,6 @@ export function RuntimeSettingsPage({
               value={model}
               onChange={setModel}
               options={modelOptions}
-            />
-            <MenuSelect
-              testId="runtime-profile-workspace"
-              value={effectiveWorkspacePolicy}
-              onChange={setWorkspacePolicy}
-              options={[
-                {
-                  value: 'project',
-                  label: t('workbench.runtime_profile_workspace_project'),
-                },
-                ...workspacePolicies.map(option => ({
-                  value: option.id,
-                  label: option.labelKey
-                    ? t(`workbench.${String(option.labelKey)}`, option.label ?? option.id)
-                    : (option.label ?? option.id),
-                })),
-              ]}
             />
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
             <div className="flex justify-end gap-2">

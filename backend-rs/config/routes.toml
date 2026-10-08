@@ -3,10 +3,22 @@
 # reference for the migrated public APIs; uncomment them to cut over.
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/users/me/available-channels"
+#[[routes]]
+#methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id"
+# `/api/knowledge-bases/organization-namespace` is a literal sibling of the
+# detail template; the static route wins dispatch, but the rule keeps the
+# cutover inventory explicit.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases/organization-namespace"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/config"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/knowledge-bases"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id/document-protection"
@@ -15,7 +27,19 @@
 #path = "/api/users/me"
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/users/features"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me/git-accounts/sync-summary"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me/runtime-configs/:runtime"
+#[[routes]]
+#methods = ["GET"]
 #path = "/api/v1/wework-notifications"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/runtime-work/im-notifications"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge-bases/:knowledge_base_id/artifacts"
@@ -32,6 +56,9 @@
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects"
 #[[routes]]
+#methods = ["DELETE"]
+#path = "/api/projects/:project_id"
+#[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/chat-agents"
 #[[routes]]
@@ -46,6 +73,9 @@ path = "/api/quota"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/wework-transcripts"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/wework-transcripts/:transcript_id/encryption-key"
 [[routes]]
 methods = ["GET"]
 path = "/"
@@ -64,9 +94,15 @@ path = "/api/startup"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/subscriptions/executions"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/api-keys"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+#[[routes]]
+#methods = ["DELETE"]
+#path = "/api/devices/records/:record_id"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/users/welcome-config"
@@ -76,6 +112,9 @@ path = "/api/devices"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/projects"
+#[[routes]]
+#methods = ["DELETE"]
+#path = "/api/projects/:project_id/tasks/:task_id"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/automations"
@@ -104,8 +143,36 @@ path = "/api/devices"
 #methods = ["GET"]
 #path = "/api/subscriptions"
 #[[routes]]
+#methods = ["POST"]
+#path = "/api/subscriptions"
+#[[routes]]
+#methods = ["PUT"]
+#path = "/api/subscriptions/:subscription_id"
+#[[routes]]
+#methods = ["DELETE"]
+#path = "/api/subscriptions/:subscription_id"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/subscriptions/:subscription_id/developer/notification-settings"
+#[[routes]]
+#methods = ["PUT"]
+#path = "/api/subscriptions/:subscription_id/developer/notification-settings"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/market/subscriptions"
+#[[routes]]
 #methods = ["GET"]
 #path = "/api/tasks/lite/personal"
+# `/api/tasks/lite/group` is a literal sibling of `/api/tasks/lite/personal`;
+# the static route wins dispatch over the `/api/tasks/:task_id` template.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/lite/group"
+# `/api/tasks/search` is a literal sibling of `/api/tasks/:task_id`; the static
+# route wins dispatch, but the rule keeps the cutover inventory explicit.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/tasks/search"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/shutdown/status"
@@ -135,6 +202,9 @@ path = "/api/devices"
 #path = "/api/teams"
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/teams/default"
+#[[routes]]
+#methods = ["GET"]
 #path = "/api/users/quick-access"
 #[[routes]]
 #methods = ["GET"]
@@ -162,6 +232,9 @@ path = "/api/devices"
 #path = "/api/models/unified"
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/models/error-recommendations"
+#[[routes]]
+#methods = ["GET"]
 #path = "/api/tasks/:task_id/remote-workspace/status"
 #[[routes]]
 #methods = ["GET"]
@@ -180,6 +253,17 @@ path = "/api/devices"
 #path = "/api/tasks/:task_id/export/docx"
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/tasks/:task_id"
+# `/api/tasks/bulk` is a literal sibling of `/api/tasks/:task_id`; the static
+# route wins dispatch, but the rule keeps the cutover inventory explicit.
+#[[routes]]
+#methods = ["DELETE"]
+#path = "/api/tasks/bulk"
+#[[routes]]
+#methods = ["DELETE"]
+#path = "/api/tasks/:task_id"
+#[[routes]]
+#methods = ["PUT"]
 #path = "/api/tasks/:task_id"
 #[[routes]]
 #methods = ["GET"]
@@ -201,4 +285,98 @@ path = "/api/devices"
 #path = "/api/resource-library/listings"
 #[[routes]]
 #methods = ["GET"]
+#path = "/api/resource-library/listings/:listing_id"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/resource-library/tags"
+#[[routes]]
+#methods = ["GET"]
 #path = "/api/v1/responses/:response_id"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/connector-apps"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/im-channels"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/im-channels/:channel_id/status"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-shells"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/system-config/marketplace-tags"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/system-config/slogan-tips"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/plugins/publication-requests"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/subscription-monitor/errors"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-models"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-ghosts"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-bots"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/service-keys"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-teams"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/public-retrievers"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/marketplace-resources"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/templates"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/admin/users"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/mcp/knowledge/sse"
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/mcp/knowledge/sse"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/mcp/subscription/sse"
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/mcp/subscription/sse"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me/mcps/providers/:provider_id/services"
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/users/me/proxy-config"
+
+# `GET /api/sites` (the `list_sites` handler); the sibling `/api/sites/...`
+# management routes still fall back to Python.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/sites"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/sites/app-types"
+
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/skill-market/search"

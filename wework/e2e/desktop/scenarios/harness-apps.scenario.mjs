@@ -610,6 +610,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('fill', '[data-testid="smart-app-development-display-name"]', {
         value: '空白 E2E 工作台',
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-confirm"]:not([disabled])',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', '[data-testid="smart-app-development-advanced-toggle"]')
       await control.command('fill', '[data-testid="smart-app-development-name"]', {
         value: CREATED_INSTALLATION_ID,
       })

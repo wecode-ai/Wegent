@@ -646,13 +646,6 @@ export function IssueChatMessage({
                 >
                   {t("activity.task_activity_manager_role")}
                 </span>
-              ) : taskSummary?.title ? (
-                <span
-                  className="text-xs text-text-muted"
-                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
-                >
-                  {taskSummary.title}
-                </span>
               ) : null}
               <ExecutionStatusBadge
                 translate={t}
@@ -687,7 +680,7 @@ export function IssueChatMessage({
         >
           {body}
         </div>
-        {taskSummary && !showInlineExecutionStatus ? (
+        {taskSummary ? (
           <div className="task-detail-thread-task-link">
             {taskSummary.onOpen ? (
               <button
@@ -696,11 +689,19 @@ export function IssueChatMessage({
                 onClick={taskSummary.onOpen}
                 className="task-detail-ai-run-open-task"
               >
-                {taskSummary.title}
+                <span
+                  data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+                >
+                  {taskSummary.title}
+                </span>
                 <ChevronRight className="h-3.5 w-3.5" />
               </button>
             ) : (
-              <span>{taskSummary.title}</span>
+              <span
+                data-testid={`cloud-task-activity-task-title-${message.messageId}`}
+              >
+                {taskSummary.title}
+              </span>
             )}
             {taskSummary.stageName ? (
               <span>{taskSummary.stageName}</span>

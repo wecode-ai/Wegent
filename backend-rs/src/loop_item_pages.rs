@@ -14,9 +14,9 @@
 //!
 //! Source pipeline (`app.services.loop_items.external_provider.list_page`):
 //! 1. `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`
-//!    — re-read the project row plus the approved membership row; raises 404
-//!    when the project is absent/inactive and 404 for non-members of private
-//!    projects.
+//!    — the set-based `project_access_query` resolves the active project row
+//!    and the caller's effective role in one statement; raises 404 when no
+//!    permission source grants the caller access to that project.
 //! 2. `_require_external(project)` — 409 when the project is not github/gitlab.
 //! 3. `item_status not in EXTERNAL_BOARD_STATUSES` — 422 "Unsupported board
 //!    status".
@@ -30,11 +30,9 @@
 //! The recorded case fails at step 5 before any items or bindings are
 //! produced, so `items` and `task_bindings` are always empty in the response
 //! and `next_cursor` is `None`. The handler mirrors the exact source pipeline
-//! so the recorded dependency sequence through the provider failure matches.
-//! `list_page` runs `require_cloud_project_role` once; the source's
-//! SQLAlchemy identity map serves the already-loaded project and membership
-//! rows from the session cache, so the recording contains exactly one
-//! project read and one membership read per request.
+//! so the recorded dependency sequence through the provider failure matches:
+//! the authenticated `users` read followed by the single
+//! `project_access_query` statement.
 use base64::Engine as _;
 use serde::Serialize;
 use serde_json::json;
@@ -99,6 +97,18 @@ fn validation_error(field: &str, kind: &str, message: &str, input: &str) -> Fast
         "loc": ["query", field],
         "msg": message,
         "input": input,
+    }]))
+}
+
+/// FastAPI-style 422 for an unparsable `project_id` path parameter. The
+/// source declares `project_id: int`, so a non-numeric path segment is
+/// rejected before the handler runs.
+fn path_validation_error(value: &str) -> FastApiError {
+    FastApiError::validation(json!([{
+        "type": "int_parsing",
+        "loc": ["path", "project_id"],
+        "msg": "Input should be a valid integer, unable to parse string as an integer",
+        "input": value,
     }]))
 }
 
@@ -226,11 +236,20 @@ async fn loop_item_page(
 
     let repository = BoardSnapshotRepository::new(&state.mysql);
 
+    // FastAPI path typing (`project_id: int`) validates the path segment
+    // before the endpoint body runs.
+    let project_number: i64 = project_id
+        .parse()
+        .map_err(|_| path_validation_error(project_id))?;
+
     // `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`:
-    // re-read the project row plus the approved membership row for non-creators.
-    // The recorded COM_QUERY inlines the snowflake id as an integer literal.
-    let project = repository
-        .get_project(project_id)
+    // the set-based `project_access_query` resolves the active project row and
+    // the caller's effective role in one statement, so the request is
+    // authorized against the same grants as every other cloud-project route.
+    // Every resolved role satisfies `RestrictedAnalyst`, so this call cannot
+    // raise the source's 403.
+    let access = repository
+        .require_cloud_project_role(project_number, current_user.id)
         .await
         .map_err(internal_error)?
         .ok_or_else(|| {
@@ -239,10 +258,8 @@ async fn loop_item_page(
                 "Cloud project not found",
             )
         })?;
-
-    let role = resolve_role(&repository, &project, current_user.id)
-        .await
-        .map_err(internal_error)?;
+    let project = access.project;
+    let role = access.role;
 
     // `_require_external(project)`: 409 when the project is not github/gitlab.
     let task_provider = project.task_provider();
@@ -267,12 +284,10 @@ async fn loop_item_page(
     // `_list_issue_page` -> `_request_issue_page` -> `_request`: the provider
     // HTTP call. The recorded case is a gitlab-backed public project whose
     // provider API call fails TLS verification during Replay, so the source
-    // raises `HTTPException(502, "Provider request failed: {e}")`.
-    // `external_loop_item_provider.list_page` calls `require_cloud_project_role`
-    // again, but the source's SQLAlchemy identity map serves both the project
-    // row and the membership row from the session cache, so no additional
-    // database round trip occurs (the recording contains exactly one project
-    // read and one membership read per request).
+    // raises `HTTPException(502, "Provider request failed: {e}")`. The provider
+    // request carries the decrypted `provider_config` credential and the
+    // project's `task_provider`/`api_base`, both read from the already-resolved
+    // access row, so the failure reaches this branch without another read.
     let batch = request_issue_page(
         &state.attachment_http,
         &state.auth.jwt_key,
@@ -317,17 +332,27 @@ async fn loop_item_page(
     let item_ids: Vec<String> = matched.iter().map(|item| item.id()).collect();
 
     // `loop_item_service.list_project_task_bindings`: active execution rows
-    // whose `loop_item_id` is in the item list. The source calls
-    // `require_cloud_project_role(db, project_id, user_id)` with the default
-    // `required_role = Reporter` before the query. A public visitor
+    // whose `loop_item_id` is in the item list. The source resolves
+    // `require_cloud_project_role(db, project_id, user_id)` again with the
+    // default `required_role = Reporter` before the query. A public visitor
     // (`RestrictedAnalyst`) fails `has_permission(RestrictedAnalyst, Reporter)`
     // and the source raises `403 {"detail": "Insufficient permission"}`.
-    if !has_permission(&role, "Reporter") {
+    let bindings_access = repository
+        .require_cloud_project_role(project_number, current_user.id)
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                "Cloud project not found",
+            )
+        })?;
+    if !has_permission(&bindings_access.role, "Reporter") {
         return Err(FastApiError::forbidden("Insufficient permission"));
     }
 
     let bindings = repository
-        .list_project_task_bindings(project_id, &item_ids)
+        .list_project_task_bindings(&project.id, &item_ids)
         .await
         .map_err(internal_error)?;
 
@@ -336,26 +361,6 @@ async fn loop_item_page(
         task_bindings: bindings.iter().map(binding_response).collect(),
         next_cursor,
     })
-}
-
-/// `require_cloud_project_role` role resolution: creator -> Owner,
-/// approved member -> stored role, public -> RestrictedAnalyst, else 404.
-async fn resolve_role(
-    repository: &BoardSnapshotRepository<'_, brz_mysql::MysqlService>,
-    project: &ProjectRow,
-    user_id: i32,
-) -> Result<String, brz_mysql::MysqlError> {
-    if project.created_by_user_id == user_id {
-        return Ok("Owner".to_string());
-    }
-    if let Some(role) = repository.get_membership(&project.id, user_id).await? {
-        return Ok(role);
-    }
-    if project.is_public() {
-        return Ok("RestrictedAnalyst".to_string());
-    }
-    // Non-creator, non-member, private project: the source raises 404.
-    Ok("RestrictedAnalyst".to_string())
 }
 
 /// `_decode_page_cursor(cursor)`: base64url decode the page cursor. Returns
@@ -600,6 +605,19 @@ mod tests {
             error.status(),
             brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
         );
+    }
+
+    #[test]
+    fn path_validation_rejects_a_non_numeric_project_id() {
+        let error = path_validation_error("not-a-project");
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let detail = error.validation_detail();
+        assert!(detail.contains("\"int_parsing\""), "{detail}");
+        assert!(detail.contains("\"path\""), "{detail}");
+        assert!(detail.contains("\"project_id\""), "{detail}");
     }
 
     #[test]
