@@ -762,6 +762,8 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
   test.each(['submitting', 'awaiting'] as const)(
     'preserves a %s compaction when the previous terminal transcript returns',
     async phase => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-08-21T00:00:01.000Z'))
       const store = new RuntimeTaskLifecycleStore('test')
       const address = runtimeTaskAddress()
       store.syncRuntimeWork(runtimeWork(true))
@@ -811,6 +813,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         })
       })
       await act(async () => {
+        vi.setSystemTime(new Date('2026-08-21T00:00:02.000Z'))
         resolveTranscript({ ...runtimeTranscript(false), fullContent: true })
       })
       expect(store.getTask(address)?.turn.phase).toBe(phase)
@@ -1142,12 +1145,14 @@ function runtimeTranscript(running: boolean): RuntimeTranscriptResponse {
               role: 'user',
               content: '之前的请求',
               status: 'done',
+              createdAt: '2026-08-21T00:00:00.000Z',
             },
           },
           {
             id: 'assistant-1',
             type: 'assistant_text',
             content: '已恢复的 AI 输出',
+            createdAt: '2026-08-21T00:00:00.500Z',
           },
         ],
       },

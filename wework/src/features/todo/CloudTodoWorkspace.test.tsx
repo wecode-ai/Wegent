@@ -2784,6 +2784,23 @@ describe('CloudTodoWorkspace', () => {
         'runtime-created-with-model'
       )
     )
+    expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
+      item.id,
+      {
+        deviceId: 'local-device',
+        taskId: 'runtime-created-with-model',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'deepseek-v4-pro-responses',
+            modelType: 'public',
+            options: { reasoning: 'high' },
+          },
+        },
+      },
+      item.title,
+      null,
+      null
+    )
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-model-name',
       'deepseek-v4-pro-responses'

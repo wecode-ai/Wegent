@@ -197,7 +197,10 @@ import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
 import { createLocalWorkspaceApi } from './WeworkCollaborationPlatform'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
-import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
+import {
+  rememberProjectTaskStore,
+  toWorkspaceRuntimeTaskAddress,
+} from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -3914,7 +3917,7 @@ export function CloudTodoWorkspace({
       if (selectedItemProject.location === 'cloud') {
         await services.workspaceRuntimePort!.bindTask(
           latest.id,
-          address,
+          toWorkspaceRuntimeTaskAddress(address),
           dispatch?.taskTitle ?? latest.title,
           dispatch
             ? {

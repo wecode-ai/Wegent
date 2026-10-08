@@ -1,9 +1,42 @@
 import { describe, expect, test, vi } from 'vitest'
+import type { WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 
 import type { WorkbenchServices } from './workbenchServices'
-import { projectTaskTrackingApi, rememberProjectTaskStore } from './projectTaskTracking'
+import {
+  createCloudProjectTaskRuntimeApi,
+  projectTaskTrackingApi,
+  rememberProjectTaskStore,
+} from './projectTaskTracking'
 
 describe('projectTaskTrackingApi', () => {
+  test('maps the runtime model identity into the shared task binding and tracking contract', async () => {
+    const bindTask = vi.fn().mockResolvedValue(undefined)
+    const trackProjectTask = vi.fn().mockResolvedValue({ issue: {} })
+    const port = { bindTask, trackProjectTask } as unknown as WeworkWorkspaceRuntimePort
+    const api = createCloudProjectTaskRuntimeApi(port)
+    const modelSelection = {
+      modelName: 'deepseek-v4-pro-responses',
+      modelType: 'public' as const,
+      options: { reasoning: 'high' },
+    }
+    const task = {
+      deviceId: 'remote-device',
+      taskId: 'runtime-model-task',
+      runtimeHandle: { modelSelection },
+    }
+    const sharedTask = {
+      deviceId: task.deviceId,
+      taskId: task.taskId,
+      modelSelection,
+    }
+
+    await api.bindTask('ISSUE-1', task, 'Task')
+    await api.trackProjectTask('project-1', task, 'Task', 'Description')
+
+    expect(bindTask).toHaveBeenCalledWith('ISSUE-1', sharedTask, 'Task')
+    expect(trackProjectTask).toHaveBeenCalledWith('project-1', sharedTask, 'Task', 'Description')
+  })
+
   test('routes backend task ownership through the shared cloud runtime port', async () => {
     const updateTrackedTaskTitle = vi.fn().mockResolvedValue(null)
     const services = {
