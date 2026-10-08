@@ -28,9 +28,9 @@
 //! 6. one `get_view_role_in_group` (`get_effective_role_in_group`) per
 //!    organization KB for the merged `my_role`.
 mod handler;
-mod membership;
-mod py_order;
-mod queries;
+pub(crate) mod membership;
+pub(crate) mod py_order;
+pub(crate) mod queries;
 
 use std::collections::HashMap;
 
@@ -68,16 +68,16 @@ const MEMBER_COLUMNS: &str = "resource_members.id AS resource_members_id, \
      resource_members.updated_at AS resource_members_updated_at";
 
 /// `kinds` columns as rendered by `db.query(Kind)`.
-const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+pub(crate) const KIND_COLUMNS: &str = "kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
      kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
      kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
      kinds.updated_at AS kinds_updated_at";
 
 /// `KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES`.
-const KB_RESOURCE_TYPES: &str = "('KnowledgeBase', 'KNOWLEDGE_BASE')";
+pub(crate) const KB_RESOURCE_TYPES: &str = "('KnowledgeBase', 'KNOWLEDGE_BASE')";
 /// `APPROVED_MEMBER_STATUS_VALUES`.
-const APPROVED_STATUSES: &str = "('approved', 'APPROVED')";
+pub(crate) const APPROVED_STATUSES: &str = "('approved', 'APPROVED')";
 /// The scalar `resource_type` the entity-resolver contract filters with
 /// (`IExternalEntityResolver.get_resource_ids_by_entity` and
 /// `list_resources_by_entity_match`, whose default is
@@ -264,7 +264,7 @@ fn role_rank(role: &str) -> Option<u8> {
 }
 
 /// `has_permission` (`app.schemas.base_role`).
-fn has_permission(user_role: &str, required_role: &str) -> bool {
+pub(crate) fn has_permission(user_role: &str, required_role: &str) -> bool {
     match (role_rank(user_role), role_rank(required_role)) {
         (Some(user), Some(required)) => user <= required,
         _ => false,
@@ -296,7 +296,7 @@ fn merge_roles(roles: &[Option<String>]) -> Option<String> {
 
 /// MySQL default string-literal escaping (mirrors the source's rendered
 /// COM_QUERY text).
-fn quote_literal(value: &str) -> String {
+pub(crate) fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
     for byte in value.bytes() {

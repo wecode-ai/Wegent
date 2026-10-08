@@ -8,7 +8,7 @@
 //! `app/services/chat/compaction_checkpoint.py:resolve_history_subtasks`,
 //! including fork-aware lineage resolution
 //! (`app/services/task_fork_history.py`).
-use crate::json_compat::raw_json;
+use crate::json_compat::{python_json_value, raw_json};
 use brz_http_server::Query as HttpQuery;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -327,6 +327,49 @@ fn build_document_text_prefix(
         blocks::truncate_for_injection(extracted_text, inject_max_chars);
     let note = blocks::build_truncation_note(is_truncated && !inject_truncated);
     Some(format!("{header}\n{note}{inject_text}\n\n"))
+}
+
+/// Video attachment metadata for history when the model cannot read video
+/// input (`shared/utils/video_metadata.py:build_video_history_metadata_text`).
+///
+/// The header never advertises a download URL or sandbox path; the stored media
+/// reference is surfaced as a trailing `{"fid": ...}` line. The name and mime
+/// type fall back to `video` and `video/mp4` when the context omits them.
+fn build_video_history_metadata_text(context: &SubtaskContextRow) -> String {
+    let filename = {
+        let original = context.original_filename();
+        if !original.is_empty() {
+            original
+        } else if !context.name.is_empty() {
+            context.name.clone()
+        } else {
+            "video".to_string()
+        }
+    };
+    let mime_type = {
+        let mime_type = context.mime_type();
+        if mime_type.is_empty() {
+            "video/mp4".to_string()
+        } else {
+            mime_type
+        }
+    };
+    let header = format!(
+        "[Video Attachment: {filename} | ID: {} | Type: {mime_type} | Size: {}]",
+        context.id,
+        blocks::format_file_size(context.file_size()),
+    );
+    // `json.dumps({"fid": fid})` when `type_data["fid"]` is truthy.
+    match context
+        .type_data
+        .as_ref()
+        .and_then(|json| json.0.get("fid"))
+    {
+        Some(fid) if !json_falsy(fid) => {
+            format!("{header}\n{{\"fid\": {}}}\n", python_json_value(fid))
+        }
+        _ => format!("{header}\n"),
+    }
 }
 
 /// Convert one subtask into response messages (`subtask_to_messages`).
@@ -654,20 +697,10 @@ fn build_user_message_content(
                 "image_url": {"url": format!("data:{};base64,{}", mime_type, context.image_base64.clone().unwrap_or_default())},
             }));
         } else if video_extensions.contains(&extension.as_str()) {
-            // Video support requires the dedicated media-resolution path that
-            // the recorded dependency topology does not exercise; keep the
-            // metadata-only shape used when `supports_video` is false.
-            let filename = context.original_filename();
-            let file_size = context.file_size();
-            let header = blocks::build_attachment_header(
-                i64::from(context.id),
-                Some(&filename),
-                Some(&context.mime_type()),
-                file_size,
-                None,
-                false,
-            );
-            attachment_text_parts.push(format!("{header}\n\n"));
+            // Metadata-only video history shape (`build_video_history_metadata_text`).
+            // The model-readable `supports_video` branch needs the dedicated
+            // media-resolution path, which this topology does not exercise.
+            attachment_text_parts.push(build_video_history_metadata_text(context));
         } else if let Some(prefix) = build_document_text_prefix(context, inject_max_chars) {
             attachment_text_parts.push(prefix);
         }
