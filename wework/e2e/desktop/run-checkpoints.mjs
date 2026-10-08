@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -439,54 +439,59 @@ async function extractArchive(archivePath, destination) {
   })
 }
 
-async function prepareSharedCoreRuntime(appBinary, parentDirectory) {
+async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
   const resourcesRoot = resolve(
     dirname(appBinary),
     ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
   )
   const resourceRoot = join(resourcesRoot, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
-  const runtimes = catalog.runtimes?.filter(runtime => runtime.role === 'core') ?? []
-  if (runtimes.length !== 1) {
-    throw new Error('Bundled Electron runtime catalog must contain exactly one Core runtime')
+  const runtimes =
+    catalog.runtimes?.filter(runtime => ['core', 'workbench'].includes(runtime.role)) ?? []
+  const roles = new Set(runtimes.map(runtime => runtime.role))
+  if (!roles.has('core') || !roles.has('workbench')) {
+    throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
   }
 
-  const [runtime] = runtimes
-  if (
-    !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
-    !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
-    !Number.isSafeInteger(runtime.archiveBytes) ||
-    runtime.archiveBytes <= 0 ||
-    typeof runtime.assetName !== 'string' ||
-    !runtime.assetName.endsWith('.tar.gz')
-  ) {
-    throw new Error('Bundled Electron Core runtime descriptor is invalid')
-  }
-
-  const archivePath = join(resourceRoot, runtime.assetName)
-  const archiveMetadata = await stat(archivePath)
-  if (archiveMetadata.size !== runtime.archiveBytes) {
-    throw new Error(`Bundled Core DSH runtime size mismatch: ${runtime.assetName}`)
-  }
-  if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
-    throw new Error(`Bundled Core DSH runtime checksum mismatch: ${runtime.assetName}`)
-  }
-
-  const runtimeRoot = join(parentDirectory, 'core-runtime')
-  const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
-  await mkdir(extractedRoot, { recursive: true })
+  const runtimeRoot = join(parentDirectory, 'harness-runtime')
   const startedAt = Date.now()
-  await extractArchive(archivePath, extractedRoot)
-  const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
-  if (
-    identity.dshVersion !== runtime.dshVersion ||
-    identity.role !== runtime.role ||
-    identity.sourceFingerprint !== runtime.sourceFingerprint
-  ) {
-    throw new Error(`Bundled Core DSH runtime identity is invalid: ${runtime.assetName}`)
+  await mkdir(runtimeRoot, { recursive: true })
+  for (const runtime of runtimes) {
+    if (
+      !/^[0-9a-f]{64}$/.test(runtime.sourceFingerprint) ||
+      !/^[0-9a-f]{64}$/.test(runtime.archiveSha256) ||
+      !Number.isSafeInteger(runtime.archiveBytes) ||
+      runtime.archiveBytes <= 0 ||
+      typeof runtime.assetName !== 'string' ||
+      !runtime.assetName.endsWith('.tar.gz')
+    ) {
+      throw new Error('Bundled Electron runtime descriptor is invalid')
+    }
+
+    const archivePath = join(resourceRoot, runtime.assetName)
+    const archiveMetadata = await stat(archivePath)
+    if (archiveMetadata.size !== runtime.archiveBytes) {
+      throw new Error(`Bundled DSH runtime size mismatch: ${runtime.assetName}`)
+    }
+    if ((await fileSha256(archivePath)) !== runtime.archiveSha256) {
+      throw new Error(`Bundled DSH runtime checksum mismatch: ${runtime.assetName}`)
+    }
+
+    const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
+    await mkdir(extractedRoot, { recursive: true })
+    await extractArchive(archivePath, extractedRoot)
+    const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
+    if (
+      identity.dshVersion !== runtime.dshVersion ||
+      identity.role !== runtime.role ||
+      identity.sourceFingerprint !== runtime.sourceFingerprint
+    ) {
+      throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
+    }
   }
+  await writeFile(join(runtimeRoot, 'runtimes.json'), `${JSON.stringify({ runtimes }, null, 2)}\n`)
   console.log(
-    `[desktop-e2e] shared Core runtime ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
+    `[desktop-e2e] shared harness runtimes ready: duration=${formatDuration(Date.now() - startedAt)}, root=${runtimeRoot}`
   )
   return runtimeRoot
 }
@@ -587,12 +592,15 @@ async function runParallelCheckpoints(checkpoints) {
   const sharedRuntimeDirectory = await mkdtemp(join(tmpdir(), 'wework-e2e-shared-'))
   try {
     const baseEnvironment = await sharedBuildEnvironment()
-    const sharedCoreRuntime =
+    const sharedHarnessRuntime =
       baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
-      (await prepareSharedCoreRuntime(baseEnvironment.WEWORK_E2E_APP_BIN, sharedRuntimeDirectory))
+      (await prepareSharedHarnessRuntime(
+        baseEnvironment.WEWORK_E2E_APP_BIN,
+        sharedRuntimeDirectory
+      ))
     const sharedEnv = {
       ...baseEnvironment,
-      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedCoreRuntime,
+      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime,
       WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
