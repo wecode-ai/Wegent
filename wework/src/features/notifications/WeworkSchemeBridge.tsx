@@ -38,6 +38,7 @@ export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
+  const focusRequestRef = useRef(0)
   const pendingUrls = useRef(new Set<string>())
   const tabsRef = useRef(tabs)
   useLayoutEffect(() => {
@@ -55,10 +56,15 @@ export function WeworkSchemeBridge() {
       }
       return false
     }
+    const route = weworkDestinationRoute(destination)
+    const focusedRoute =
+      destination.kind === 'board' && destination.commentId
+        ? `${route}&focusRequest=${Date.now()}-${++focusRequestRef.current}`
+        : route
     navigateWorkspaceTab(
       tabsRef.current,
       destination.kind === 'task' ? 'task' : 'board',
-      weworkDestinationRoute(destination)
+      focusedRoute
     )
     return true
   }, [])

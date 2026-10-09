@@ -120,6 +120,34 @@ describe('Wework scheme bridge', () => {
     expect(openTab).not.toHaveBeenCalled()
   })
 
+  it('creates a new focus request when reopening the same comment', () => {
+    workspaceTabs.tabs = [
+      { id: 'board', kind: 'board', title: 'Board', contentRoute: '/todo', fixed: true },
+    ]
+    workspaceTabs.activeTabId = 'board'
+    render(
+      <CloudConnectionContext.Provider
+        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+      >
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+
+    act(() => {
+      openWeworkScheme('wework://boards/12/issues/ISSUE-1/comments/comment-1')
+      openWeworkScheme('wework://boards/12/issues/ISSUE-1/comments/comment-1')
+    })
+
+    expect(workspaceTabs.selectTab).toHaveBeenCalledTimes(2)
+    const firstRoute = workspaceTabs.selectTab.mock.calls[0][1]?.contentRoute
+    const secondRoute = workspaceTabs.selectTab.mock.calls[1][1]?.contentRoute
+    expect(firstRoute).toContain('commentId=comment-1')
+    expect(firstRoute).toContain('focusRequest=')
+    expect(secondRoute).toContain('commentId=comment-1')
+    expect(secondRoute).toContain('focusRequest=')
+    expect(secondRoute).not.toBe(firstRoute)
+  })
+
   it('reuses the fixed task tab while another app is active', () => {
     workspaceTabs.tabs = [
       { id: 'other-task', kind: 'task', title: 'Other', contentRoute: '/', fixed: false },

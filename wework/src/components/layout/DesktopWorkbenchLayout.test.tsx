@@ -76,6 +76,7 @@ import {
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
+import { requestProjectCreateMode } from './workbenchShellEvents'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
@@ -1268,6 +1269,7 @@ describe('DesktopWorkbenchLayout', () => {
     onRefreshDevices?: () => Promise<void>
     onUpgradeDevice?: (...args: unknown[]) => Promise<void>
     onCreateProject?: (...args: unknown[]) => Promise<unknown>
+    onCreateLocalRuntimeProject?: WorkbenchContextValue['createLocalRuntimeProject']
     onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
     onPrepareDeviceWorkspace?: (...args: unknown[]) => Promise<unknown>
     onDeleteDeviceWorkspace?: (...args: unknown[]) => Promise<void>
@@ -1589,6 +1591,9 @@ describe('DesktopWorkbenchLayout', () => {
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
       createProject:
         props.onCreateProject ?? baseProps.onCreateProject ?? vi.fn().mockResolvedValue({}),
+      createLocalRuntimeProject:
+        props.onCreateLocalRuntimeProject ??
+        vi.fn().mockResolvedValue({ id: 99, name: 'Created project', tasks: [] }),
       createGitWorkspaceProject:
         props.onCreateGitWorkspaceProject ??
         baseProps.onCreateGitWorkspaceProject ??
@@ -6204,6 +6209,72 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('creates a project from a collaboration composer without navigating to the task surface', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    const onCreated = vi.fn()
+    const createdProject = {
+      id: 93,
+      name: 'Product',
+      config: {
+        mode: 'workspace' as const,
+        execution: { targetType: 'local' as const, deviceId: 'device-1' },
+        workspace: { source: 'local_path' as const, localPath: '/Users/alice/repo' },
+      },
+      tasks: [],
+    }
+    const onCreateLocalRuntimeProject = vi.fn().mockResolvedValue(createdProject)
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
+      '/Users/alice/repo'
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        surfaceKind="board"
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onCreateLocalRuntimeProject={onCreateLocalRuntimeProject}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    act(() => {
+      requestProjectCreateMode('existing', {
+        preserveCurrentSurface: true,
+        onCreated,
+      })
+    })
+
+    expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('local-project-create-name-input'))
+    await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
+    await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
+
+    await waitFor(() =>
+      expect(onCreateLocalRuntimeProject).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        name: 'Product',
+        roots: ['/Users/alice/repo'],
+      })
+    )
+    expect(onCreated).toHaveBeenCalledWith(createdProject)
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
   })
 
   test('opens Finder without waiting for the local executor home directory', async () => {

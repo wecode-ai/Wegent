@@ -556,22 +556,18 @@ export function createDesktopScenario({
           scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
           { timeoutMs: uiTimeoutMs }
         )
-        await control.command(
-          'waitFor',
-          scoped('[data-testid="cloud-todo-personal-task-action"]'),
-          {
-            text: '让 AI 帮我处理',
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-tasks"]'), {
+          text: '关联任务',
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
+          text: '新建任务',
+          timeoutMs: uiTimeoutMs,
+        })
         const personalTaskSnapshot = await snapshot(control)
         assert.ok(
-          personalTaskSnapshot.text.includes('创建一个仅自己可见的任务，并在当前电脑上运行'),
-          'The current assignee did not receive the private local Task explanation'
-        )
-        assert.ok(
           personalTaskSnapshot.testIds.includes('cloud-task-activity-composer'),
-          'The public Issue comment composer disappeared when the private Task action was shown'
+          'The public Issue comment composer disappeared when linked Tasks were shown'
         )
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
         const durationSelector = scoped('[data-testid="issue-execution-duration"]')

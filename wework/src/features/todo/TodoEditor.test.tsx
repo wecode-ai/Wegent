@@ -277,6 +277,81 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
+  it('shows running and recent tasks directly and uses expand only for the remaining tasks', async () => {
+    const onCreateTask = vi.fn()
+    const assignedToCurrentUser = {
+      ...baseItem,
+      can_view_detail: true,
+      can_edit: false,
+      assignee_user_id: 1,
+      assignee_agent_id: null,
+      project_store: 'backend' as const,
+    }
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={assignedToCurrentUser}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[assignedToCurrentUser]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[
+          {
+            id: 1,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'running-task',
+            task_title: '仍在运行的任务',
+            linked_at: '2026-10-08T08:00:00Z',
+          },
+          {
+            id: 2,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'older-task',
+            task_title: '较早完成的任务',
+            linked_at: '2026-10-08T09:00:00Z',
+          },
+          {
+            id: 3,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'recent-task',
+            task_title: '最近完成的任务',
+            linked_at: '2026-10-08T10:00:00Z',
+          },
+        ]}
+        taskExecutionStates={{
+          '1': { status: 'running' },
+          '2': { status: 'succeeded' },
+          '3': { status: 'succeeded' },
+        }}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByText('仍在运行的任务')).toBeInTheDocument()
+    expect(screen.getByText('最近完成的任务')).toBeInTheDocument()
+    expect(screen.queryByText('较早完成的任务')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+
+    const toggle = screen.getByTestId('cloud-todo-toggle-tasks')
+    expect(toggle).toHaveTextContent('展开')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await userEvent.click(toggle)
+
+    expect(screen.getByText('较早完成的任务')).toBeInTheDocument()
+    expect(toggle).toHaveTextContent('收起')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
   it('uses the Issue assignee when older active assignment records still exist', () => {
     render(
       <TodoEditor
@@ -433,8 +508,8 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     const taskRow = await screen.findByTestId('cloud-todo-open-task-conversation-7')
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
     expect(taskRow).toHaveTextContent('立即显示的本地任务')
     expect(taskRow).toHaveTextContent('开发设备')
     expect(taskRow).toHaveTextContent('执行中')
@@ -503,14 +578,14 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(await screen.findByTestId('cloud-todo-toggle-tasks')).toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-open-task-conversation-8')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-toggle-tasks')).not.toBeInTheDocument()
 
     await act(async () => {
       pendingBindings.resolve([])
       await pendingBindings.promise
     })
 
-    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     expect(screen.getByTestId('cloud-todo-open-task-conversation-8')).toHaveTextContent(
       '看板已加载的任务'
     )
@@ -560,7 +635,6 @@ describe('TodoEditor external item sync', () => {
         workspaceKind: 'worktree',
       })
     )
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(screen.getByTestId('cloud-todo-open-task-conversation-8'))
 
     expect(onOpenTaskConversation).toHaveBeenCalledWith(
@@ -622,14 +696,12 @@ describe('TodoEditor external item sync', () => {
     )
     const view = render(renderEditor(baseItem, 0))
 
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(baseItem, 1))
     expect(screen.getByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(secondItem, 1))
-    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第二个 Issue 的任务')).toBeInTheDocument()
     expect(screen.queryByText('第一个 Issue 的任务')).not.toBeInTheDocument()
 

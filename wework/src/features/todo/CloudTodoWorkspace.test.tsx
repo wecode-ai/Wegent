@@ -30,6 +30,10 @@ import {
 } from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
+import {
   createWeworkSharedWorkspaceApi,
   createWeworkWorkspaceRuntimePort,
 } from '@/features/collaboration/weworkSharedWorkspaceApi'
@@ -184,6 +188,8 @@ vi.mock('./AiChatModal', () => ({
     prepareTask,
     initialTaskRequest,
     initialTaskInput,
+    initialLocalProjectId,
+    initialDeviceWorkspaceId,
   }: {
     task?: { id: string }
     open: boolean
@@ -196,7 +202,11 @@ vi.mock('./AiChatModal', () => ({
     } | null
     onOpenRuntimeTask?: (address: { deviceId: string; taskId: string }) => void
     onAddressChange?: (address: { deviceId: string; taskId: string }) => void
-    onTaskCreated?: (address: { deviceId: string; taskId: string }) => void | Promise<void>
+    onTaskCreated?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null,
+      deviceWorkspaceId: number | null
+    ) => void | Promise<void>
     prepareTask?: (address: {
       deviceId: string
       taskId: string
@@ -209,6 +219,8 @@ vi.mock('./AiChatModal', () => ({
       workspacePath?: string
     }
     initialTaskInput?: string
+    initialLocalProjectId?: number | null
+    initialDeviceWorkspaceId?: number | null
   }) => (
     <div
       data-testid="ai-chat-modal"
@@ -222,15 +234,18 @@ vi.mock('./AiChatModal', () => ({
       data-task-device-id={initialTaskRequest?.deviceId}
       data-task-workspace-path={initialTaskRequest?.workspacePath}
       data-initial-task-input={initialTaskInput}
+      data-initial-local-project-id={initialLocalProjectId ?? undefined}
+      data-initial-device-workspace-id={initialDeviceWorkspaceId ?? undefined}
     >
       <button
         type="button"
         data-testid="mock-create-runtime-task"
         onClick={() => {
           const address = { deviceId: 'local-device', taskId: 'runtime-created' }
+          const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
           void Promise.resolve(prepareTask?.(address)).then(() => {
             onAddressChange?.(address)
-            return onTaskCreated?.(address)
+            return onTaskCreated?.(address, localProject, 201)
           })
         }}
       >
@@ -251,9 +266,10 @@ vi.mock('./AiChatModal', () => ({
               },
             },
           }
+          const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
           void Promise.resolve(prepareTask?.(address)).then(() => {
             onAddressChange?.(address)
-            return onTaskCreated?.(address)
+            return onTaskCreated?.(address, localProject, 201)
           })
         }}
       >
@@ -301,7 +317,8 @@ vi.mock('./BackgroundTaskStarter', () => ({
     taskRequest?: RuntimeTaskCreateRequest | null
     onTaskCreated?: (
       address: { deviceId: string; taskId: string },
-      localProject: { id: number; name: string; tasks: [] } | null
+      localProject: { id: number; name: string; tasks: [] } | null,
+      deviceWorkspaceId: number | null
     ) => void | Promise<void>
     prepareTask?: (
       address: { deviceId: string; taskId: string },
@@ -317,7 +334,7 @@ vi.mock('./BackgroundTaskStarter', () => ({
         const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
         void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
           onAddressChange(address)
-          return onTaskCreated?.(address, localProject)
+          return onTaskCreated?.(address, localProject, null)
         })
       }}
     >
@@ -2912,7 +2929,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
-  it('uses the prepared project environment when starting a personal task', async () => {
+  it('does not use the agent prepared environment when starting a personal task', async () => {
     const preparedProject = {
       ...project,
       execution_environment: {
@@ -2948,17 +2965,57 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-device-id',
-      'project-runtime-device'
-    )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-task-workspace-path',
-      '/srv/projects/wegent-v4'
-    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-task-workspace-path')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-initial-task-input',
       '[$WEG-1 · Implement cloud MCP](wework-issue://11/WEG-1)'
+    )
+  })
+
+  it('restores and updates the project-space code workspace mapping after task creation', async () => {
+    saveProjectSpaceCodeWorkspacePreference(
+      1,
+      { projectStore: 'backend', projectId: String(project.id) },
+      { localProjectId: 92, deviceWorkspaceId: 202 }
+    )
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[
+          { id: 91, name: '运营工作区', tasks: [] },
+          { id: 92, name: '历史工作区', tasks: [] },
+        ]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-local-project-id',
+      '92'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-device-workspace-id',
+      '202'
+    )
+
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() =>
+      expect(
+        loadProjectSpaceCodeWorkspacePreference(1, {
+          projectStore: 'backend',
+          projectId: String(project.id),
+        })
+      ).toEqual({
+        localProjectId: 91,
+        deviceWorkspaceId: 201,
+      })
     )
   })
 
@@ -3645,7 +3702,7 @@ describe('CloudTodoWorkspace', () => {
     await expandIssueExecutionDetails()
     expect(screen.queryByTestId('cloud-todo-detail-add-child')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-children')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('执行任务')
+    expect(screen.getByTestId('cloud-todo-tasks')).toHaveTextContent('关联任务')
     expect(screen.getByTestId('cloud-todo-execution-task-count')).toHaveTextContent('1')
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('实现快速排序')
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toHaveTextContent('开发机器人')
