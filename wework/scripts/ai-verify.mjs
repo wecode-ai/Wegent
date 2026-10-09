@@ -13,6 +13,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -139,6 +140,7 @@ Options:
                             Seed and verify isolated first-run Codex migration
   --executor-home PATH      Use an explicitly selected existing executor home
   --packaged true           Launch the packaged app instead of Electron source mode
+  --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
                             click-at, seed-local-project, archive-local-project,
@@ -200,6 +202,7 @@ export function validateStartOptions(options) {
     'executor-home',
     'packaged',
     'timeout',
+    'rollout',
   ])
   const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
   if (unexpectedOption) {
@@ -214,6 +217,12 @@ export function validateStartOptions(options) {
     if (options['codex-home-initialization'] === 'true') {
       throw new Error('--executor-home cannot be combined with --codex-home-initialization true')
     }
+    if (options.rollout) {
+      throw new Error('--rollout cannot be combined with --executor-home')
+    }
+  }
+  if (options.rollout && options['codex-home-initialization'] === 'true') {
+    throw new Error('--rollout cannot be combined with --codex-home-initialization')
   }
 }
 
@@ -664,6 +673,8 @@ async function main() {
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
     validateStartOptions(options)
+    const rolloutSource = options.rollout ? resolve(options.rollout) : undefined
+    if (rolloutSource) await readRolloutHeader(rolloutSource)
     const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
     await prepareElectronApp({ packaged })
     const launch = resolveElectronLaunch({
@@ -677,6 +688,9 @@ async function main() {
       `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
     )
     await mkdir(directory, { recursive: true })
+    const rolloutReplay = rolloutSource
+      ? await seedAiVerifyRollout(rolloutSource, directory)
+      : undefined
     const token = randomBytes(32).toString('hex')
     await readFile(launch.command)
     const sessionPath = join(directory, 'session.json')
@@ -692,6 +706,7 @@ async function main() {
           launchMode: packaged ? 'packaged' : 'source',
           executorHomeOverride: options['executor-home']?.trim(),
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
+          rolloutReplay,
         },
         null,
         2
@@ -742,7 +757,11 @@ async function main() {
             lastStatus = await request(session, token, '/status')
             if (lastStatus.ready) {
               console.log(
-                JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
+                JSON.stringify(
+                  { session: sessionPath, controlUrl: session.controlUrl, rolloutReplay },
+                  null,
+                  2
+                )
               )
               return
             }

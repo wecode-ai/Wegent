@@ -1,4 +1,8 @@
 {
+  "history": {
+    "load_failed": "Could not load conversation history",
+    "retry": "Retry"
+  },
   "table": {
     "expand": "Expand table",
     "close": "Close expanded table",
