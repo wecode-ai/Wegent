@@ -106,8 +106,7 @@ def test_prepare_document_index_enqueue_schedules_new_generation(
     assert decision.reason == "scheduled"
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 1
-    # updated_at is maintained by the database (ON UPDATE CURRENT_TIMESTAMP);
-    # SQLite has no ON UPDATE semantics, so unit tests must not assert the bump.
+    assert document.updated_at > previous_updated_at
 
 
 def test_prepare_document_index_enqueue_skips_when_generation_is_active(
@@ -242,8 +241,7 @@ def test_prepare_document_index_enqueue_can_replace_active_generation(
     assert decision.generation == 5
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 5
-    # updated_at is maintained by the database (ON UPDATE CURRENT_TIMESTAMP);
-    # SQLite has no ON UPDATE semantics, so unit tests must not assert the bump.
+    assert document.updated_at > previous_updated_at
 
 
 def test_prepare_document_index_enqueue_allows_success_override(
@@ -345,8 +343,7 @@ def test_mark_document_index_started_updates_timestamp_on_success(
     assert decision.should_execute is True
     assert decision.reason == "started"
     assert document.index_status == DocumentIndexStatus.INDEXING
-    # updated_at is maintained by the database (ON UPDATE CURRENT_TIMESTAMP);
-    # SQLite has no ON UPDATE semantics, so unit tests must not assert the bump.
+    assert document.updated_at > previous_updated_at
 
 
 def test_mark_document_index_succeeded_only_updates_active_generation(
@@ -692,8 +689,7 @@ def test_mark_document_index_succeeded_promotes_synced_external_version(
     assert sync["indexed_version"] == "2026-09-06T02:00:00Z"
     assert sync["last_synced_at"]
     assert "last_error_code" not in sync
-    # updated_at is maintained by the database (ON UPDATE CURRENT_TIMESTAMP);
-    # SQLite has no ON UPDATE semantics, so unit tests must not assert the bump.
+    assert document.updated_at > previous_updated_at
     assert document.updated_at != datetime(2026, 9, 6, 2)
 
 

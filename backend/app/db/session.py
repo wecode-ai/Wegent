@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Generator, Optional
 
 from sqlalchemy import create_engine, event
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -21,6 +23,39 @@ from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Database connection URL (using sync driver)
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+
+
+def _bump_updated_at_on_sqlite(session, _flush_context, _instances) -> None:
+    """Emulate ON UPDATE CURRENT_TIMESTAMP for SQLite sessions.
+
+    SQLite has no ON UPDATE column semantics, so server_onupdate is a no-op
+    there and updated_at would never advance on updates. MySQL maintains the
+    column itself, so this listener only acts on SQLite binds. SQLite's basis
+    is UTC (CURRENT_TIMESTAMP is UTC and there is no SET time_zone).
+    """
+    try:
+        bind = session.get_bind()
+    except Exception:
+        return
+    dialect = getattr(bind, "dialect", None)
+    if dialect is None or dialect.name != "sqlite":
+        return
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for obj in session.dirty:
+        state = sa_inspect(obj, raiseerr=False)
+        if state is None or "updated_at" not in state.mapper.columns:
+            continue
+        # Skip objects whose only change is updated_at itself.
+        if not any(
+            attr.key != "updated_at" and attr.history.has_changes()
+            for attr in state.attrs
+        ):
+            continue
+        obj.updated_at = now
+
+
+# Class-level registration also covers the sync session backing AsyncSession.
+event.listens_for(Session, "before_flush")(_bump_updated_at_on_sqlite)
 
 
 def _configure_sqlite_engine(sqlite_engine: Engine) -> Engine:
