@@ -1344,6 +1344,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const workItemContextAvailable = Boolean(
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
+  const issueExecutionReadOnly = Boolean(
+    currentProjectSpaceRuntimeTask?.projectSession && workItemContextAvailable
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -5153,7 +5156,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     contentFooter={
                       isCreatingWorktree ? (
                         <WorktreeCreationStatus className="py-8" />
-                      ) : workItemContextAvailable ? null : (
+                      ) : issueExecutionReadOnly ? null : (
                         <PluginWorkspaceConversationResult
                           taskId={currentRuntimeTask?.taskId}
                           workspacePath={
@@ -5212,7 +5215,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </button>
                               )}
-                              {workItemContextAvailable ? (
+                              {issueExecutionReadOnly ? (
                                 <div
                                   data-testid="project-execution-reply-in-issue"
                                   className="flex items-center gap-3 rounded-2xl border border-border/50 bg-background/95 px-4 py-3 shadow-sm"
@@ -5406,14 +5409,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                     devices={devices}
                     onRetryFailedMessage={
-                      workItemContextAvailable
+                      issueExecutionReadOnly
                         ? undefined
                         : message => {
                             void paneSession.retryFailedMessage(message)
                           }
                     }
                     onSwitchModelForFailedMessage={
-                      workItemContextAvailable
+                      issueExecutionReadOnly
                         ? undefined
                         : message => {
                             pendingModelRetryRef.current = message
@@ -5429,7 +5432,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       )
                     }
                     onRevertFileChanges={
-                      workItemContextAvailable
+                      issueExecutionReadOnly
                         ? undefined
                         : (subtaskId, fileChanges) =>
                             revertTurnFileChanges(
@@ -5466,22 +5469,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onOpenWorkspaceFile={openWorkspaceFileFromMessage}
                     onOpenLocalSkillFile={openLocalSkillFile}
                     onRequestUserInputSubmit={
-                      workItemContextAvailable
-                        ? undefined
-                        : paneSession.sendRequestUserInputResponse
+                      issueExecutionReadOnly ? undefined : paneSession.sendRequestUserInputResponse
                     }
                     onRequestUserInputIgnore={
-                      workItemContextAvailable ? undefined : paneSession.ignoreRequestUserInput
+                      issueExecutionReadOnly ? undefined : paneSession.ignoreRequestUserInput
                     }
                     onOpenAssistantPlan={openAssistantPlan}
                     onEditLastUserMessage={
-                      workItemContextAvailable ? undefined : paneSession.editLastUserMessage
+                      issueExecutionReadOnly ? undefined : paneSession.editLastUserMessage
                     }
-                    canEditLastUserMessage={
-                      workItemContextAvailable ? false : canEditLastUserMessage
-                    }
+                    canEditLastUserMessage={issueExecutionReadOnly ? false : canEditLastUserMessage}
                     onForkMessage={
-                      !workItemContextAvailable &&
+                      !issueExecutionReadOnly &&
                       currentRuntimeUsesCodex &&
                       currentRuntimeTask &&
                       (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)

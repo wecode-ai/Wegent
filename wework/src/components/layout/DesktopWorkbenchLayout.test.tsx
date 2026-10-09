@@ -3374,7 +3374,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     deliveryApiMock.findRuntimeIssue.mockResolvedValue(issue)
 
-    render(
+    const { rerender } = render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
@@ -3398,9 +3398,40 @@ describe('DesktopWorkbenchLayout', () => {
       expect(deliveryApiMock.findRuntimeContext).toHaveBeenCalledWith(runtimeTask)
     )
     expect(deliveryApiMock.findRuntimeIssue).toHaveBeenCalledWith(runtimeTask)
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-execution-reply-in-issue')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
     expect(await screen.findByTestId('environment-delivery-button')).toHaveTextContent('交付')
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+          currentRuntimeTask: {
+            ...runtimeTask,
+            projectSession: {
+              projectId: project.id,
+              issueId: issue.id,
+            },
+          },
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('project-execution-reply-in-issue')).toBeInTheDocument()
+    expect(screen.queryByTestId('chat-message-input')).not.toBeInTheDocument()
   })
 
   test('shows the existing local task data in the board presentation', async () => {
