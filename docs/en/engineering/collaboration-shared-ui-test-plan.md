@@ -42,6 +42,18 @@ Linux and macOS desktop build fingerprints must include `packages/collaboration`
 so shared UI changes cannot reuse stale artifacts. Cache script tests cover both
 adding and modifying shared-package files.
 
+Run the accompanying state regression with `e2e:desktop:cloud --segment model-routing`:
+after a real remote executor completes the text turn, the tool turn must execute and
+write its artifact instead of remaining queued behind a stale running snapshot. State
+tests replay a millisecond-precision start and a same-second, second-precision completion;
+the old snapshot must not revive the task, while a newer execution remains accepted.
+`e2e:desktop:cloud --segment goal-lifecycle` covers reading the mounted remote directory
+control and the complete Goal lifecycle. Mounting and value checks share the original
+step timeout; isolated devices and databases are cleaned up after each scenario.
+Executor task lists must preserve `goalExecutionStatus` so a restarted UI can recognize
+running or recovering Goals between turns. Response serialization tests cover running,
+recovering, needs-attention, and ordinary tasks without this field.
+
 This plan must prove more than “both hosts appear to work”:
 
 1. Wegent Web and Wework mount the same collaboration root component exported by

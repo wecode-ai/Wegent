@@ -38,6 +38,14 @@ sidebar_position: 25
 Linux 和 macOS 桌面构建缓存指纹必须包含 `packages/collaboration`，否则共享 UI
 改动可能复用旧产物。缓存脚本测试覆盖新增和修改共享包文件时的缓存失效。
 
+配套状态回归使用 `e2e:desktop:cloud --segment model-routing`：真实远程执行器完成文本轮次后，
+工具轮次必须继续发送并生成文件，不能因旧运行快照覆盖终态而滞留队列。状态单测重放
+毫秒精度启动时间与同秒、秒精度完成时间，要求旧快照不能复活任务，而更新的执行仍可启动。
+`e2e:desktop:cloud --segment goal-lifecycle` 覆盖远程目录控件挂载后的读取与完整 Goal 生命周期；
+控件挂载和值检查共用原有步骤超时，场景结束后清理隔离设备与数据库。
+执行器任务列表必须保留 `goalExecutionStatus`，让重启后的界面在轮次间隙仍能识别运行或恢复中的
+Goal；响应序列化单测覆盖运行、恢复、需要处理以及普通任务不带该字段的情况。
+
 本计划用于证明以下结论，而不只是证明两个宿主“看起来都能用”：
 
 1. Wegent Web 与 Wework 挂载的是 `@wegent/collaboration` 导出的同一个协作 UI 根组件。
