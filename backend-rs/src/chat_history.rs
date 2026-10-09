@@ -8,9 +8,8 @@
 //! `app/services/chat/compaction_checkpoint.py:resolve_history_subtasks`,
 //! including fork-aware lineage resolution
 //! (`app/services/task_fork_history.py`).
-use crate::json_compat::raw_json;
+use crate::json_compat::{python_json_value, raw_json};
 use brz_http_server::Query as HttpQuery;
-use brz_mysql::Mysql;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -37,12 +36,19 @@ pub struct HistoryQuery {
 /// History statuses kept in the response (`history_statuses`).
 const HISTORY_STATUSES: [&str; 3] = ["COMPLETED", "CANCELLED", "FAILED"];
 
-/// Message content block: either a bare string or OpenAI-style blocks.
+/// Closing note appended to a cancelled assistant turn that kept useful text
+/// (`CANCELLED_ASSISTANT_CONTEXT_NOTE`).
+const CANCELLED_ASSISTANT_CONTEXT_NOTE: &str =
+    "[Previous assistant response was interrupted by the user.]";
+
+/// Message content block: a bare string, OpenAI-style blocks, or any other
+/// JSON value the source keeps in its `Any` content field.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(untagged)]
 pub enum MessageContent {
     Text(String),
     Blocks(Vec<Box<serde_json::value::RawValue>>),
+    Raw(Box<serde_json::value::RawValue>),
 }
 
 fn opaque_blocks(blocks: Vec<Value>) -> MessageContent {
@@ -167,8 +173,8 @@ fn apply_checkpoint_limit(
 
 /// Resolve the fork lineage for a task (`resolve_lineage`), bounded by
 /// `MAX_FORK_DEPTH`; cycle detection raises a bad-request error.
-async fn resolve_lineage<M: Mysql>(
-    repository: &ChatHistoryRepository<'_, M>,
+async fn resolve_lineage(
+    repository: &ChatHistoryRepository<'_>,
     task_id: i64,
     user_id: i32,
 ) -> Result<Vec<(i64, Option<i64>, Option<i64>)>, HttpError> {
@@ -190,7 +196,7 @@ async fn resolve_lineage<M: Mysql>(
         // ancestors are unscoped (`owner_user_id=None`).
         let task = if current_task_id == task_id {
             repository
-                .get_task_by_id_with_owner(current_task_id, user_id)
+                .get_task_by_id_with_owner(current_task_id, i64::from(user_id))
                 .await
                 .map_err(HttpError::internal)?
         } else {
@@ -228,8 +234,8 @@ async fn resolve_lineage<M: Mysql>(
 /// `resolve_history_subtasks`: resolve -> status-filter -> checkpoint-scope ->
 /// limit.
 #[allow(clippy::too_many_arguments)]
-async fn resolve_history_subtasks<M: Mysql>(
-    repository: &ChatHistoryRepository<'_, M>,
+async fn resolve_history_subtasks(
+    repository: &ChatHistoryRepository<'_>,
     task_id: i64,
     user_id: i32,
     before_message_id: Option<i64>,
@@ -241,7 +247,7 @@ async fn resolve_history_subtasks<M: Mysql>(
 
     for (node_task_id, node_user_id, inherited_cutoff) in &lineage {
         let subtasks = repository
-            .list_subtasks_by_task(*node_task_id, node_user_id.unwrap_or_default() as i32)
+            .list_subtasks_by_task(*node_task_id, node_user_id.unwrap_or_default())
             .await
             .map_err(HttpError::internal)?;
         for subtask in subtasks {
@@ -323,10 +329,53 @@ fn build_document_text_prefix(
     Some(format!("{header}\n{note}{inject_text}\n\n"))
 }
 
+/// Video attachment metadata for history when the model cannot read video
+/// input (`shared/utils/video_metadata.py:build_video_history_metadata_text`).
+///
+/// The header never advertises a download URL or sandbox path; the stored media
+/// reference is surfaced as a trailing `{"fid": ...}` line. The name and mime
+/// type fall back to `video` and `video/mp4` when the context omits them.
+fn build_video_history_metadata_text(context: &SubtaskContextRow) -> String {
+    let filename = {
+        let original = context.original_filename();
+        if !original.is_empty() {
+            original
+        } else if !context.name.is_empty() {
+            context.name.clone()
+        } else {
+            "video".to_string()
+        }
+    };
+    let mime_type = {
+        let mime_type = context.mime_type();
+        if mime_type.is_empty() {
+            "video/mp4".to_string()
+        } else {
+            mime_type
+        }
+    };
+    let header = format!(
+        "[Video Attachment: {filename} | ID: {} | Type: {mime_type} | Size: {}]",
+        context.id,
+        blocks::format_file_size(context.file_size()),
+    );
+    // `json.dumps({"fid": fid})` when `type_data["fid"]` is truthy.
+    match context
+        .type_data
+        .as_ref()
+        .and_then(|json| json.0.get("fid"))
+    {
+        Some(fid) if !json_falsy(fid) => {
+            format!("{header}\n{{\"fid\": {}}}\n", python_json_value(fid))
+        }
+        _ => format!("{header}\n"),
+    }
+}
+
 /// Convert one subtask into response messages (`subtask_to_messages`).
 #[allow(clippy::too_many_arguments)]
-async fn subtask_to_messages<M: Mysql>(
-    repository: &ChatHistoryRepository<'_, M>,
+async fn subtask_to_messages(
+    repository: &ChatHistoryRepository<'_>,
     subtask: &SubtaskRow,
     is_group_chat: bool,
     supports_image: bool,
@@ -383,92 +432,163 @@ async fn subtask_to_messages<M: Mysql>(
         }]);
     }
 
-    // Assistant subtasks -------------------------------------------------
+    Ok(assistant_messages(subtask))
+}
+
+/// Python truthiness of a JSON value (`if not content`).
+fn json_falsy(value: &Value) -> bool {
+    match value {
+        Value::Null | Value::Bool(false) => true,
+        Value::Bool(true) => false,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+    }
+}
+
+/// Python truthiness of an optional JSON field; an absent field is falsy.
+fn json_truthy(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| !json_falsy(value))
+}
+
+/// Opaque JSON content, preserving the source's `Any` content field.
+fn raw_content(value: &Value) -> MessageContent {
+    MessageContent::Raw(raw_json(value))
+}
+
+/// Optional raw JSON field: an explicit `null` is absent (`MessageResponse`).
+fn optional_raw(value: Option<&Value>) -> Option<Box<serde_json::value::RawValue>> {
+    value.filter(|value| !value.is_null()).map(raw_json)
+}
+
+/// Summary-compaction marker forwarded through the controlled metadata
+/// whitelist (`resp_metadata`).
+fn compacted_metadata(msg: &Value) -> Option<Value> {
+    let compacted = msg
+        .get("additional_kwargs")
+        .and_then(Value::as_object)
+        .and_then(|kwargs| kwargs.get("summary_compacted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    compacted.then(|| json!({"summary_compacted": true}))
+}
+
+/// Build the messages of one assistant subtask (`subtask_to_messages`).
+///
+/// A single assistant subtask may expand into several messages when its
+/// `messages_chain` carries the intermediate tool-call and tool-result
+/// entries of one agent turn. Cancelled, failed, and legacy chain-less turns
+/// are shaped separately: a turn the source omits must not reappear here.
+fn assistant_messages(subtask: &SubtaskRow) -> Vec<Message> {
     let result = subtask
         .result
         .as_ref()
         .map(|json| &json.0)
         .filter(|value| value.is_object())
         .cloned()
-        .unwrap_or_else(|| serde_json::Map::new().into_iter().collect::<Value>());
+        .unwrap_or_else(|| json!({}));
+    let created_at = subtask.created_at.map(format_datetime);
 
-    if subtask.status == "FAILED" {
+    // A cancelled turn may contain a partial response. Preserve the useful
+    // text, but close the turn explicitly so the next model request does not
+    // interpret it as an unfinished assistant message. Empty cancelled turns
+    // add no context and must be omitted.
+    if subtask.status == "CANCELLED" {
         if subtask.role != "ASSISTANT" {
-            return Ok(Vec::new());
+            return Vec::new();
         }
-        let content = result.get("value").cloned().unwrap_or_else(|| json!(""));
-        let text = content.as_str().unwrap_or_default();
-        if text.is_empty() {
-            return Ok(Vec::new());
+        let Some(text) = result.get("value").and_then(Value::as_str) else {
+            return Vec::new();
+        };
+        if text.trim().is_empty() {
+            return Vec::new();
         }
-        return Ok(vec![Message {
+        return vec![Message {
             id: subtask.id.to_string(),
             role: "assistant".to_string(),
-            content: MessageContent::Text(text.to_string()),
+            content: MessageContent::Text(format!(
+                "{}\n\n{CANCELLED_ASSISTANT_CONTEXT_NOTE}",
+                text.trim_end()
+            )),
             name: None,
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
-            created_at: subtask.created_at.map(format_datetime),
+            created_at,
             loaded_skills: None,
             model_info: None,
             metadata: None,
-        }]);
+        }];
     }
 
-    let created_at = subtask.created_at.map(format_datetime);
+    // For FAILED assistant subtasks, only keep result.value when present.
+    // Do not expand messages_chain for failed turns to avoid injecting
+    // tool-call artifacts or partial chain state into model history.
+    if subtask.status == "FAILED" {
+        if subtask.role != "ASSISTANT" {
+            return Vec::new();
+        }
+        let content = result.get("value").cloned().unwrap_or_else(|| json!(""));
+        if json_falsy(&content) {
+            return Vec::new();
+        }
+        return vec![Message {
+            id: subtask.id.to_string(),
+            role: "assistant".to_string(),
+            content: raw_content(&content),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+            created_at,
+            loaded_skills: None,
+            model_info: None,
+            metadata: None,
+        }];
+    }
 
+    // If messages_chain is available, expand to individual Message objects.
     if let Some(chain) = result.get("messages_chain").and_then(Value::as_array)
         && !chain.is_empty()
     {
         let loaded_skills = result.get("loaded_skills").cloned();
         let mut responses: Vec<Message> = Vec::with_capacity(chain.len());
         for (index, msg) in chain.iter().enumerate() {
-            let msg_id = format!("{}-{index}", subtask.id);
             let role = msg
                 .get("role")
                 .and_then(Value::as_str)
-                .unwrap_or("assistant")
-                .to_string();
-            let msg_kwargs = msg.get("additional_kwargs").and_then(Value::as_object);
-            let resp_metadata = msg_kwargs
-                .and_then(|kwargs| kwargs.get("summary_compacted"))
-                .and_then(Value::as_bool)
-                .filter(|value| *value)
-                .map(|_| json!({"summary_compacted": true}));
+                .unwrap_or("assistant");
+            let resp_metadata = compacted_metadata(msg);
+            let content = msg.get("content").cloned().unwrap_or_else(|| json!(""));
+            // Empty assistant entries without tool calls, reasoning, or a
+            // compaction marker carry no context.
+            if role == "assistant"
+                && json_falsy(&content)
+                && !json_truthy(msg.get("tool_calls"))
+                && !json_truthy(msg.get("reasoning_content"))
+                && resp_metadata.is_none()
+            {
+                continue;
+            }
             responses.push(Message {
-                id: msg_id,
-                role,
-                content: match msg.get("content") {
-                    Some(Value::String(text)) => MessageContent::Text(text.clone()),
-                    Some(Value::Array(items)) => opaque_blocks(items.clone()),
-                    Some(other) if !other.is_null() => MessageContent::Text(other.to_string()),
-                    _ => MessageContent::Text(String::new()),
-                },
-                name: (msg.get("name").cloned().filter(|v| !v.is_null()))
-                    .as_ref()
-                    .map(raw_json),
-                tool_call_id: (msg.get("tool_call_id").cloned().filter(|v| !v.is_null()))
-                    .as_ref()
-                    .map(raw_json),
-                tool_calls: (msg.get("tool_calls").cloned().filter(|v| !v.is_null()))
-                    .as_ref()
-                    .map(raw_json),
-                reasoning_content: (msg
-                    .get("reasoning_content")
-                    .cloned()
-                    .filter(|v| !v.is_null()))
-                .as_ref()
-                .map(raw_json),
+                id: format!("{}-{index}", subtask.id),
+                role: role.to_string(),
+                content: raw_content(&content),
+                name: optional_raw(msg.get("name")),
+                tool_call_id: optional_raw(msg.get("tool_call_id")),
+                tool_calls: optional_raw(msg.get("tool_calls")),
+                reasoning_content: optional_raw(msg.get("reasoning_content")),
                 created_at: created_at.clone(),
-                loaded_skills: (None).as_ref().map(raw_json),
-                model_info: (msg.get("model_info").cloned().filter(|v| !v.is_null()))
-                    .as_ref()
-                    .map(raw_json),
-                metadata: (resp_metadata).as_ref().map(raw_json),
+                loaded_skills: None,
+                model_info: optional_raw(msg.get("model_info")),
+                metadata: resp_metadata.map(|value| raw_json(&value)),
             });
         }
-        if let Some(skills) = loaded_skills.filter(|value| !value.is_null()) {
+        // Attach loaded_skills to the last *assistant* message in the chain,
+        // mirroring the package-mode backward scan so that skill state is
+        // restored even when the chain ends with a tool message.
+        if let Some(skills) = loaded_skills.filter(|value| !json_falsy(value)) {
             for response in responses.iter_mut().rev() {
                 if response.role == "assistant" {
                     response.loaded_skills = Some(raw_json(&skills));
@@ -476,33 +596,27 @@ async fn subtask_to_messages<M: Mysql>(
                 }
             }
         }
-        return Ok(responses);
+        return responses;
     }
 
     // Fallback for legacy data without messages_chain.
     let content = result.get("value").cloned().unwrap_or_else(|| json!(""));
-    let content_text = content.as_str().unwrap_or_default().to_string();
-    Ok(vec![Message {
+    if json_falsy(&content) {
+        return Vec::new();
+    }
+    vec![Message {
         id: subtask.id.to_string(),
         role: "assistant".to_string(),
-        content: MessageContent::Text(content_text),
+        content: raw_content(&content),
         name: None,
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
         created_at,
-        loaded_skills: result
-            .get("loaded_skills")
-            .cloned()
-            .filter(|v| !v.is_null())
-            .as_ref()
-            .map(raw_json),
-        model_info: result
-            .get("model_info")
-            .filter(|v| !v.is_null())
-            .map(raw_json),
+        loaded_skills: optional_raw(result.get("loaded_skills")),
+        model_info: optional_raw(result.get("model_info")),
         metadata: None,
-    }])
+    }]
 }
 
 fn format_datetime(datetime: chrono::NaiveDateTime) -> String {
@@ -583,20 +697,10 @@ fn build_user_message_content(
                 "image_url": {"url": format!("data:{};base64,{}", mime_type, context.image_base64.clone().unwrap_or_default())},
             }));
         } else if video_extensions.contains(&extension.as_str()) {
-            // Video support requires the dedicated media-resolution path that
-            // the recorded dependency topology does not exercise; keep the
-            // metadata-only shape used when `supports_video` is false.
-            let filename = context.original_filename();
-            let file_size = context.file_size();
-            let header = blocks::build_attachment_header(
-                i64::from(context.id),
-                Some(&filename),
-                Some(&context.mime_type()),
-                file_size,
-                None,
-                false,
-            );
-            attachment_text_parts.push(format!("{header}\n\n"));
+            // Metadata-only video history shape (`build_video_history_metadata_text`).
+            // The model-readable `supports_video` branch needs the dedicated
+            // media-resolution path, which this topology does not exercise.
+            attachment_text_parts.push(build_video_history_metadata_text(context));
         } else if let Some(prefix) = build_document_text_prefix(context, inject_max_chars) {
             attachment_text_parts.push(prefix);
         }
@@ -739,7 +843,7 @@ async fn get_chat_history_inner(
         ));
     }
 
-    let repository = ChatHistoryRepository::new(&app.mysql, app.task_policy);
+    let repository = ChatHistoryRepository::new(&app.mysql, &*app.task_store);
     let task = repository
         .get_task_by_id(task_id)
         .await
@@ -778,130 +882,5 @@ async fn get_chat_history_inner(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_task_session_ids() {
-        let (kind, id) = parse_session_id("task-69956427469753").unwrap();
-        assert_eq!((kind, id), ("task", 69_956_427_469_753));
-    }
-
-    #[test]
-    fn rejects_invalid_session_ids() {
-        assert!(parse_session_id("nope").is_err());
-        assert!(parse_session_id("other-1").is_err());
-        assert!(parse_session_id("task-abc").is_err());
-    }
-
-    fn item(message_id: i32, status: &str, role: &str, with_checkpoint: bool) -> ForkHistoryItem {
-        let mut result = json!({});
-        if with_checkpoint {
-            result = json!({
-                "messages_chain": [
-                    {"role": "user", "additional_kwargs": {"summary_compacted": true}}
-                ]
-            });
-        }
-        ForkHistoryItem {
-            subtask: SubtaskRow {
-                id: message_id as i64,
-                user_id: 1,
-                task_id: 1,
-                role: role.to_string(),
-                prompt: None,
-                message_id,
-                status: status.to_string(),
-                result: Some(brz_mysql::Json(result)),
-                created_at: None,
-                sender_user_id: 0,
-            },
-        }
-    }
-
-    #[test]
-    fn checkpoint_scoping_keeps_only_after_latest_checkpoint() {
-        let items = vec![
-            item(1, "COMPLETED", "USER", false),
-            item(2, "COMPLETED", "ASSISTANT", true),
-            item(3, "COMPLETED", "USER", false),
-            item(4, "COMPLETED", "ASSISTANT", false),
-        ];
-        let (scoped, index) = scope_to_latest_checkpoint(&items);
-        assert_eq!(index, Some(1));
-        assert_eq!(scoped.len(), 3);
-    }
-
-    #[test]
-    fn no_checkpoint_returns_all() {
-        let items = vec![item(1, "COMPLETED", "USER", false)];
-        let (scoped, index) = scope_to_latest_checkpoint(&items);
-        assert_eq!(index, None);
-        assert_eq!(scoped.len(), 1);
-    }
-
-    #[test]
-    fn limit_without_checkpoint_returns_most_recent() {
-        let items = vec![
-            item(1, "COMPLETED", "USER", false),
-            item(2, "COMPLETED", "USER", false),
-            item(3, "COMPLETED", "USER", false),
-        ];
-        let limited = apply_checkpoint_limit(&items, Some(2), false);
-        assert_eq!(limited.len(), 2);
-        assert_eq!(limited[0].subtask.message_id, 2);
-    }
-
-    #[test]
-    fn limit_with_checkpoint_never_drops_checkpoint() {
-        let items = vec![
-            item(1, "COMPLETED", "ASSISTANT", true),
-            item(2, "COMPLETED", "USER", false),
-            item(3, "COMPLETED", "USER", false),
-        ];
-        let limited = apply_checkpoint_limit(&items, Some(2), true);
-        assert_eq!(limited.len(), 2);
-        assert_eq!(limited[0].subtask.message_id, 1);
-        assert_eq!(limited[1].subtask.message_id, 3);
-    }
-
-    #[test]
-    fn chain_message_ids_carry_the_chain_index() {
-        // Verified against the recorded response: 69956427469762-0 ...
-        let id = format!("{}-{}", 69_956_427_469_762_i64, 0);
-        assert_eq!(id, "69956427469762-0");
-    }
-
-    fn document_context(extracted_text: &str) -> SubtaskContextRow {
-        SubtaskContextRow {
-            id: 1271806,
-            subtask_id: 776117770408675,
-            user_id: 3396,
-            context_type: "attachment".to_string(),
-            name: "spreadsheet".to_string(),
-            status: "ready".to_string(),
-            image_base64: None,
-            extracted_text: Some(extracted_text.to_string()),
-            type_data: None,
-            created_at: None,
-        }
-    }
-
-    #[test]
-    fn document_prefix_omits_the_sandbox_path_like_the_history_endpoint() {
-        // `chat_storage.py:571` calls build_document_text_prefix without
-        // task/subtask ids, so build_sandbox_path is None and the header
-        // carries no "File Path(already in sandbox)" segment.
-        let prefix = build_document_text_prefix(&document_context("R1: a\nR2: b\n"), 32_000)
-            .expect("prefix");
-        assert!(prefix.starts_with("[Attachment: spreadsheet | ID: 1271806"));
-        assert!(!prefix.contains("File Path(already in sandbox)"));
-        assert!(!prefix.contains("File Path in Sandbox"));
-        assert!(prefix.contains("R1: a\nR2: b\n"));
-    }
-
-    #[test]
-    fn empty_extracted_text_has_no_document_prefix() {
-        assert!(build_document_text_prefix(&document_context(""), 32_000).is_none());
-    }
-}
+#[path = "chat_history_tests.rs"]
+mod tests;

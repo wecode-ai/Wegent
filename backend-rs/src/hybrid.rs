@@ -16,6 +16,7 @@ use crate::{Application, BoxError, Gateway, OriginService, RouteTable, RustApi, 
 
 mod routes;
 use routes::load as load_routes;
+pub use routes::load_routes_config;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
@@ -42,6 +43,18 @@ impl HybridConfig {
     /// Returns an error for an invalid address, port, upstream URL, or route
     /// configuration.
     pub fn from_env() -> Result<Self, BoxError> {
+        let mut config = Self::from_env_without_routes()?;
+        if let Some(path) = env::var_os("WEGENT_RS_ROUTES_FILE") {
+            config = config.with_routes_file(Path::new(&path))?;
+        }
+        Ok(config)
+    }
+
+    /// Loads listener and upstream settings, leaving route selection to callers.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid address, port or upstream URL.
+    pub fn from_env_without_routes() -> Result<Self, BoxError> {
         let host: IpAddr = env::var("WEGENT_RS_LISTEN_HOST")
             .unwrap_or_else(|_| DEFAULT_HOST.to_owned())
             .parse()?;
@@ -50,14 +63,10 @@ impl HybridConfig {
         let python_upstream = env::var("WEGENT_PYTHON_UPSTREAM_URL")
             .unwrap_or_else(|_| DEFAULT_PYTHON_UPSTREAM.to_owned())
             .parse()?;
-        let routes = match env::var_os("WEGENT_RS_ROUTES_FILE") {
-            Some(path) => load_routes(Path::new(&path))?,
-            None => RouteTable::empty(),
-        };
         Ok(Self {
             listen_address: SocketAddr::new(host, port),
             python_upstream,
-            routes,
+            routes: RouteTable::empty(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
         })
     }
@@ -113,6 +122,14 @@ where
         RequestIdFilter::new(api),
         &config.python_upstream,
     )?;
+    serve_gateway(config, gateway, shutdown).await
+}
+
+async fn serve_gateway<S: RustApi, F: Future<Output = ()>>(
+    config: HybridConfig,
+    gateway: Gateway<S>,
+    shutdown: F,
+) -> Result<(), BoxError> {
     let listener = bind(config.listen_address).await?;
 
     info!(
@@ -144,6 +161,34 @@ pub async fn serve_hybrid_application<F>(
 where
     F: Future<Output = ()>,
 {
+    serve_hybrid_application_with_gateway(config, application, shutdown, |config, api| {
+        Ok(Gateway::new(
+            config.routes.clone(),
+            api,
+            &config.python_upstream,
+        )?)
+    })
+    .await
+}
+
+/// Serves an application using a caller-supplied gateway assembly.
+///
+/// The caller controls dispatch while sharing application authentication,
+/// the loopback API listener and graceful shutdown with the default runtime.
+///
+/// # Errors
+/// Returns gateway construction, listener binding and serving errors.
+pub async fn serve_hybrid_application_with_gateway<S, F, G>(
+    config: HybridConfig,
+    application: Application,
+    shutdown: F,
+    build_gateway: G,
+) -> Result<(), BoxError>
+where
+    S: RustApi,
+    F: Future<Output = ()>,
+    G: FnOnce(&HybridConfig, RequestIdFilter<OriginService>) -> Result<Gateway<S>, BoxError>,
+{
     let Application { state, routes } = application;
     let authenticator = crate::auth::AppAuthenticator::new(state);
     let api_server = brz_http_server::Server::bind_with_authenticator_and_config(
@@ -163,7 +208,8 @@ where
     let api_server = api_server.serve_until(async move {
         let _ = wait_for_api_shutdown.await;
     });
-    let gateway = serve_hybrid(config, api, shutdown);
+    let gateway = build_gateway(&config, RequestIdFilter::new(api))?;
+    let gateway = serve_gateway(config, gateway, shutdown);
     tokio::pin!(api_server);
     tokio::pin!(gateway);
 
@@ -194,6 +240,28 @@ pub async fn run_hybrid(config: HybridConfig, application: Application) -> Resul
         config,
         application,
         shutdown_signal(),
+    ))
+    .await
+}
+
+/// Runs a caller-supplied gateway until an interrupt or terminate signal.
+///
+/// # Errors
+/// Returns the errors from [`serve_hybrid_application_with_gateway`].
+pub async fn run_hybrid_with_gateway<S, G>(
+    config: HybridConfig,
+    application: Application,
+    build_gateway: G,
+) -> Result<(), BoxError>
+where
+    S: RustApi,
+    G: FnOnce(&HybridConfig, RequestIdFilter<OriginService>) -> Result<Gateway<S>, BoxError>,
+{
+    Box::pin(serve_hybrid_application_with_gateway(
+        config,
+        application,
+        shutdown_signal(),
+        build_gateway,
     ))
     .await
 }

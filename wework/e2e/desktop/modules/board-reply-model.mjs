@@ -200,6 +200,16 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
     text: expectedText,
     timeoutMs,
   })
+  const modelSelector = `${conversation} [data-testid="model-selector-button"]`
+  await control.command('waitFor', modelSelector, {
+    text: PUBLIC_MODEL_ID,
+    timeoutMs,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', modelSelector),
+    /选择模型|Select model/u,
+    'An executed Issue must display its recorded runtime model instead of a placeholder'
+  )
   const completedDialog = JSON.parse(await control.command('snapshot', conversation))
   assert.ok(
     completedDialog.testIds.includes('ai-chat-open-runtime-task'),

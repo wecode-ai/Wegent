@@ -19,11 +19,11 @@ use serde_json::{Value, value::RawValue};
 use super::models::{
     SubtaskAgentConfig, SubtaskBotResponse, SubtaskResponse, TaskDetailResponse, TeamResponse,
 };
-use super::repository::SubtaskRow;
+use super::repository::{ContextRow, SubtaskRow};
 use super::repository::{
     TaskRow, count_approved_members, get_accessible_task_owner, get_active_non_deleted_task,
     get_task_by_id_with_owner, get_workspace_by_ref, is_approved_member, list_contexts,
-    list_subtasks_by_task, owner_matches_task_id,
+    list_subtasks_by_task,
 };
 use super::team_access_policy::team_usage_summary;
 use super::views::{CachedUserResponse, build_team_response, cached_user, subtask_responses};
@@ -225,11 +225,14 @@ pub(crate) async fn build_task_detail(
     // `get_task_by_id`: active non-deleted task, `is_member`'s accessible
     // check, then the member-row check for non-owners.
     let Some(task) =
-        get_active_non_deleted_task(mysql, state.task_policy, task_id, client_origin).await?
+        get_active_non_deleted_task(&*state.task_store, task_id, client_origin).await?
     else {
         anyhow::bail!(TaskNotFound);
     };
-    if get_accessible_task_owner(mysql, task_id).await?.is_none() {
+    if get_accessible_task_owner(&*state.task_store, task_id)
+        .await?
+        .is_none()
+    {
         anyhow::bail!(TaskNotFound);
     }
     if task.user_id != user_id && !is_approved_member(mysql, task_id, user_id).await? {
@@ -249,7 +252,8 @@ pub(crate) async fn build_task_detail(
     if let Some((name, namespace)) =
         typed_spec.and_then(|spec| reference_parts(&spec.workspace_ref))
     {
-        let workspace = get_workspace_by_ref(mysql, task.user_id, &name, &namespace).await?;
+        let workspace =
+            get_workspace_by_ref(&*state.task_store, task.user_id, &name, &namespace).await?;
         if let Some(repository) = workspace
             .as_ref()
             .and_then(|row| JsonProjection::<WorkspaceDocumentInput>::from_json(&row.json).value)
@@ -303,48 +307,58 @@ pub(crate) async fn build_task_detail(
 
     // Requested skills: raw task load with the owner filter, then label
     // parsing (`requestedSkillRefs`).
-    let skills_task =
-        get_task_by_id_with_owner(mysql, state.task_policy, task_id, task.user_id).await?;
+    let skills_task = get_task_by_id_with_owner(&*state.task_store, task_id, task.user_id).await?;
     let requested_skills = requested_skills_from_labels(skills_task.as_ref());
 
-    // Team detail: `kindReader.get_by_id`, `get_task_owner_id`, then
+    // Team detail, in the source's order: `kindReader.get_by_id` first, then —
+    // only when it returned a team — `get_task_owner_id`, then
     // `_convert_to_team_dict`. `should_redact_team_for_user` runs BETWEEN the
     // owner lookup and the conversion, and its outcome decides whether the
     // converted team is replaced by `team_usage_summary`.
-    let task_owner_id = get_accessible_task_owner(mysql, task_id).await?;
-    let team_value = match (resolved_team_id, task_owner_id) {
-        (Some(team_id), Some(owner_id)) => {
+    //
+    // The source reaches this block only through `task_dict["team_id"]`, which
+    // `resolve_task_ref_team` sets to `team.id if team else None`; an
+    // unresolved team leaves `team_id` empty, so `get_task_owner_id` and the
+    // team load never run. Reading the owner id unconditionally would issue a
+    // task statement the source never issues whenever a task's `teamRef`
+    // resolves to no row.
+    let team_value = match resolved_team_id {
+        Some(team_id) => {
             let team_detail = kinds
                 .get_by_id("Team", team_id)
                 .await
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             match team_detail {
-                Some(team) => {
-                    let redact = should_redact_team_for_user(
-                        mysql,
-                        &ErpContext {
-                            erp: state.erp.as_ref(),
-                            redis: state.redis.as_ref(),
-                        },
-                        user_id,
-                        team.id,
-                        team.user_id,
-                        &team.namespace,
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-                    let mut response = build_team_response(state, &kinds, &team, owner_id)
+                Some(team) => match get_accessible_task_owner(&*state.task_store, task_id).await? {
+                    Some(owner_id) => {
+                        let redact = should_redact_team_for_user(
+                            mysql,
+                            &ErpContext {
+                                erp: state.erp.as_ref(),
+                                redis: state.redis.as_ref(),
+                            },
+                            user_id,
+                            team.id,
+                            team.user_id,
+                            &team.namespace,
+                        )
                         .await
                         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-                    if redact {
-                        team_usage_summary(&mut response);
+                        let mut response = build_team_response(state, &kinds, &team, owner_id)
+                            .await
+                            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+                        if redact {
+                            team_usage_summary(&mut response);
+                        }
+                        Some(response)
                     }
-                    Some(response)
-                }
+                    // The source logs the missing owner id and drops the team.
+                    None => None,
+                },
                 None => None,
             }
         }
-        _ => None,
+        None => None,
     };
 
     // Fork lineage: depth-0 `_lineage_task` (owner-filtered get_by_id),
@@ -356,8 +370,7 @@ pub(crate) async fn build_task_detail(
         // `_lineage_task` for the current chain node: depth 0 resolves the
         // task itself, deeper nodes resolve the fork source task.
         let lineage_task = get_task_by_id_with_owner(
-            mysql,
-            state.task_policy,
+            &*state.task_store,
             *lineage_task_ids.last().expect("nonempty"),
             task.user_id,
         )
@@ -378,32 +391,30 @@ pub(crate) async fn build_task_detail(
 
     let mut subtasks: Vec<SubtaskRow> = Vec::new();
     let mut inherited_task_ids: Vec<i64> = Vec::new();
+    let mut contexts: Vec<ContextRow> = Vec::new();
+    let mut contexts_pending: Vec<i64> = Vec::new();
     for (index, lineage_task_id) in lineage_task_ids.iter().enumerate() {
-        // `list_by_task_ordered`'s `_owner_matches_task_id` guard applies
-        // only to new-format ids; legacy ids fall straight through to the
-        // model lookup inside `list_subtasks_by_task`.
-        let guarded = (state.task_policy.is_scoped_id)(lineage_task_id.unsigned_abs())
-            && owner_matches_task_id(mysql, *lineage_task_id, task.user_id).await?;
-        if guarded || !(state.task_policy.is_scoped_id)(lineage_task_id.unsigned_abs()) {
-            let rows =
-                list_subtasks_by_task(mysql, state.task_policy, *lineage_task_id, task.user_id)
-                    .await?;
-            if index > 0 {
-                inherited_task_ids.push(*lineage_task_id);
-            }
-            subtasks.extend(rows);
+        // `list_by_task_ordered` runs the new-format owner guard itself, so
+        // an unowned task contributes no subtasks.
+        let listing =
+            list_subtasks_by_task(&*state.task_store, *lineage_task_id, task.user_id).await?;
+        if index > 0 {
+            inherited_task_ids.push(*lineage_task_id);
         }
+        match listing.contexts {
+            Some(rows) => contexts.extend(rows),
+            None => contexts_pending.extend(listing.subtasks.iter().map(|row| row.id)),
+        }
+        subtasks.extend(listing.subtasks);
     }
 
-    // `_attach_contexts` runs inside each `list_by_task_ordered` call, on
-    // every subtask of the lineage task — before `resolve_for_task` sorts
-    // and keeps the last `limit` items. Loading before the slice preserves
-    // that query shape.
-    let contexts = list_contexts(
-        mysql,
-        &subtasks.iter().map(|row| row.id).collect::<Vec<_>>(),
-    )
-    .await?;
+    // `_attach_contexts` runs inside every `list_by_task_ordered` call, on the
+    // subtasks of that lineage task, before `resolve_for_task` sorts and keeps
+    // the last `limit` items; the store performs those loads. A listing whose
+    // store left the contexts out is loaded here, one batch for all of them.
+    if !contexts_pending.is_empty() {
+        contexts.extend(list_contexts(mysql, &contexts_pending).await?);
+    }
 
     // `resolve_for_task` sorts by (message_id, created_at, id) and keeps the
     // last `limit` items.
@@ -628,9 +639,11 @@ fn task_detail_response(task: &TaskRow, user_id: i64, parts: TaskDetailParts) ->
             progress: status
                 .map(|status| status.progress.raw_or(0))
                 .unwrap_or_else(|| serde_json::value::to_raw_value(&0).unwrap()),
+            // `convert_to_task_dict` returns `task_crd.status.result` verbatim:
+            // only subtask results pass through `sanitize_client_payload`
+            // (`convert_subtasks_to_dict`).
             result: status
-                .and_then(|status| status.result.as_ref())
-                .map(|result| raw_json(&sanitize_client_payload(result.to_value())))
+                .map(|status| status.result.raw_or(()))
                 .unwrap_or_else(raw_null),
             error_message: status
                 .map(|status| status.error_message.raw_or(""))
@@ -702,10 +715,10 @@ fn task_detail_response(task: &TaskRow, user_id: i64, parts: TaskDetailParts) ->
 /// `IN (...)` fallback) in that order, which is CPython `set[int]` slot order,
 /// not ascending id order: one recorded case inserts
 /// `[100515, 100523, 100521, 100519, 100517, 129344, 100525]` and the source
-/// probes 129344 first. Reuse the emulator the remote-workspace modules
-/// already ship for the same source path.
+/// probes 129344 first. Reuse the shared emulator (`crate::py_set_order`)
+/// already applied to the same source path.
 fn bot_probe_order(subtasks: &[SubtaskRow]) -> Vec<i64> {
-    let mut bot_ids = crate::remote_workspace_tree::py_set_order::PySetOrder::new();
+    let mut bot_ids = crate::py_set_order::SetOrder::new();
     for subtask in subtasks {
         if let Some(ids) = subtask.bot_ids.project::<Vec<Option<i64>>>() {
             for id in ids.into_iter().flatten() {

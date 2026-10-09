@@ -88,6 +88,7 @@ from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
 )
 from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
@@ -2822,6 +2823,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 )
                 await emitter.emit(event)
                 await emitter.close()
+
+                # Forward device events to active OpenAPI SSE consumers.
+                await session_manager.publish_callback_event(subtask_id, event)
 
                 await forward_event_to_channel_callbacks(
                     task_id=task_id,

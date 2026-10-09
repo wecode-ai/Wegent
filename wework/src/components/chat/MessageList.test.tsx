@@ -983,6 +983,116 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('generated-image')).not.toBeInTheDocument()
   })
 
+  test('downloads a remote tool image only when its detail is opened', async () => {
+    const user = userEvent.setup()
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/workspace/generated/sunset.png',
+      name: 'sunset.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+    })
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:remote-tool-image')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    const { unmount } = render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        <MessageList
+          imageTarget={{ deviceId: 'remote-device', workspacePath: '/workspace/project' }}
+          messages={[
+            {
+              id: 'assistant-remote-image',
+              role: 'assistant',
+              content: 'Done.',
+              status: 'done',
+              createdAt: '2026-09-29T10:00:00Z',
+              blocks: [
+                {
+                  id: 'view-remote-image',
+                  subtaskId: '1',
+                  type: 'tool',
+                  toolName: 'view_image',
+                  toolInput: { path: '/workspace/generated/sunset.png' },
+                  status: 'done',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+        />
+      </WorkspaceFileReaderProvider>
+    )
+
+    expect(readWorkspaceFileChunk).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('final-processing-toggle'))
+    await user.click(screen.getByTestId('processing-summary-toggle'))
+    expect(readWorkspaceFileChunk).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    expect(await screen.findByTestId('image-view-preview')).toHaveAttribute(
+      'src',
+      'blob:remote-tool-image'
+    )
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'remote-device',
+      '/workspace/generated/sunset.png',
+      0,
+      '/workspace/generated'
+    )
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png' }))
+    expect(electronLocalFileMock.read).not.toHaveBeenCalled()
+
+    unmount()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:remote-tool-image')
+  })
+
+  test('shows a remote image read failure inside the tool detail', async () => {
+    const user = userEvent.setup()
+    const readWorkspaceFileChunk = vi.fn().mockRejectedValue(new Error('Device is offline'))
+
+    render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        <MessageList
+          imageTarget={{ deviceId: 'remote-device', workspacePath: '/workspace' }}
+          messages={[
+            {
+              id: 'assistant-remote-image-error',
+              role: 'assistant',
+              content: 'Done.',
+              status: 'done',
+              createdAt: '2026-09-29T10:00:00Z',
+              blocks: [
+                {
+                  id: 'view-remote-image-error',
+                  subtaskId: '1',
+                  type: 'tool',
+                  toolName: 'view_image',
+                  toolInput: { path: 'sunset.png' },
+                  status: 'done',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+        />
+      </WorkspaceFileReaderProvider>
+    )
+
+    await user.click(screen.getByTestId('final-processing-toggle'))
+    await user.click(screen.getByTestId('processing-summary-toggle'))
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('图片加载失败: Device is offline')
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'remote-device',
+      '/workspace/sunset.png',
+      0,
+      '/workspace'
+    )
+    expect(screen.queryByTestId('image-view-preview')).not.toBeInTheDocument()
+  })
+
   test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
@@ -1165,6 +1275,9 @@ describe('MessageList', () => {
     expect(
       chunks.every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
     ).toBe(true)
+
+    // Intersection callbacks recheck the current chunk geometry before rendering.
+    vi.spyOn(chunks.at(-1)!, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 100, 736, 360))
 
     act(() => {
       intersectionCallbacks.at(-1)?.(
@@ -6862,6 +6975,32 @@ describe('MessageList', () => {
       'WEG0001-1 结合代码分析，这个问题可能是因为什么'
     )
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
+
+  test('keeps sent issue references styled as native context chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '[$LL-1 · 看看cpu](wework-issue://project/LL-1) 处理一下',
+            status: 'done',
+            createdAt: '2026-10-08T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const issueChip = screen.getByTestId(/^sent-issue-token-/)
+
+    expect(issueChip).toHaveAttribute('href', 'wework-issue://project/LL-1')
+    expect(issueChip).toHaveClass('composer-mention-node', 'composer-mention-link')
+    expect(issueChip).toHaveTextContent('LL-1 · 看看cpu')
+    expect(screen.getByTestId(/^sent-issue-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('LL-1 · 看看cpu 处理一下')
+    expect(screen.queryByText('[blocked]')).not.toBeInTheDocument()
+    expect(screen.queryByText(/wework-issue:\/\//)).not.toBeInTheDocument()
   })
 
   test('renders conversation references in user messages without exposing the internal URI', () => {

@@ -170,6 +170,7 @@ export function createLocalWorkspaceApi(
       }
     const fingerprint = await executionEnvironmentFingerprint(configuration)
     const baseConfiguration: CollaborationExecutionEnvironmentConfig = {
+      workspace_policy: configuration.workspace_policy ?? 'git_worktree',
       repositories: configuration.repositories,
       setup_steps: configuration.setup_steps,
       fingerprint,
@@ -344,6 +345,7 @@ export function createLocalWorkspaceApi(
         model: agent.model,
         modelType: agent.modelType,
         modelNamespace: agent.modelNamespace,
+        allowedModels: agent.allowedModels ?? [],
         capabilityDescription: agent.capabilityDescription,
         capabilityMode: agent.capabilityMode,
         systemPrompt: agent.systemPrompt,

@@ -74,6 +74,7 @@ export interface SmartAppRuntimeHost {
 
 export interface SmartAppManagerOptions {
   dataDirectory: string
+  documentsDirectory: () => string
   downloadsDirectory: () => string
   logDirectory: string
   runtimeRoot: string
@@ -175,11 +176,16 @@ export class SmartAppManager {
       const name = validEditableName(input.name)
       const displayName = requiredText(input.displayName)
       const template = validSmartAppTemplate(input.template)
-      const parent = await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
+      const parent = input.parentPath.trim()
+        ? await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
+        : await this.defaultCreationParent()
       const target = join(parent, name)
       await mkdir(target).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
           throw new Error('Smart app destination already exists')
+        }
+        if (isDirectoryPermissionError(error)) {
+          throw new Error('Smart app save location is not writable', { cause: error })
         }
         throw error
       })
@@ -198,6 +204,16 @@ export class SmartAppManager {
         throw error
       }
     })
+  }
+
+  private async defaultCreationParent(): Promise<string> {
+    try {
+      const parent = join(this.options.documentsDirectory(), 'WeworkSmartApps')
+      await mkdir(parent, { recursive: true, mode: 0o700 })
+      return await requiredSmartAppDirectory(parent, 'Smart app default parent')
+    } catch (error) {
+      throw new Error('Smart app default save location is unavailable', { cause: error })
+    }
   }
 
   async linkDirectory(directoryPath: string): Promise<SmartAppInstallation> {
@@ -742,6 +758,11 @@ async function optionalDirectory(path: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function isDirectoryPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return code === 'EACCES' || code === 'EPERM'
 }
 
 function validEditableName(value: string): string {

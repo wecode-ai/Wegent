@@ -49,6 +49,7 @@ function preparedExecutionEnvironmentCandidates(
           deviceId: normalizedDeviceId,
           workspacePath,
           supportsIsolatedWorkspace: Boolean(
+            configuration?.workspace_policy !== 'project' &&
             configuration?.repositories.some(repository => repository.primary)
           ),
           online: environment?.status === 'online',

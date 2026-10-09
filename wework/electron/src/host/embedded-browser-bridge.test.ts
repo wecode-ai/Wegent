@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -163,12 +163,18 @@ describe('EmbeddedBrowserBridge', () => {
         action: 'click',
         label: 'workspace-browser',
         selector: '#run-agent',
+        timeoutMs: 5_000,
       }),
     })
 
     await vi.waitFor(() => {
       expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 100, 50)
     })
+    expect(browser.waitForAgentCursorArrival).toHaveBeenCalledWith(
+      'workspace-browser',
+      expect.any(Number),
+      5_000
+    )
     expect(browser.evaluate).toHaveBeenCalledOnce()
     resolveArrival(true)
 
@@ -390,6 +396,124 @@ describe('EmbeddedBrowserBridge', () => {
     })
     expect(browser.clickAt).toHaveBeenCalledWith('workspace-browser', 120.4, 48.6)
   })
+
+  test('uploads a local file through the CDP file-input bridge', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const uploadPath = join(executorHome, 'upload.png')
+    await writeFile(uploadPath, 'png-bytes')
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'uploadFile',
+        path: uploadPath,
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: {
+        ok: true,
+        kind: 'browser.action',
+        action: 'uploadFile',
+        backend: 'electron-cdp-setFileInputFiles',
+        selector: 'input[type="file"]',
+        fileCount: 1,
+      },
+    })
+    expect(browser.uploadFiles).toHaveBeenCalledWith('workspace-browser', null, [uploadPath])
+  })
+
+  test('rejects upload paths that are not absolute existing files', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+    const request = (body: Record<string, unknown>) =>
+      fetch(`http://${identity.address}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${identity.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      })
+
+    const relative = await request({ action: 'uploadFile', path: 'upload.png' })
+    expect((await relative.json()).ok).toBe(false)
+    const missing = await request({
+      action: 'uploadFile',
+      path: join(executorHome, 'missing.png'),
+    })
+    expect((await missing.json()).ok).toBe(false)
+    expect(browser.uploadFiles).not.toHaveBeenCalled()
+  })
+
+  test('clears default browser data kinds and forwards explicit kinds', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+    const request = (body: Record<string, unknown>) =>
+      fetch(`http://${identity.address}/browser`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${identity.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      })
+
+    await expect(
+      request({ action: 'clearData' }).then(response => response.json())
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        ok: true,
+        kind: 'browser.action',
+        action: 'clearData',
+        cleared: ['cookies', 'cache', 'storage'],
+      },
+    })
+    expect(browser.clearData).toHaveBeenLastCalledWith(['cookies', 'cache', 'storage'])
+
+    await request({
+      action: 'clearData',
+      options: { kinds: ['cache'] },
+    })
+    expect(browser.clearData).toHaveBeenLastCalledWith(['cache'])
+
+    const invalid = await request({
+      action: 'clearData',
+      options: { kinds: ['passwords'] },
+    })
+    expect((await invalid.json()).ok).toBe(false)
+  })
 })
 
 function fakeBrowser() {
@@ -407,6 +531,8 @@ function fakeBrowser() {
   const navigate = vi.fn(async () => undefined)
   const evaluate = vi.fn()
   const clickAt = vi.fn()
+  const uploadFiles = vi.fn(async () => ({ selector: 'input[type="file"]' }))
+  const clearData = vi.fn(async () => 1)
   const hideAgentCursor = vi.fn()
   const showAgentCursor = vi.fn(() => 1)
   const waitForAgentCursorArrival = vi.fn(async () => true)
@@ -429,9 +555,12 @@ function fakeBrowser() {
     hideAgentCursor,
     showAgentCursor,
     waitForAgentCursorArrival,
+    uploadFiles,
+    clearData,
   } as unknown as EmbeddedBrowserManager
   return {
     activeLabel,
+    clearData,
     clickAt,
     evaluate,
     has,
@@ -441,6 +570,7 @@ function fakeBrowser() {
     requestOpen,
     showAgentCursor,
     state,
+    uploadFiles,
     waitForAgentCursorArrival,
   }
 }

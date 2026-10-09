@@ -186,6 +186,10 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
   it("loads execution environment readiness for a local project", async () => {
     const api = {
       projects: {
+        get: vi.fn(async () => ({
+          ...projectWithDevice("ready", "/workspace"),
+          project_store: "local" as const,
+        })),
         listExecutionEnvironments: vi.fn(async () => [environment("online")]),
       },
     } as unknown as SharedWorkspaceApi;
@@ -204,6 +208,7 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
   it("reports a status check failure as unknown without treating it as unassigned", async () => {
     const api = {
       projects: {
+        get: vi.fn(async () => baseProject),
         listExecutionEnvironments: vi.fn(async () => {
           throw new Error("network unavailable");
         }),
@@ -220,6 +225,9 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     const second = deferred<CollaborationExecutionEnvironment[]>();
     const api = {
       projects: {
+        get: vi.fn(async (projectId: string) =>
+          projectId === nextProject.id ? nextProject : baseProject,
+        ),
         listExecutionEnvironments: vi
           .fn()
           .mockReturnValueOnce(first.promise)
@@ -247,6 +255,13 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     const refreshed = deferred<CollaborationExecutionEnvironment[]>();
     const api = {
       projects: {
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(baseProject)
+          .mockResolvedValueOnce({
+            ...projectWithDevice("ready", "/workspace"),
+            version: 2,
+          }),
         listExecutionEnvironments: vi
           .fn()
           .mockResolvedValueOnce([environment("online")])
@@ -278,6 +293,7 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     const initialLoad = deferred<CollaborationExecutionEnvironment[]>();
     const api = {
       projects: {
+        get: vi.fn(async () => projectWithDevice("ready", "/workspace")),
         listExecutionEnvironments: vi
           .fn()
           .mockReturnValueOnce(initialLoad.promise)
@@ -310,5 +326,20 @@ describe("useProjectExecutionEnvironmentReadiness", () => {
     expect(container.textContent).toContain("ready");
     await act(async () => initialLoad.resolve([]));
     expect(container.textContent).toContain("ready");
+  });
+
+  it("uses the latest project configuration instead of the stale rendered project", async () => {
+    const latestProject = projectWithDevice("ready", "/workspace");
+    const api = {
+      projects: {
+        get: vi.fn(async () => latestProject),
+        listExecutionEnvironments: vi.fn(async () => [environment("online")]),
+      },
+    } as unknown as SharedWorkspaceApi;
+
+    await renderProbe(api, baseProject);
+
+    expect(container?.textContent).toBe("ready");
+    expect(api.projects.get).toHaveBeenCalledWith(baseProject.id);
   });
 });

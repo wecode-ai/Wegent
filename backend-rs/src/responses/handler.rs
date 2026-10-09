@@ -158,19 +158,20 @@ async fn load_response(
     user_id: i32,
 ) -> Result<Option<ResponseObject>, HttpError> {
     let mysql = &state.mysql;
+    let task_store = &*state.task_store;
     let internal = |error: brz_mysql::MysqlError| {
         tracing::error!(%error, "responses database dependency failure");
         HttpError::internal("database query failed")
     };
 
     // `task_kinds_service.get_task_by_id`.
-    let task = repo::get_active_non_deleted_task(mysql, task_id)
+    let task = repo::get_active_non_deleted_task(task_store, task_id)
         .await
         .map_err(internal)?;
     let Some(task) = task else {
         return Ok(None);
     };
-    if !repo::is_member(mysql, task_id, user_id)
+    if !repo::is_member(task_store, mysql, task_id, user_id)
         .await
         .map_err(internal)?
     {
@@ -186,7 +187,7 @@ async fn load_response(
     {
         let name = workspace_ref.name();
         let namespace = workspace_ref.namespace();
-        let _ = repo::get_workspace_by_ref(mysql, state.task_policy, task.user_id, name, namespace)
+        let _ = repo::get_workspace_by_ref(task_store, i64::from(task.user_id), name, namespace)
             .await
             .map_err(internal)?;
     }
@@ -203,13 +204,13 @@ async fn load_response(
         })?;
 
     // `subtask_store.list_by_task_for_user_ordered`.
-    let subtasks = repo::list_subtasks_for_user_ordered(mysql, task_id, user_id)
+    let subtasks = repo::list_subtasks_for_user_ordered(task_store, task_id, user_id)
         .await
         .map_err(internal)?;
 
     // `task_store.get_task_by_states(states=[STATE_ACTIVE],
     // owner_user_id=current_user.id)` + model-string reconstruction.
-    let task_kind = repo::get_task_by_states_active_owned(mysql, task_id, user_id)
+    let task_kind = repo::get_task_by_states_active_owned(task_store, task_id, user_id)
         .await
         .map_err(internal)?;
     let model_string = model_string_for(&task_kind);

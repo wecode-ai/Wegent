@@ -115,7 +115,7 @@ describe("Web adapter for the desktop main composer", () => {
     await render(vi.fn().mockResolvedValue(attachment), send);
     expect(
       container.querySelector(".composer-prosemirror-placeholder")?.textContent,
-    ).toBe("留下评论…");
+    ).toBe("发起新讨论（将创建新的执行任务）…");
     expect(
       container.querySelectorAll(".task-detail-new-comment-actions button"),
     ).toHaveLength(3);

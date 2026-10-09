@@ -1,37 +1,13 @@
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
-
 //! SQL row loads for the task-detail endpoint.
 //!
-//! Every statement mirrors the source SQLAlchemy rendering against the
-//! sharded physical tables (`tasks_{:04}` / `subtasks_{:04}`, selected by
-//! the configured store), now using brz-mysql routed `{{tasks}}`/
-//! `{{subtasks}}` tokens with unqualified column names and `?` placeholders.
+//! Every task and subtask statement lives in the task store, which owns the
+//! physical table choice; this module decodes the rows it returns and keeps
+//! the reads that carry no table choice.
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow};
 use chrono::NaiveDateTime;
 use serde_json::Value;
 
 use crate::json_compat::OpaqueJson;
-use crate::task_routing::TaskPolicy;
-use crate::task_routing::{ByTaskId, ByUserId};
-
-const TASK_BY_OWNER_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE id = ? AND user_id = ? \
-    LIMIT 1";
-const WORKSPACE_BY_REF_SQL: &str = "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, \
-        client_origin, is_group_chat \
-    FROM {{tasks}} \
-    WHERE user_id = ? AND kind = 'Workspace' AND name = ? AND namespace = ? AND is_active = 1 \
-    LIMIT 1";
-const SUBTASKS_BY_TASK_SQL: &str = "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \
-    FROM {{subtasks}} \
-    WHERE task_id = ? \
-    ORDER BY message_id ASC, created_at ASC";
 
 /// A `tasks_{:04}` row selected with the full unqualified projection.
 #[derive(Debug)]
@@ -53,42 +29,16 @@ fn decode_task_row(row: &MysqlRow) -> brz_mysql::MysqlResult<TaskRow> {
     })
 }
 
-/// `ShardedTaskStore.get_active_non_deleted_task` with the optional
-/// `client_origin` filter (`get_task_by_id` passes the query value).
-///
-/// New-format ids route to `get_task_by_states` (shard table, no SQL
-/// deletion predicate; the JSON status is filtered in Rust like the source
-/// `_is_json_deleted`). Legacy ids fall through to the base
-/// `SqlAlchemyTaskStore.get_active_non_deleted_task`, whose SQLAlchemy
-/// `text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'")` predicate
-/// sits between the `is_active` and `client_origin` filters.
-pub(crate) async fn get_active_non_deleted_task<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
+/// `task_store.get_active_non_deleted_task` through the store, keeping the
+/// source's `_is_json_deleted` filter over the decoded status.
+pub(crate) async fn get_active_non_deleted_task(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
     client_origin: Option<&str>,
-) -> brz_mysql::MysqlResult<Option<TaskRow>>
-where
-    M: brz_mysql::Mysql,
-{
-    let mut sql = String::from(
-        "SELECT id, user_id, kind, name, namespace, json, is_active,
-                created_at, updated_at, project_id, client_origin, is_group_chat
-         FROM {{tasks}}
-         WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)",
-    );
-    if !(task_policy.is_scoped_id)(task_id as u64) {
-        sql.push_str(" AND JSON_EXTRACT(json, '$.status.status') != 'DELETE'");
-    }
-    if client_origin.is_some() {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" LIMIT 1");
-    let mysql = mysql.route(ByTaskId(task_id as u64));
-    let row: Option<MysqlRow> = match client_origin {
-        Some(origin) => mysql.fetch_optional(&sql, (task_id, origin)).await?,
-        None => mysql.fetch_optional(&sql, (task_id,)).await?,
-    };
+) -> brz_mysql::MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_by_id(task_id, client_origin)
+        .await?;
     Ok(row
         .as_ref()
         .map(decode_task_row)
@@ -96,31 +46,44 @@ where
         .filter(|task| !json_status_is_delete(&task.json)))
 }
 
-/// `ShardedTaskStore._is_json_deleted`.
-pub(crate) fn json_status_is_delete(payload: &Value) -> bool {
-    crate::crd::json_status_is_delete(payload)
-}
-
-/// `SqlAlchemyTaskAccessStore._get_accessible_task` (owner id projection
-/// used by `is_member` / `get_task_owner_id`).
-pub(crate) async fn get_accessible_task_owner<M>(
-    mysql: &M,
+/// `SqlAlchemyTaskAccessStore._get_accessible_task`'s owner id through the
+/// store's active-task owner projection.
+pub(crate) async fn get_accessible_task_owner(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
-) -> brz_mysql::MysqlResult<Option<i64>>
-where
-    M: brz_mysql::Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(
-            "SELECT id, user_id \nFROM {{tasks}} \n\
-             WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2) \n LIMIT 1",
-            (task_id,),
-        )
-        .await?;
+) -> brz_mysql::MysqlResult<Option<i64>> {
+    let row = task_store.get_task_owner_id(task_id).await?;
     Ok(row
         .as_ref()
         .and_then(|row| row.get_required::<i64>("user_id").ok()))
+}
+
+/// `task_store.get_by_id` with the owner filter, through the store.
+pub(crate) async fn get_task_by_id_with_owner(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    owner_user_id: i64,
+) -> brz_mysql::MysqlResult<Option<TaskRow>> {
+    let row = task_store.get_task_owned(task_id, owner_user_id).await?;
+    row.as_ref().map(decode_task_row).transpose()
+}
+
+/// `task_store.get_workspace_by_ref`, through the store.
+pub(crate) async fn get_workspace_by_ref(
+    task_store: &dyn crate::task_store::TaskStore,
+    owner_user_id: i64,
+    name: &str,
+    namespace: &str,
+) -> brz_mysql::MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_workspace_by_ref(owner_user_id, name, namespace)
+        .await?;
+    row.as_ref().map(decode_task_row).transpose()
+}
+
+/// `ShardedTaskStore._is_json_deleted`.
+pub(crate) fn json_status_is_delete(payload: &Value) -> bool {
+    crate::crd::json_status_is_delete(payload)
 }
 
 /// `is_member`'s approved member-row check (only reached when the requesting
@@ -151,105 +114,37 @@ where
     Ok(row.is_some())
 }
 
-/// `task_store.get_by_id` with the owner filter.
-///
-/// New-format ids query their shard table directly. Legacy ids go through
-/// `ShardedTaskStore._migrated_legacy_task_model`: first the base-table
-/// owner lookup (`SELECT user_id FROM {{tasks}} WHERE id = ? [AND user_id = ?]`,
-/// routed by `ByTaskId` which resolves to the base table for legacy ids),
-/// then the shard-table existence check (routed by `ByUserId`), then the
-/// full row on whichever table holds the task (shard when migrated, base
-/// otherwise).
-pub(crate) async fn get_task_by_id_with_owner<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
-    task_id: i64,
-    owner_user_id: i64,
-) -> brz_mysql::MysqlResult<Option<TaskRow>>
-where
-    M: brz_mysql::Mysql,
-{
-    if (task_policy.is_scoped_id)(task_id as u64) || !task_policy.resolve_migrated_legacy {
-        let row: Option<MysqlRow> = mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(TASK_BY_OWNER_SQL, (task_id, owner_user_id))
-            .await?;
-        return row.as_ref().map(decode_task_row).transpose();
-    }
-    // `_legacy_task_owner_user_id`: base-table owner lookup with the owner
-    // filter applied server-side. `ByTaskId` on a legacy id routes to the
-    // base `tasks` table.
-    let owner_row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(
-            "SELECT user_id \nFROM {{tasks}} \n\
-             WHERE id = ? AND user_id = ? \n LIMIT 1",
-            (task_id, owner_user_id),
-        )
-        .await?;
-    if owner_row.is_none() {
-        // Owner filter missed on the base table: `get_by_id` returns None
-        // without touching the shard tables.
-        return Ok(None);
-    }
-    // `_migrated_legacy_task_model` existence check on the owner's shard.
-    let exists: Option<MysqlRow> = mysql
-        .route(ByUserId(owner_user_id as u64))
-        .fetch_optional(
-            "SELECT id \nFROM {{tasks}} \nWHERE id = ? \n LIMIT 1",
-            (task_id,),
-        )
-        .await?;
-    // When migrated, route by the owner; otherwise by the legacy task id
-    // (resolves to the base table).
-    let row: Option<MysqlRow> = if exists.is_some() {
-        mysql
-            .route(ByUserId(owner_user_id as u64))
-            .fetch_optional(TASK_BY_OWNER_SQL, (task_id, owner_user_id))
-            .await?
-    } else {
-        mysql
-            .route(ByTaskId(task_id as u64))
-            .fetch_optional(TASK_BY_OWNER_SQL, (task_id, owner_user_id))
-            .await?
-    };
-    row.as_ref().map(decode_task_row).transpose()
+/// One `list_by_task_ordered` listing, decoded: the subtasks and the contexts
+/// the store attached on the path that resolved its own table.
+pub(crate) struct SubtaskListing {
+    pub subtasks: Vec<SubtaskRow>,
+    pub contexts: Option<Vec<ContextRow>>,
 }
 
-/// `task_store.get_workspace_by_ref` on the owner's shard table.
-pub(crate) async fn get_workspace_by_ref<M>(
-    mysql: &M,
-    owner_user_id: i64,
-    name: &str,
-    namespace: &str,
-) -> brz_mysql::MysqlResult<Option<TaskRow>>
-where
-    M: brz_mysql::Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByUserId(owner_user_id as u64))
-        .fetch_optional(WORKSPACE_BY_REF_SQL, (owner_user_id, name, namespace))
-        .await?;
-    row.as_ref().map(decode_task_row).transpose()
-}
-
-/// `ShardedSubtaskStore._owner_matches_task_id` guard query.
-pub(crate) async fn owner_matches_task_id<M>(
-    mysql: &M,
+/// `subtask_store.list_by_task_ordered` (message_id, created_at).
+pub(crate) async fn list_subtasks_by_task(
+    task_store: &dyn crate::task_store::TaskStore,
     task_id: i64,
     owner_user_id: i64,
-) -> brz_mysql::MysqlResult<bool>
-where
-    M: brz_mysql::Mysql,
-{
-    let row: Option<MysqlRow> = mysql
-        .route(ByTaskId(task_id as u64))
-        .fetch_optional(
-            "SELECT id \nFROM {{tasks}} \nWHERE id = ? AND user_id = ? \n LIMIT 1",
-            (task_id, owner_user_id),
-        )
+) -> brz_mysql::MysqlResult<SubtaskListing> {
+    let listing = task_store
+        .list_subtasks_by_task_ordered(task_id, owner_user_id)
         .await?;
-    Ok(row.is_some())
+    Ok(SubtaskListing {
+        subtasks: listing
+            .rows
+            .iter()
+            .map(decode_subtask_row)
+            .collect::<brz_mysql::MysqlResult<_>>()?,
+        contexts: listing
+            .contexts
+            .map(|rows| {
+                rows.into_iter()
+                    .map(ContextRow::from_mysql_row)
+                    .collect::<brz_mysql::MysqlResult<Vec<_>>>()
+            })
+            .transpose()?,
+    })
 }
 
 /// A `subtasks_{:04}` row.
@@ -310,63 +205,6 @@ fn decode_subtask_row(row: &MysqlRow) -> brz_mysql::MysqlResult<SubtaskRow> {
     })
 }
 
-/// `ShardedSubtaskStore.list_by_task_ordered` (message_id, created_at).
-pub(crate) async fn list_subtasks_by_task<M>(
-    mysql: &M,
-    task_policy: TaskPolicy,
-    task_id: i64,
-    owner_user_id: i64,
-) -> brz_mysql::MysqlResult<Vec<SubtaskRow>>
-where
-    M: brz_mysql::Mysql,
-{
-    // New-format ids route by `ByTaskId`; legacy ids resolve the migrated
-    // shard through the base-table owner + shard existence check
-    // (`_subtask_model_for_task_lookup`).
-    let rows: Vec<MysqlRow> =
-        if (task_policy.is_scoped_id)(task_id as u64) || !task_policy.resolve_migrated_legacy {
-            mysql
-                .route(ByTaskId(task_id as u64))
-                .fetch_all(SUBTASKS_BY_TASK_SQL, (task_id,))
-                .await?
-        } else {
-            // `_legacy_task_owner_user_id`: base-table owner lookup.
-            let owner_row: Option<MysqlRow> = mysql
-                .route(ByTaskId(task_id as u64))
-                .fetch_optional(
-                    "SELECT user_id \nFROM {{tasks}} \n\
-                 WHERE id = ? AND user_id = ? \n LIMIT 1",
-                    (task_id, owner_user_id),
-                )
-                .await?;
-            let use_owner_shard = if owner_row.is_none() {
-                false
-            } else {
-                // Confirm the migrated row exists in the owner's shard table.
-                let exists: Option<MysqlRow> = mysql
-                    .route(ByUserId(owner_user_id as u64))
-                    .fetch_optional(
-                        "SELECT id \nFROM {{tasks}} \nWHERE id = ? \n LIMIT 1",
-                        (task_id,),
-                    )
-                    .await?;
-                exists.is_some()
-            };
-            if use_owner_shard {
-                mysql
-                    .route(ByUserId(owner_user_id as u64))
-                    .fetch_all(SUBTASKS_BY_TASK_SQL, (task_id,))
-                    .await?
-            } else {
-                mysql
-                    .route(ByTaskId(task_id as u64))
-                    .fetch_all(SUBTASKS_BY_TASK_SQL, (task_id,))
-                    .await?
-            }
-        };
-    rows.iter().map(decode_subtask_row).collect()
-}
-
 /// One `subtask_contexts` row (`_attach_contexts`'s batch load).
 #[derive(Debug, FromMysqlRow)]
 pub(crate) struct ContextRow {
@@ -420,7 +258,13 @@ where
     .await
 }
 
-/// `add_group_chat_info_to_task`'s approved member count.
+/// `add_group_chat_info_to_task`'s approved member count
+/// (`task_detail_helpers.py:172-192`).
+///
+/// The source filters `copied_resource_id == 0` because approving a share
+/// recipient also writes an approved `resource_members` row whose
+/// `copied_resource_id` is the copied task; without the predicate the count
+/// includes share records and the statement no longer matches the source SQL.
 pub(crate) async fn count_approved_members<M>(
     mysql: &M,
     task_id: i64,
@@ -448,7 +292,8 @@ where
          resource_members.created_at AS resource_members_created_at, \
          resource_members.updated_at AS resource_members_updated_at \n\
          FROM resource_members \nWHERE resource_members.resource_type = 'Task' \
-         AND resource_members.resource_id = ? AND resource_members.status = 'approved'",
+         AND resource_members.resource_id = ? AND resource_members.status = 'approved' \
+         AND resource_members.copied_resource_id = 0",
         (task_id,),
     )
     .await?;
@@ -467,73 +312,5 @@ mod tests {
         assert!(!json_status_is_delete(&serde_json::json!({
             "status": {"status": "PENDING"}
         })));
-    }
-}
-
-#[cfg(test)]
-mod sql_tests {
-    use super::*;
-    use crate::sql_test_support::{QueryCapture, Route};
-
-    #[tokio::test]
-    async fn active_task_query_keeps_legacy_filters_and_binds_origin() {
-        for task_id in [42, 700_000_000_001_i64] {
-            for origin in [None, Some(""), Some("client'\\name")] {
-                let mysql = QueryCapture::default();
-                get_active_non_deleted_task(
-                    &mysql,
-                    TaskPolicy {
-                        is_scoped_id: |id| id != 42,
-                        resolve_migrated_legacy: true,
-                    },
-                    task_id,
-                    origin,
-                )
-                .await
-                .unwrap();
-                let queries = mysql.queries();
-                let query = &queries[0];
-                assert_eq!(query.route, Route::Task(task_id as u64));
-                assert_eq!(query.args, 1 + usize::from(origin.is_some()));
-                assert_eq!(query.sql.contains("JSON_EXTRACT"), task_id == 42);
-                assert_eq!(
-                    query.sql.contains("AND client_origin = ?"),
-                    origin.is_some()
-                );
-                assert!(query.sql.ends_with("LIMIT 1"));
-                assert!(!query.sql.contains("client'"));
-                if task_id == 42 && origin.is_some() {
-                    assert!(
-                        query
-                            .sql
-                            .contains("!= 'DELETE' AND client_origin = ? LIMIT 1")
-                    );
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn owner_query_expands_active_states_and_static_queries_keep_tokens() {
-        let mysql = QueryCapture::default();
-        get_accessible_task_owner(&mysql, 42).await.unwrap();
-        get_task_by_id_with_owner(
-            &mysql,
-            TaskPolicy {
-                is_scoped_id: |_| true,
-                resolve_migrated_legacy: true,
-            },
-            700_000_000_001_i64,
-            7,
-        )
-        .await
-        .unwrap();
-        get_workspace_by_ref(&mysql, 7, "workspace", "default")
-            .await
-            .unwrap();
-        let queries = mysql.queries();
-        assert!(queries[0].sql.contains("is_active IN (1, 2)"));
-        assert_eq!(queries[2].route, Route::User(7));
-        crate::sql_test_support::assert_routed_sql(SUBTASKS_BY_TASK_SQL, 1);
     }
 }

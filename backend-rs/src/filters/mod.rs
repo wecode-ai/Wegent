@@ -8,4 +8,4 @@ mod cors;
 mod request_id;
 
 pub(crate) use cors::server_config;
-pub(crate) use request_id::RequestIdFilter;
+pub use request_id::RequestIdFilter;

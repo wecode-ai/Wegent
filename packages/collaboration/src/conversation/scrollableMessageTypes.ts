@@ -34,6 +34,7 @@ export interface RuntimeTranscriptRange {
 
 export interface UserViewportAnchor {
   messageId: string
+  element: HTMLElement
   anchorIndex: number
   offsetFromScrollerTop: number
   textOffset: number | null

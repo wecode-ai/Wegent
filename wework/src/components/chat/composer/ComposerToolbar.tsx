@@ -16,6 +16,7 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/desktop/appPreferences'
+import { useComposerDrawing } from './useComposerDrawing'
 
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
@@ -79,50 +80,55 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
     onQuickPhraseSelect,
     workspaceTarget,
   } = props
+  const { openDrawing, drawingDialog } = useComposerDrawing(props.onFileSelect, disabled)
   return (
-    <SharedComposerToolbar
-      {...props}
-      translate={(key, fallback, options) => t(key, fallback ?? key, options)}
-      renderModelSelector={modelProps => <ModelSelector {...modelProps} />}
-      contextUsageIndicator={
-        <ContextUsageIndicator
-          usage={props.contextUsage}
-          disabled={disabled}
-          onCompactContext={props.onCompactContext}
-        />
-      }
-      workspaceMenu={
-        props.showWorkspaceMenu && props.projectWorkMenuContext ? (
-          <PopoutWorkspaceMenu {...props.projectWorkMenuContext} disabled={disabled} />
-        ) : null
-      }
-      renderFeatureMenus={compact => (
-        <>
-          <DshMenuActions disabled={disabled} location="composer.toolbar" />
-          <div className="contents" data-testid="composer-extension-actions">
-            <DshContributionSlotSurface
-              attachedClassName="contents"
-              props={{ compact, disabled, workspaceTarget }}
-              slot={WEWORK_DSH_SLOTS.composerAction}
-            />
-          </div>
-          {showExecutionTools ? (
-            <>
-              <QuickPhraseMenu
-                disabled={disabled}
-                projectPhrases={projectPhrases}
-                onSelect={onQuickPhraseSelect}
+    <>
+      {drawingDialog}
+      <SharedComposerToolbar
+        {...props}
+        onDraw={openDrawing}
+        translate={(key, fallback, options) => t(key, fallback ?? key, options)}
+        renderModelSelector={modelProps => <ModelSelector {...modelProps} />}
+        contextUsageIndicator={
+          <ContextUsageIndicator
+            usage={props.contextUsage}
+            disabled={disabled}
+            onCompactContext={props.onCompactContext}
+          />
+        }
+        workspaceMenu={
+          props.showWorkspaceMenu && props.projectWorkMenuContext ? (
+            <PopoutWorkspaceMenu {...props.projectWorkMenuContext} disabled={disabled} />
+          ) : null
+        }
+        renderFeatureMenus={compact => (
+          <>
+            <DshMenuActions disabled={disabled} location="composer.toolbar" />
+            <div className="contents" data-testid="composer-extension-actions">
+              <DshContributionSlotSurface
+                attachedClassName="contents"
+                props={{ compact, disabled, workspaceTarget }}
+                slot={WEWORK_DSH_SLOTS.composerAction}
               />
-              <PluginPickerMenu
-                disabled={disabled}
-                iconOnly={compact || pluginPickerIconOnly}
-                onListLocalApps={onListLocalApps}
-                onInsertReference={props.onInsertPluginReference}
-              />
-            </>
-          ) : null}
-        </>
-      )}
-    />
+            </div>
+            {showExecutionTools ? (
+              <>
+                <QuickPhraseMenu
+                  disabled={disabled}
+                  projectPhrases={projectPhrases}
+                  onSelect={onQuickPhraseSelect}
+                />
+                <PluginPickerMenu
+                  disabled={disabled}
+                  iconOnly={compact || pluginPickerIconOnly}
+                  onListLocalApps={onListLocalApps}
+                  onInsertReference={props.onInsertPluginReference}
+                />
+              </>
+            ) : null}
+          </>
+        )}
+      />
+    </>
   )
 }

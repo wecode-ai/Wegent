@@ -62,6 +62,7 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { waitForWindowState } from './native-window-state.mjs'
 
 const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
@@ -298,33 +299,53 @@ async function verifyRuntimeTaskNotificationNavigation({
   composerSelector,
   control,
   taskRowTestId,
+  taskAddress,
 }) {
-  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    .workbench?.currentRuntimeTask
   assert.equal(
-    activeTask?.taskId,
+    taskAddress?.taskId,
     taskRowTestId.replace('runtime-local-task-row-', ''),
     'The notification navigation fixture did not expose the expected active task'
   )
-  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+  assert.ok(taskAddress?.deviceId, 'The notification navigation fixture did not expose a device ID')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
+  const tabsBefore = JSON.parse(await control.command('snapshot', 'body'))
+    .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+    .sort()
+  assert.ok(tabsBefore.length > 0, 'The notification fixture has no workspace tabs')
+  await control.command('closeMainWindowToTray', 'body')
+  await waitForWindowState(
+    control,
+    state => !state.visible,
+    'The notification fixture did not hide the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   await control.command('activateRuntimeTaskCompletionNotification', 'body', {
     value: JSON.stringify({
-      deviceId: activeTask.deviceId,
-      taskId: activeTask.taskId,
+      deviceId: taskAddress.deviceId,
+      taskId: taskAddress.taskId,
     }),
   })
+  await waitForWindowState(
+    control,
+    state => state.visible && !state.minimized,
+    'Activating the task notification did not restore the main window',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
 
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       .workbench?.currentRuntimeTask
     if (
-      currentTask?.deviceId === activeTask.deviceId &&
-      currentTask?.taskId === activeTask.taskId
+      currentTask?.deviceId === taskAddress.deviceId &&
+      currentTask?.taskId === taskAddress.taskId
     ) {
+      const tabsAfter = JSON.parse(await control.command('snapshot', 'body'))
+        .testIds.filter(testId => testId.startsWith('workspace-tab-select-'))
+        .sort()
+      assert.deepEqual(tabsAfter, tabsBefore, 'The task notification created a duplicate tab')
       return
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -398,6 +419,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     'runtime-local-task-running-',
     'runtime-local-task-row-'
   )
+  const taskAddress = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .workbench?.currentRuntimeTask
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -527,9 +550,12 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot => snapshot.testIds.includes(unreadTaskTestId),
     'The settled background task did not become unread'
   )
-  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  setPhase('first-turn-task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+    taskAddress,
   })
   await waitForSnapshot(
     control,
@@ -538,7 +564,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
       !snapshot.testIds.includes(unreadTaskTestId) &&
       !snapshot.testIds.includes('thinking-indicator'),
-    'Switching to the completed background task did not show its latest read state',
+    'The first-turn notification did not open the completed task and mark it read',
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
@@ -555,12 +581,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
-  setPhase('task-notification-navigation')
-  await verifyRuntimeTaskNotificationNavigation({
-    composerSelector,
-    control,
-    taskRowTestId,
-  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

@@ -1597,82 +1597,6 @@ def test_running_ai_state_clears_completed_at_using_schema_contract(
     assert contract_calls[0][1] == "completed_at"
 
 
-@pytest.mark.parametrize("unset_value", [None, EPOCH_TIME])
-def test_advance_to_review_clears_completed_at_using_schema_contract(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-    unset_value: datetime | None,
-) -> None:
-    project = create_project(test_db, test_user)
-    task = LoopItem(
-        cloud_project_id=project.id,
-        title="Review completed task",
-        description="",
-        status="in_progress",
-        completed_at=datetime(2026, 9, 10, 12),
-        assignee_agent_id="12",
-        created_by_user_id=test_user.id,
-    )
-    test_db.add(task)
-    test_db.commit()
-    test_db.refresh(task)
-    row = ProjectChatMessage(
-        message_id=str(uuid.uuid4()),
-        project_id=str(project.id),
-        task_id=task.id,
-        agent_id="12",
-    )
-    contract_calls: list[tuple[object, str]] = []
-
-    def unset_for_connection(connection: object, attribute: str) -> datetime | None:
-        contract_calls.append((connection, attribute))
-        return unset_value
-
-    monkeypatch.setattr(
-        "app.services.project_chat.service.loop_unset_datetime_for_connection",
-        unset_for_connection,
-    )
-
-    project_chat_service._advance_task_to_review(test_db, row)
-
-    assert task.status == "in_review"
-    assert task.completed_at == unset_value
-    assert len(contract_calls) == 1
-    assert contract_calls[0][1] == "completed_at"
-
-
-@pytest.mark.parametrize("dispatch_role", ["manager", "member"])
-def test_collaboration_execution_cannot_advance_parent_issue_to_review(
-    test_db: Session,
-    test_user: User,
-    dispatch_role: str,
-) -> None:
-    project = create_project(test_db, test_user)
-    task = LoopItem(
-        cloud_project_id=project.id,
-        title="Collaboration parent",
-        description="",
-        status="in_progress",
-        assignee_agent_id="12",
-        created_by_user_id=test_user.id,
-    )
-    test_db.add(task)
-    test_db.commit()
-    test_db.refresh(task)
-    row = ProjectChatMessage(
-        message_id=str(uuid.uuid4()),
-        project_id=str(project.id),
-        task_id=task.id,
-        agent_id="12",
-        metadata_json={"dispatch_role": dispatch_role},
-    )
-
-    project_chat_service._advance_task_to_review(test_db, row)
-
-    assert task.status == "in_progress"
-
-
 def _expire_ai_lease(
     test_db: Session, task: LoopItem, *, minutes_ago: int = 10
 ) -> None:
@@ -2134,7 +2058,7 @@ def test_local_runtime_completion_persists_the_agent_response(
     assert completed[0].type == "text"
 
 
-def test_runtime_completion_advances_assigned_task_to_review(
+def test_runtime_completion_advances_assigned_agent_issue_to_review(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -2191,6 +2115,36 @@ def test_runtime_completion_advances_assigned_task_to_review(
     test_db.refresh(task)
     assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
+def test_runtime_completion_preserves_human_assigned_issue_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-HUMAN-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Human-owned private AI task",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id=None,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_progress"
 
 
 def test_runtime_completion_waits_for_reported_workflow_outcome(

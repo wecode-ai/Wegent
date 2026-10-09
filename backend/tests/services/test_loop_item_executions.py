@@ -2035,6 +2035,76 @@ def test_stall_scan_keeps_runs_with_text_output(
     assert claimed.status == "running"
 
 
+def test_stall_scan_keeps_runs_when_older_activity_contains_text(
+    test_db: Session, test_user: User
+) -> None:
+    """A later empty status row must not hide earlier assistant progress."""
+
+    from datetime import timedelta
+
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    running = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="cloud-device-1",
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None
+    running.started_at = running.started_at - timedelta(minutes=30)
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    activity.content = "real progress text"
+    test_db.add(
+        ProjectChatMessage(
+            message_id=str(uuid.uuid4()),
+            project_id=activity.project_id,
+            task_id=activity.task_id,
+            sender_type="agent",
+            sender_id=activity.sender_id,
+            sender_name=activity.sender_name,
+            message_type="agent_status",
+            content="",
+            metadata_json={"run_status": "running"},
+            agent_id=activity.agent_id,
+            runtime_device_id=activity.runtime_device_id,
+            runtime_task_id=activity.runtime_task_id,
+            status="streaming",
+        )
+    )
+    test_db.commit()
+
+    stalled = loop_item_execution_service.stall_scan(
+        test_db, text_timeout_seconds=20 * 60
+    )
+
+    assert stalled == []
+    test_db.refresh(claimed)
+    assert claimed.status == "running"
+
+
 def _make_stalled_wegent_execution(
     db: Session, user: User
 ) -> tuple[LoopItemExecution, ProjectChatMessage]:
@@ -2588,6 +2658,7 @@ def test_project_execution_environment_reaches_runtime_request(
         },
     }
     assert payload["origin"]["executionEnvironment"] == {
+        "workspace_policy": "git_worktree",
         "repositories": [
             {
                 "name": "Wegent",
@@ -2765,10 +2836,20 @@ def test_claude_code_project_agent_compiles_executor_payload(
     assert execution_request["preload_skills"] == [{"name": "project-review"}]
 
 
-def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
-    test_db: Session, test_user: User
+@pytest.mark.parametrize("workspace_policy", ["git_worktree", "project"])
+@pytest.mark.parametrize("inherit", [False, True])
+@pytest.mark.parametrize("supplied", [None, "git_worktree", "local_path"])
+def test_project_workspace_policy_does_not_depend_on_robot_concurrency(
+    test_db: Session,
+    test_user: User,
+    workspace_policy: str,
+    inherit: bool,
+    supplied: str | None,
 ) -> None:
     project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "execution_environment": {"workspace_policy": workspace_policy}
+    }
     _ensure_device(test_db, test_user, "local-device", "local")
     code_project = Project(
         user_id=test_user.id,
@@ -2788,7 +2869,6 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
         model="test-model",
         local_project_id=code_project.id,
         max_concurrent_executions=1,
-        workspace_policy="git_worktree",
     )
 
     request = profile.build_runtime_request(
@@ -2804,12 +2884,55 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
             priority="medium",
         ),
         cloud_project_id=str(project.id),
-        origin_context={},
+        origin_context=(
+            {
+                "execution": {"workspace": {"source": "git_worktree"}},
+                "workflow_stage_input": {
+                    "target_stage": {"workspace_policy": "inherit"},
+                    "dependencies": [
+                        {
+                            "runtime_tasks": [
+                                {
+                                    "device_id": "local-device",
+                                    "task_id": "previous-task",
+                                }
+                            ]
+                        }
+                    ],
+                },
+            }
+            if inherit
+            else (
+                {
+                    "execution": {
+                        "workspace": {"source": supplied},
+                        "setup": {"fingerprint": "caller-setup", "steps": []},
+                    }
+                }
+                if supplied
+                else {}
+            )
+        ),
         execution_device_id="local-device",
     )
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
-    assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
+    expected_execution = (
+        {"setup": {"fingerprint": "caller-setup", "steps": []}}
+        if supplied and not inherit
+        else {}
+    )
+    if workspace_policy == "git_worktree" and not inherit:
+        expected_execution["workspace"] = {"source": "git_worktree"}
+    elif supplied == "local_path" and not inherit:
+        expected_execution["workspace"] = {"source": "local_path"}
+    assert payload.get("execution") == (expected_execution or None)
+    if inherit:
+        assert payload["workspaceSourceTask"] == {
+            "deviceId": "local-device",
+            "taskId": "previous-task",
+        }
+        assert payload.get("workspacePath") is None
 
 
 def test_claim_binds_canonical_runtime_identity(
@@ -3162,6 +3285,89 @@ def test_open_execution_activity_never_revives_a_terminal_execution(
         assert persisted_activity.metadata_json["run_status"] == "completed"
     finally:
         verify_session.close()
+
+
+def test_open_execution_activity_does_not_create_late_placeholder_for_completed_issue(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    item.status = "completed"
+    test_db.commit()
+
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert opened is None
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == item.id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .count()
+        == 0
+    )
+
+
+def test_open_execution_activity_does_not_revive_terminal_activity_from_stale_execution(
+    test_db: Session, test_user: User
+) -> None:
+    from app.models.project_chat_message import ProjectChatMessage
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+    )
+    assert claimed is not None
+    opened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+    assert opened is not None
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == opened.message_id)
+        .one()
+    )
+    activity.status = "completed"
+    activity.content = "Finished before stale execution metadata was observed"
+    activity.metadata_json = {**activity.metadata_json, "run_status": "completed"}
+    item.status = "completed"
+    test_db.commit()
+
+    reopened = loop_item_execution_service.open_execution_activity(
+        test_db, execution=claimed
+    )
+
+    assert reopened is not None
+    assert reopened.status == "completed"
+    test_db.refresh(activity)
+    assert activity.status == "completed"
+    assert activity.metadata_json["run_status"] == "completed"
+    assert activity.content == "Finished before stale execution metadata was observed"
 
 
 def test_runtime_event_opens_activity_when_start_report_races_ahead(
@@ -5010,11 +5216,11 @@ def test_runtime_catalog_creates_one_default_per_device(
 
 
 @pytest.mark.asyncio
-async def test_cancel_running_automation_requires_runtime_confirmation(
+async def test_cancel_running_automation_requires_runtime_acceptance(
     test_db: Session,
     test_user: User,
 ) -> None:
-    """A pause must not report success while the Runtime task is still active."""
+    """A pause must not report success when Runtime rejects the control RPC."""
 
     from app.services.project_automations import project_automation_service
 
@@ -5034,7 +5240,7 @@ async def test_cancel_running_automation_requires_runtime_confirmation(
             )
 
     assert error.value.status_code == 502
-    assert error.value.detail == "Runtime did not confirm cancellation"
+    assert error.value.detail == "Runtime did not accept cancellation"
     execution = test_db.get(LoopItemExecution, execution_id)
     assert execution is not None
     test_db.refresh(run)

@@ -105,7 +105,9 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - An explicit click request requires `browser_click` or `browser_click_coordinates`; filling, pressing Enter, page auto-update, JavaScript submission, or a screenshot does not count as a click.
 - Use `browser_take_screenshot` only when the user explicitly requests a screenshot. Use `browser_evaluate` only for read-only diagnostics, never as a substitute for open/fill/click/press actions.
 - On a transient action error, inspect the existing page and retry that action once with a fresh target. Do not reopen a page that is still available.
-- Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
+- Report progress in one short line when each requested subtask starts and finishes (for example "第 2/4 项完成：搜索结果已获取，开始第 3 项"), so the user can follow along and intervene in time. Keep progress lines brief. After all requested actions and any needed final inspect, give one concise result based on the final page.
+- If a page redirects to a login or sign-in page (the URL or page content shows authentication is required), stop all further browser actions immediately. Tell the user the page requires login, ask them to log in inside the Wework built-in browser panel, and wait for their confirmation. Do not continue executing later steps while logged out. After the user confirms they have logged in, resume from the step that failed: reopen the target page, retry that step, and then continue the remaining steps.
+- To upload a local file into a page upload control, use `browser_upload_file` with the absolute local file path; target the file input with a CSS selector, or omit the selector to use the first file input on the page. To clear browser data, use `browser_clear_data` with `kinds` chosen from cookies, cache, storage, and history; omitting `kinds` clears cookies, cache, and storage. Clearing cookies signs the user out of websites, so only clear what the user asked for.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 电脑操控 routing:
@@ -3371,7 +3373,7 @@ struct CodexLaunchConfig {
 }
 
 #[derive(Debug)]
-struct LocalProxyRegistration(String);
+pub(crate) struct LocalProxyRegistration(String);
 
 impl LocalProxyRegistration {
     fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
@@ -3393,6 +3395,55 @@ fn bind_local_proxy_thread(
         registration.bind_thread(thread_id)?;
     }
     Ok(())
+}
+
+/// Registers the local model route that serves a Codex thread and binds it to
+/// that thread.
+///
+/// A Codex thread reaches its model through the local `codex-router` route, and
+/// that route only exists while a turn that registered it is alive. Actions that
+/// drive an existing thread without spawning a turn must establish the route
+/// themselves, otherwise the thread cannot reach any model at all.
+///
+/// Returns `None` when the task talks to its provider directly instead of going
+/// through the local route, and a registration that must stay alive for as long
+/// as the thread needs the model otherwise.
+pub(crate) fn bind_codex_thread_model_route(
+    request: &ExecutionRequest,
+    thread_id: &str,
+) -> Result<Option<LocalProxyRegistration>, String> {
+    // Mirrors the launch-config decision so an existing thread resolves the same
+    // upstream it was started with.
+    let upstream = if use_user_runtime_config(&request.model_config) {
+        configured_codex_provider(
+            &inference_model_provider(&request.model_config),
+            runtime_proxy_url(&request.model_config),
+        )
+    } else {
+        local_model_proxy::upstream_from_model_config(&request.model_config)
+    };
+    let Some(upstream) = upstream else {
+        return Ok(None);
+    };
+    let mut upstream = upstream;
+    upstream.routing_model_id = codex_request_model(request);
+    inject_session_headers(&mut upstream.default_headers, &request.task_id);
+    let vision_sidecar =
+        vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?;
+    let registration = LocalProxyRegistration(local_model_proxy::register_with_vision_sidecar(
+        &request.task_id,
+        upstream,
+        vision_sidecar,
+    ));
+    registration.bind_thread(thread_id)?;
+    log_executor_event(
+        "codex thread model route bound",
+        &[
+            ("task_id", request.task_id.clone()),
+            ("thread_id", thread_id.to_owned()),
+        ],
+    );
+    Ok(Some(registration))
 }
 
 struct PreparedCodexExecutionRequest {

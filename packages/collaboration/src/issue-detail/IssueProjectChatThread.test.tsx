@@ -99,6 +99,11 @@ describe("shared Issue threads", () => {
       card.querySelector(".task-detail-thread-message-header .bg-text-primary"),
     ).not.toBeNull();
     expect(
+      card.querySelector(
+        ".task-detail-thread-message-aside [data-testid='cloud-task-activity-execution-badge-root']",
+      ),
+    ).not.toBeNull();
+    expect(
       card.querySelector(".task-detail-comment-inline-composer"),
     ).not.toBeNull();
     expect(card.querySelector(".task-detail-run-events")).toBeNull();
@@ -117,6 +122,36 @@ describe("shared Issue threads", () => {
         '[data-testid="task-activity-run-execution-badge-root"]',
       )?.textContent,
     ).toContain("已完成");
+  });
+
+  it("keeps execution status and timestamp in the trailing header area", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{ root: message, replies: [] }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+          taskSummaryForMessage={() => ({
+            title: "检查协作任务的工作树配置",
+            stageName: "实现",
+          })}
+        />,
+      ),
+    );
+
+    const header = container.querySelector(
+      ".task-detail-thread-message-header",
+    );
+    expect(
+      header?.querySelector(".task-detail-thread-message-author")?.textContent,
+    ).toBe("Codex");
+    const aside = header?.querySelector(".task-detail-thread-message-aside");
+    expect(aside?.textContent).toContain("已完成");
+    expect(
+      aside?.querySelector(".task-detail-thread-message-time")?.textContent,
+    ).toBe("09-17 08:00");
   });
 
   it("renders a manager assignment as a compact dispatch event", () => {

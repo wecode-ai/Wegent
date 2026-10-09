@@ -353,3 +353,13 @@ impl CursorInt {
         }
     }
 }
+
+/// `int(value)` for a JSON scalar, `None` when the text does not parse.
+pub(super) fn scalar_to_int(value: &JsonScalar) -> Option<i64> {
+    match value {
+        JsonScalar::Bool(value) => Some(i64::from(*value)),
+        JsonScalar::Int(value) => Some(*value),
+        JsonScalar::Float(value) => Some(*value as i64),
+        JsonScalar::Text(value) => value.trim().parse().ok(),
+    }
+}

@@ -44,7 +44,6 @@ export function useProjectRuntimeTaskComposer({
         project,
         deviceWorkspaceId,
         ...(workspaceExecution !== undefined ? { workspaceExecution } : {}),
-        automaticWorkspaceSelection: true,
         workspaceSource,
         ...(taskRequest !== undefined ? { taskRequest } : {}),
         runtime: 'codex',

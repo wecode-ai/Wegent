@@ -11,7 +11,7 @@ import {
   getConversationScrollSnapshot,
   hasConversationScrollSnapshot,
 } from './conversationViewportCache'
-import { getDistanceFromBottom, getDistanceFromTop } from './bottomOriginScroll'
+import { getDistanceFromBottom } from './bottomOriginScroll'
 
 import {
   SCROLLED_TO_BOTTOM_THRESHOLD,
@@ -20,13 +20,14 @@ import {
 } from './scrollableMessageTypes'
 import {
   getInitialDistanceFromBottomPx,
-  getMaximumScrollOffset,
-  createUserViewportAnchor,
-  findUserViewportAnchor,
-  getTextOffsetRect,
   findLatestUserMessageId,
 } from './conversationScrollGeometry'
 import { useConversationScrollController } from './useConversationScrollController'
+import { useReaderViewportAnchor } from './useReaderViewportAnchor'
+import {
+  recordConversationScrollDiagnostic as recordScrollDiagnostic,
+  startConversationDiagnosticCapture,
+} from './conversationDiagnostics'
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
   props: ScrollableMessageAreaProps
 ) {
@@ -427,119 +428,15 @@ function ScrollableMessagePaneContent({
     }
   }, [scrollStateFrameSignature, updateScrollState])
 
-  // Records where the reader is looking, together with the scroll offset that position belongs to.
-  // A transient layout state can leave nothing on screen; that must not erase the position the
-  // reader last chose, so an empty capture is dropped instead of replacing a usable one.
-  const captureUserViewportAnchor = useCallback(() => {
-    const scroller = activeScrollRefRef.current.current
-    const content = contentRef.current
-    if (!scroller || !content) return
-    const anchor = createUserViewportAnchor(scroller, content)
-    if (!anchor) return
-    selfScrollOffsetRef.current = 0
-    userViewportAnchorRef.current = anchor
-  }, [])
-
-  // With overflow-anchor:none, Chromium preserves scrollTop across content and viewport resizing.
-  // Only our own writes and the native range clamp must be excluded from the reader's movement.
-  const readReaderScrollOffsetSinceAnchor = useCallback(
-    (scroller: HTMLElement, maximumOffset: number): number => {
-      const anchor = userViewportAnchorRef.current
-      if (!anchor) return scroller.scrollTop
-      const believedScrollTop = anchor.scrollTopPx + selfScrollOffsetRef.current
-      // A shrinking layout also removes offsets the sample used to have: the clamp is the layout's
-      // own doing exactly like the height change, so the belief is moved with it rather than counted
-      // as the reader's scrolling, which would make the next correction ask for an offset that does
-      // not exist.
-      const clampedScrollTop = bottomOrigin
-        ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
-        : Math.min(maximumOffset, Math.max(0, believedScrollTop))
-      selfScrollOffsetRef.current += clampedScrollTop - believedScrollTop
-      return scroller.scrollTop - clampedScrollTop
-    },
-    [bottomOrigin]
-  )
-
-  /**
-   * Puts the text the reader is looking at back where it belongs after a layout change.
-   *
-   * The browser's own scroll anchoring is switched off for this scroller (`[overflow-anchor:none]`),
-   * so the only things that can move the reader are their own scrolling and the layout change that
-   * just happened. That makes the correction measurable without assuming anything about how the
-   * browser reacts to content height changes:
-   *
-   *   correction = ΔanchorOffset + ΔreaderScrollTop
-   *
-   * `ΔanchorOffset` is how far the sampled text moved on screen; the second term is how far the reader
-   * scrolled, as read back by `readReaderScrollOffsetSinceAnchor`. A pure reader scroll moves the text
-   * by exactly the negative of their scrolling, so it cancels to zero and their scrolling is never
-   * taken back; whatever is left is the layout change's own effect, and writing it back is what keeps
-   * a reflow, a re-measured row above the viewport, and a streaming response growing underneath from
-   * dragging the text away — all cases the browser used to handle for us with a rule that turned out
-   * to depend on where the content changed.
-   *
-   * Both signs work out because moving `scrollTop` by `x` moves the text by `-x` in every scroll
-   * origin the chat list is rendered with.
-   */
-  const restoreReaderPositionFromLayout = useCallback(() => {
-    const scroller = activeScrollRefRef.current.current
-    const content = contentRef.current
-    const anchor = userViewportAnchorRef.current
-    if (!scroller || !content || !anchor) {
-      return
-    }
-
-    const anchorElement = findUserViewportAnchor(content, anchor)
-    if (!anchorElement) {
-      // Nothing on screen from the last sample can be measured, so this layout change cannot be
-      // attributed. Re-sample instead of guessing.
-      captureUserViewportAnchor()
-      return
-    }
-    const anchorRect =
-      anchor.textOffset === null
-        ? anchorElement.getBoundingClientRect()
-        : (getTextOffsetRect(anchorElement, anchor.textOffset) ??
-          anchorElement.getBoundingClientRect())
-
-    const anchorOffset = anchorRect.top - scroller.getBoundingClientRect().top
-    const readerScrollTop = readReaderScrollOffsetSinceAnchor(
-      scroller,
-      getMaximumScrollOffset(scroller)
-    )
-    const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
-    const layout = `${Math.round(getMaximumScrollOffset(scroller))}:${scroller.clientWidth}:${scroller.clientHeight}`
-    // A layout this rule has not measured yet counts as still moving: the first frame of a re-layout is
-    // exactly the one that used to hand the reader a position taken in the middle of it.
-    const layoutChanged = lastMeasuredLayoutRef.current !== layout
-    lastMeasuredLayoutRef.current = layout
-    if (Math.abs(correction) < 1) {
-      // The sampled text is already back where it was, so the sample describes the settled layout — but
-      // only once that layout has stopped moving. A pane re-laid out beside the conversation re-wraps its
-      // messages over several frames, and replacing the sample between two of them would read the shift
-      // that is still coming as the position the reader chose.
-      if (!layoutChanged) {
-        captureUserViewportAnchor()
-      }
-      return
-    }
-    const previousScrollTop = scroller.scrollTop
-    scroller.scrollTop = previousScrollTop + correction
-    const appliedScrollTop = scroller.scrollTop - previousScrollTop
-    // The browser clamps a write whose offset has no range yet: a transient layout (a row measured
-    // before the scroller's own range caught up) cannot put the text back, so this sample still owns
-    // the reader's position. Counting the write we did apply keeps the reader's own scrolling
-    // separable, and keeping the sample lets the next layout change finish the correction instead of
-    // adopting the clamped position as the one the reader chose.
-    selfScrollOffsetRef.current += appliedScrollTop
-    lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-    if (Math.abs(appliedScrollTop - correction) < 1 && !layoutChanged) {
-      // The reader is settled again where this sample was taken, so the next layout change has to
-      // measure from here rather than from a baseline that already includes this correction.
-      captureUserViewportAnchor()
-    }
-  }, [bottomOrigin, captureUserViewportAnchor, readReaderScrollOffsetSinceAnchor])
-
+  const { captureUserViewportAnchor, restoreReaderPositionFromLayout } = useReaderViewportAnchor({
+    activeScrollRefRef,
+    contentRef,
+    userViewportAnchorRef,
+    selfScrollOffsetRef,
+    lastMeasuredLayoutRef,
+    lastScrollPositionRef,
+    bottomOrigin,
+  })
   /**
    * Puts the text back where the reader left it whenever the offset has moved since the sample for a
    * reason of the layout's own, and leaves everything alone while another part of the scroll owner is
@@ -561,6 +458,12 @@ function ScrollableMessagePaneContent({
       virtualInitialPositionOwnerRef.current = null
       return
     }
+    recordScrollDiagnostic('layout-change', activeScrollRefRef.current.current, {
+      bottomOrigin,
+      paused: userScrollPausedAutoFollowRef.current,
+      hasAnchor: userViewportAnchorRef.current !== null,
+      streaming: streamingFollowActive,
+    })
     if (restorePendingLayoutScrollPosition()) {
       return
     }
@@ -614,6 +517,7 @@ function ScrollableMessagePaneContent({
     }
   }, [
     autoScrollSuspended,
+    bottomOrigin,
     currentScrollKey,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
@@ -673,6 +577,11 @@ function ScrollableMessagePaneContent({
       restoredScrollSnapshotRef.current = null
 
       const nativeEvent = event && 'nativeEvent' in event ? event.nativeEvent : event
+      startConversationDiagnosticCapture()
+      recordScrollDiagnostic('scroll-input', activeScrollRefRef.current.current, {
+        deltaY: nativeEvent && 'deltaY' in nativeEvent ? Number(nativeEvent.deltaY) : null,
+        paused: userScrollPausedAutoFollowRef.current,
+      })
       if (nativeEvent && 'deltaY' in nativeEvent && Number(nativeEvent.deltaY) < 0) {
         clearScheduledScrolls()
         explicitBottomFollowRef.current = false
@@ -700,6 +609,11 @@ function ScrollableMessagePaneContent({
     }
 
     const userInitiated = userScrollIntentRef.current
+    recordScrollDiagnostic('scroll-position', activeScrollRefRef.current.current, {
+      scrolling: userInitiated,
+      bottomOrigin,
+      paused: userScrollPausedAutoFollowRef.current,
+    })
     userScrollIntentRef.current = false
     if (userInitiated) {
       preserveLatestUserTurnRef.current = false
@@ -921,7 +835,12 @@ function ScrollableMessagePaneContent({
                   const customGap = renderGapAfterMessage?.(message, nextMessage)
                   if (!transcriptGap) return customGap
                   if (!customGap) return transcriptGap
-                  return <>{transcriptGap}{customGap}</>
+                  return (
+                    <>
+                      {transcriptGap}
+                      {customGap}
+                    </>
+                  )
                 }}
               />
               {contentFooter ? (
