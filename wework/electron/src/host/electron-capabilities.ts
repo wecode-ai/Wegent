@@ -1287,6 +1287,7 @@ function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRe
     taskContext: request.taskContext ?? null,
     screenshotDataUrl: nullableStringValue(request.screenshotDataUrl, 'request.screenshotDataUrl'),
     composerDiagnostics: request.composerDiagnostics ?? null,
+    conversationDiagnostics: request.conversationDiagnostics ?? null,
     attachments: attachments.map((attachment, index) => {
       const record = objectValue(attachment, `request.attachments[${index}]`)
       return {
