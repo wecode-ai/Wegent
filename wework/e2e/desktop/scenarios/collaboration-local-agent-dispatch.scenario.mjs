@@ -436,6 +436,11 @@ export async function createDesktopScenario({
         }
       )
       assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
+        0,
+        'Opening the full Issue execution left the inline conversation mounted'
+      )
+      assert.equal(
         Number(
           await control.command(
             'getElementCount',

@@ -198,6 +198,12 @@ export function AiChatModal({
         : currentAddress,
     [currentAddress, project.id, project.project_store, issueId]
   )
+  const openRuntimeTask = useCallback(async () => {
+    const address = conversationAddress ?? initialAddress
+    if (!onOpenRuntimeTask || !address) return
+    await onOpenRuntimeTask(address)
+    onClose()
+  }, [conversationAddress, initialAddress, onClose, onOpenRuntimeTask])
   const notifiedInitialAddressRef = useRef(hasInitialAddress)
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
@@ -364,11 +370,7 @@ export function AiChatModal({
           onClose={onClose}
           onBack={onBack}
           translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
-          onOpenTask={
-            onOpenRuntimeTask
-              ? () => onOpenRuntimeTask(conversationAddress ?? initialAddress)
-              : undefined
-          }
+          onOpenTask={onOpenRuntimeTask ? openRuntimeTask : undefined}
         >
           <TemporaryChatPanel
             key={`${initialAddress.deviceId}:${initialAddress.taskId}`}
@@ -463,7 +465,7 @@ export function AiChatModal({
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
-                  onClick={() => void onOpenRuntimeTask(conversationAddress ?? initialAddress)}
+                  onClick={() => void openRuntimeTask()}
                   className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary transition hover:bg-muted"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
