@@ -94,6 +94,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
+import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   projectSpaceForRuntimeTask,
@@ -619,11 +620,13 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const environmentTaskRequest = projectExecutionEnvironmentTaskRequest(project)
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         taskRequest: {
+          ...environmentTaskRequest,
           runtime: 'codex',
           message: '',
           ...(dispatch
@@ -646,7 +649,7 @@ export function WeworkSharedProject({
       })
       projectHost.navigate({ ...projectHost.location, issueId: issue.id })
     },
-    [project.id, projectHost, runtimePort]
+    [project, projectHost, runtimePort]
   )
 
   useIssueDispatchNotificationActionRegistration(

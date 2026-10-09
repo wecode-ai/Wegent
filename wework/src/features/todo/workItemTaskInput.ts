@@ -20,7 +20,8 @@ export function workItemStartedUpdate(
   item: { status: string; tags?: string[] | null; version: number },
   associatedTags: string[]
 ): { version: number; status?: 'in_progress'; tags?: string[] } | null {
-  const shouldStartIssue = item.status === 'inbox' || item.status === 'pending'
+  const shouldStartIssue =
+    item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review'
   const currentTags = item.tags ?? []
   const associationChanged =
     associatedTags.length !== currentTags.length ||

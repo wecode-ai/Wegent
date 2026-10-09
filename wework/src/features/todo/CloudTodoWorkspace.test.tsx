@@ -408,10 +408,13 @@ describe('workItemTaskInput', () => {
     )
   })
 
-  it('does not advance a reviewed Issue when a personal task reports completion', () => {
+  it('returns a reviewed Issue to progress when a new personal task starts', () => {
     expect(
       workItemStartedUpdate({ status: 'in_review', tags: [], version: 4 } as never, [])
-    ).toBeNull()
+    ).toEqual({
+      version: 4,
+      status: 'in_progress',
+    })
   })
 })
 
