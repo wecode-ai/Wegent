@@ -239,7 +239,7 @@ describe('DesktopSidebar', () => {
         theme === 'light'
           ? sidebarStyles.split("[data-theme='dark']")[0]
           : sidebarStyles.split("[data-theme='dark']")[1]
-      expect(themeStyles).toContain('--color-sidebar-attention-bg: var(--color-primary);')
+      expect(themeStyles).toContain('--color-sidebar-attention: var(--color-primary);')
       const luminance = (rgb: string) => {
         const channels = rgb.split(' ').map(value => {
           const channel = Number(value) / 255
@@ -256,24 +256,49 @@ describe('DesktopSidebar', () => {
         'class',
       ].map(name => [name, root.getAttribute(name)] as const)
       try {
-        for (const [accentColor, expectedBackground, expectedForeground] of [
-          [defaultAppearance.accentColor, '37 99 235', '255 255 255'],
-          ['#123456', '18 52 86', '255 255 255'],
-          ['#facc15', '250 204 21', '0 0 0'],
-          ['#808080', '128 128 128', '0 0 0'],
-          ['#000000', '0 0 0', '255 255 255'],
-          ['#ffffff', '255 255 255', '0 0 0'],
-          ['#fff', '255 255 255', '0 0 0'],
-          [defaultAppearance.accentColor, '37 99 235', '255 255 255'],
+        for (const [accentColor, expectedAccent] of [
+          [defaultAppearance.accentColor, '37 99 235'],
+          ['#123456', '18 52 86'],
+          ['#facc15', '250 204 21'],
+          ['#808080', '128 128 128'],
+          ['#000000', '0 0 0'],
+          ['#ffffff', '255 255 255'],
+          ['#fff', '255 255 255'],
+          [defaultAppearance.accentColor, '37 99 235'],
         ]) {
           applyAppearance({ ...defaultAppearance, accentColor }, theme)
-          expect(root.style.getPropertyValue('--color-primary')).toBe(expectedBackground)
-          expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedForeground)
+          expect(root.style.getPropertyValue('--color-primary')).toBe(expectedAccent)
+          if (theme === 'light' && accentColor === defaultAppearance.accentColor) {
+            expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedAccent)
+          }
           const foreground = luminance(root.style.getPropertyValue('--color-sidebar-attention'))
-          const background = luminance(root.style.getPropertyValue('--color-primary'))
-          const contrast =
-            (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
-          expect(contrast).toBeGreaterThanOrEqual(3)
+          const composite = (color: string, backdrop: number[]) => {
+            const [rgb, opacity = '1'] = color.split('/')
+            return rgb
+              .trim()
+              .split(/\s+/)
+              .map(
+                (value, index) =>
+                  Number(value) * Number(opacity) + backdrop[index] * (1 - Number(opacity))
+              )
+          }
+          const canvas = composite(root.style.getPropertyValue('--color-bg-base'), [0, 0, 0])
+          const sidebar = composite(root.style.getPropertyValue('--color-sidebar'), canvas)
+          for (const surface of [
+            sidebar,
+            composite(root.style.getPropertyValue('--color-sidebar-hover'), sidebar),
+            composite(root.style.getPropertyValue('--color-sidebar-active'), sidebar),
+          ]) {
+            const background = luminance(
+              expectedAccent
+                .split(' ')
+                .map((value, index) => Number(value) * 0.1 + surface[index] * 0.9)
+                .join(' ')
+            )
+            const contrast =
+              (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
+            expect(contrast).toBeGreaterThanOrEqual(3)
+          }
         }
       } finally {
         for (const [name, value] of originalAttributes) {
@@ -1166,8 +1191,8 @@ describe('DesktopSidebar', () => {
     expect(waitingStatus).toHaveClass(
       'h-6',
       'w-6',
-      'rounded-lg',
-      'bg-[rgb(var(--color-sidebar-attention-bg))]',
+      'rounded-full',
+      'bg-primary/10',
       'text-[rgb(var(--color-sidebar-attention))]'
     )
     expect(waitingStatus.querySelector('svg')).toHaveClass('lucide-bell', 'h-4', 'w-4')
@@ -3793,8 +3818,8 @@ describe('DesktopSidebar', () => {
     expect(waitingStatus).toHaveClass(
       'h-6',
       'w-6',
-      'rounded-lg',
-      'bg-[rgb(var(--color-sidebar-attention-bg))]',
+      'rounded-full',
+      'bg-primary/10',
       'text-[rgb(var(--color-sidebar-attention))]'
     )
     expect(waitingStatus.querySelector('svg')).toHaveClass('h-4', 'w-4')

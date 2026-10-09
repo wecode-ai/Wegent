@@ -1960,7 +1960,7 @@ function RuntimeTaskRow({
                       data-testid={`runtime-local-task-waiting-${task.taskId}`}
                       role="status"
                       aria-label={t('workbench.priority_filter_waiting')}
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--color-sidebar-attention-bg))] text-[rgb(var(--color-sidebar-attention))]"
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[rgb(var(--color-sidebar-attention))]"
                     >
                       <Bell className="h-4 w-4" aria-hidden="true" />
                     </span>
