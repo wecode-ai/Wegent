@@ -72,7 +72,9 @@ export async function uninstallInUi(control, fixture) {
 }
 
 export async function assertInstallButton(control, fixture, timeoutMs = 10_000) {
-  const selector = testId(`plugin-marketplace-install-${fixture.pluginId}`)
+  // The pending status span intentionally shares this test ID. Wait for the
+  // actual actionable button, not just the disappearance of the installed row.
+  const selector = `button${testId(`plugin-marketplace-install-${fixture.pluginId}`)}:not(:disabled)`
   await control.command('waitFor', selector, { enabled: true, timeoutMs })
   assert.match((await control.command('getText', selector)).trim(), /^(Install|安装)$/)
 }

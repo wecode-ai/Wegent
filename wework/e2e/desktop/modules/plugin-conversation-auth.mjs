@@ -28,16 +28,17 @@ export async function verifyConversationQrAuthorization({
     })
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-    let draft = `${qrPrompt} ${mode}`
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${qrPrompt} ${mode}` })
     if (mode === 'preflight') {
       await control.command('click', '[data-testid="composer-plugin-picker-button"]')
       await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
         value: slug,
       })
       await control.command('click', `[data-testid="composer-plugin-picker-item-plugin:${slug}"]`)
-      draft = `${await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)} ${draft}`
+      // getValue returns display labels, not serialized references. Preserve
+      // the real picker chip instead of filling its plain-text label back in.
+      await control.command('waitFor', testId('composer-plugin-chip-' + slug))
     }
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: draft })
     const pendingDraft = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', '[data-testid="connector-auth-qr"]')
@@ -110,11 +111,12 @@ export async function verifyConversationQrAuthorization({
   }
   const beginPreflight = async () => {
     await control.command('click', testId('new-chat-button'))
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: qrPrompt })
     await control.command('click', testId('composer-plugin-picker-button'))
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
     await control.command('click', testId('composer-plugin-picker-item-plugin:' + slug))
-    const mention = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: mention + ' ' + qrPrompt })
+    await control.command('waitFor', testId('composer-plugin-chip-' + slug))
     const draft = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
     return draft

@@ -3538,7 +3538,26 @@ describe('WorkbenchProvider runtime tasks', () => {
       },
       status: { state: 'enabled' },
     }
-    writePluginInventory(cacheKey, 'local-device', { installedPlugins: [plugin] })
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [plugin],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+        )
+          return { data: [], nextCursor: null }
+        return {}
+      }
+    )
     renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
       status: 'connected',
       isConnected: true,
@@ -3604,6 +3623,47 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
     )
     expect(getComposerApps()).toEqual([])
+    expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
+  })
+
+  test('reads a new disk import even when shared membership was recently refreshed', async () => {
+    setElectronRuntime()
+    const cacheKey = pluginMarketplaceCacheKey('', '')
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [],
+      installedPluginsFetchedAt: Date.now(),
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+        if (method === 'executor.plugins.personal.list')
+          return {
+            marketplacePath: '/personal',
+            plugins: [{ name: 'new-import', pluginPath: '/personal/plugins/new-import' }],
+          }
+        if (method === 'executor.codex_home.config.read')
+          return { enabledPluginKeys: ['new-import@wework-personal'] }
+        if (method === 'executor.plugins.links.list') return []
+        if (
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+        )
+          return new Promise(() => {})
+        return {}
+      }
+    )
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'loaded:plugin:new-import'
+      )
+    )
+    expect(getComposerApps().map(app => app.id)).toEqual(['plugin:new-import'])
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.codex_home.config.read'
+    )
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
@@ -3983,7 +4043,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginInstalledRequestCount()).toBe(1)
   })
 
-  test('projects a pending shared plugin load into the current project after switching projects', async () => {
+  test('loads missing project packages despite fresh membership and projects them after switching', async () => {
+    writePluginInventory(pluginMarketplaceCacheKey('', ''), 'local-device', {
+      installedPlugins: [],
+      installedPluginsFetchedAt: Date.now(),
+    })
     const alphaLoad = deferred<{ marketplaces: unknown[] }>()
     const appsLoad = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
     const installedMarketplace = {
@@ -4009,6 +4073,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }

@@ -53,6 +53,7 @@ describe('installed-only management refresh', () => {
         sourcePayload: {
           codexInstallationReceipt: {
             awaitingMembership: true,
+            acceptedAt: Date.now(),
             authPolicy: 'ON_USE',
             appsNeedingAuth: [],
           },

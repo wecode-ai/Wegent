@@ -851,7 +851,21 @@ async function openOfficialPluginChat(control, installSelector) {
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
-  const trialDraft = await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)
+  const pluginChipSelector = `[data-testid="composer-plugin-chip-${OFFICIAL_PLUGIN_NAME}"]`
+  await control.command('waitFor', pluginChipSelector)
+  const trialReference = await control.command('getAttribute', pluginChipSelector, {
+    value: 'data-composer-skill-reference',
+  })
+  const trialLabel = await control.command('getAttribute', pluginChipSelector, {
+    value: 'data-composer-skill-label',
+  })
+  // Display text is not a round-trippable composer document. Keep the real
+  // reference when restoring the detail page's suggested prompt.
+  assert.ok(trialReference && trialLabel)
+  const trialDraft = (await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)).replace(
+    trialLabel,
+    trialReference
+  )
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
   await openComposerPluginPicker(control)
   await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
@@ -860,10 +874,13 @@ async function openOfficialPluginChat(control, installSelector) {
   const pickerItem = `[data-testid="composer-plugin-picker-item-plugin:${OFFICIAL_PLUGIN_NAME}"]`
   await control.command('waitFor', pickerItem)
   await control.command('click', pickerItem)
+  await control.command('waitFor', pluginChipSelector)
   assert.ok(
-    (await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)).includes(
-      `plugin://${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`
-    ),
+    (
+      await control.command('getAttribute', pluginChipSelector, {
+        value: 'data-composer-skill-reference',
+      })
+    ).includes(`plugin://${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`),
     'The installed plugin picker did not insert its native package reference'
   )
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: trialDraft })

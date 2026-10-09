@@ -2350,22 +2350,25 @@ export function WorkbenchProvider({
         const hasFreshInventory =
           !options?.supersedeInstalledRequest &&
           cached?.deviceId === deviceId &&
-          cached.fetchedAt + LOCAL_SKILLS_CACHE_TTL_MS > Date.now()
+          (cached.installedPluginsFetchedAt ?? 0) + LOCAL_SKILLS_CACHE_TTL_MS > Date.now() &&
+          [...(projectPluginNamesRef.current ?? [])].every(name =>
+            cached.installedPlugins.some(plugin => plugin.spec.source.pluginKey === name)
+          )
         const cloudInstalled =
           !hasFreshInventory && cloudConnection.isConnected
             ? cloudPluginApi.listInstalledPlugins(deviceId).then(response => response.items)
             : Promise.resolve([] as InstalledPlugin[])
-        const snapshot = hasFreshInventory
-          ? cached
-          : await loadPluginInventory({
-              cacheKey,
-              deviceId,
-              readLocalInstalledPlugins: listLocalInstalledPluginsFromDisk,
-              listCloudInstalledPlugins: () => cloudInstalled,
-              isCurrent,
-              partial: true,
-              cloudMembershipAuthoritative: cloudConnection.isConnected,
-            })
+        // Disk membership is cheap and can change outside this renderer (ZIP
+        // import, CLI, restart). Presentation freshness never replaces this read.
+        const snapshot = await loadPluginInventory({
+          cacheKey,
+          deviceId,
+          readLocalInstalledPlugins: listLocalInstalledPluginsFromDisk,
+          listCloudInstalledPlugins: () => cloudInstalled,
+          isCurrent,
+          partial: true,
+          cloudMembershipAuthoritative: cloudConnection.isConnected,
+        })
         if (!snapshot || !isCurrent()) return []
         const apps = projectSnapshot(snapshot)
 
@@ -2408,6 +2411,7 @@ export function WorkbenchProvider({
                 if (!current || current.deviceId !== deviceId) return
                 if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
                 writePluginInventory(cacheKey, deviceId, {
+                  installedPluginsFetchedAt: Date.now(),
                   installedPlugins: mergeInstalledPlugins(
                     cloud,
                     local.items,
