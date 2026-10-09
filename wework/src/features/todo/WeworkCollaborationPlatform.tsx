@@ -314,6 +314,7 @@ export function WeworkSharedProject({
     humanWorkBinding?: NonNullable<CollaborationIssue['human_work']>['ai_task_binding']
   } | null>(null)
   const latestProjectRef = useRef(project)
+  const previousProjectPropRef = useRef(project)
   const taskComposerSequenceRef = useRef(0)
   const acceptedDispatchTaskActions = useRef(new Set<string>())
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
@@ -334,7 +335,17 @@ export function WeworkSharedProject({
     runtimeTaskLifecycleRef.current = runtimeTaskLifecycle
   }, [runtimeTaskLifecycle])
   useEffect(() => {
-    latestProjectRef.current = project
+    const previousProject = previousProjectPropRef.current
+    previousProjectPropRef.current = project
+    // Navigation can recreate an older host snapshot after settings are saved.
+    if (
+      String(project.id) !== String(previousProject.id) ||
+      project.project_store !== previousProject.project_store ||
+      JSON.stringify(project.execution_environment) !==
+        JSON.stringify(previousProject.execution_environment)
+    ) {
+      latestProjectRef.current = project
+    }
   }, [project])
   const hasFullWorkspaceAccess = 'access_role' in workspace
   const scopedApi = useMemo<SharedWorkspaceApi>(

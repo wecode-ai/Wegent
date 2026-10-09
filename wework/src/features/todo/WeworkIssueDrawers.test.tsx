@@ -88,6 +88,17 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
         Open Issue
       </button>
       <button
+        data-testid="save-execution-environment"
+        onClick={async () => {
+          const initialProject = props.initialProject
+          if (!initialProject) throw new Error('The fixture requires an initial project')
+          const updatedProject = await props.api.projects.get(String(initialProject.id))
+          props.onProjectChange?.({ ...initialProject, ...updatedProject })
+        }}
+      >
+        Save execution environment
+      </button>
+      <button
         data-testid="create-issue-without-environment"
         onClick={() => {
           props.host.notify?.('请先完成项目执行环境初始化，再创建 Issue。', 'error')
@@ -437,6 +448,7 @@ describe('Wework Issue conversation drawers', () => {
       },
     }
 
+    await userEvent.click(screen.getByText('Save execution environment'))
     await userEvent.click(screen.getByText('Open Issue'))
     await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
 
@@ -525,6 +537,7 @@ describe('Wework Issue conversation drawers', () => {
       />
     )
     const user = userEvent.setup()
+    await user.click(screen.getByText('Save execution environment'))
     await user.click(screen.getByText('Open Issue'))
     await user.click(screen.getByRole('button', { name: 'Add task' }))
 
