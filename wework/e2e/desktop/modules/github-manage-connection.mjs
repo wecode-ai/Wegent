@@ -49,7 +49,6 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
   assert.equal(loggedOut.status, 'ok', 'Empty CLI logout must be idempotent')
   assert.equal(loggedOut.connected, false, 'Empty CLI configuration must remain disconnected')
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', '[data-testid="plugins-search-input"]')
   await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
   await control.command('fill', '[data-testid="plugins-search-input"]', {
@@ -92,8 +91,10 @@ export async function verifyGithubManageConnectionConsent(control, previousSlug,
     await control.command('waitFor', '[data-testid="plugin-detail-action-error"]')
   }
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  await control.command('waitFor', '[data-testid="plugins-search-input"]')
   await control.command('click', '[data-testid="plugins-distribution-tab-all"]')
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: previousSlug })
+  await control.command('waitFor', `[data-testid="plugin-marketplace-row-${previousId}"]`)
   await control.command('click', `[data-testid="plugin-marketplace-row-${previousId}"]`)
   await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
 }
