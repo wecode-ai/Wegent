@@ -714,9 +714,11 @@ export function WeworkSharedProject({
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
-      const latestBinding = (await scopedApi.taskBindings.list(issue.id, String(project.id))).find(
-        binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
-      )
+      const latestBinding = scopedApi.taskBindings
+        ? (await scopedApi.taskBindings.list(issue.id, String(project.id))).find(
+            binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
+          )
+        : undefined
       const resolvedAddress = latestBinding
         ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id)
         : {
