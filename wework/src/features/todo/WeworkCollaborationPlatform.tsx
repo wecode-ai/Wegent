@@ -94,8 +94,11 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
-import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
+import {
+  loadProjectSpaceCodeWorkspacePreference,
+  saveProjectSpaceCodeWorkspacePreference,
+} from './projectSpaceCodeWorkspacePreference'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
@@ -689,13 +692,12 @@ export function WeworkSharedProject({
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
       const currentProject = latestProjectRef.current
-      const environmentTaskRequest = projectExecutionEnvironmentTaskRequest(currentProject)
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         taskRequest: {
-          ...environmentTaskRequest,
+          schemaVersion: 2,
           runtime: 'codex',
           message: '',
           ...(dispatch
@@ -786,6 +788,19 @@ export function WeworkSharedProject({
     }
   )
 
+  const codeWorkspacePreference = loadProjectSpaceCodeWorkspacePreference(userId, {
+    projectStore: project.project_store,
+    projectId: String(project.id),
+  })
+  const issueLocalProjectId = taskComposer
+    ? (loopItemLocalProject(taskComposer.issue as unknown as CloudLoopItem)?.id ?? null)
+    : null
+  const initialLocalProjectId =
+    issueLocalProjectId ?? codeWorkspacePreference?.localProjectId ?? null
+  const initialDeviceWorkspaceId =
+    initialLocalProjectId === codeWorkspacePreference?.localProjectId
+      ? (codeWorkspacePreference?.deviceWorkspaceId ?? null)
+      : null
   const conversationPanel =
     taskComposer && runtimePort ? (
       <AiChatModal
@@ -793,9 +808,8 @@ export function WeworkSharedProject({
         project={project as unknown as CloudProject}
         localProjects={localProjects}
         task={taskComposer.issue as unknown as CloudLoopItem}
-        initialLocalProjectId={
-          loopItemLocalProject(taskComposer.issue as unknown as CloudLoopItem)?.id ?? null
-        }
+        initialLocalProjectId={initialLocalProjectId}
+        initialDeviceWorkspaceId={initialDeviceWorkspaceId}
         initialTaskRequest={taskComposer.taskRequest}
         taskTitle={taskComposer.dispatch?.taskTitle}
         open
@@ -847,7 +861,20 @@ export function WeworkSharedProject({
             })
           }
         }}
-        onTaskCreated={async address => {
+        onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
+          if (localProject) {
+            saveProjectSpaceCodeWorkspacePreference(
+              userId,
+              {
+                projectStore: project.project_store,
+                projectId: String(project.id),
+              },
+              {
+                localProjectId: localProject.id,
+                deviceWorkspaceId,
+              }
+            )
+          }
           const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
             scopedApi.issues,
             taskComposer.issue.id

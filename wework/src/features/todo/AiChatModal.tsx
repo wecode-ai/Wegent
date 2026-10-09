@@ -39,6 +39,7 @@ interface AiChatModalProps {
   onBack?: () => void
   initialAddress?: RuntimeTaskAddress | null
   initialLocalProjectId?: number | null
+  initialDeviceWorkspaceId?: number | null
   initialTaskRequest?: RuntimeTaskCreateRequest | null
   inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
@@ -47,7 +48,8 @@ interface AiChatModalProps {
   onAddressChange?: (address: RuntimeTaskAddress) => void
   onTaskCreated?: (
     address: RuntimeTaskAddress,
-    localProject: ProjectWithTasks | null
+    localProject: ProjectWithTasks | null,
+    deviceWorkspaceId: number | null
   ) => Promise<void> | void
   prepareTask?: (
     address: RuntimeTaskAddress,
@@ -61,6 +63,10 @@ interface AutomaticIssueTaskComposerProps {
   project: ProjectWithTasks | null
   deviceWorkspaceId: number | null
   projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']
+  selectedExecutionMode?: ProjectExecutionMode
+  selectedWorktreeBranch: string | null
+  onExecutionModeChange: (mode: ProjectExecutionMode) => void
+  onWorktreeBranchChange: (branch: string | null) => void
   inheritFromTask: RuntimeTaskAddress | null
   taskRequest: RuntimeTaskCreateRequest | null
   runtimeContext: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
@@ -72,8 +78,10 @@ interface AutomaticIssueTaskComposerProps {
   >
 }
 
-const isolatedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] = {
-  workspace: { source: 'git_worktree' },
+interface IssueTaskWorkspaceSelection {
+  projectId: number | null
+  executionMode: ProjectExecutionMode
+  worktreeBranch: string | null
 }
 
 function AutomaticIssueTaskComposer({
@@ -81,6 +89,10 @@ function AutomaticIssueTaskComposer({
   workspacePolicy,
   deviceWorkspaceId,
   projectWork,
+  selectedExecutionMode,
+  selectedWorktreeBranch,
+  onExecutionModeChange,
+  onWorktreeBranchChange,
   inheritFromTask,
   taskRequest,
   runtimeContext,
@@ -88,24 +100,41 @@ function AutomaticIssueTaskComposer({
   onTaskCreated,
   panelProps,
 }: AutomaticIssueTaskComposerProps) {
+  const taskRequestWorkspace = taskRequest?.execution?.workspace
+  const executionModeLocked = Boolean(inheritFromTask || taskRequestWorkspace)
   const executionMode: ProjectExecutionMode = inheritFromTask
     ? 'current_workspace'
-    : taskRequest
-      ? taskRequest.execution?.workspace?.source === 'git_worktree'
+    : taskRequestWorkspace
+      ? taskRequestWorkspace.source === 'git_worktree'
         ? 'git_worktree'
         : 'current_workspace'
-      : collaborationExecutionMode(project, workspacePolicy, projectWork?.worktreeAvailability)
+      : selectedExecutionMode
+        ? selectedExecutionMode
+        : collaborationExecutionMode(project, workspacePolicy, projectWork?.worktreeAvailability)
+  const worktreeBranch = taskRequestWorkspace?.branch ?? selectedWorktreeBranch
+  const selectedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] | undefined =
+    executionMode === 'git_worktree'
+      ? {
+          workspace: {
+            source: 'git_worktree',
+            ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
+          },
+        }
+      : undefined
+  const resolvedTaskRequest =
+    taskRequest && !taskRequestWorkspace
+      ? {
+          ...taskRequest,
+          execution: selectedWorkspaceExecution,
+        }
+      : taskRequest
   const createConversation = useProjectRuntimeTaskComposer({
     project,
     deviceWorkspaceId,
     workspaceExecution:
-      inheritFromTask || taskRequest
-        ? undefined
-        : executionMode === 'git_worktree'
-          ? isolatedWorkspaceExecution
-          : null,
+      inheritFromTask || taskRequest ? undefined : (selectedWorkspaceExecution ?? null),
     workspaceSource: inheritFromTask,
-    taskRequest,
+    taskRequest: resolvedTaskRequest,
     runtimeContext,
     prepareTask,
     onTaskCreated,
@@ -121,7 +150,13 @@ function AutomaticIssueTaskComposer({
           ? {
               ...projectWork,
               executionMode,
-              executionModeLocked: true,
+              executionModeLocked,
+              worktreeBranch,
+              onExecutionModeChange,
+              onWorktreeBranchChange: branch => {
+                onExecutionModeChange(executionMode)
+                onWorktreeBranchChange(branch)
+              },
             }
           : undefined
       }
@@ -151,6 +186,7 @@ export function AiChatModal({
   onBack,
   initialAddress = null,
   initialLocalProjectId = null,
+  initialDeviceWorkspaceId = null,
   initialTaskRequest = null,
   inheritFromTask = null,
   taskTitle,
@@ -220,10 +256,31 @@ export function AiChatModal({
     return matched?.id ?? null
   })
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
-    initialTaskRequest?.deviceWorkspaceId ?? null
+    initialTaskRequest?.deviceWorkspaceId ?? initialDeviceWorkspaceId
   )
   const selectedLocalProject =
     runtimeTaskProjects.find(candidate => candidate.id === localProjectId) ?? null
+  const [workspaceSelection, setWorkspaceSelection] = useState<IssueTaskWorkspaceSelection | null>(
+    null
+  )
+  const activeWorkspaceSelection =
+    workspaceSelection?.projectId === localProjectId ? workspaceSelection : null
+  const updateWorkspaceSelection = useCallback(
+    (update: Partial<Omit<IssueTaskWorkspaceSelection, 'projectId'>>) => {
+      setWorkspaceSelection(current => {
+        const active =
+          current?.projectId === localProjectId
+            ? current
+            : {
+                projectId: localProjectId,
+                executionMode: 'current_workspace',
+                worktreeBranch: null,
+              }
+        return { ...active, ...update }
+      })
+    },
+    [localProjectId]
+  )
   const selectLocalProject = useCallback((projectId: number | null) => {
     setLocalProjectId(projectId)
     setLocalDeviceWorkspaceId(null)
@@ -304,6 +361,10 @@ export function AiChatModal({
         workspacePolicy={project.execution_environment?.workspace_policy}
         deviceWorkspaceId={localDeviceWorkspaceId}
         projectWork={projectWork}
+        selectedExecutionMode={activeWorkspaceSelection?.executionMode}
+        selectedWorktreeBranch={activeWorkspaceSelection?.worktreeBranch ?? null}
+        onExecutionModeChange={mode => updateWorkspaceSelection({ executionMode: mode })}
+        onWorktreeBranchChange={branch => updateWorkspaceSelection({ worktreeBranch: branch })}
         inheritFromTask={inheritFromTask}
         taskRequest={taskRequest}
         runtimeContext={runtimeContext}
@@ -343,12 +404,17 @@ export function AiChatModal({
       />
     )
 
-    return selectedLocalProject ? (
+    return !hasPreparedEnvironmentTarget && !inheritFromTask ? (
       <ConnectedIssueProjectWork
+        projects={runtimeTaskProjects}
         project={selectedLocalProject}
         selectedDeviceWorkspaceId={localDeviceWorkspaceId}
+        executionMode={activeWorkspaceSelection?.executionMode}
+        worktreeBranch={activeWorkspaceSelection?.worktreeBranch ?? null}
         onSelectProject={selectLocalProject}
         onSelectProjectWorkspace={selectLocalProjectWorkspace}
+        onExecutionModeChange={mode => updateWorkspaceSelection({ executionMode: mode })}
+        onWorktreeBranchChange={branch => updateWorkspaceSelection({ worktreeBranch: branch })}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}

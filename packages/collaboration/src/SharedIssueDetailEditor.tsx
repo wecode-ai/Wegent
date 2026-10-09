@@ -46,6 +46,7 @@ import {
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
   issueExecutionElapsedMinutes,
+  isExecutionActive as isTaskExecutionActive,
   Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -170,6 +171,7 @@ export interface SharedIssueDetailExtensions {
   renderCreateOptions?(context: { saving: boolean }): ReactNode;
   renderPersonalTaskAction?(context: {
     item: SharedEditorIssue;
+    tasks: SharedIssueDetailTaskBinding[];
     onCreateTask(): void;
   }): ReactNode;
 }
@@ -651,6 +653,8 @@ function taskExecutionDotClass(
   }
   return "is-idle";
 }
+
+const COLLAPSED_EXECUTION_TASK_LIMIT = 2;
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
 // local draft and stages attachments until the item exists; edit mode loads the
@@ -1219,8 +1223,44 @@ export function TodoEditor(props: TodoEditorProps) {
       ? effectiveTasks.slice(0, 1)
       : []
     : effectiveTasks;
+  const activeDisplayedTasks = displayedTasks.filter((task) =>
+    isTaskExecutionActive(
+      props.taskExecutionStates?.[String(task.id)]?.status,
+    ),
+  );
+  const activeDisplayedTaskIds = new Set(
+    activeDisplayedTasks.map((task) => String(task.id)),
+  );
+  const recentInactiveTasks = displayedTasks
+    .filter((task) => !activeDisplayedTaskIds.has(String(task.id)))
+    .slice()
+    .sort(
+      (left, right) =>
+        Date.parse(right.linked_at ?? "") - Date.parse(left.linked_at ?? ""),
+    );
+  const collapsedDisplayedTasks = [
+    ...activeDisplayedTasks,
+    ...recentInactiveTasks.slice(
+      0,
+      Math.max(
+        0,
+        COLLAPSED_EXECUTION_TASK_LIMIT - activeDisplayedTasks.length,
+      ),
+    ),
+  ];
+  const orderedDisplayedTasks = [
+    ...activeDisplayedTasks,
+    ...recentInactiveTasks,
+  ];
+  const visibleDisplayedTasks = tasksExpanded
+    ? orderedDisplayedTasks
+    : collapsedDisplayedTasks;
   const executionChildItems = showChildren ? [] : childItems;
   const executionTaskCount = executionChildItems.length + displayedTasks.length;
+  const canToggleExecutionDetails =
+    displayedTasks.length > collapsedDisplayedTasks.length ||
+    executionChildItems.length > COLLAPSED_EXECUTION_TASK_LIMIT ||
+    deliveries.length > 0;
   const hasExecutionDetails =
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
@@ -3141,24 +3181,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         </Tooltip>
                       ) : null}
                     </span>
-                    {executionTaskCount > 0 ||
-                    executionElapsedMinutes !== null ? (
+                    {executionElapsedMinutes !== null ? (
                       <span className="task-detail-state-metrics">
-                        {executionTaskCount > 0 ? (
-                          <Tooltip
-                            label={t(
-                              "todo.execution_tasks_help",
-                              "执行任务：{{count}} 个。点击右侧按钮可查看任务详情。",
-                              { count: executionTaskCount },
-                            )}
-                            side="bottom"
-                          >
-                            <span className="task-detail-state-metric">
-                              <ListTodo aria-hidden="true" size={15} />
-                              <strong>{executionTaskCount}</strong>
-                            </span>
-                          </Tooltip>
-                        ) : null}
                         {executionElapsedMinutes !== null ? (
                           <Tooltip
                             label={t(
@@ -3178,7 +3202,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         ) : null}
                       </span>
                     ) : null}
-                    {hasExecutionDetails ? (
+                    {hasExecutionDetails && canToggleExecutionDetails ? (
                       <button
                         type="button"
                         data-testid="cloud-todo-toggle-tasks"
@@ -3187,8 +3211,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         className="task-detail-state-action"
                       >
                         {tasksExpanded
-                          ? t("todo.collapse_tasks", "收起任务")
-                          : t("todo.view_tasks", "查看任务")}
+                          ? t("todo.collapse_execution_details", "收起")
+                          : t("todo.expand_execution_details", "展开")}
                       </button>
                     ) : canStartWork && !props.defaultAssistant ? (
                       <button
@@ -3206,6 +3230,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   {props.onCreateTask
                     ? extensions?.renderPersonalTaskAction?.({
                         item,
+                        tasks: effectiveTasks,
                         onCreateTask: props.onCreateTask,
                       })
                     : null}
@@ -3215,7 +3240,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     issue={item}
                     translate={t}
                   />
-                  {!isCreate && tasksExpanded && executionTaskCount > 0 ? (
+                  {!isCreate && executionTaskCount > 0 ? (
                     <section
                       className="task-detail-workspace-section"
                       data-testid="cloud-todo-tasks"
@@ -3224,7 +3249,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         <h3 className="task-detail-workspace-section-title">
                           {props.showCurrentTaskOnly
                             ? t("todo.current_running_task")
-                            : t("todo.execution_tasks")}
+                            : t("todo.linked_tasks", "关联任务")}
                         </h3>
                         <span
                           className="task-detail-workspace-count"
@@ -3232,12 +3257,29 @@ export function TodoEditor(props: TodoEditorProps) {
                         >
                           {executionTaskCount}
                         </span>
+                        {props.onCreateTask ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-create-task"
+                            onClick={() => props.onCreateTask?.()}
+                            className="task-detail-workspace-ghost-action"
+                          >
+                            <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                            {t("todo.new_task", "新建任务")}
+                          </button>
+                        ) : null}
                       </div>
                       <div
                         data-testid="cloud-todo-task-list"
                         className="task-detail-flat-task-list"
                       >
-                        {executionChildItems.map((child) => {
+                        {(tasksExpanded
+                          ? executionChildItems
+                          : executionChildItems.slice(
+                              0,
+                              COLLAPSED_EXECUTION_TASK_LIMIT,
+                            )
+                        ).map((child) => {
                           const assignee =
                             child.assignee_agent_name ??
                             child.assignee_team_name ??
@@ -3280,7 +3322,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             </button>
                           );
                         })}
-                        {displayedTasks.map((task) => {
+                        {visibleDisplayedTasks.map((task) => {
                           const selected =
                             props.selectedTaskId === task.task_id;
                           const executionState =

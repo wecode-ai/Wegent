@@ -625,16 +625,17 @@ const sharedMessages: Record<
     "todo.issue_actions": "任务操作",
     "todo.current_running_task": "当前运行任务",
     "todo.execution_tasks": "执行任务",
+    "todo.linked_tasks": "关联任务",
     "todo.execution_duration": "执行时长",
     "todo.issue_status_help":
       "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
     "todo.assignee_help": "负责人：{{value}}。负责推进并跟进这个 Issue。",
     "todo.issue_security_help":
       "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
-    "todo.execution_tasks_help":
-      "执行任务：{{count}} 个。点击右侧按钮可查看任务详情。",
     "todo.execution_duration_help":
       "执行时长：{{duration}}。从本轮执行开始后持续计时。",
+    "todo.expand_execution_details": "展开",
+    "todo.collapse_execution_details": "收起",
     "todo.follow_up_owner": "跟进人",
     "todo.new_task": "新建任务",
     "todo.no_linked_task": "暂无关联任务",
@@ -1065,6 +1066,7 @@ const sharedMessages: Record<
     "todo.issue_actions": "Issue actions",
     "todo.current_running_task": "Current running task",
     "todo.execution_tasks": "Execution tasks",
+    "todo.linked_tasks": "Linked tasks",
     "todo.execution_duration": "Execution duration",
     "todo.issue_status_help":
       "Status: {{value}}. Shows the issue's current workflow stage.",
@@ -1072,10 +1074,10 @@ const sharedMessages: Record<
       "Assignee: {{value}}. Responsible for moving this issue forward.",
     "todo.issue_security_help":
       "Visibility: {{value}}. Controls who can view this issue's details.",
-    "todo.execution_tasks_help":
-      "Execution tasks: {{count}}. Use the action on the right to view task details.",
     "todo.execution_duration_help":
       "Execution duration: {{duration}}. Counts from the start of the current run.",
+    "todo.expand_execution_details": "Expand",
+    "todo.collapse_execution_details": "Collapse",
     "todo.follow_up_owner": "Owner",
     "todo.new_task": "New task",
     "todo.no_linked_task": "No linked tasks",

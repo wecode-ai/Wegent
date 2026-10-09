@@ -223,24 +223,33 @@ export function TodoEditor(props: TodoEditorProps) {
       props.mode === 'create' && props.createOptions ? () => props.createOptions : undefined,
     renderPersonalTaskAction:
       showPersonalTaskAction && props.onCreateTask
-        ? ({ onCreateTask }) => (
-            <section
-              className="task-detail-personal-task"
-              data-testid="cloud-todo-personal-task-action"
-            >
-              <span className="task-detail-personal-task-icon" aria-hidden="true">
-                <LockKeyhole size={14} />
-              </span>
-              <span className="task-detail-personal-task-copy">
-                <strong>{t('todo.personal_task_title')}</strong>
-                <small>{t('todo.personal_task_description')}</small>
-              </span>
-              <button type="button" data-testid="cloud-todo-create-task" onClick={onCreateTask}>
-                <Send aria-hidden="true" size={14} />
-                {t('todo.create_personal_task')}
-              </button>
-            </section>
-          )
+        ? ({ tasks, onCreateTask }) => {
+            const hasCurrentUserTask = tasks.some(
+              task =>
+                task.task_user_id == null ||
+                String(task.task_user_id) === String(props.currentUserId)
+            )
+            if (hasCurrentUserTask) return null
+
+            return (
+              <section
+                className="task-detail-personal-task"
+                data-testid="cloud-todo-personal-task-action"
+              >
+                <span className="task-detail-personal-task-icon" aria-hidden="true">
+                  <LockKeyhole size={14} />
+                </span>
+                <span className="task-detail-personal-task-copy">
+                  <strong>{t('todo.personal_task_title')}</strong>
+                  <small>{t('todo.personal_task_description')}</small>
+                </span>
+                <button type="button" data-testid="cloud-todo-create-task" onClick={onCreateTask}>
+                  <Send aria-hidden="true" size={14} />
+                  {t('todo.create_personal_task')}
+                </button>
+              </section>
+            )
+          }
         : undefined,
   }
 
