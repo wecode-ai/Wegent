@@ -10,6 +10,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+
 MYSQL_SESSION_TIMEZONE_OFFSET = "+08:00"
 MYSQL_SESSION_TIMEZONE = timezone(timedelta(hours=8))
 
@@ -52,9 +54,12 @@ def db_now(db: Session) -> datetime:
 
 
 def db_now_iso() -> str:
-    """Timezone-aware +08:00 ISO timestamp for outbound (WS/SSE) payloads.
+    """Timezone-aware ISO timestamp for outbound (WS/SSE) payloads.
 
     Outbound timestamps must carry their offset so consumers never have to
-    guess the basis; +08:00 matches the MySQL session time zone.
+    guess the basis. The offset matches the configured database's naive
+    basis: +08:00 for MySQL sessions, +00:00 for SQLite.
     """
+    if settings.DATABASE_URL.startswith("sqlite"):
+        return datetime.now(timezone.utc).isoformat()
     return datetime.now(MYSQL_SESSION_TIMEZONE).isoformat()
