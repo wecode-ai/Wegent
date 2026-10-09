@@ -57,7 +57,7 @@ classify_path() {
     .github/claude-code-cli/* | frontend/src/* | package.json | \
       pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json | \
-      packages/chat-core/*)
+      packages/chat-core/* | packages/collaboration/*)
       changed[node]=true
       changed[wework_target]=true
       ;;

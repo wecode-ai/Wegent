@@ -318,6 +318,11 @@ export async function createDesktopScenario({
         'cloud-task-activity-execution-badge-',
         modelResponseTimeoutMs
       )
+      // Issue projection and terminal transcript hydration complete independently.
+      await control.command('waitFor', `[data-testid="${executionBadgeTestId}"]`, {
+        text: '已完成',
+        timeoutMs: uiTimeoutMs,
+      })
       const executionBadge = await control.command(
         'getText',
         `[data-testid="${executionBadgeTestId}"]`
