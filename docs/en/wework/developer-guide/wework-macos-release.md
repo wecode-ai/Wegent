@@ -234,8 +234,10 @@ clients without this capability first receive one migration host package that
 still contains the managed components, preventing missing runtime resources
 after the upgrade. Component manifests and archives must be published before
 the Electron YAML so a visible host update never references unavailable
-components. Complete installers always contain every component for first-time
-offline installation.
+components. The `WeWorkHostUpdate` ZIP must use normal compression rather than
+the `store` mode that only wraps the original bytes. Formal Release E2E reads
+the ZIP summary and rejects an uncompressed host update artifact. Complete
+installers always contain every component for first-time offline installation.
 
 The client accepts only a component manifest that exactly matches the running
 Electron application version, channel, platform, and architecture. A
