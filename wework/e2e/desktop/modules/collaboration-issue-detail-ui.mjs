@@ -4,8 +4,25 @@ export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summary = scope('[data-testid="cloud-todo-state-summary"]')
   await control.command('waitFor', summary, { visible: true, timeoutMs })
   const summaryText = await control.command('getText', summary)
-  assert.match(summaryText, /负责人/, 'The Issue property bar must label its assignee')
-  assert.match(summaryText, /可见范围/, 'The Issue property bar must label its visibility')
+  assert.doesNotMatch(
+    summaryText,
+    /负责人|可见范围/,
+    'The compact Issue property bar must not repeat property labels'
+  )
+  assert.equal(
+    await control.command('getAttribute', scope('[data-testid="cloud-todo-detail-assignee"]'), {
+      value: 'aria-label',
+    }),
+    '负责人',
+    'The assignee icon control must remain accessible'
+  )
+  assert.equal(
+    await control.command('getAttribute', scope('[data-testid="cloud-issue-security-level"]'), {
+      value: 'aria-label',
+    }),
+    '任务可见范围',
+    'The visibility icon control must remain accessible'
+  )
 
   const status = scope('[data-testid="cloud-todo-detail-status"]')
   await control.command('hover', status, { visible: true })

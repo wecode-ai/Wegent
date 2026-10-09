@@ -804,6 +804,7 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  await control.command('click', issueDetailDescription)
   await waitForAttribute(
     control,
     issueDetailDescription,
@@ -1205,6 +1206,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', titleSelector)
   await control.command('fill', titleSelector, { value: title })
   await control.command(
     'clickWhenEnabled',
