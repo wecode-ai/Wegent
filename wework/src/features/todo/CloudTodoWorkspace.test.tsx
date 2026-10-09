@@ -23,7 +23,11 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
-import { workItemTaskInput } from './workItemTaskInput'
+import {
+  workItemComposerReference,
+  workItemStartedUpdate,
+  workItemTaskInput,
+} from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 import {
   createWeworkSharedWorkspaceApi,
@@ -362,6 +366,24 @@ const item = {
 }
 
 describe('workItemTaskInput', () => {
+  it('creates an Issue composer chip reference', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '本地电脑处理配置' }
+      )
+    ).toBe('[$WORK-806 · 本地电脑处理配置](wework-issue://project/issue)')
+  })
+
+  it('removes Markdown escapes from an Issue composer chip label', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '处理 [路径]\\\r\n' }
+      )
+    ).toBe('[$WORK-806 · 处理  路径](wework-issue://project/issue)')
+  })
+
   it('sends the original user-authored title without adding an AI instruction wrapper', () => {
     expect(
       workItemTaskInput({
@@ -375,6 +397,24 @@ describe('workItemTaskInput', () => {
     expect(workItemTaskInput({ title: '  ', description: 'Use the shared workspace' })).toBe(
       'Use the shared workspace'
     )
+  })
+
+  it('marks a pending Issue in progress when its personal task starts', () => {
+    expect(workItemStartedUpdate({ status: 'pending', tags: [], version: 3 } as never, [])).toEqual(
+      {
+        version: 3,
+        status: 'in_progress',
+      }
+    )
+  })
+
+  it('returns a reviewed Issue to progress when a new personal task starts', () => {
+    expect(
+      workItemStartedUpdate({ status: 'in_review', tags: [], version: 4 } as never, [])
+    ).toEqual({
+      version: 4,
+      status: 'in_progress',
+    })
   })
 })
 
@@ -2872,7 +2912,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
-  it('uses the prepared project environment when starting a task from the Issue detail', async () => {
+  it('uses the prepared project environment when starting a personal task', async () => {
     const preparedProject = {
       ...project,
       execution_environment: {
@@ -2915,6 +2955,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-task-workspace-path',
       '/srv/projects/wegent-v4'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-task-input',
+      '[$WEG-1 · Implement cloud MCP](wework-issue://11/WEG-1)'
     )
   })
 

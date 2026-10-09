@@ -6977,6 +6977,32 @@ describe('MessageList', () => {
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
   })
 
+  test('keeps sent issue references styled as native context chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '[$LL-1 · 看看cpu](wework-issue://project/LL-1) 处理一下',
+            status: 'done',
+            createdAt: '2026-10-08T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const issueChip = screen.getByTestId(/^sent-issue-token-/)
+
+    expect(issueChip).toHaveAttribute('href', 'wework-issue://project/LL-1')
+    expect(issueChip).toHaveClass('composer-mention-node', 'composer-mention-link')
+    expect(issueChip).toHaveTextContent('LL-1 · 看看cpu')
+    expect(screen.getByTestId(/^sent-issue-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('LL-1 · 看看cpu 处理一下')
+    expect(screen.queryByText('[blocked]')).not.toBeInTheDocument()
+    expect(screen.queryByText(/wework-issue:\/\//)).not.toBeInTheDocument()
+  })
+
   test('renders conversation references in user messages without exposing the internal URI', () => {
     const href =
       'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'

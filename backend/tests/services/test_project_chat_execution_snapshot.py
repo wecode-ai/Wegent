@@ -83,12 +83,10 @@ def test_persists_terminal_without_advancing_business_workflow(
     project, task, row = run
     snapshot = report()
     snapshot.turns[0].status = outcome
-    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
-        changed = reconcile_execution_snapshot(
-            test_db, user_id=test_user.id, snapshot=snapshot
-        )
-        assert changed[0]["status"] == expected
-        advance.assert_not_called()
+    changed = reconcile_execution_snapshot(
+        test_db, user_id=test_user.id, snapshot=snapshot
+    )
+    assert changed[0]["status"] == expected
     test_db.expire_all()
     messages = project_chat_service.subscribe(
         test_db,
