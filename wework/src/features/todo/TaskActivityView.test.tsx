@@ -964,7 +964,7 @@ describe('TaskActivityView', () => {
     )
 
     await screen.findByText('Code Reviewer 已进入执行队列，将自动处理并提交结果供你验收。')
-    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('默认')
+    expect(await screen.findByTestId('model-selector-button')).toHaveTextContent('选择模型')
   })
 
   it('keeps a manual model choice when the model catalog refreshes', async () => {
@@ -1478,7 +1478,12 @@ describe('TaskActivityView', () => {
     await user.click(replyToggle)
     expect(replyToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('issue-reply-composer')).toBeVisible()
-    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent('回复 Ada')
+    expect(screen.getByTestId('issue-reply-composer')).toHaveTextContent(
+      '正在回复 Ada · 将继续原执行任务'
+    )
+    expect(
+      within(screen.getByTestId('issue-reply-composer')).getByText('回复此讨论（继续原执行任务）…')
+    ).toBeInTheDocument()
     expect(
       screen.queryByTestId('cloud-task-activity-card-composer-message-1')
     ).not.toBeInTheDocument()

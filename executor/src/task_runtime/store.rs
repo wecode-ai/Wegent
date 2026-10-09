@@ -1020,6 +1020,9 @@ impl LocalTaskStore {
         if let Some(model_namespace) = input.model_namespace.as_ref() {
             metadata["model_namespace"] = json!(model_namespace);
         }
+        if let Some(allowed_models) = input.allowed_models.as_ref() {
+            metadata["allowed_models"] = json!(allowed_models);
+        }
         if let Some(description) = input.capability_description.as_ref() {
             metadata["capability_description"] = json!(description);
         }
@@ -2815,6 +2818,19 @@ fn insert_chat_agent(
     });
     let id = format!("LA-{}", Uuid::new_v4().simple());
     let timestamp = now();
+    let allowed_models = input.allowed_models.clone().unwrap_or_else(|| {
+        input
+            .model
+            .as_ref()
+            .map(|model| {
+                vec![json!({
+                    "name": model,
+                    "type": input.model_type,
+                    "namespace": input.model_namespace.as_deref().unwrap_or("default"),
+                })]
+            })
+            .unwrap_or_default()
+    });
     let mut metadata = json!({
         "display_name": input.display_name.unwrap_or_else(|| input.name.clone()),
         "namespace": input.namespace.unwrap_or_else(|| "default".to_owned()),
@@ -2822,6 +2838,7 @@ fn insert_chat_agent(
         "model": input.model,
         "model_type": input.model_type,
         "model_namespace": input.model_namespace.unwrap_or_else(|| "default".to_owned()),
+        "allowed_models": allowed_models,
         "capability_description": input.capability_description.unwrap_or_default(),
         "capability_mode": capability_mode,
         "system_prompt": input.system_prompt.unwrap_or_default(),
@@ -4098,6 +4115,26 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
         model_namespace: text("model_namespace", "default"),
+        allowed_models: metadata
+            .get("allowed_models")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| {
+                metadata
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(|model| {
+                        vec![json!({
+                            "name": model,
+                            "type": metadata.get("model_type"),
+                            "namespace": metadata
+                                .get("model_namespace")
+                                .and_then(Value::as_str)
+                                .unwrap_or("default"),
+                        })]
+                    })
+                    .unwrap_or_default()
+            }),
         capability_description: text("capability_description", ""),
         capability_mode: metadata
             .get("capability_mode")
@@ -4962,6 +4999,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Be careful.".to_owned()),
@@ -4990,6 +5028,7 @@ mod tests {
             model: Some("gpt-5".to_owned()),
             model_type: Some("public".to_owned()),
             model_namespace: Some("default".to_owned()),
+            allowed_models: Some(Vec::new()),
             capability_description: None,
             capability_mode: Some("follow_device".to_owned()),
             system_prompt: Some(String::new()),
@@ -5005,6 +5044,44 @@ mod tests {
             additional_skills: Vec::new(),
             mcp_servers: json!({}),
         }
+    }
+
+    #[test]
+    fn chat_agent_create_derives_allowed_models_only_when_omitted() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let legacy_input: ChatAgentCreate = serde_json::from_value(json!({
+            "name": "Legacy Bot",
+            "model": "legacy-model",
+            "model_type": "runtime",
+            "model_namespace": "legacy"
+        }))
+        .unwrap();
+
+        let legacy = store.create_chat_agent(&project.id, legacy_input).unwrap();
+        assert_eq!(
+            legacy.allowed_models,
+            vec![json!({
+                "name": "legacy-model",
+                "type": "runtime",
+                "namespace": "legacy",
+            })]
+        );
+
+        let explicit_empty = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Explicit Empty Bot".to_owned(),
+                    model: Some("legacy-model".to_owned()),
+                    model_type: Some("runtime".to_owned()),
+                    model_namespace: Some("legacy".to_owned()),
+                    allowed_models: Some(Vec::new()),
+                    ..serde_json::from_value(json!({"name": "unused"})).unwrap()
+                },
+            )
+            .unwrap();
+        assert!(explicit_empty.allowed_models.is_empty());
     }
 
     fn accept_and_start(store: &LocalTaskStore, claimed: &LocalExecution) -> LocalExecution {
@@ -5855,6 +5932,7 @@ mod tests {
                     model: Some("gpt-6-mini".to_owned()),
                     model_type: Some("runtime".to_owned()),
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: Some("Collect evidence".to_owned()),
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Only collect verifiable evidence.".to_owned()),
@@ -5888,6 +5966,7 @@ mod tests {
                     model: Some("gpt-6-mini".to_owned()),
                     model_type: Some("runtime".to_owned()),
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: Some("Review evidence".to_owned()),
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: Some("Only review submitted evidence.".to_owned()),
@@ -6562,6 +6641,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("manual".to_owned()),
                     system_prompt: None,
@@ -6730,6 +6810,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6764,6 +6845,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6796,6 +6878,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: None,
                     capability_description: None,
                     capability_mode: None,
                     system_prompt: None,
@@ -6831,6 +6914,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6859,6 +6943,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -6973,6 +7058,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7059,6 +7145,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7250,6 +7337,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -7323,6 +7411,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,
@@ -8032,6 +8121,7 @@ mod tests {
                     model: None,
                     model_type: None,
                     model_namespace: None,
+                    allowed_models: Some(Vec::new()),
                     capability_description: None,
                     capability_mode: Some("follow_device".to_owned()),
                     system_prompt: None,

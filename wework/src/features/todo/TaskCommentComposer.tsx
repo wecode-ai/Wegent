@@ -27,6 +27,7 @@ export function TaskCommentComposer({
   controls,
   projectWork,
   serverExecution = false,
+  placeholder,
 }: {
   value: string
   onChange: (value: string) => void
@@ -39,6 +40,7 @@ export function TaskCommentComposer({
   controls: ProjectChatControls
   projectWork: ProjectWorkControls
   serverExecution?: boolean
+  placeholder?: string
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
@@ -56,7 +58,7 @@ export function TaskCommentComposer({
       mentionCandidates={mentionCandidates}
       translate={translate}
       labels={{
-        placeholder: t('workbench.task_activity_placeholder'),
+        placeholder: placeholder ?? t('workbench.task_activity_placeholder'),
         send: t('workbench.send_message'),
         attach: t('workbench.task_activity_attachment_attach'),
         settings: t('workbench.task_activity_execution_settings'),

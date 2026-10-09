@@ -139,6 +139,13 @@ Opening an issue from a project-space board shows its attachments directly in th
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
+Comments in the issue activity have two different execution semantics:
+
+- Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.
+- Selecting **Reply** inside an execution activity continues the original execution task and model session owned by that activity. Use it to add requirements, ask follow-up questions, or request corrections without creating another parallel task.
+
+The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
+
 For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
 
 An issue that is no longer needed can be deleted from the board card menu, the table row actions, or the detail panel's "…" menu. Deletion is a soft delete: the issue and its sub-issues disappear from the board while their data is kept, and any run still executing is cancelled first so no orphaned process is left behind.

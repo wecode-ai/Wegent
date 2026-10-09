@@ -1,5 +1,9 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CONVERSATION_SCROLL_WRITE_SOURCE,
+  recordConversationScrollWrite,
+} from '@wegent/collaboration/conversation'
 
 interface TaskDetailScrollbarProps {
   viewportRef: RefObject<HTMLDivElement | null>
@@ -60,7 +64,15 @@ export function TaskDetailScrollbar({
       0,
       Math.min(1, (clientY - track.getBoundingClientRect().top - offset) / travel)
     )
-    viewport.scrollTop = (ratio - 1) * (viewport.scrollHeight - viewport.clientHeight)
+    const top = (ratio - 1) * (viewport.scrollHeight - viewport.clientHeight)
+    recordConversationScrollWrite(
+      viewport,
+      CONVERSATION_SCROLL_WRITE_SOURCE.scrollbarPointer,
+      top,
+      () => {
+        viewport.scrollTop = top
+      }
+    )
   }
 
   return (
@@ -115,7 +127,15 @@ export function TaskDetailScrollbar({
         const position = positions[event.key]
         if (position === undefined) return
         event.preventDefault()
-        viewport.scrollTop = Math.max(-range, Math.min(0, position))
+        const top = Math.max(-range, Math.min(0, position))
+        recordConversationScrollWrite(
+          viewport,
+          CONVERSATION_SCROLL_WRITE_SOURCE.scrollbarKeyboard,
+          top,
+          () => {
+            viewport.scrollTop = top
+          }
+        )
       }}
     >
       <div

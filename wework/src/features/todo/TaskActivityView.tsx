@@ -1019,6 +1019,9 @@ export function TaskActivityView({
                 controls={commentProjectChat}
                 projectWork={commentProjectWork}
                 serverExecution={projectLocation !== 'local' && Boolean(client?.executeTaskComment)}
+                placeholder={
+                  replyTarget ? t('workbench.task_activity_inline_placeholder') : undefined
+                }
               />
             </div>
           ) : (
@@ -1074,10 +1077,10 @@ export function TaskActivityView({
                   <div
                     key="issue-created"
                     data-testid="cloud-task-status-created"
-                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                    className="task-detail-timeline-system-event"
                   >
-                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
-                    <div className="min-w-0 flex-1 text-xs text-text-primary">
+                    <span className="task-detail-timeline-marker" aria-hidden="true" />
+                    <div className="task-detail-timeline-system-content text-xs text-text-primary">
                       <span className="font-medium">
                         {task.created_by_user_name ||
                           memberNameById(projectMembers, task.created_by_user_id) ||
@@ -1096,10 +1099,10 @@ export function TaskActivityView({
                   <div
                     key={`status-${activity.index}`}
                     data-testid={`cloud-task-status-event-${activity.index}`}
-                    className="flex gap-3 border-b border-border/60 px-3 py-2"
+                    className="task-detail-timeline-system-event"
                   >
-                    <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-text-muted" />
-                    <div className="min-w-0 flex-1">
+                    <span className="task-detail-timeline-marker" aria-hidden="true" />
+                    <div className="task-detail-timeline-system-content">
                       <IssueStatusHistoryList
                         entries={[activity.entry]}
                         startIndex={activity.index}
@@ -1168,7 +1171,7 @@ export function TaskActivityView({
                         <TimelineReply
                           rootId={rootId}
                           createdAt={card.root.createdAt}
-                          replyLabel={t('workbench.task_activity_inline_placeholder')}
+                          replyLabel={t('workbench.task_activity_reply_action')}
                           executionMessage={latestExecution}
                           executionTurnId={
                             latestExecution

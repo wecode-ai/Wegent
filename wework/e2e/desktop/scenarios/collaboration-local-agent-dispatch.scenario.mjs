@@ -318,11 +318,11 @@ export async function createDesktopScenario({
         'cloud-task-activity-execution-badge-',
         modelResponseTimeoutMs
       )
-      // Issue review state and execution-card state are separate async projections.
+      // Wait for both the execution state and hydrated completion label.
       await control.command(
         'waitFor',
         scoped(`[data-testid="${executionBadgeTestId}"][data-status="succeeded"]`),
-        { timeoutMs: modelResponseTimeoutMs }
+        { text: '已完成', timeoutMs: modelResponseTimeoutMs }
       )
       const executionBadge = await control.command(
         'getText',

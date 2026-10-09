@@ -24,7 +24,7 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
@@ -39,6 +39,7 @@ import {
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
+import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
@@ -267,12 +268,26 @@ const pluginDevelopmentChildRuntime =
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const startupTelemetry = new StartupTelemetryLifecycle({
+  id: randomUUID(),
+  now: () => performance.now(),
+  publish: (type, payload) => desktopHostEvents.publish(type, payload),
+})
+const startupTelemetrySuccess = new StartupTelemetrySuccessGate(startupTelemetry)
+startupTelemetry.start()
 const pendingSchemes = new SchemeQueue()
 process.argv.forEach(value => pendingSchemes.enqueue(value))
 
 function queueScheme(url: string): void {
   if (!pendingSchemes.enqueue(url)) return
   desktopHostEvents.publish('wework-scheme-requested', {})
+}
+
+function openSchemeInMainWindow(url: string): void {
+  queueScheme(url)
+  void reactivateMainWindow().catch(error => {
+    console.error('[navigation] failed to activate main window for scheme navigation', error)
+  })
 }
 
 app.on('open-url', (event, url) => {
@@ -689,29 +704,23 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
-    void desktopRuntime
-      .listCoreDshPlugins()
-      .then(plugins =>
-        detectCoreDshStartupPluginFailure(
-          contents,
-          plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
-        )
-      )
-      .then(pluginName => {
-        if (!pluginName || quitting || contents.isDestroyed()) return
-        runtimeError = `Core DSH plugin failed to load: ${pluginName}`
-        rendererHealth.failed('plugin_load_failed')
-        logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
-        notifyRuntimeChanged()
-        return startupSplash?.showError(pluginName)
-      })
-      .catch(error => {
-        console.error('[startup] failed to inspect Core DSH plugin loading', error)
-      })
+    const plugins = await desktopRuntime.listCoreDshPlugins()
+    const pluginName = await detectCoreDshStartupPluginFailure(
+      contents,
+      plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
+    )
+    if (!pluginName || quitting || contents.isDestroyed()) return
+    runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+    rendererHealth.failed('plugin_load_failed')
+    logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+    startupTelemetry.fail('core_plugin')
+    notifyRuntimeChanged()
+    await startupSplash?.showError(pluginName)
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
     logStartupStep('primary-renderer-load', 'failed')
+    startupTelemetry.fail('renderer_load')
     throw error
   }
 })
@@ -1623,7 +1632,7 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
-          openScheme: queueScheme,
+          openScheme: openSchemeInMainWindow,
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
@@ -1657,6 +1666,7 @@ async function configureDesktopRuntime(): Promise<void> {
           rendererStartupReady: createStartupReadyHandler(async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
             logStartupStep('renderer-startup-ready', 'completed', { source })
+            startupTelemetrySuccess.markRendererReady()
             if (!keepE2EWindowInBackground) mainWindow.show()
             logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
@@ -1671,6 +1681,7 @@ async function configureDesktopRuntime(): Promise<void> {
           }),
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
+            startupTelemetry.fail('renderer_initialize')
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
@@ -1824,6 +1835,7 @@ function startDesktopRuntime(): Promise<void> {
     pluginDevelopmentChildRuntime?.startWatcher()
     await pluginDevelopmentChildRuntime?.writeState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
+    startupTelemetrySuccess.markRuntimeReady()
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
       void componentUpdates
         ?.stageAvailableUpdate()
@@ -1836,8 +1848,16 @@ function startDesktopRuntime(): Promise<void> {
     }
   })()
     .catch(async error => {
+      const failurePublished = startupTelemetry.fail('desktop_runtime')
       if (await componentUpdates?.rollbackStartup()) {
         console.error('[components] startup failed after activation; rolling back and relaunching')
+        if (failurePublished) {
+          const failureSequence = desktopHostEvents.latestSequence()
+          await Promise.race([
+            desktopHostEvents.waitUntilRead(failureSequence),
+            new Promise<void>(resolve => setTimeout(resolve, 1_500)),
+          ])
+        }
         app.relaunch()
         app.exit(1)
         return

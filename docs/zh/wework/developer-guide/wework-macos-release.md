@@ -19,6 +19,40 @@ macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建
 保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
 E2E 断言隐藏失败。
 
+## macOS 应用图标
+
+macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
+构建时生成的 `Assets.car`，通过 `CFBundleIconName=Wework` 注册资产目录
+中的 App 图标。macOS 27 会给未注册的 ICNS 图标再加一层底板并缩小图案；注册资产
+目录可避免重复处理。目录中的所有尺寸直接取自现有 ICNS，保留 macOS 15 的圆角、
+留白和图案，不回退旧图标，也不使用 Icon Composer 重新生成旧系统的位图。
+
+Electron Packager 本地包、Electron Builder 安装包和在线更新包必须都将资产目录
+放在 `Contents/Resources/Assets.car`，并保留 `CFBundleIconFile` 指向的 ICNS。
+macOS 打包需要完整 Xcode。Packager 在打包前、Builder 在 `beforePack` 阶段自动
+从当前 ICNS 编译图标，安装包和在线更新包使用同一生成流程。编译失败会阻止打包。
+产物写入已忽略的 `wework/electron/resources/macos/`，不提交生成的二进制文件。
+
+```mermaid
+flowchart LR
+  ICNS[Existing ICNS artwork] --> Compiler[iconutil and actool]
+  Compiler --> Catalog[Generated Assets.car]
+  Catalog --> Packager[Local app bundle]
+  Catalog --> Builder[Installer and online update]
+```
+
+修改 ICNS 后，可在安装完整 Xcode 的 Mac 上单独检查编译和产物：
+
+```bash
+node wework/electron/scripts/compile-macos-app-icon.mjs
+pnpm --dir wework/electron test scripts/macos-app-icon.test.mjs
+```
+
+脚本从 ICNS 提取全部十个尺寸表示并编译标准 `.appiconset`，同时更新
+同一生成目录下 `app-icon.json` 的源文件和产物 SHA-256。编译产物以原子替换方式
+写入，避免并行安装包和在线更新构建读取不完整文件；回归测试实际编译目录并核对
+十种尺寸和哈希。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式

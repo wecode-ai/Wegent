@@ -36,6 +36,7 @@ on:
       - "knowledge_engine/uv.lock"
       - "package.json"
       - "packages/chat-core/**"
+      - "packages/collaboration/**"
       - "packages/*/package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

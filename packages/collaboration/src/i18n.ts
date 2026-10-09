@@ -530,9 +530,9 @@ const sharedMessages: Record<
     "todo.activity_empty": "还没有动态",
     "todo.expand_content": "展开全文",
     "todo.collapse_content": "收起全文",
-    "todo.reply_placeholder": "回复…",
+    "todo.reply_placeholder": "回复此讨论（继续原执行任务）…",
     "todo.send_message": "发送消息",
-    "todo.comment_placeholder": "留下评论…",
+    "todo.comment_placeholder": "发起新讨论（将创建新的执行任务）…",
     "todo.execution_settings": "执行设置",
     "todo.show_text_attachment": "在文本框中显示",
     "todo.pasted_text_attachment": "粘贴的文本",
@@ -607,6 +607,15 @@ const sharedMessages: Record<
     "todo.current_running_task": "当前运行任务",
     "todo.execution_tasks": "执行任务",
     "todo.execution_duration": "执行时长",
+    "todo.issue_status_help":
+      "状态：{{value}}。表示 Issue 当前所处的处理阶段。",
+    "todo.assignee_help": "负责人：{{value}}。负责推进并跟进这个 Issue。",
+    "todo.issue_security_help":
+      "可见范围：{{value}}。控制谁可以查看这个 Issue 的详情。",
+    "todo.execution_tasks_help":
+      "执行任务：{{count}} 个。点击右侧按钮可查看任务详情。",
+    "todo.execution_duration_help":
+      "执行时长：{{duration}}。从本轮执行开始后持续计时。",
     "todo.follow_up_owner": "跟进人",
     "todo.new_task": "新建任务",
     "todo.no_linked_task": "暂无关联任务",
@@ -930,9 +939,11 @@ const sharedMessages: Record<
     "todo.activity_empty": "No activity yet",
     "todo.expand_content": "Show more",
     "todo.collapse_content": "Show less",
-    "todo.reply_placeholder": "Reply…",
+    "todo.reply_placeholder":
+      "Reply in this thread (continues the existing execution)…",
     "todo.send_message": "Send message",
-    "todo.comment_placeholder": "Leave a comment…",
+    "todo.comment_placeholder":
+      "Start a new discussion (creates a new execution)…",
     "todo.execution_settings": "Execution settings",
     "todo.show_text_attachment": "Show in text box",
     "todo.pasted_text_attachment": "Pasted text",
@@ -1014,6 +1025,16 @@ const sharedMessages: Record<
     "todo.current_running_task": "Current running task",
     "todo.execution_tasks": "Execution tasks",
     "todo.execution_duration": "Execution duration",
+    "todo.issue_status_help":
+      "Status: {{value}}. Shows the issue's current workflow stage.",
+    "todo.assignee_help":
+      "Assignee: {{value}}. Responsible for moving this issue forward.",
+    "todo.issue_security_help":
+      "Visibility: {{value}}. Controls who can view this issue's details.",
+    "todo.execution_tasks_help":
+      "Execution tasks: {{count}}. Use the action on the right to view task details.",
+    "todo.execution_duration_help":
+      "Execution duration: {{duration}}. Counts from the start of the current run.",
     "todo.follow_up_owner": "Owner",
     "todo.new_task": "New task",
     "todo.no_linked_task": "No linked tasks",

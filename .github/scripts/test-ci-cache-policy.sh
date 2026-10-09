@@ -88,6 +88,12 @@ assert_warmup_case "Wework runtime artifact downloader" \
   ".github/scripts/download-actions-artifact.sh"
 assert_warmup_case "Chat Core source" "$node_and_wework_target" \
   "packages/chat-core/src/index.ts"
+assert_warmup_case "Collaboration source" "$node_and_wework_target" \
+  "packages/collaboration/src/issue-detail/issueTimestamp.ts"
+if ! grep -Fq '"packages/collaboration/**"' \
+  "$workflow_dir/ci-cache-warmup.yml"; then
+  fail "Collaboration changes must trigger cache warmup"
+fi
 assert_warmup_case "Claude CLI lock" "$node_and_wework_target" \
   ".github/claude-code-cli/package-lock.json"
 

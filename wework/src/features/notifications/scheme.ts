@@ -3,6 +3,14 @@ export type WeworkDestination =
   | { kind: 'board'; projectId: string; itemId?: string; commentId?: string }
   | { kind: 'task'; deviceId: string; taskId: string }
 
+export function weworkTaskScheme(address: { deviceId: string; taskId: string }): string {
+  return `wework://tasks/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}`
+}
+
+export function weworkIssueScheme(projectId: string, itemId: string): string {
+  return `wework://boards/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(itemId)}`
+}
+
 function segment(value: string): string | null {
   const decoded = decodeURIComponent(value)
   return decoded &&

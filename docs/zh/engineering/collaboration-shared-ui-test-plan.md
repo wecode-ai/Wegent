@@ -24,6 +24,28 @@ sidebar_position: 25
 
 ## 目标
 
+### 执行时长时区回归
+
+`collaboration-shared-core` 在 `TZ=Asia/Shanghai` 下运行真实 Backend 和隔离 Electron。
+通过现有评论执行流程创建任务绑定，返回 Issue 详情后读取 `issue-execution-duration`，
+与真实 `/loop-items/{id}/tasks` 的最早有效绑定时间比较，允许一分钟的显示取整误差。
+新建执行必须显示分钟数，不能因无时区后缀的 UTC 时间被当成本地时间而多出八小时。
+单元测试同时覆盖显式偏移、混合时间排序和无效时间；全部无效时不显示时长。
+场景沿用现有清理流程归档测试项目，不接触用户项目。
+
+运行命令：`pnpm --filter wework e2e:desktop --segment collaboration-shared-core`。
+
+Linux 和 macOS 桌面构建缓存指纹必须包含 `packages/collaboration`，否则共享 UI
+改动可能复用旧产物。缓存脚本测试覆盖新增和修改共享包文件时的缓存失效。
+
+配套状态回归使用 `e2e:desktop:cloud --segment model-routing`：真实远程执行器完成文本轮次后，
+工具轮次必须继续发送并生成文件，不能因旧运行快照覆盖终态而滞留队列。状态单测重放
+毫秒精度启动时间与同秒、秒精度完成时间，要求旧快照不能复活任务，而更新的执行仍可启动。
+`e2e:desktop:cloud --segment goal-lifecycle` 覆盖远程目录控件挂载后的读取与完整 Goal 生命周期；
+控件挂载和值检查共用原有步骤超时，场景结束后清理隔离设备与数据库。
+执行器任务列表必须保留 `goalExecutionStatus`，让重启后的界面在轮次间隙仍能识别运行或恢复中的
+Goal；响应序列化单测覆盖运行、恢复、需要处理以及普通任务不带该字段的情况。
+
 本计划用于证明以下结论，而不只是证明两个宿主“看起来都能用”：
 
 1. Wegent Web 与 Wework 挂载的是 `@wegent/collaboration` 导出的同一个协作 UI 根组件。

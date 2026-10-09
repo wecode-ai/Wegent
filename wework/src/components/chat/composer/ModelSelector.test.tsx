@@ -165,6 +165,22 @@ describe('ModelSelector desktop layout', () => {
     )
   })
 
+  test('asks the user to select a model instead of displaying a default model', () => {
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Select model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('默认')
+  })
+
   test('positions the menu to the left of the right workspace panel shell', async () => {
     createShellElement()
 

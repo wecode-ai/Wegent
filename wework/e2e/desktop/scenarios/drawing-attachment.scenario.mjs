@@ -46,6 +46,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     async verify(control) {
       active = true
       // Establish a fresh draft; no state from another checkpoint is required.
+      await control.command('waitFor', '[data-testid="new-chat-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, WORKBENCH)

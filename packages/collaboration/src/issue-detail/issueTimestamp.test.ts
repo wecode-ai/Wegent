@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { compareIssueTimestamps, formatIssueTimestamp } from "./issueTimestamp";
+import {
+  compareIssueTimestamps,
+  formatIssueTimestamp,
+  issueExecutionElapsedMinutes,
+} from "./issueTimestamp";
+
+describe("issueExecutionElapsedMinutes", () => {
+  it("treats timezone-less backend timestamps as UTC", () => {
+    expect(
+      issueExecutionElapsedMinutes(
+        ["2026-10-09T04:18:19"],
+        Date.parse("2026-10-09T04:19:19Z"),
+      ),
+    ).toBe(1);
+  });
+
+  it("uses the earliest valid execution timestamp", () => {
+    expect(
+      issueExecutionElapsedMinutes(
+        ["not-a-date", "2026-10-09T12:18:19+08:00", "2026-10-09T04:17:19Z"],
+        Date.parse("2026-10-09T04:19:19Z"),
+      ),
+    ).toBe(2);
+  });
+
+  it("returns null when no valid execution timestamp exists", () => {
+    expect(issueExecutionElapsedMinutes([null, undefined, "not-a-date"])).toBe(
+      null,
+    );
+  });
+});
 
 describe("formatIssueTimestamp", () => {
   it("treats timezone-less backend timestamps as UTC", () => {

@@ -73,7 +73,7 @@ export const HOST_CAPABILITIES = [
   'e2e.capturePrimaryView',
   'e2e.captureWorkspaceWindow',
   'e2e.closeMainWindow',
-  'e2e.activateRuntimeTaskNotification',
+  'e2e.activateNotification',
   'e2e.focusMainWindow',
   'e2e.focusWindow',
   'e2e.insertText',

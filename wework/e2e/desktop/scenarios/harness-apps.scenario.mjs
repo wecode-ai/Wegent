@@ -1621,6 +1621,21 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         const request = await control.awaitTelemetryEvent(eventName)
         const event = telemetryEvents(request.payload).find(item => item.event === eventName)
         assert.equal(event?.properties.domain, 'smart_app')
+        if (eventName === 'smart_app_start_succeeded') {
+          assert.match(
+            event?.properties.startup_id ?? '',
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+            'Smart App startup success did not include a UUID correlation ID'
+          )
+          const attempted = control.telemetryRequests
+            .flatMap(candidate => telemetryEvents(candidate.payload))
+            .find(
+              candidate =>
+                candidate.event === 'smart_app_start_attempted' &&
+                candidate.properties?.startup_id === event.properties.startup_id
+            )
+          assert.ok(attempted, 'Smart App startup success had no correlated attempt event')
+        }
         for (const privateKey of [
           'smart_app_name',
           'smart_app_id',
