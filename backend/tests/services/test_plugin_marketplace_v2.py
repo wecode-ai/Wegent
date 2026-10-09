@@ -3021,6 +3021,19 @@ async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
     # A later heartbeat retries the durable row, without any new DELETE request.
     row.last_sync_at = datetime.now() - timedelta(seconds=61)
     test_db.commit()
+    await plugin_removal_sync.sync_pending_plugin_removals(
+        test_user.id, "current-device"
+    )
+    test_db.refresh(row)
+    assert row.attempt_count == 2
+    row.last_sync_at = datetime.now() - timedelta(seconds=61)
+    test_db.commit()
+    await plugin_removal_sync.sync_pending_plugin_removals(
+        test_user.id, "current-device"
+    )
+    assert sync.await_count == 2
+    row.last_sync_at = datetime.now() - timedelta(seconds=121)
+    test_db.commit()
     sync.return_value = DeviceCapabilitySyncResult(
         device_id="current-device", success=True, acknowledged=True
     )

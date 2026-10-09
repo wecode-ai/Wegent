@@ -101,7 +101,7 @@ function slimLogoField(value?: string | null): string | null | undefined {
 function slimInterface(interfaceData?: PluginInterface | null): PluginInterface | null {
   if (!interfaceData) return null
   return {
-    ...interfaceData,
+    defaultPrompt: interfaceData.defaultPrompt,
     displayName: interfaceData.displayName ?? null,
     shortDescription: interfaceData.shortDescription ?? null,
     developerName: interfaceData.developerName ?? null,

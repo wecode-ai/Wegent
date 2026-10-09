@@ -6288,6 +6288,54 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId(/^plugin-detail-delete-/)).toHaveTextContent('删除插件')
   })
 
+  test('uninstalling a cloud GitHub leaves the same-name OpenAI installation in shared inventory', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceName: 'github',
+      marketplaceDisplayName: 'GitHub',
+      marketplaceInstalled: true,
+      marketplaceVisibility: 'workspace',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['github'],
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          path: null,
+          plugins: [
+            {
+              id: 'github@openai-curated-remote',
+              name: 'github',
+              installed: true,
+              enabled: true,
+              source: { type: 'remote' },
+              interface: { displayName: 'GitHub' },
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins).toHaveLength(2)
+    )
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
+    )
+    const inventory = getPluginMarketplaceCache('/api|cloud-token')!
+    expect(inventory.installedPlugins.map(plugin => plugin.metadata.labels?.id)).toContain(
+      'github@openai-curated-remote'
+    )
+    expect(
+      inventory.installedPlugins.map(plugin => String(plugin.metadata.labels?.id))
+    ).not.toContain('101')
+  })
+
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockCodexAppServerInvoke({

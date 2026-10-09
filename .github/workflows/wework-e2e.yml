@@ -783,6 +783,17 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
+      - name: Prepare real GitHub CLI for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth')
+        run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages gh)
+          if ((${#missing[@]} > 0)); then
+            apt-get update
+            apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
+          gh --version
+
       - name: Prepare the pinned native DWS compiler for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
         uses: actions/setup-go@v6

@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
     git \
-    gh \
     imagemagick \
     libasound2t64 \
     libatk-bridge2.0-0t64 \
@@ -57,7 +56,6 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
-  && gh --version \
   && pnpm --version \
   && python3 --version \
   && uv --version \

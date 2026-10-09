@@ -178,7 +178,11 @@ import {
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
-import { marketplaceItemMarketplaceId, marketplacePluginDistribution } from './pluginDistribution'
+import {
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+  marketplacePluginDistribution,
+} from './pluginDistribution'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 
 import {
@@ -1479,10 +1483,18 @@ export function PluginsWorkspace({
     )
     setUninstallingPluginIds(previous => new Set(previous).add(id))
     const markUninstalledLocally = () => {
+      const catalogItem = pluginMarketplaceStateRef.current.items.find(
+        item => String(item.id) === String(id) || String(item.installedPluginId) === String(id)
+      )
+      const marketplaceId = plugin
+        ? installedPluginMarketplaceId(plugin.raw)
+        : catalogItem && marketplaceItemMarketplaceId(catalogItem)
       removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
         installedIds: [id, plugin?.id, plugin && linkedCloudInstalledPluginId(plugin.raw)],
         marketplaceItemIds: [id],
-        pluginKeys: [pluginName, plugin?.raw.spec.source.pluginKey],
+        marketplaceId,
+        // Without a marketplace, only exact IDs are safe removal identities.
+        pluginKeys: marketplaceId ? [pluginName, plugin?.raw.spec.source.pluginKey] : [],
       })
       setSelectedPluginId(current => (String(current) === String(id) ? null : current))
       setLocalConnectorAuthBySlug({})

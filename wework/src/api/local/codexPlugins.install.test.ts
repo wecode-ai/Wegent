@@ -131,6 +131,7 @@ describe('installation from a shared catalog item', () => {
     const plugin = await api.installAvailablePlugin(items[0])
     expect(plugin.spec.sourcePayload?.codexInstallationReceipt).toEqual({
       awaitingMembership: true,
+      acceptedAt: expect.any(Number),
       authPolicy: 'ON_INSTALL',
       appsNeedingAuth: [{ id: 'github-app', name: 'GitHub' }],
     })

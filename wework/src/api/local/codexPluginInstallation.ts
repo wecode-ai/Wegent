@@ -4,9 +4,13 @@ import i18n from '@/i18n'
 
 interface CodexInstallationReceipt {
   awaitingMembership: boolean
+  acceptedAt: number
   authPolicy: 'ON_INSTALL' | 'ON_USE'
   appsNeedingAuth: Array<{ id: string; name: string }>
 }
+
+/** Bound discovery races without indefinitely overriding native membership. */
+export const CODEX_INSTALLATION_RECEIPT_TTL_MS = 5 * 60 * 1000
 
 function decodeInstallationReceipt(value: unknown): CodexInstallationReceipt {
   const response = value as Partial<CodexInstallationReceipt> | null
@@ -22,6 +26,7 @@ function decodeInstallationReceipt(value: unknown): CodexInstallationReceipt {
   }
   return {
     awaitingMembership: true,
+    acceptedAt: Date.now(),
     authPolicy: response.authPolicy as CodexInstallationReceipt['authPolicy'],
     // Installation never proves account authorization. Do not persist auth URLs.
     appsNeedingAuth: response.appsNeedingAuth.map(({ id, name }) => ({ id, name })),
@@ -85,7 +90,17 @@ export function reconcileCodexInstallations(
   previous: InstalledPlugin[],
   incoming: InstalledPlugin[]
 ): InstalledPlugin[] {
-  const pending = previous.filter(plugin => receiptOf(plugin)?.awaitingMembership === true)
+  const now = Date.now()
+  const pending = previous.filter(plugin => {
+    const receipt = receiptOf(plugin)
+    // Legacy receipts have no acceptance time and cannot establish current membership.
+    return (
+      receipt?.awaitingMembership === true &&
+      Number.isFinite(receipt.acceptedAt) &&
+      receipt.acceptedAt <= now &&
+      now - receipt.acceptedAt < CODEX_INSTALLATION_RECEIPT_TTL_MS
+    )
+  })
   if (!pending.length) return incoming
   const byIdentity = new Map(incoming.map(plugin => [identity(plugin), plugin]))
   for (const installed of pending) {

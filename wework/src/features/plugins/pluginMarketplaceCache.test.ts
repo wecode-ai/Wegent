@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
+import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
   clearPluginMarketplaceCache,
   flushPluginMarketplaceCachePersist,
@@ -114,6 +115,7 @@ describe('pluginMarketplaceCache', () => {
     plugin.spec.sourcePayload = {
       codexInstallationReceipt: {
         awaitingMembership: true,
+        acceptedAt: Date.now(),
         authPolicy: 'ON_USE',
         appsNeedingAuth: [],
       },
@@ -172,6 +174,32 @@ describe('pluginMarketplaceCache', () => {
       confirmed.installedPlugins[0].spec.sourcePayload?.codexInstallationReceipt
     ).toMatchObject({ awaitingMembership: false })
     expect(publishGithub([]).installedPlugins).toEqual([])
+  })
+
+  test('expires acceptance at its original deadline despite refreshes and restart', () => {
+    vi.useFakeTimers()
+    const acceptedAt = Date.now()
+    publishGithub([acceptedGithub()], undefined, undefined, true)
+    vi.setSystemTime(acceptedAt + CODEX_INSTALLATION_RECEIPT_TTL_MS - 1)
+    expect(publishGithub([]).installedPlugins).toHaveLength(1)
+    resetPluginMarketplaceCacheMemory()
+    vi.setSystemTime(acceptedAt + CODEX_INSTALLATION_RECEIPT_TTL_MS)
+    expect(publishGithub([]).installedPlugins).toEqual([])
+    expect(publishGithub([]).installedPlugins).toEqual([])
+  })
+
+  test('does not indefinitely restore legacy or invalid acceptance times', () => {
+    for (const acceptedAt of [undefined, NaN, Date.now() + 1000]) {
+      const plugin = acceptedGithub()
+      plugin.spec.sourcePayload!.codexInstallationReceipt = {
+        awaitingMembership: true,
+        acceptedAt,
+        authPolicy: 'ON_USE',
+        appsNeedingAuth: [],
+      }
+      publishGithub([plugin], undefined, undefined, true)
+      expect(publishGithub([]).installedPlugins).toEqual([])
+    }
   })
 
   test('does not mistake metadata hydration for native membership confirmation', () => {
@@ -266,6 +294,47 @@ describe('pluginMarketplaceCache', () => {
     expect(getPluginMarketplaceCache(key)?.logosStripped).toBe(true)
   })
 
+  test('persists presentation fields without copying heavy plugin detail', () => {
+    const key = 'bounded-interface'
+    const interfaceData = {
+      displayName: 'GitHub',
+      defaultPrompt: 'Inspect this repository',
+      longDescription: 'detail'.repeat(100_000),
+      screenshots: ['data:image/png;base64,' + 'A'.repeat(100_000)],
+    }
+    const plugin = installedItem('github@official', 'official', 'github').raw
+    plugin.spec.interface = interfaceData
+    setPluginMarketplaceCache(
+      {
+        cacheKey: key,
+        marketplaceItems: [item({ id: 'github', name: 'github', interface: interfaceData })],
+        installedPlugins: [plugin],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device',
+        fetchedAt: Date.now(),
+      },
+      { persistImmediately: true }
+    )
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0].interface).toEqual(interfaceData)
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.interface).toEqual(
+      interfaceData
+    )
+    resetPluginMarketplaceCacheMemory()
+    const restored = getPluginMarketplaceCache(key)!
+    for (const data of [
+      restored.marketplaceItems[0].interface,
+      restored.installedPlugins[0].spec.interface,
+    ]) {
+      expect(data).toMatchObject({
+        defaultPrompt: 'Inspect this repository',
+        displayName: 'GitHub',
+      })
+      expect(data).not.toHaveProperty('longDescription')
+      expect(data).not.toHaveProperty('screenshots')
+    }
+  })
+
   test('compacts an existing heavy inventory snapshot before returning it', () => {
     const storageKey = 'wework.plugins.inventory.v2'
     const key = pluginMarketplaceCacheKey('http://api', 'token-heavy-v2')
@@ -302,7 +371,7 @@ describe('pluginMarketplaceCache', () => {
       shortDescription: 'Create documents',
       logo: null,
     })
-    expect(restored?.marketplaceItems[0]?.interface?.longDescription?.length).toBe(100_000)
+    expect(restored?.marketplaceItems[0]?.interface).not.toHaveProperty('longDescription')
     expect(compactedRaw.length).toBeLessThan(heavyRaw.length - logo.length / 2)
   })
 

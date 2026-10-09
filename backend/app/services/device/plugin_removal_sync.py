@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.schemas.device import DeviceCapabilitySyncResult
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.plugin_device_identity import plugin_device_id
@@ -20,6 +21,7 @@ from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 RETRY_INTERVAL_SECONDS = 60
+MAX_RETRY_INTERVAL_SECONDS = 3600
 # Coordination only; pending work remains in PluginDeviceInstallation across restarts.
 _inflight: set[tuple[int, str]] = set()
 
@@ -88,8 +90,24 @@ def pending_removal_devices(user_id: int, device_id: str | None) -> set[str]:
             .all()
         )
         target = plugin_device_id(db, user_id, device_id) if device_id else None
-        devices = {plugin_device_id(db, user_id, row.device_id) for row in rows}
+        now = datetime.now()
+        devices = {
+            plugin_device_id(db, user_id, row.device_id)
+            for row in rows
+            if removal_retry_due(row, now)
+        }
         return devices & {target} if target else devices
+
+
+def removal_retry_due(row: PluginDeviceInstallation, now: datetime) -> bool:
+    """Retry persisted failures with bounded backoff, never an in-memory timer."""
+    if row.state == "uninstalling":
+        return True
+    if row.last_sync_at is None:
+        return False
+    exponent = min(max((row.attempt_count or 0) - 1, 0), 6)
+    interval = min(RETRY_INTERVAL_SECONDS * 2**exponent, MAX_RETRY_INTERVAL_SECONDS)
+    return row.last_sync_at <= now - timedelta(seconds=interval)
 
 
 async def _sync_device(user_id: int, device_id: str) -> None:
@@ -102,10 +120,7 @@ async def _sync_device(user_id: int, device_id: str) -> None:
         result = await device_capability_sync_service.sync_current_device_capabilities(
             user_id=user_id, device_id=device_id
         )
-        with get_db_session() as db:
-            plugin_device_installation_service.record_device_sync_result(
-                db, user_id=user_id, result=result
-            )
+        await asyncio.to_thread(_record_sync_result, user_id, result)
         if not result.success:
             logger.warning(
                 "Plugin removal sync pending: user_id=%s device_id=%s",
@@ -120,6 +135,13 @@ async def _sync_device(user_id: int, device_id: str) -> None:
         _inflight.discard(key)
 
 
+def _record_sync_result(user_id: int, result: DeviceCapabilitySyncResult) -> None:
+    with get_db_session() as db:
+        plugin_device_installation_service.record_device_sync_result(
+            db, user_id=user_id, result=result
+        )
+
+
 @trace_async(tracer_name="backend.plugins", span_name="sync_pending_plugin_removals")
 async def sync_pending_plugin_removals(
     user_id: int, device_id: str | None = None
@@ -129,9 +151,5 @@ async def sync_pending_plugin_removals(
     A lost background task leaves the rows intact. Heartbeats and registration
     replay the authoritative desired state, without a second queue or snapshot.
     """
-    await asyncio.gather(
-        *(
-            _sync_device(user_id, target)
-            for target in pending_removal_devices(user_id, device_id)
-        )
-    )
+    targets = await asyncio.to_thread(pending_removal_devices, user_id, device_id)
+    await asyncio.gather(*(_sync_device(user_id, target) for target in targets))
