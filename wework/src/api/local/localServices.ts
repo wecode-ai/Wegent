@@ -1319,38 +1319,6 @@ function messageWithApplicationContext(
   return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
 }
 
-function projectSpaceMcpServers(
-  input: Pick<
-    BuildLocalRuntimeExecutionRequestInput,
-    'additionalContext' | 'cloudModelGateway' | 'message' | 'origin'
-  >
-): Array<Record<string, unknown>> {
-  if (
-    input.origin?.type === 'project_automation' ||
-    input.origin?.dispatchRole === 'manager' ||
-    input.origin?.dispatch_role === 'manager'
-  ) {
-    return []
-  }
-  const hasProjectSpaceContext = Boolean(
-    input.additionalContext?.projectSpaceIssue ||
-    input.additionalContext?.projectSpaceChat ||
-    input.message.includes('cloud://projects')
-  )
-  const backendUrl = input.cloudModelGateway?.backendUrl?.replace(/\/+$/, '')
-  const authToken = input.cloudModelGateway?.apiKey
-  if (!hasProjectSpaceContext || !backendUrl || !authToken) return []
-  return [
-    {
-      name: 'wegent-wework-space',
-      type: 'streamable-http',
-      url: `${backendUrl}/mcp/wework-space/sse`,
-      headers: { Authorization: `Bearer ${authToken}` },
-      timeout: 60,
-    },
-  ]
-}
-
 async function buildLocalRuntimeExecutionRequest(
   input: BuildLocalRuntimeExecutionRequestInput
 ): Promise<Record<string, unknown>> {
@@ -1427,7 +1395,7 @@ async function buildLocalRuntimeExecutionRequest(
       ? { runtime_executable_path: input.runtimeExecutablePath }
       : {}),
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
-    mcp_servers: projectSpaceMcpServers(input),
+    mcp_servers: [],
     model_config: modelConfig,
     system_prompt: input.projectInstructions?.trim() ?? '',
     project_plugin_ids: (input.projectPlugins ?? []).map(plugin => plugin.id),

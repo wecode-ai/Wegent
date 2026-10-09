@@ -2058,7 +2058,7 @@ def test_local_runtime_completion_persists_the_agent_response(
     assert completed[0].type == "text"
 
 
-def test_runtime_completion_preserves_shared_issue_status(
+def test_runtime_completion_advances_assigned_agent_issue_to_review(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -2113,8 +2113,38 @@ def test_runtime_completion_preserves_shared_issue_status(
     )
 
     test_db.refresh(task)
-    assert task.status == "in_progress"
+    assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
+def test_runtime_completion_preserves_human_assigned_issue_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-HUMAN-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Human-owned private AI task",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_user_id=test_user.id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    row = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=task.id,
+        agent_id=None,
+    )
+
+    project_chat_service._advance_task_to_review(test_db, row)
+
+    assert task.status == "in_progress"
 
 
 def test_runtime_completion_waits_for_reported_workflow_outcome(
@@ -2360,7 +2390,7 @@ def test_runtime_task_terminal_status_closes_the_task_ai_state(
     assert completed[0].status == "completed"
     assert completed[0].metadata["run_status"] == "completed"
     test_db.refresh(task)
-    assert task.status == "in_progress"
+    assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["run_id"] == response.metadata["run_id"]
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
@@ -2409,7 +2439,7 @@ def test_runtime_done_event_closes_the_task_ai_state(
     assert completed[0].status == "completed"
     assert completed[0].content == "done from executor"
     test_db.refresh(task)
-    assert task.status == "in_progress"
+    assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["run_id"] == response.metadata["run_id"]
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
@@ -2878,7 +2908,7 @@ def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     )
     assert stored_message.status == "completed"
     test_db.refresh(task)
-    assert task.status == "in_progress"
+    assert task.status == "in_review"
 
 
 def test_reply_thread_resolves_root_and_carries_reply_to(

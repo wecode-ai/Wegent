@@ -94,7 +94,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
-import { workItemComposerReference, workItemStartedUpdate } from './workItemTaskInput'
+import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
@@ -751,10 +751,12 @@ export function WeworkSharedProject({
           }
         }}
         onTaskCreated={async address => {
-          const latestIssue = await scopedApi.issues.get(taskComposer.issue.id)
-          const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
-          if (startUpdate) {
-            await scopedApi.issues.update(latestIssue.id, startUpdate)
+          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
+            scopedApi.issues,
+            taskComposer.issue.id
+          )
+          if (statusUpdateError !== null) {
+            notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
           }
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey

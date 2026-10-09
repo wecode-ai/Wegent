@@ -4021,6 +4021,7 @@
     "task_board_status_in_progress": "进行中",
     "task_board_status_in_review": "待确认",
     "task_board_status_completed": "已完成",
+    "task_board_status_update_failed": "AI 任务已创建，但 Issue 状态更新失败",
     "new_task": "新建任务",
     "add_task": "添加任务",
     "personal_task_title": "让 AI 帮我处理",

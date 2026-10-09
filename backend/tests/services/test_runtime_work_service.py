@@ -5527,7 +5527,7 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
     )
 
 
-def test_build_runtime_execution_request_exposes_project_space_tools_for_issue(
+def test_build_runtime_execution_request_uses_managed_project_space_tools_for_issue(
     test_db,
     test_user,
 ) -> None:
@@ -5565,17 +5565,14 @@ def test_build_runtime_execution_request_exposes_project_space_tools_for_issue(
         ),
     )
 
-    assert len(execution_request.mcp_servers) == 1
-    server = execution_request.mcp_servers[0]
-    assert server["name"] == "wegent-wework-space"
-    assert server["type"] == "streamable-http"
-    assert server["url"].endswith("/mcp/wework-space/sse")
-    assert server["headers"]["Authorization"].startswith("Bearer ")
+    assert execution_request.mcp_servers == []
 
 
-def test_build_runtime_execution_request_does_not_duplicate_manager_space_tools(
+@pytest.mark.parametrize("dispatch_role", ["manager", "executor", "member"])
+def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_roles(
     test_db,
     test_user,
+    dispatch_role,
 ) -> None:
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
@@ -5590,7 +5587,7 @@ def test_build_runtime_execution_request_does_not_duplicate_manager_space_tools(
             "type": "board_task",
             "cloudProjectId": "project-1",
             "loopItemId": "ISSUE-1",
-            "dispatchRole": "manager",
+            "dispatchRole": dispatch_role,
         },
         additionalContext={
             "projectSpaceIssue": {

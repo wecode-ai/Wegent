@@ -1,4 +1,5 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 
 export function workItemComposerReference(
   project: Pick<CloudProject, 'id' | 'project_key'>,
@@ -6,7 +7,7 @@ export function workItemComposerReference(
 ): string {
   const projectKey = project.project_key?.trim()
   const issueKey = projectKey ? `${projectKey}-${item.sequence_number}` : `#${item.sequence_number}`
-  const title = item.title.replace(/[[\]\n]/g, ' ').trim()
+  const title = item.title.replace(/[[\]\\\r\n]/g, ' ').trim()
   const label = title ? `${issueKey} · ${title}` : issueKey
   return `[$${label}](wework-issue://${encodeURIComponent(String(project.id))}/${encodeURIComponent(item.id)})`
 }
@@ -29,6 +30,22 @@ export function workItemStartedUpdate(
     version: item.version,
     ...(shouldStartIssue ? { status: 'in_progress' as const } : {}),
     ...(associationChanged ? { tags: associatedTags } : {}),
+  }
+}
+
+export async function updateIssueWhenPersonalTaskStarts(
+  issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>,
+  issueId: string
+): Promise<string | null> {
+  try {
+    const latestIssue = await issues.get(issueId)
+    const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
+    if (startUpdate) {
+      await issues.update(latestIssue.id, startUpdate)
+    }
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : ''
   }
 }
 

@@ -4024,6 +4024,7 @@
     "task_board_status_in_progress": "In progress",
     "task_board_status_in_review": "In review",
     "task_board_status_completed": "Completed",
+    "task_board_status_update_failed": "The AI task was created, but the Issue status could not be updated",
     "new_task": "New task",
     "add_task": "Add task",
     "personal_task_title": "Let AI help",

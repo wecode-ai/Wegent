@@ -375,6 +375,15 @@ describe('workItemTaskInput', () => {
     ).toBe('[$WORK-806 · 本地电脑处理配置](wework-issue://project/issue)')
   })
 
+  it('removes Markdown escapes from an Issue composer chip label', () => {
+    expect(
+      workItemComposerReference(
+        { id: 'project', project_key: 'WORK' },
+        { id: 'issue', sequence_number: 806, title: '处理 [路径]\\\r\n' }
+      )
+    ).toBe('[$WORK-806 · 处理  路径](wework-issue://project/issue)')
+  })
+
   it('sends the original user-authored title without adding an AI instruction wrapper', () => {
     expect(
       workItemTaskInput({

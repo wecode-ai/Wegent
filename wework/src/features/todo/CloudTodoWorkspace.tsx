@@ -4672,6 +4672,9 @@ export function CloudTodoWorkspace({
                                   ? cloudWorkspaceApi!
                                   : localProjectManageApi!
                               }
+                              onProjectChange={updated =>
+                                replaceProject(selectedProject, updated as CloudProject)
+                              }
                               project={selectedProject}
                               translate={(key, fallback, options) =>
                                 fallback === undefined ? t(key, options) : t(key, fallback, options)
