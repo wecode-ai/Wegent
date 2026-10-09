@@ -85,14 +85,32 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
   await createIssue(control, label)
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
   await control.command('waitFor', COMPOSER)
+  const projectButton = `${PANEL} [data-testid="project-work-button"]`
+  if (!(await control.command('getText', projectButton)).includes('Worktree policy E2E')) {
+    await control.command('click', projectButton)
+    const projectOption = await waitForTestIdByText(
+      control,
+      '[data-testid="project-work-menu"]',
+      'project-option-',
+      'Worktree policy E2E',
+      timeoutMs
+    )
+    await control.command('click', `[data-testid="${projectOption}"]`)
+    await control.command('waitFor', projectButton, {
+      text: 'Worktree policy E2E',
+      timeoutMs,
+    })
+  }
+  const modeButton = `${PANEL} [data-testid="execution-mode-button"]`
   if (executionMode === 'git_worktree') {
-    const modeButton = `${PANEL} [data-testid="execution-mode-button"]`
     await control.command('click', modeButton)
     await control.command(
       'clickWhenEnabled',
       `${PANEL} [data-testid="execution-mode-git-worktree-button"]`
     )
     await control.command('waitFor', modeButton, { text: '新工作树' })
+  } else {
+    await control.command('waitFor', modeButton, { text: '当前工作区' })
   }
   const before = new Set((await tasks(control)).map(task => task.taskId))
   await control.command('fill', COMPOSER, { value: `${MARKER} ${label}` })
@@ -247,7 +265,7 @@ export function createDesktopScenario({
         'Shared agent task',
         modelResponseTimeoutMs
       )
-      assert.equal(sharedAgent.workspacePath, shared.workspacePath)
+      assert.notEqual(sharedAgent.workspacePath, shared.workspacePath)
       assert.notEqual(sharedAgent.workspaceKind, 'worktree')
       await configurePolicy(control, 'git_worktree')
       const isolatedAgent = await runAgent(
@@ -257,6 +275,7 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       assert.equal(isolatedAgent.workspaceKind, 'worktree')
+      assert.notEqual(isolatedAgent.workspacePath, sharedAgent.workspacePath)
       assert.notEqual(isolatedAgent.workspacePath, isolated.workspacePath)
       await access(join(isolatedAgent.workspacePath, '.git'))
       const markerPath = join(isolated.workspacePath, 'restore-evidence.txt')
