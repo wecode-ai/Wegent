@@ -9378,7 +9378,7 @@ mod tests {
                 TaskCreate {
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
-                    status: "inbox".to_owned(),
+                    status: "completed".to_owned(),
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
