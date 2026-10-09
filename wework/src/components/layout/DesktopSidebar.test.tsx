@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
+import { applyAppearance } from '@/features/appearance/applyAppearance'
+import { defaultAppearance } from '@/features/appearance/presets'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { CloudWorkStatus } from '@/types/workbench'
 import {
@@ -229,27 +231,58 @@ describe('DesktopSidebar', () => {
     vi.unstubAllEnvs()
   })
 
-  test.each(['light', 'dark'])('defines contrasting waiting-indicator colors for %s', theme => {
-    const sidebarStyles = readFileSync('src/styles/globals.css', 'utf8')
-    const themeStyles =
-      theme === 'light'
-        ? sidebarStyles.split("[data-theme='dark']")[0]
-        : sidebarStyles.split("[data-theme='dark']")[1]
-    const luminance = (token: string) => {
-      const match = themeStyles.match(new RegExp(`${token}: (\\d+) (\\d+) (\\d+);`))
-      expect(match).not.toBeNull()
-      const channels = match!.slice(1).map(value => {
-        const channel = Number(value) / 255
-        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
-      })
-      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  test.each(['light', 'dark'] as const)(
+    'keeps the waiting indicator readable as the accent changes in %s mode',
+    theme => {
+      const sidebarStyles = readFileSync('src/styles/globals.css', 'utf8')
+      const themeStyles =
+        theme === 'light'
+          ? sidebarStyles.split("[data-theme='dark']")[0]
+          : sidebarStyles.split("[data-theme='dark']")[1]
+      expect(themeStyles).toContain('--color-sidebar-attention-bg: var(--color-primary);')
+      const luminance = (rgb: string) => {
+        const channels = rgb.split(' ').map(value => {
+          const channel = Number(value) / 255
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+        })
+        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+      }
+      const root = document.documentElement
+      const originalAttributes = [
+        'style',
+        'data-theme',
+        'data-appearance-mode',
+        'data-sidebar-translucent',
+        'class',
+      ].map(name => [name, root.getAttribute(name)] as const)
+      try {
+        for (const [accentColor, expectedBackground, expectedForeground] of [
+          [defaultAppearance.accentColor, '37 99 235', '255 255 255'],
+          ['#123456', '18 52 86', '255 255 255'],
+          ['#facc15', '250 204 21', '0 0 0'],
+          ['#808080', '128 128 128', '0 0 0'],
+          ['#000000', '0 0 0', '255 255 255'],
+          ['#ffffff', '255 255 255', '0 0 0'],
+          ['#fff', '255 255 255', '0 0 0'],
+          [defaultAppearance.accentColor, '37 99 235', '255 255 255'],
+        ]) {
+          applyAppearance({ ...defaultAppearance, accentColor }, theme)
+          expect(root.style.getPropertyValue('--color-primary')).toBe(expectedBackground)
+          expect(root.style.getPropertyValue('--color-sidebar-attention')).toBe(expectedForeground)
+          const foreground = luminance(root.style.getPropertyValue('--color-sidebar-attention'))
+          const background = luminance(root.style.getPropertyValue('--color-primary'))
+          const contrast =
+            (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
+          expect(contrast).toBeGreaterThanOrEqual(3)
+        }
+      } finally {
+        for (const [name, value] of originalAttributes) {
+          if (value === null) root.removeAttribute(name)
+          else root.setAttribute(name, value)
+        }
+      }
     }
-    const foreground = luminance('--color-sidebar-attention')
-    const background = luminance('--color-sidebar-attention-bg')
-    const contrast =
-      (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
-    expect(contrast).toBeGreaterThanOrEqual(3)
-  })
+  )
 
   test('keeps project and task section header actions visible outside the flex layout', () => {
     renderSidebar()

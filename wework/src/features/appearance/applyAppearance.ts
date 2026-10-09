@@ -22,7 +22,19 @@ export function applyAppearance(
   root.dataset.sidebarTranslucent = String(appearance.sidebarTranslucent)
   root.classList.toggle('dark', resolvedMode === 'dark')
   root.style.colorScheme = resolvedMode
-  Object.entries(resolveThemeVariables(resolvedMode, appearance)).forEach(([variable, value]) => {
+  const variables = resolveThemeVariables(resolvedMode, appearance)
+  Object.entries(variables).forEach(([variable, value]) => {
     root.style.setProperty(variable, value)
   })
+  const channels = variables['--color-primary'].split(' ').map(value => {
+    const channel = Number(value) / 255
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  const blackContrast = (luminance + 0.05) / 0.05
+  const whiteContrast = 1.05 / (luminance + 0.05)
+  root.style.setProperty(
+    '--color-sidebar-attention',
+    blackContrast >= whiteContrast ? '0 0 0' : '255 255 255'
+  )
 }

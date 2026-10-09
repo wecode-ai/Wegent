@@ -63,8 +63,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-marked: 255 244 214;
   --color-sidebar-marked-hover: 255 232 163;
   --color-sidebar-marked-accent: 166 106 0;
-  --color-sidebar-attention-bg: 255 237 213;
-  --color-sidebar-attention: 154 52 18;
+  --color-sidebar-attention-bg: var(--color-primary);
+  --color-sidebar-attention: 0 0 0;
   --color-sidebar-text-primary: 56 58 61;
   --color-sidebar-text-secondary: 87 88 91;
   --color-sidebar-text-muted: 128 129 131;
@@ -578,8 +578,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-sidebar-marked: 82 64 24;
   --color-sidebar-marked-hover: 105 83 31;
   --color-sidebar-marked-accent: 245 180 52;
-  --color-sidebar-attention-bg: 67 40 18;
-  --color-sidebar-attention: 253 186 116;
+  --color-sidebar-attention-bg: var(--color-primary);
+  --color-sidebar-attention: 255 255 255;
   --color-sidebar-text-primary: 242 242 242;
   --color-sidebar-text-secondary: 179 179 179;
   --color-sidebar-text-muted: 128 128 128;
