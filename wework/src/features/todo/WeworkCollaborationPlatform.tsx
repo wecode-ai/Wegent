@@ -320,6 +320,7 @@ export function WeworkSharedProject({
     taskRequest?: RuntimeTaskCreateRequest | null
     dispatch?: IssueDispatchPersonalTaskAction
   } | null>(null)
+  const latestProjectRef = useRef(project)
   const taskComposerSequenceRef = useRef(0)
   const acceptedDispatchTaskActions = useRef(new Set<string>())
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
@@ -339,6 +340,9 @@ export function WeworkSharedProject({
   useEffect(() => {
     runtimeTaskLifecycleRef.current = runtimeTaskLifecycle
   }, [runtimeTaskLifecycle])
+  useEffect(() => {
+    latestProjectRef.current = project
+  }, [project])
   const hasFullWorkspaceAccess = 'access_role' in workspace
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
@@ -620,7 +624,8 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
-      const environmentTaskRequest = projectExecutionEnvironmentTaskRequest(project)
+      const currentProject = latestProjectRef.current
+      const environmentTaskRequest = projectExecutionEnvironmentTaskRequest(currentProject)
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
@@ -633,10 +638,10 @@ export function WeworkSharedProject({
             ? {
                 message: issueDispatchPersonalTaskInput(dispatch),
                 title: dispatch.taskTitle,
-                cloudProjectId: String(project.id),
+                cloudProjectId: String(currentProject.id),
                 origin: {
                   type: 'issue_dispatch',
-                  cloudProjectId: String(project.id),
+                  cloudProjectId: String(currentProject.id),
                   loopItemId: issue.id,
                   dispatchId: dispatch.dispatchId,
                   roundId: dispatch.roundId,
@@ -649,7 +654,7 @@ export function WeworkSharedProject({
       })
       projectHost.navigate({ ...projectHost.location, issueId: issue.id })
     },
-    [project, projectHost, runtimePort]
+    [projectHost, runtimePort]
   )
 
   useIssueDispatchNotificationActionRegistration(
@@ -785,6 +790,9 @@ export function WeworkSharedProject({
         <CollaborationApp
           api={scopedApi}
           initialProject={project}
+          onProjectChange={nextProject => {
+            latestProjectRef.current = nextProject
+          }}
           host={projectHost}
           locale={locale}
           showProjectBack={false}
