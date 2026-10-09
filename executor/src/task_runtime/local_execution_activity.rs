@@ -207,6 +207,7 @@ pub(super) fn ensure_execution_binding(
             task_title: Some(task_title),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: node,
         },
         &metadata,
@@ -264,6 +265,38 @@ pub(super) fn repair_missing_execution_activity(
 }
 
 impl LocalTaskStore {
+    pub fn update_execution_binding_runtime(
+        &self,
+        execution_id: i64,
+        execution_context: Option<&Value>,
+        model_selection: Option<&Value>,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(execution_context) = execution_context {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(COALESCE(metadata, '{}'), '$.execution_context', json(?1)),
+                     updated_at=?2
+                 WHERE resource_type='execution' AND unlinked_at IS NULL
+                   AND json_extract(metadata,'$.execution_id')=?3",
+                params![execution_context.to_string(), now(), execution_id],
+            )?;
+        }
+        if let Some(model_selection) = model_selection {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET metadata=json_set(COALESCE(metadata, '{}'), '$.model_selection', json(?1)),
+                     updated_at=?2
+                 WHERE resource_type='execution' AND unlinked_at IS NULL
+                   AND json_extract(metadata,'$.execution_id')=?3",
+                params![model_selection.to_string(), now(), execution_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Persist progress only while the execution is active; late output cannot replace a result.
     pub fn update_execution_progress(
         &self,
@@ -288,15 +321,38 @@ impl LocalTaskStore {
         status: &str,
         content: &str,
     ) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task_id = transaction
+            .query_row(
+                "SELECT task_id FROM loop_item_comments
+                 WHERE deleted_at IS NULL AND status IN ('pending','streaming')
+                   AND json_extract(metadata,'$.runtime_address.taskId')=?1
+                 ORDER BY id DESC LIMIT 1",
+                params![runtime_task_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        transaction.execute(
             "UPDATE loop_item_comments SET content=?1,status=?2,updated_at=?3
              WHERE id=(SELECT id FROM loop_item_comments
                  WHERE deleted_at IS NULL AND status IN ('pending','streaming')
                    AND json_extract(metadata,'$.runtime_address.taskId')=?4
-                 ORDER BY id DESC LIMIT 1)",
+             ORDER BY id DESC LIMIT 1)",
             params![content, status, now(), runtime_task_id],
         )?;
+        if matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
+            if let Some(task_id) = task_id {
+                transaction.execute(
+                    "UPDATE loop_items
+                     SET status='in_review', completed_at=NULL,
+                         version=version+1, updated_at=?1
+                     WHERE id=?2 AND resource_type='task' AND status='in_progress'",
+                    params![now(), task_id],
+                )?;
+            }
+        }
+        transaction.commit()?;
         Ok(())
     }
 }

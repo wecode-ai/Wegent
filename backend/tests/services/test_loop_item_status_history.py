@@ -295,18 +295,33 @@ def test_task_binding_does_not_claim_runtime_has_started(test_db, test_user) -> 
     project = _make_project(test_db, test_user)
     item = _create_item(test_db, project, test_user)
 
-    loop_item_service.bind_task(
+    binding = loop_item_service.bind_task(
         test_db,
         item.id,
         LoopItemTaskBind(
             device_id="device-1",
             task_id="task-1",
             task_title="bound task",
+            execution_context={
+                "runtime": "codex",
+                "threadId": "thread-1",
+                "workspacePath": "/tmp/wegent",
+                "workspaceKind": "worktree",
+                "worktreeId": "task-1",
+                "ignored": "value",
+            },
         ),
         test_user.id,
     )
     test_db.refresh(item)
 
     assert item.status == "inbox"
+    assert binding.execution_context == {
+        "runtime": "codex",
+        "threadId": "thread-1",
+        "workspacePath": "/tmp/wegent",
+        "workspaceKind": "worktree",
+        "worktreeId": "task-1",
+    }
     history = _history(item)
     assert len(history) == 1

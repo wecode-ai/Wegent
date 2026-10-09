@@ -324,6 +324,7 @@ function toWeworkTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding
     task_title: binding.taskTitle,
     backend_task_id: binding.backendTaskId,
     modelSelection: binding.modelSelection as LoopItemTaskBinding['modelSelection'],
+    executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     linked_at: binding.linkedAt,
   }
@@ -407,7 +408,10 @@ type SelectedTaskBinding = Pick<
 > & {
   work_item_id: string
 }
-type TaskBindingAddressInput = Pick<LoopItemTaskBinding, 'device_id' | 'task_id' | 'modelSelection'>
+type TaskBindingAddressInput = Pick<
+  LoopItemTaskBinding,
+  'device_id' | 'task_id' | 'modelSelection' | 'executionContext'
+>
 
 function selectedTaskBindingAddress(
   binding: TaskBindingAddressInput,
@@ -417,6 +421,17 @@ function selectedTaskBindingAddress(
   return hydrateRuntimeTaskAddress(runtimeWork, {
     deviceId: resolveWorkbenchDeviceId(devices, binding.device_id) ?? binding.device_id,
     taskId: binding.task_id,
+    ...(binding.executionContext?.runtime ? { runtime: binding.executionContext.runtime } : {}),
+    ...(binding.executionContext?.threadId ? { threadId: binding.executionContext.threadId } : {}),
+    ...(binding.executionContext?.workspacePath
+      ? { workspacePath: binding.executionContext.workspacePath }
+      : {}),
+    ...(binding.executionContext?.workspaceKind
+      ? { workspaceKind: binding.executionContext.workspaceKind }
+      : {}),
+    ...(binding.executionContext?.worktreeId
+      ? { worktreeId: binding.executionContext.worktreeId }
+      : {}),
     ...(binding.modelSelection
       ? { runtimeHandle: { modelSelection: binding.modelSelection } }
       : {}),
@@ -2421,9 +2436,28 @@ export function CloudTodoWorkspace({
         await onOpenRuntimeTask({
           deviceId: existing.deviceId,
           taskId: existing.taskId,
+          ...(existing.executionContext?.runtime
+            ? { runtime: existing.executionContext.runtime }
+            : {}),
+          ...(existing.executionContext?.threadId
+            ? { threadId: existing.executionContext.threadId }
+            : {}),
+          ...(existing.executionContext?.workspacePath
+            ? { workspacePath: existing.executionContext.workspacePath }
+            : {}),
+          ...(existing.executionContext?.workspaceKind
+            ? { workspaceKind: existing.executionContext.workspaceKind }
+            : {}),
+          ...(existing.executionContext?.worktreeId
+            ? { worktreeId: existing.executionContext.worktreeId }
+            : {}),
           ...(existing.modelSelection
             ? { runtimeHandle: { modelSelection: existing.modelSelection } }
             : {}),
+          projectSession: {
+            projectId: String(action.projectId),
+            issueId: String(action.itemId),
+          },
         })
         return
       }

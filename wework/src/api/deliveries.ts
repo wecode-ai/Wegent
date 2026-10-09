@@ -547,6 +547,13 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: {
+    runtime?: string | null
+    threadId?: string | null
+    workspacePath?: string | null
+    workspaceKind?: string | null
+    worktreeId?: string | null
+  } | null
   binding_type?: 'system' | 'user'
   human_assignment_id?: string | null
   dispatch_id?: string | null

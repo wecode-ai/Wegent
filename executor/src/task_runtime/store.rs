@@ -1186,8 +1186,9 @@ impl LocalTaskStore {
             prompt,
             model,
         } = *input;
-        let connection = self.connection()?;
-        if let Some(message_id) = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(message_id) = transaction
             .query_row(
                 "SELECT message_id FROM loop_item_comments
                  WHERE project_id=?1 AND task_id=?2 AND sender_type='agent'
@@ -1206,13 +1207,16 @@ impl LocalTaskStore {
             )
             .optional()?
         {
-            return comment_row(&connection, &message_id);
+            move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+            let comment = comment_row(&transaction, &message_id)?;
+            transaction.commit()?;
+            return Ok(comment);
         }
-        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+        let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
             TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
         })?;
-        insert_comment(
-            &connection,
+        let comment = insert_comment(
+            &transaction,
             &LocalCommentCreate {
                 project_id: project_id.to_owned(),
                 task_id: task_id.to_owned(),
@@ -1235,7 +1239,10 @@ impl LocalTaskStore {
                 reply_to_message_id: Some(trigger_message_id.to_owned()),
             },
             "streaming",
-        )
+        )?;
+        move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn fail_runtime_comment(
@@ -2384,6 +2391,9 @@ impl LocalTaskStore {
         if let Some(model_selection) = input.model_selection.as_ref() {
             metadata["model_selection"] = model_selection.clone();
         }
+        if let Some(execution_context) = input.execution_context.as_ref() {
+            metadata["execution_context"] = execution_context.clone();
+        }
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
             let same_target = active.cloud_project_id == project_id
@@ -2657,7 +2667,8 @@ impl LocalTaskStore {
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (
@@ -2753,7 +2764,8 @@ impl LocalTaskStore {
                             ELSE 'user'
                         END,
                         linked_at,
-                        json_extract(metadata, '$.model_selection')
+                        json_extract(metadata, '$.model_selection'),
+                        json_extract(metadata, '$.execution_context')
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
@@ -2892,7 +2904,8 @@ fn get_effective_binding(
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2933,7 +2946,8 @@ fn get_binding_by_kind(
                         ELSE 'user'
                     END,
                     linked_at,
-                    json_extract(metadata, '$.model_selection')
+                    json_extract(metadata, '$.model_selection'),
+                    json_extract(metadata, '$.execution_context')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -3015,6 +3029,9 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         linked_at: row.get(11)?,
         model_selection: row
             .get::<_, Option<String>>(12)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
+        execution_context: row
+            .get::<_, Option<String>>(13)?
             .and_then(|value| serde_json::from_str(&value).ok()),
     })
 }
@@ -4254,6 +4271,21 @@ fn insert_comment(
     )?;
     refresh_runtime_projection_additional_context(connection, &create.task_id)?;
     comment_row(connection, &message_id)
+}
+
+fn move_runtime_comment_task_to_in_progress(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    connection.execute(
+        "UPDATE loop_items
+         SET status='in_progress', completed_at=NULL,
+             version=version+1, updated_at=?1
+         WHERE id=?2 AND resource_type='task'
+           AND status IN ('inbox', 'pending', 'in_review')",
+        params![now(), task_id],
+    )?;
+    Ok(())
 }
 
 fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
@@ -5511,6 +5543,28 @@ mod tests {
             .unwrap();
         assert_eq!(updated.status, "completed");
         assert_eq!(updated.content, "搞定");
+        let task = store.get_task(&project.id, &task.id).unwrap();
+        let task = store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    assignee_group_id: None,
+                    assignee_user_id: None,
+                    version: task.version,
+                    title: None,
+                    description: None,
+                    status: Some("in_review".to_owned()),
+                    priority: None,
+                    parent_id: None,
+                    tags: None,
+                    assignee_agent_id: None,
+                    execution_payload: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(task.status.as_deref(), Some("in_review"));
 
         let after = store
             .list_comments(&project.id, &task.id, user_comment.sequence_number)
@@ -5545,6 +5599,14 @@ mod tests {
             .unwrap();
         assert_eq!(continuation.status, "streaming");
         assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+        assert_eq!(
             continuation.thread_root_message_id,
             user_comment.thread_root_message_id
         );
@@ -5560,6 +5622,14 @@ mod tests {
         assert_eq!(continued.status, "completed");
         assert_eq!(continued.content, "你之前让我看一下");
         assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
     }
 
     #[test]
@@ -7590,6 +7660,51 @@ mod tests {
         store
             .request_runtime_start(claimed.id, device_id, task_id, 300)
             .unwrap();
+        store
+            .update_execution_binding_runtime(
+                claimed.id,
+                Some(&json!({
+                    "runtime": "codex",
+                    "threadId": "thread-1",
+                    "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                    "workspaceKind": "worktree",
+                    "worktreeId": "codex-queue-1",
+                })),
+                Some(&json!({
+                    "modelName": "gpt-5.6-sol",
+                    "modelType": "runtime",
+                    "options": {
+                        "codexProviderType": "official"
+                    }
+                })),
+            )
+            .unwrap();
+        let binding = store
+            .list_task_bindings(&task.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("Runtime start must create an Issue task binding");
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "runtime": "codex",
+                "threadId": "thread-1",
+                "workspacePath": "/tmp/wegent/worktrees/codex-queue-1",
+                "workspaceKind": "worktree",
+                "worktreeId": "codex-queue-1",
+            }))
+        );
+        assert_eq!(
+            binding.model_selection,
+            Some(json!({
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {
+                    "codexProviderType": "official"
+                }
+            }))
+        );
 
         let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
         connection
@@ -8943,6 +9058,11 @@ mod tests {
                         "modelType": "public",
                         "options": {"reasoning": "high"},
                     })),
+                    execution_context: Some(json!({
+                        "workspacePath": "/tmp/wegent",
+                        "workspaceKind": "worktree",
+                        "worktreeId": "runtime-1",
+                    })),
                     workflow_node_id: None,
                 },
             )
@@ -8955,6 +9075,14 @@ mod tests {
                 "modelName": "gpt-5.6-sol",
                 "modelType": "public",
                 "options": {"reasoning": "high"},
+            }))
+        );
+        assert_eq!(
+            binding.execution_context,
+            Some(json!({
+                "workspacePath": "/tmp/wegent",
+                "workspaceKind": "worktree",
+                "worktreeId": "runtime-1",
             }))
         );
         assert_eq!(store.list_task_bindings(&task.id).unwrap().len(), 1);
@@ -9006,6 +9134,7 @@ mod tests {
                     task_title: task.title.clone(),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
             )
@@ -9323,6 +9452,7 @@ mod tests {
                         task_title: item.title.clone(),
                         backend_task_id: None,
                         model_selection: None,
+                        execution_context: None,
                         workflow_node_id: None,
                     },
                 )
@@ -9391,6 +9521,7 @@ mod tests {
             task_title: Some("Runtime".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: None,
         };
 
@@ -9664,6 +9795,7 @@ mod tests {
             task_title: Some("Implement".to_owned()),
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: Some("develop".to_owned()),
         };
         store

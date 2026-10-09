@@ -999,7 +999,11 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
-        if self.is_busy_local_task(&local_task_id) {
+        let queue_if_busy = bool_field(&payload, "queueIfBusy")
+            .or_else(|| bool_field(&payload, "queue_if_busy"))
+            .unwrap_or(false);
+        let was_busy = self.is_busy_local_task(&local_task_id);
+        if was_busy && !queue_if_busy {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1116,8 +1120,13 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request, false)
-                .await?;
+            if was_busy {
+                self.queue_claude_turn(local_task_id.clone(), request)
+                    .await?;
+            } else {
+                self.spawn_claude_turn(local_task_id.clone(), request, false)
+                    .await?;
+            }
             let queue_position = self
                 .queued_local_task_position(&local_task_id)
                 .map(|position| position + 1);
@@ -1192,7 +1201,7 @@ impl RuntimeWorkRpcHandler {
         let resume_thread_id = (!ephemeral).then_some(thread_id);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
-        self.spawn_turn(SpawnTurnRequest {
+        let turn = SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -1201,8 +1210,12 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id,
             initial_thread_goal,
-        })
-        .await?;
+        };
+        if was_busy {
+            self.queue_turn(turn).await?;
+        } else {
+            self.spawn_turn(turn).await?;
+        }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
             .map(|position| position + 1);

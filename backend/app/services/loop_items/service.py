@@ -136,6 +136,23 @@ def _task_binding_metadata(
         metadata["workflow_node_id"] = values.workflow_node_id
     if values.model_selection:
         metadata["model_selection"] = values.model_selection.model_dump(by_alias=True)
+    if values.execution_context:
+        allowed_context = {
+            key: value.strip()
+            for key, value in values.execution_context.items()
+            if key
+            in {
+                "runtime",
+                "threadId",
+                "workspacePath",
+                "workspaceKind",
+                "worktreeId",
+            }
+            and isinstance(value, str)
+            and value.strip()
+        }
+        if allowed_context:
+            metadata["execution_context"] = allowed_context
     for key in (
         "human_assignment_id",
         "dispatch_id",

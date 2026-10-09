@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::runtime_work::automations::AutomationRunStatus;
+use crate::runtime_work::util::infer_worktree_id;
 
 static LAST_RUNTIME_STATUS_OBSERVATION: AtomicU64 = AtomicU64::new(0);
 
@@ -139,6 +140,46 @@ impl RuntimeWorkRpcHandler {
                         && response.get("taskId").and_then(Value::as_str)
                             == Some(runtime_task_id.as_str()) =>
                 {
+                    let execution_context = response
+                        .get("workspacePath")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(|workspace_path| {
+                            json!({
+                            "runtime": response.get("runtime").and_then(Value::as_str),
+                            "threadId": response
+                                .get("runtimeHandle")
+                                .and_then(|handle| handle.get("threadId"))
+                                .and_then(Value::as_str),
+                            "workspacePath": workspace_path,
+                            "workspaceKind": infer_workspace_kind(workspace_path),
+                            "worktreeId": infer_worktree_id(workspace_path),
+                            })
+                        });
+                    let model_selection = response
+                        .get("runtimeHandle")
+                        .and_then(|handle| {
+                            handle
+                                .get("modelSelection")
+                                .or_else(|| handle.get("model_selection"))
+                        })
+                        .filter(|selection| selection.is_object());
+                    if execution_context.is_some() || model_selection.is_some() {
+                        if let Err(error) = store.update_execution_binding_runtime(
+                            execution.id,
+                            execution_context.as_ref(),
+                            model_selection,
+                        ) {
+                            log_executor_event(
+                                "local Issue Runtime binding persistence failed",
+                                &[
+                                    ("execution_id", execution.id.to_string()),
+                                    ("error", error.to_string()),
+                                ],
+                            );
+                        }
+                    }
                     if let Err(error) = store.confirm_runtime_accepted(
                         execution.id,
                         &self.device_id,

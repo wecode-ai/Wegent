@@ -2851,7 +2851,7 @@ async fn runtime_tasks_send_rejects_missing_execution_request() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
+async fn runtime_tasks_send_queues_running_local_task_only_when_requested() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -2901,6 +2901,27 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
             "code": "bad_request"
         })
     );
+
+    let queued = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "queued turn",
+                "queueIfBusy": true,
+                "executionRequest": codex_execution_request(
+                    "queued turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("explicit queueing should be accepted");
+    assert_eq!(queued["accepted"], true);
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(queued["queuePosition"], 1);
 
     let cancelled = handler
         .handle_runtime_rpc(json!({

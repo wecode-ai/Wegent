@@ -694,6 +694,43 @@ describe('workbenchReducer', () => {
     expect(opened.currentRuntimeTask?.taskId).toBe('runtime-1')
   })
 
+  test('keeps resolved execution context when the route reopens the same task by identity', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'codex',
+          threadId: 'thread-1',
+          workspacePath: '/workspace/worktrees/runtime-1/repo',
+          workspaceKind: 'worktree',
+          worktreeId: 'runtime-1',
+          projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
+      projectSession: { projectId: 'project-1', issueId: 'issue-1' },
+    })
+  })
+
   test('reconciles an accepted task address without depending on work-list projection', () => {
     const state = {
       ...initialWorkbenchState,

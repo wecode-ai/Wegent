@@ -406,6 +406,10 @@ class LoopItemTaskBind(BaseModel):
         default=None,
         alias="modelSelection",
     )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
+    )
     workflow_node_id: str | None = Field(
         default=None,
         alias="workflowNodeId",
@@ -453,6 +457,10 @@ class LoopItemTaskBindingResponse(BaseModel):
     model_selection: RuntimeModelSelection | None = Field(
         default=None,
         alias="modelSelection",
+    )
+    execution_context: dict[str, Any] | None = Field(
+        default=None,
+        alias="executionContext",
     )
     workflow_node_id: str | None = None
     human_assignment_id: str | None = None

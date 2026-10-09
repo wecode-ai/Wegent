@@ -116,6 +116,13 @@ export interface WorkspaceTaskBinding {
   taskTitle: string | null;
   backendTaskId: number | null;
   modelSelection?: ModelSelectionConfig | null;
+  executionContext?: {
+    runtime?: string | null;
+    threadId?: string | null;
+    workspacePath?: string | null;
+    workspaceKind?: string | null;
+    worktreeId?: string | null;
+  } | null;
   bindingType?: "system" | "user";
   humanAssignmentId?: string | null;
   dispatchId?: string | null;

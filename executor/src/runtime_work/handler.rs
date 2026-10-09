@@ -315,6 +315,10 @@ impl RuntimeTurnScheduler {
         turn
     }
 
+    fn enqueue_queued(&mut self, turn: SpawnTurnRequest) {
+        self.queued_turns.push_back(turn);
+    }
+
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
         self.queued_turns
             .iter()

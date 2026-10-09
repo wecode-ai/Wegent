@@ -1355,7 +1355,9 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     const expectedTab = {
       title: '我的任务',
-      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
+      contentRoute:
+        `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}` +
+        `&itemId=${item.id}`,
     }
     if (fixed) {
       expect(workspaceTabs.selectTab).not.toHaveBeenCalled()

@@ -5153,7 +5153,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     contentFooter={
                       isCreatingWorktree ? (
                         <WorktreeCreationStatus className="py-8" />
-                      ) : (
+                      ) : workItemContextAvailable ? null : (
                         <PluginWorkspaceConversationResult
                           taskId={currentRuntimeTask?.taskId}
                           workspacePath={
@@ -5212,7 +5212,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                                 </button>
                               )}
-                              {connectorAuthGate.pending ? (
+                              {workItemContextAvailable ? (
+                                <div
+                                  data-testid="project-execution-reply-in-issue"
+                                  className="flex items-center gap-3 rounded-2xl border border-border/50 bg-background/95 px-4 py-3 shadow-sm"
+                                >
+                                  <MessageCircle
+                                    className="h-4 w-4 shrink-0 text-text-muted"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="min-w-0 flex-1 text-sm text-text-secondary">
+                                    {t(
+                                      'workbench.project_execution_reply_in_issue',
+                                      '此执行属于 Issue，请在 Issue 中追问或补充要求'
+                                    )}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-testid="project-execution-open-issue"
+                                    onClick={openBoundProjectSpaceTask}
+                                    className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
+                                  >
+                                    {t('workbench.back_to_work_item', '返回 Issue')}
+                                  </button>
+                                </div>
+                              ) : connectorAuthGate.pending ? (
                                 <ConnectorAuthCard
                                   target={connectorAuthGate.pending.target}
                                   title={connectorAuthGate.pending.title}
@@ -5381,13 +5405,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     }
                     scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                     devices={devices}
-                    onRetryFailedMessage={message => {
-                      void paneSession.retryFailedMessage(message)
-                    }}
-                    onSwitchModelForFailedMessage={message => {
-                      pendingModelRetryRef.current = message
-                      setModelSelectorOpenSignal(signal => signal + 1)
-                    }}
+                    onRetryFailedMessage={
+                      workItemContextAvailable
+                        ? undefined
+                        : message => {
+                            void paneSession.retryFailedMessage(message)
+                          }
+                    }
+                    onSwitchModelForFailedMessage={
+                      workItemContextAvailable
+                        ? undefined
+                        : message => {
+                            pendingModelRetryRef.current = message
+                            setModelSelectorOpenSignal(signal => signal + 1)
+                          }
+                    }
                     onLoadFileChangesDiff={(subtaskId, fileChanges) =>
                       loadTurnFileChangesDiff(
                         subtaskId,
@@ -5396,13 +5428,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         currentRuntimeTask
                       )
                     }
-                    onRevertFileChanges={(subtaskId, fileChanges) =>
-                      revertTurnFileChanges(
-                        subtaskId,
-                        paneMessages,
-                        fileChanges,
-                        currentRuntimeTask
-                      )
+                    onRevertFileChanges={
+                      workItemContextAvailable
+                        ? undefined
+                        : (subtaskId, fileChanges) =>
+                            revertTurnFileChanges(
+                              subtaskId,
+                              paneMessages,
+                              fileChanges,
+                              currentRuntimeTask
+                            )
                     }
                     onOpenFileChangesReview={({
                       subtaskId,
@@ -5430,12 +5465,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     }
                     onOpenWorkspaceFile={openWorkspaceFileFromMessage}
                     onOpenLocalSkillFile={openLocalSkillFile}
-                    onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-                    onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+                    onRequestUserInputSubmit={
+                      workItemContextAvailable
+                        ? undefined
+                        : paneSession.sendRequestUserInputResponse
+                    }
+                    onRequestUserInputIgnore={
+                      workItemContextAvailable ? undefined : paneSession.ignoreRequestUserInput
+                    }
                     onOpenAssistantPlan={openAssistantPlan}
-                    onEditLastUserMessage={paneSession.editLastUserMessage}
-                    canEditLastUserMessage={canEditLastUserMessage}
+                    onEditLastUserMessage={
+                      workItemContextAvailable ? undefined : paneSession.editLastUserMessage
+                    }
+                    canEditLastUserMessage={
+                      workItemContextAvailable ? false : canEditLastUserMessage
+                    }
                     onForkMessage={
+                      !workItemContextAvailable &&
                       currentRuntimeUsesCodex &&
                       currentRuntimeTask &&
                       (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)

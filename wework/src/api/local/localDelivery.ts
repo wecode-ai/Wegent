@@ -1375,6 +1375,13 @@ export function createLocalDeliveryApi(
       const projectId = await resolveProjectId(itemId)
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
+      const executionContext = {
+        runtime: task.runtime,
+        threadId: task.threadId,
+        workspacePath: task.workspacePath,
+        workspaceKind: task.workspaceKind,
+        worktreeId: task.worktreeId,
+      }
       await request('todos.bind', {
         project_id: projectId,
         item_id: itemId,
@@ -1382,6 +1389,9 @@ export function createLocalDeliveryApi(
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
           ...(modelSelection ? { modelSelection } : {}),
+          ...(Object.values(executionContext).some(value => value != null && value !== '')
+            ? { executionContext }
+            : {}),
         },
       })
     },

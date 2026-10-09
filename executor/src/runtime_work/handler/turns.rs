@@ -310,20 +310,25 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.spawn_turn_with_capacity_override(turn, false).await
+        self.schedule_turn(turn, false, false).await
     }
 
     pub(super) async fn spawn_forced_turn(
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.spawn_turn_with_capacity_override(turn, true).await
+        self.schedule_turn(turn, true, false).await
     }
 
-    async fn spawn_turn_with_capacity_override(
+    pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
+        self.schedule_turn(turn, false, true).await
+    }
+
+    async fn schedule_turn(
         &self,
         mut turn: SpawnTurnRequest,
         force_start: bool,
+        queue_only: bool,
     ) -> Result<(), AppIpcError> {
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
@@ -355,7 +360,10 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
-            let turn_to_start = if force_start {
+            let turn_to_start = if queue_only {
+                scheduler.enqueue_queued(turn);
+                None
+            } else if force_start {
                 Some(scheduler.enqueue_forced(turn))
             } else {
                 scheduler.enqueue(turn)

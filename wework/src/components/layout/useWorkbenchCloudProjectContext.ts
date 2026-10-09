@@ -953,7 +953,7 @@ export function useWorkbenchCloudProjectContext({
   const openBoundProjectSpaceTask = useCallback(() => {
     if (!boundCloudProject || !boundCloudItem) return
     const projectRef = projectSpaceRef(boundCloudProject)
-    const contentRoute = projectSpaceContentRoute(projectRef)
+    const contentRoute = projectSpaceContentRoute(projectRef, boundCloudItem.id)
     if (workspaceTabs) {
       const existingBoardTab = workspaceTabs.tabs.find(
         tab =>
