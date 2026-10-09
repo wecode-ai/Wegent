@@ -452,7 +452,9 @@ def test_self_assignment_uses_maintainer_fallback(
 
 
 @pytest.mark.parametrize("initial_status", ["in_review", "completed"])
-@pytest.mark.parametrize("unassign_first", [False, True])
+@pytest.mark.parametrize(
+    ("unassign_first", "same_assignee"), [(False, False), (True, False), (True, True)]
+)
 def test_reassignment_preserves_status_until_new_assignee_starts(
     test_client: TestClient,
     test_db: Session,
@@ -461,13 +463,17 @@ def test_reassignment_preserves_status_until_new_assignee_starts(
     monkeypatch: pytest.MonkeyPatch,
     initial_status: str,
     unassign_first: bool,
+    same_assignee: bool,
 ) -> None:
     monkeypatch.setattr(
         "app.core.socketio.get_sio", lambda: SimpleNamespace(emit=AsyncMock())
     )
     first, first_token = _member(test_db, project)
-    second, second_token = _member(test_db, project)
+    second, second_token = (
+        (first, first_token) if same_assignee else _member(test_db, project)
+    )
     issue = _assigned_issue(test_client, project, test_token, first)
+    previous_assignment_id = issue["human_work"]["assignment_id"]
     started = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/work/start",
         headers=_auth(first_token),
@@ -501,6 +507,21 @@ def test_reassignment_preserves_status_until_new_assignee_starts(
         json={"version": submitted["version"]},
     )
     assert repeated_start.status_code == 409
+    repeated_assignment = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items/{issue['id']}/assign",
+        headers=_auth(test_token),
+        json={
+            "version": submitted["version"],
+            "assignee_type": "user",
+            "assignee_id": str(first.id),
+        },
+    )
+    assert repeated_assignment.status_code == 200, repeated_assignment.text
+    submitted = repeated_assignment.json()
+    assert submitted["human_work"]["assignment_id"] == previous_assignment_id
+    assert submitted["human_work"]["state"] == (
+        "accepted" if initial_status == "completed" else "submitted"
+    )
     if unassign_first:
         unassigned = test_client.patch(
             f"/api/v1/loop-items/{issue['id']}",
@@ -510,6 +531,8 @@ def test_reassignment_preserves_status_until_new_assignee_starts(
         assert unassigned.status_code == 200, unassigned.text
         submitted = unassigned.json()
         assert submitted["status"] == initial_status
+        assert submitted["assignee_user_id"] is None
+        assert issue_assignment_service.active_for_issue(test_db, issue["id"]) == []
     reassigned = test_client.post(
         f"/api/v1/cloud-projects/{project.id}/loop-items/{issue['id']}/assign",
         headers=_auth(test_token),
@@ -522,20 +545,22 @@ def test_reassignment_preserves_status_until_new_assignee_starts(
     assert reassigned.status_code == 200, reassigned.text
     assert reassigned.json()["status"] == initial_status
     assert reassigned.json()["human_work"]["state"] == "none"
+    assert reassigned.json()["human_work"]["assignment_id"] != previous_assignment_id
     second_view = test_client.get(
         f"/api/v1/loop-items/{issue['id']}", headers=_auth(second_token)
     ).json()
     assert second_view["human_work"]["can_start"] is True
-    old_view = test_client.get(
-        f"/api/v1/loop-items/{issue['id']}", headers=_auth(first_token)
-    ).json()
-    assert old_view["human_work"]["can_start"] is False
-    old_assignee_start = test_client.post(
-        f"/api/v1/loop-items/{issue['id']}/work/start",
-        headers=_auth(first_token),
-        json={"version": reassigned.json()["version"]},
-    )
-    assert old_assignee_start.status_code == 403
+    if not same_assignee:
+        old_view = test_client.get(
+            f"/api/v1/loop-items/{issue['id']}", headers=_auth(first_token)
+        ).json()
+        assert old_view["human_work"]["can_start"] is False
+        old_assignee_start = test_client.post(
+            f"/api/v1/loop-items/{issue['id']}/work/start",
+            headers=_auth(first_token),
+            json={"version": reassigned.json()["version"]},
+        )
+        assert old_assignee_start.status_code == 403
     resumed = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/work/start",
         headers=_auth(second_token),
@@ -544,3 +569,61 @@ def test_reassignment_preserves_status_until_new_assignee_starts(
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["issue"]["status"] == "in_progress"
     assert resumed.json()["issue"]["completed_at"] is None
+
+
+def test_stale_unassignment_preserves_the_active_assignment(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    project: CloudProject,
+) -> None:
+    assignee, _ = _member(test_db, project)
+    issue = _assigned_issue(test_client, project, test_token, assignee)
+    assignment_id = issue["human_work"]["assignment_id"]
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+        json={"version": issue["version"] - 1, "assignee_user_id": None},
+    )
+
+    assert response.status_code == 409, response.text
+    active = issue_assignment_service.active_for_issue(test_db, issue["id"])
+    assert [assignment.id for assignment in active] == [assignment_id]
+    current = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}", headers=_auth(test_token)
+    ).json()
+    assert current["assignee_user_id"] == assignee.id
+    assert current["version"] == issue["version"]
+
+
+def test_unassignment_preserves_workflow_assignments(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    project: CloudProject,
+) -> None:
+    assignee, _ = _member(test_db, project)
+    issue = _assigned_issue(test_client, project, test_token, assignee)
+    workflow_assignment, _ = issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=issue["id"],
+        member_type="human",
+        member_id=str(assignee.id),
+        assigned_by_user_id=project.created_by_user_id,
+        workflow_step="review",
+        notify=False,
+        trigger="manual",
+    )
+    test_db.commit()
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+        json={"version": issue["version"], "assignee_user_id": None},
+    )
+
+    assert response.status_code == 200, response.text
+    active = issue_assignment_service.active_for_issue(test_db, issue["id"])
+    assert [assignment.id for assignment in active] == [workflow_assignment.id]

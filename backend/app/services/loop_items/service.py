@@ -1633,6 +1633,28 @@ class LoopItemService:
                     else None
                 )
             if target_id is None:
+                if (
+                    "assignee_user_id" in values.model_fields_set
+                    and values.assignee_user_id is None
+                    and item.assignee_user_id is not None
+                ):
+                    from app.services.issue_assignments import issue_assignment_service
+
+                    assignment = issue_assignment_service.active(
+                        db,
+                        issue_id=item.id,
+                        member_type="human",
+                        member_id=str(item.assignee_user_id),
+                        workflow_step=None,
+                    )
+                    if assignment is not None:
+                        issue_assignment_service.remove(
+                            db,
+                            project_id=int(item.cloud_project_id),
+                            issue_id=item.id,
+                            assignment_id=assignment.id,
+                            user_id=user_id,
+                        )
                 self._write_assignment_change(metadata, user_id, None, None, None)
             elif target_type == "agent":
                 agent = db.get(ProjectChatAgent, target_id)

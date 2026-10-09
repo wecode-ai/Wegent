@@ -70,3 +70,19 @@ replies, reassignment and manually bound agent models. The panel-reopening unit
 test establishes its active project directly, reuses its interaction device and
 asserts that the old panel closed before reopening. It retains the late-address
 isolation assertion without increasing the timeout.
+
+## Reassignment to the same human after unassignment
+
+Core shard 12 at `f5bbaab0c` failed after human acceptance and reassignment:
+`human_work.state` remained `accepted` instead of `none` for the new assignment.
+The legacy PATCH endpoint cleared the assignee field without revoking its
+assignment activity, so assigning the same human again was incorrectly
+deduplicated. Direct human unassignment now reuses the existing event removal
+service in the same version-checked transaction as the assignee update.
+
+Regression coverage includes reassignment to the same or another human on
+in-review and completed Issues. A new event ID preserves the Issue status until
+the human explicitly starts work. Repeated assignment without unassignment stays
+idempotent; version conflicts preserve assignments; workflow-step assignments
+are not removed. Existing review records, desktop E2E assertions and timeouts
+remain unchanged.
