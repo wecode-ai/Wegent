@@ -6,7 +6,7 @@ import hashlib
 import os
 import tempfile
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Tuple
 
 import pytest
@@ -242,12 +242,16 @@ def test_session_factory(test_engine):
 
 
 @pytest.fixture(scope="function")
-def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]:
+def test_db(
+    test_engine, test_session_factory, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Session, None, None]:
     """
     Create a test database session with transaction rollback.
     Each test function gets a clean database state via transaction rollback.
     This is much faster than recreating tables for each test.
     """
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
+
     # Start a connection and begin a transaction
     connection = test_engine.connect()
     transaction = connection.begin()
@@ -275,12 +279,13 @@ def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]
 
 
 @pytest.fixture(scope="function")
-async def async_test_db():
+async def async_test_db(monkeypatch: pytest.MonkeyPatch):
     """
     Async test DB session for testing async service methods.
     Uses an independent in-memory SQLite database with its own tables.
     Data setup should be done via this session (not test_db).
     """
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
     async with engine.begin() as conn:

@@ -47,7 +47,7 @@ interface ToolScenarioStep {
   responseContent?: string
 }
 
-test.describe.configure({ mode: 'serial' })
+test.describe.configure({ mode: 'default' })
 
 test.describe('Provider-native Wegent knowledge access', () => {
   let apiClient: ApiClient
@@ -57,6 +57,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
   let createdBotId: number | null = null
   let createdTeamId: number | null = null
   let configuredScenarioMatchText: string | null = null
+  let longDocumentId: number | null = null
 
   test.beforeAll(async ({ request }) => {
     apiClient = createApiClient(request)
@@ -78,7 +79,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
   test.beforeEach(async ({ page }) => {
     configuredScenarioMatchText = null
     await skipOnboardingTour(page)
-    await page.goto(`/chat?teamId=${createdTeamId}`)
+    await page.goto(`/chat?teamId=${createdTeamId}`, { waitUntil: 'domcontentloaded' })
     await page.waitForLoadState('domcontentloaded')
     await dismissOnboardingTour(page)
     await ensureTestTeamSelected(page)
@@ -86,6 +87,14 @@ test.describe('Provider-native Wegent knowledge access', () => {
 
   test.afterEach(async ({ request }) => {
     await clearConfiguredToolScenario(request)
+    if (longDocumentId !== null) {
+      const response = await request.delete(
+        `${API_BASE_URL}/api/knowledge-documents/${longDocumentId}`,
+        { headers: authHeaders() }
+      )
+      expect(response.ok(), await response.text()).toBeTruthy()
+      longDocumentId = null
+    }
   })
 
   test.afterAll(async ({ request }) => {
@@ -402,6 +411,165 @@ test.describe('Provider-native Wegent knowledge access', () => {
     )
   })
 
+  test('E2E-A2-021 continues one conversation with K, K+L, then K', async ({ page, request }) => {
+    const knowledge = new ProviderNativeKnowledgePage(page)
+    const k = fixture.knowledgeBase
+    const l = fixture.otherKnowledgeBase
+    await knowledge.selectWholeKnowledgeBase(k.id, k.name)
+    let taskId: number | undefined
+    for (const [turn, selected] of [
+      [1, [k]],
+      [2, [k, l]],
+      [3, [k]],
+    ] as const) {
+      if (turn === 2) await knowledge.selectWholeKnowledgeBase(l.id, l.name)
+      if (turn === 3) {
+        // The picker adds knowledge; removing a saved task binding uses the task API.
+        const unbind = await request.delete(
+          `${API_BASE_URL}/api/tasks/${taskId}/knowledge-bases/${encodeURIComponent(l.name)}`,
+          { headers: authHeaders() }
+        )
+        expect(unbind.ok(), await unbind.text()).toBeTruthy()
+        await page.reload({ waitUntil: 'domcontentloaded' })
+      }
+      const prompt = `${TEST_PREFIX} scope-turn-${turn} 列出当前选中知识库的文档。`
+      await configureToolScenario(request, prompt, [
+        {
+          toolCalls: selected.map(kb => ({
+            toolName: LIST_DOCUMENTS_TOOL,
+            arguments: { knowledge_base_id: kb.id },
+          })),
+        },
+        { responseContent: `scope-turn-${turn}-done` },
+      ])
+      const currentTaskId = await sendAndWait(knowledge, page, request, prompt)
+      if (taskId !== undefined) expect(currentTaskId).toBe(taskId)
+      taskId = currentTaskId
+      const evidence = await collectEvidence(request, taskId, prompt)
+      expect(evidence.boundKnowledgeBases.items.map(kb => kb.id).sort()).toEqual(
+        selected.map(kb => kb.id).sort()
+      )
+      for (const body of evidence.modelBodies) {
+        const selections = collectSelectedKnowledgeSources(body)
+        expect(selections).toHaveLength(1)
+        expect(countOccurrences(selections[0], '<source ')).toBe(selected.length)
+        for (const kb of selected) {
+          expect(selections[0]).toContain(`knowledge_base_id="${kb.id}"`)
+          expectToolCall(evidence.latestToolCalls, LIST_DOCUMENTS_TOOL, {
+            knowledge_base_id: kb.id,
+          })
+        }
+        if (turn === 3) expect(selections[0]).not.toContain(`knowledge_base_id="${l.id}"`)
+      }
+      expectProviderToolOrder(
+        evidence.latestToolCalls,
+        selected.map(() => LIST_DOCUMENTS_TOOL)
+      )
+      const latestModelBody = JSON.stringify(evidence.latestToolCalls.map(call => call.output))
+      for (const kb of selected) {
+        expect(latestModelBody).toContain(
+          kb.id === k.id ? fixture.documents.a1.name : fixture.documents.b1.name
+        )
+      }
+      await expect(page.getByTestId('messages-container')).toContainText(`scope-turn-${turn}-done`)
+      await clearConfiguredToolScenario(request)
+      // Reload between turns: selections must come from the saved task, not component memory.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+    }
+  })
+
+  test('E2E-A2-022 reads a long document on a follow-up and opens its source link', async ({
+    page,
+    request,
+  }) => {
+    const head = 'LONG-PARITY-HEAD'
+    const tail = 'LONG-PARITY-TAIL-成都679'
+    const content = `${head}\n${'背景段落。'.repeat(12000)}\n${tail}`
+    const create = await request.post(`${API_BASE_URL}/api/knowledge/documents`, {
+      headers: authHeaders(),
+      data: {
+        knowledge_base_id: fixture.knowledgeBase.id,
+        name: 'Long-parity.md',
+        source_type: 'text',
+        content,
+        file_extension: 'md',
+        folder_id: 0,
+      },
+    })
+    expect(create.ok(), await create.text()).toBeTruthy()
+    const document = (await create.json()) as { id: number; name: string }
+    longDocumentId = document.id
+    const knowledge = new ProviderNativeKnowledgePage(page)
+    await knowledge.selectDocuments(fixture.knowledgeBase.id, fixture.knowledgeBase.name, [
+      document.id,
+    ])
+    const firstPrompt = `${TEST_PREFIX} long-first 先读开头。`
+    await configureToolScenario(request, firstPrompt, [
+      {
+        toolCalls: [
+          {
+            toolName: READ_DOCUMENT_TOOL,
+            arguments: { document_id: document.id, offset: 0, limit: 512 },
+          },
+        ],
+      },
+      { responseContent: head },
+    ])
+    const taskId = await sendAndWait(knowledge, page, request, firstPrompt)
+    const first = await collectEvidence(request, taskId, firstPrompt)
+    const firstRead = first.toolCalls.find(call => call.name.endsWith(READ_DOCUMENT_TOOL))
+    expect(JSON.stringify(firstRead?.output)).toContain(head)
+    expect(JSON.stringify(firstRead?.output)).not.toContain(tail)
+    expect(firstRead).toBeTruthy()
+    const firstPayload = firstRead!.output as Array<{ type: string; text: string }>
+    expect(firstPayload).toHaveLength(1)
+    expect(firstPayload[0].type).toBe('text')
+    expect(JSON.parse(firstPayload[0].text)).toMatchObject({
+      has_more: true,
+      offset: 0,
+      returned_length: 512,
+    })
+    await clearConfiguredToolScenario(request)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+
+    const nextPrompt = `${TEST_PREFIX} long-followup 最后一条规则是什么？打开来源。`
+    const offset = content.indexOf(tail)
+    const sourceUrl = `/knowledge/default/${encodeURIComponent(fixture.knowledgeBase.name)}/${encodeURIComponent(document.name)}?documentId=${document.id}`
+    await configureToolScenario(request, nextPrompt, [
+      {
+        toolCalls: [
+          {
+            toolName: READ_DOCUMENT_TOOL,
+            arguments: { document_id: document.id, offset, limit: 512 },
+          },
+        ],
+      },
+      { responseContent: `${tail} [打开来源](${sourceUrl})` },
+    ])
+    expect(await sendAndWait(knowledge, page, request, nextPrompt)).toBe(taskId)
+    const next = await collectEvidence(request, taskId, nextPrompt)
+    expectSingleSource(next.modelBodies, fixture.knowledgeBase.id)
+    expectSelectedResources(next.modelBodies, [document.id])
+    const tailRead = next.toolCalls.find(
+      call => call.name.endsWith(READ_DOCUMENT_TOOL) && call.input.offset === offset
+    )
+    expect(tailRead, 'Follow-up must actually read the requested page from storage').toBeTruthy()
+    expect(JSON.stringify(tailRead?.output)).toContain(tail)
+    expect(JSON.stringify(tailRead?.output)).not.toContain(head)
+    // The model supplies the link; the browser and real document preview must open it.
+    const sourceLink = page
+      .getByTestId('messages-container')
+      .getByRole('link', { name: '打开来源' })
+    await expect(sourceLink).toHaveAttribute('href', sourceUrl)
+    await Promise.all([
+      page.waitForURL(url => url.pathname.startsWith('/knowledge/default/')),
+      sourceLink.click(),
+    ])
+    const preview = page.getByRole('dialog')
+    await expect(preview.getByRole('heading', { name: document.name, exact: true })).toBeVisible()
+    await expect(preview).toContainText(tail, { timeout: 30000 })
+  })
+
   async function createChatResources(request: APIRequestContext): Promise<void> {
     const modelResponse = await request.post(`${API_BASE_URL}/api/v1/namespaces/default/models`, {
       headers: authHeaders(),
@@ -546,6 +714,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
       modelBodies,
       modelText: JSON.stringify(modelBodies).replace(/\\\"/g, '\"'),
       toolCalls: collectToolCalls(task),
+      latestToolCalls: collectToolCalls((task as { subtasks?: unknown[] }).subtasks?.at(-1)),
       boundKnowledgeBases: boundKnowledge,
       finalAnswer: extractFinalAnswer(task),
       externalKnowledgeRefs: extractExternalKnowledgeRefs(task),
@@ -810,22 +979,8 @@ test.describe('Provider-native Wegent knowledge access', () => {
   }
 
   async function ensureTestTeamSelected(page: Page): Promise<void> {
-    const messageInput = page.getByTestId('message-input')
-    if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) return
-
-    const selector = page
-      .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
-      .first()
-    await expect(selector).toBeVisible()
-    await selector.click({ force: true })
-    const option = page
-      .locator(
-        `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}"), [role="option"]:has-text("${TEST_TEAM_NAME}")`
-      )
-      .first()
-    await expect(option).toBeVisible()
-    await option.click({ force: true })
-    await expect(messageInput).toBeVisible()
+    // The explicit teamId route selects the fixture team after resources load.
+    await expect(page.getByTestId('message-input')).toBeVisible({ timeout: 30000 })
   }
 
   function authHeaders(): Record<string, string> {

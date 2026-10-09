@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.tools import BaseTool
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentStatus, KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
@@ -152,8 +152,22 @@ def process_selected_documents_contexts(
     # This ensures we check access for all KBs that contain the selected documents
     documents = (
         db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.id.in_(all_document_ids))
+        .filter(
+            KnowledgeDocument.id.in_(all_document_ids),
+            KnowledgeDocument.status == DocumentStatus.ENABLED,
+            KnowledgeDocument.is_active.is_(True),
+        )
         .all()
+    )
+    if not documents:
+        return message, base_system_prompt, extra_tools
+    effective_ids = {document.id for document in documents}
+    all_document_ids = list(
+        dict.fromkeys(
+            document_id
+            for document_id in all_document_ids
+            if document_id in effective_ids
+        )
     )
     # Collect knowledge_base_ids from the actual KnowledgeDocument rows
     resolved_kb_ids = {doc.kind_id for doc in documents if doc.kind_id}
@@ -269,9 +283,15 @@ def _load_documents_content(
     """
     documents_content = []
 
-    # Query documents with their attachment IDs (no is_active filter for notebook mode)
+    # Recheck visibility at the content-read boundary.
     documents = (
-        db.query(KnowledgeDocument).filter(KnowledgeDocument.id.in_(document_ids)).all()
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id.in_(document_ids),
+            KnowledgeDocument.status == DocumentStatus.ENABLED,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        .all()
     )
 
     logger.info(

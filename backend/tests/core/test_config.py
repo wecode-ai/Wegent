@@ -303,65 +303,13 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 60
         assert s.MAX_RUNNING_TASKS_PER_USER == 5
 
-    def test_rag_runtime_mode_defaults_to_local_for_all_operations(self):
-        """Test RAG runtime mode defaults to local across operations."""
-        s = build_settings()
-
-        assert s.RAG_RUNTIME_MODE == "local"
-        assert s.get_rag_runtime_mode("index") == "local"
-        assert s.get_rag_runtime_mode("query") == "local"
-        assert s.get_rag_runtime_mode("delete") == "local"
-
-    def test_rag_runtime_mode_accepts_global_env_value(self, monkeypatch):
-        """Test RAG runtime mode accepts a single global env value."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", "remote")
+    def test_rag_runtime_mode_env_is_ignored(self, monkeypatch):
+        """Test the deprecated RAG runtime mode variable no longer affects startup."""
+        monkeypatch.setenv("RAG_RUNTIME_MODE", '{"default":"local",')
 
         s = build_settings_from_env()
 
-        assert s.RAG_RUNTIME_MODE == "remote"
-        assert s.get_rag_runtime_mode("index") == "remote"
-        assert s.get_rag_runtime_mode("query") == "remote"
-        assert s.get_rag_runtime_mode("delete") == "remote"
-
-    def test_rag_runtime_mode_accepts_operation_override_map(self, monkeypatch):
-        """Test RAG runtime mode accepts per-operation overrides."""
-        monkeypatch.setenv(
-            "RAG_RUNTIME_MODE",
-            '{"default":"remote","query":"local"}',
-        )
-
-        s = build_settings_from_env()
-
-        assert s.RAG_RUNTIME_MODE == {"default": "remote", "query": "local"}
-        assert s.get_rag_runtime_mode("index") == "remote"
-        assert s.get_rag_runtime_mode("query") == "local"
-        assert s.get_rag_runtime_mode("delete") == "remote"
-
-    def test_rag_runtime_mode_rejects_unknown_global_value(self, monkeypatch):
-        """Test invalid global RAG runtime modes fail fast."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", "edge")
-
-        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
-            build_settings_from_env()
-
-    def test_rag_runtime_mode_rejects_invalid_operation_override_value(
-        self, monkeypatch
-    ):
-        """Test invalid per-operation runtime modes fail fast."""
-        monkeypatch.setenv(
-            "RAG_RUNTIME_MODE",
-            '{"default":"remote","query":"edge"}',
-        )
-
-        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
-            build_settings_from_env()
-
-    def test_rag_runtime_mode_rejects_malformed_json_override(self, monkeypatch):
-        """Test malformed JSON override maps are rejected."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", '{"default":"remote",')
-
-        with pytest.raises(ValidationError, match="malformed"):
-            build_settings_from_env()
+        assert not hasattr(s, "RAG_RUNTIME_MODE")
 
     def test_rag_auto_disable_direct_injection_defaults_to_false(self):
         """Test the auto-routing direct injection kill switch defaults to disabled."""
@@ -376,3 +324,43 @@ class TestSettings:
         s = build_settings_from_env()
 
         assert s.RAG_AUTO_DISABLE_DIRECT_INJECTION is True
+
+
+@pytest.mark.unit
+def test_database_timezone_is_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_TIMEZONE", "+05:30")
+
+    configured = build_settings_from_env()
+
+    assert configured.DATABASE_TIMEZONE == "+05:30"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("offset", ["+00:00", "-05:30", "+05:45", "-13:59", "+14:00"])
+def test_database_timezone_accepts_mysql_fixed_offsets(offset: str) -> None:
+    assert build_settings(DATABASE_TIMEZONE=offset).DATABASE_TIMEZONE == offset
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "offset",
+    [
+        "UTC",
+        "SYSTEM",
+        "Asia/Shanghai",
+        "+08:60",
+        "+14:01",
+        "-14:00",
+        "",
+        "+08:00'; SELECT 1",
+    ],
+)
+def test_database_timezone_rejects_invalid_or_named_offsets(offset: str) -> None:
+    with pytest.raises(ValidationError, match="DATABASE_TIMEZONE"):
+        build_settings(DATABASE_TIMEZONE=offset)
+
+
+def test_database_timezone_default_preserves_existing_contract() -> None:
+    assert build_settings().DATABASE_TIMEZONE == "+08:00"

@@ -13,6 +13,7 @@ import pytest
 from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus
 from app.tasks.knowledge_tasks import (
+    LateIndexCleanupError,
     _build_stale_processing_error,
     _delete_late_index_if_document_was_deleted,
     index_document_task,
@@ -134,6 +135,41 @@ def test_index_document_task_skips_after_lock_retry_exhaustion(
     assert result["reason"] == "lock_retry_exhausted"
 
 
+def test_index_document_task_cleans_up_after_lock_retry_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An exhausted lock retry still removes a late reference for a deleted document."""
+    retry_mock = MagicMock()
+    cleanup_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(index_document_task, "retry", retry_mock)
+
+    with _task_request_context(retries=index_document_task.max_retries):
+        with (
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(False),
+            ),
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            ),
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_failed",
+            ),
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            ),
+        ):
+            result = index_document_task.run(**_task_kwargs())
+
+    retry_mock.assert_not_called()
+    cleanup_mock.assert_called_once()
+    assert result["status"] == "skipped"
+    assert result["reason"] == "lock_retry_exhausted"
+    assert result["deleted_late_index"] is True
+
+
 def test_index_document_task_marks_skip_result_as_failed():
     start_decision = MagicMock(should_execute=True, reason="started")
     success_finalize_mock = MagicMock()
@@ -231,6 +267,9 @@ def test_index_document_task_routes_indexing_through_gateway():
             )
         )
         mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = AsyncMock(
+            return_value={"deleted_chunks": 0}
+        )
         mock_gateway.index_document = AsyncMock(
             return_value={
                 "status": "success",
@@ -239,9 +278,15 @@ def test_index_document_task_routes_indexing_through_gateway():
                 "chunks_data": {"total_count": 8},
             }
         )
-        mock_get_index_gateway = stack.enter_context(
+        stack.enter_context(
             patch(
-                "app.services.knowledge.indexing.get_index_gateway",
+                "app.services.knowledge.indexing.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            )
+        )
+        mock_get_rag_gateway = stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.get_rag_gateway",
                 return_value=mock_gateway,
             )
         )
@@ -262,7 +307,7 @@ def test_index_document_task_routes_indexing_through_gateway():
 
     assert result["status"] == "success"
     mock_resolve.assert_called_once()
-    mock_get_index_gateway.assert_called_once()
+    mock_get_rag_gateway.assert_called_once()
     mock_gateway.index_document.assert_awaited_once_with(
         mock_resolve.return_value,
         db=None,
@@ -385,6 +430,256 @@ def test_index_document_task_deletes_late_index_after_document_deletion():
     assert result["reason"] == "stale_or_already_finalized"
 
 
+def test_index_document_task_compensates_a_late_index_after_a_failed_write():
+    """An indexing failure that arrives after the document is gone cleans up."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(return_value=True)
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_failed",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                side_effect=RuntimeError("runtime unavailable"),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        result = index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    assert result["reason"] == "stale_failure"
+
+
+def test_index_document_task_retries_a_failed_late_index_cleanup():
+    """A failed compensation retries instead of ending as a clean skip."""
+    from celery.exceptions import Retry
+
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+    retry_mock = MagicMock(side_effect=Retry("retry requested"))
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        stack.enter_context(patch.object(index_document_task, "retry", retry_mock))
+        with pytest.raises(Retry):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    retry_mock.assert_called_once()
+    assert retry_mock.call_args.kwargs["countdown"] > 0
+
+
+def test_index_document_task_owns_a_failed_cleanup_outside_a_worker():
+    """A direct call cannot retry, so the cleanup failure is its own failure."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        with pytest.raises(LateIndexCleanupError, match="vector store down"):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+
+
+def test_index_document_task_reports_an_exhausted_late_index_cleanup():
+    """The last allowed attempt re-raises, so the cleanup failure stays visible."""
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(side_effect=RuntimeError("vector store down"))
+    retry_mock = MagicMock()
+
+    with (
+        _task_request_context(retries=settings.KNOWLEDGE_INDEX_LOCK_MAX_RETRIES),
+        ExitStack() as stack,
+    ):
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        stack.enter_context(patch.object(index_document_task, "retry", retry_mock))
+        with pytest.raises(LateIndexCleanupError, match="vector store down"):
+            index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    retry_mock.assert_not_called()
+
+
+def test_index_document_task_retry_only_cleans_a_deleted_document():
+    """A retried task for a deleted document cleans up instead of indexing again."""
+    start_decision = MagicMock(should_execute=False, reason="document_not_found")
+    cleanup_mock = MagicMock(return_value=True)
+    indexing_mock = MagicMock()
+
+    with _task_request_context(retries=1), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                indexing_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        result = index_document_task.run(**_task_kwargs())
+
+    indexing_mock.assert_not_called()
+    cleanup_mock.assert_called_once()
+    assert result["status"] == "skipped"
+    assert result["reason"] == "document_not_found"
+    assert result["deleted_late_index"] is True
+
+
 def test_delete_late_index_uses_deleted_document_ref():
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
@@ -402,7 +697,7 @@ def test_delete_late_index_uses_deleted_document_ref():
             return_value=delete_spec,
         ) as build_spec,
         patch(
-            "app.services.rag.gateway_factory.get_delete_gateway",
+            "app.services.rag.gateway_factory.get_rag_gateway",
             return_value=gateway,
         ),
     ):

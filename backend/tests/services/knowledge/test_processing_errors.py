@@ -45,7 +45,11 @@ def test_map_indexing_collection_dimension_mismatch_stays_sanitized() -> None:
 
     result = map_indexing_exception(error, generation=7)
 
-    payload = json.dumps(result.model_dump(mode="json"))
+    # Exclude the generated timestamp: its microseconds can coincidentally
+    # contain "0.5" without leaking any backend detail.
+    payload = json.dumps(
+        result.model_dump(mode="json", exclude={"occurred_at"})
+    ).lower()
     assert result.stage == DocumentProcessingStage.INDEXING
     assert result.code == "collection_dimension_mismatch"
     assert result.retryable is False
@@ -56,4 +60,4 @@ def test_map_indexing_collection_dimension_mismatch_stays_sanitized() -> None:
         "embedding model declares. Rebuild the document index to match the model."
     )
     for leaked in ("milvus", "localhost", "http", "secret", "0.5"):
-        assert leaked not in payload.lower()
+        assert leaked not in payload

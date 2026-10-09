@@ -9,7 +9,7 @@ Retrievers are configurations for RAG (Retrieval-Augmented Generation) functiona
 ## Prerequisites
 
 - Wegent platform installed and running
-- Elasticsearch service enabled (optional, only needed for RAG features)
+- The bundled Elasticsearch service is needed only when a retriever uses Elasticsearch storage (optional):
   ```bash
   docker compose --profile rag up -d
   ```

@@ -8,6 +8,32 @@ const FOLLOW_UP = 'WEWORK_E2E_INTERRUPTED_COMPACTION_FOLLOW_UP'
 const SUMMARY = 'WEWORK_E2E_INTERRUPTED_COMPACTION_SUMMARY'
 const COMPLETE = 'WEWORK_E2E_INTERRUPTED_COMPACTION_RECOVERED'
 
+export async function verifyRecoveredCompaction(control, timeoutMs) {
+  const messageId = await control.command('getAttribute', '[data-testid="message-assistant"]', {
+    text: COMPLETE,
+    value: 'data-message-id',
+  })
+  assert.ok(messageId, 'Recovered assistant message must have a stable ID')
+  const message = `[data-message-id=${JSON.stringify(messageId)}]`
+  await control.command(
+    'click',
+    `${message} [data-testid="final-processing-toggle"][aria-expanded="false"]`
+  )
+  await control.command(
+    'waitFor',
+    `${message} [data-testid="final-processing-toggle"][aria-expanded="true"]`,
+    {
+      timeoutMs,
+    }
+  )
+  await control.command('waitFor', `${message} ${INDICATOR}`, {
+    text: '上下文已自动压缩',
+    timeoutMs,
+  })
+  const recoveredText = await control.command('getText', `${message} ${INDICATOR}`)
+  assert.equal(recoveredText.split('上下文已自动压缩').length - 1, 1)
+}
+
 function finish(response, id, text, inputTokens) {
   response.end(
     [
@@ -158,13 +184,8 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         assert.equal(compactionRequests, 2)
         assert.equal(recoveredWithSummary, true)
         await waitIdle(control)
-        // Completed turns fold their processing details behind the duration toggle.
-        await control.command(
-          'click',
-          '[data-testid="final-processing-toggle"][aria-expanded="false"]'
-        )
-        const recoveredText = await control.command('getText', INDICATOR)
-        assert.equal(recoveredText.split('上下文已自动压缩').length - 1, previousIndicators + 1)
+        // Scope the check to the recovered turn and wait for React to render it.
+        await verifyRecoveredCompaction(control, uiTimeoutMs)
       } finally {
         heldResponse?.destroy()
         active = false

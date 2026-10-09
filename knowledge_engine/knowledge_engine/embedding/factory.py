@@ -12,7 +12,7 @@ from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
 from knowledge_engine.embedding.custom import CustomEmbedding
-from shared.models import RuntimeEmbeddingModelConfig
+from shared.knowledge_contracts import RuntimeEmbeddingModelConfig
 
 
 def create_embedding_model_from_runtime_config(

@@ -3680,24 +3680,16 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "chardet" },
-    { name = "docx2txt" },
     { name = "emoji" },
     { name = "html2text" },
     { name = "httpx", extra = ["brotli", "socks"] },
     { name = "langchain-text-splitters" },
-    { name = "llama-index-core" },
-    { name = "llama-index-embeddings-openai" },
-    { name = "llama-index-readers-file" },
-    { name = "llama-index-vector-stores-elasticsearch" },
-    { name = "llama-index-vector-stores-milvus" },
-    { name = "llama-index-vector-stores-qdrant" },
     { name = "markdown" },
     { name = "openpyxl" },
     { name = "orjson" },
     { name = "pdf2image" },
     { name = "pillow" },
     { name = "pydantic" },
-    { name = "pymilvus" },
     { name = "pypdf2" },
     { name = "pytesseract" },
     { name = "python-docx" },
@@ -3710,29 +3702,41 @@ dependencies = [
     { name = "wegent-shared" },
 ]
 
+[package.optional-dependencies]
+retrieval = [
+    { name = "docx2txt" },
+    { name = "llama-index-core" },
+    { name = "llama-index-embeddings-openai" },
+    { name = "llama-index-readers-file" },
+    { name = "llama-index-vector-stores-elasticsearch" },
+    { name = "llama-index-vector-stores-milvus" },
+    { name = "llama-index-vector-stores-qdrant" },
+    { name = "pymilvus" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "boto3", specifier = ">=1.42.97" },
     { name = "chardet", specifier = ">=5.0.0" },
-    { name = "docx2txt", specifier = ">=0.8" },
+    { name = "docx2txt", marker = "extra == 'retrieval'", specifier = ">=0.8" },
     { name = "emoji", specifier = ">=2.9.0" },
     { name = "html2text", specifier = ">=2024.2.26" },
     { name = "httpx", extras = ["brotli", "socks"], specifier = ">=0.26.0" },
     { name = "langchain-text-splitters", specifier = ">=0.3.0" },
-    { name = "llama-index-core", specifier = ">=0.12.0" },
-    { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
-    { name = "llama-index-readers-file", specifier = ">=0.4.0" },
-    { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
-    { name = "llama-index-vector-stores-milvus", specifier = ">=0.4.0" },
-    { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
+    { name = "llama-index-core", marker = "extra == 'retrieval'", specifier = ">=0.12.0" },
+    { name = "llama-index-embeddings-openai", marker = "extra == 'retrieval'", specifier = ">=0.3.0" },
+    { name = "llama-index-readers-file", marker = "extra == 'retrieval'", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-elasticsearch", marker = "extra == 'retrieval'", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-milvus", marker = "extra == 'retrieval'", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-qdrant", marker = "extra == 'retrieval'", specifier = ">=0.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "orjson", specifier = ">=3.9.0" },
     { name = "pdf2image", specifier = ">=1.16.0" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "pydantic", specifier = ">=2.5.3" },
-    { name = "pymilvus", specifier = ">=2.4.0,<2.6.4" },
+    { name = "pymilvus", marker = "extra == 'retrieval'", specifier = ">=2.4.0,<2.6.4" },
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-docx", specifier = ">=1.1.0" },
@@ -3744,6 +3748,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "wegent-shared", editable = "../shared" },
 ]
+provides-extras = ["retrieval"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3754,6 +3759,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-mock", specifier = ">=3.15.1" },
+    { name = "wegent-knowledge-engine", extras = ["retrieval"] },
 ]
 
 [[package]]
@@ -3770,7 +3776,7 @@ dependencies = [
     { name = "tenacity" },
     { name = "uvicorn" },
     { name = "watchfiles" },
-    { name = "wegent-knowledge-engine" },
+    { name = "wegent-knowledge-engine", extra = ["retrieval"] },
     { name = "wegent-shared" },
 ]
 
@@ -3796,7 +3802,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "watchfiles", specifier = ">=1.0.0" },
-    { name = "wegent-knowledge-engine", editable = "../knowledge_engine" },
+    { name = "wegent-knowledge-engine", extras = ["retrieval"], editable = "../knowledge_engine" },
     { name = "wegent-shared", editable = "../shared" },
 ]
 
