@@ -6,6 +6,7 @@ import {
 } from './useActivityExecutionStatus'
 import { useIssueActivityScroll } from '@wegent/collaboration/issue-detail/useIssueActivityScroll'
 import { useTaskActivityRefresh } from './useTaskActivityRefresh'
+import { useFocusedComment } from './useFocusedComment'
 import {
   dispatchTaskCardReply,
   commentAgentMentions,
@@ -111,6 +112,7 @@ interface TaskActivityViewProps {
   agents?: CollaborationAgent[]
   /** Opens the comment list on this comment and flashes it once. */
   focusedCommentId?: string | null
+  focusedCommentRequestKey?: string | null
 }
 
 interface ActivityExecutionDetail {
@@ -169,9 +171,6 @@ function TimelineReply({
   )
 }
 
-/** How long a comment keeps the "you were sent here" highlight. */
-const COMMENT_FLASH_MS = 2000
-
 function isVersionConflict(cause: unknown): boolean {
   if (!cause || typeof cause !== 'object') return false
   if ('status' in cause && cause.status === 409) return true
@@ -200,6 +199,7 @@ export function TaskActivityView({
   members = [],
   agents = [],
   focusedCommentId = null,
+  focusedCommentRequestKey = null,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
@@ -420,25 +420,13 @@ export function TaskActivityView({
       cardTestIdPrefix: 'cloud-task-activity-card-',
     })
 
-  // A notification can point at one comment. Land on it once, flash it, and
-  // then leave the list under the reader's control.
-  const [flashedCommentId, setFlashedCommentId] = useState<string | null>(null)
-  const revealedCommentRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!focusedCommentId || revealedCommentRef.current === focusedCommentId) return
-    const target = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
-    ).find(node => node.dataset.messageId === focusedCommentId)
-    if (!target) return
-    revealedCommentRef.current = focusedCommentId
-    target.scrollIntoView?.({ block: 'center' })
-    setFlashedCommentId(focusedCommentId)
-  }, [focusedCommentId, listRef, threadMessages])
-  useEffect(() => {
-    if (!flashedCommentId) return
-    const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)
-    return () => window.clearTimeout(timer)
-  }, [flashedCommentId])
+  // Land once per notification, then leave scrolling under the reader's control.
+  const flashedCommentId = useFocusedComment(
+    listRef,
+    threadMessages,
+    focusedCommentId,
+    focusedCommentRequestKey
+  )
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi

@@ -288,9 +288,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const linkFlashMs = Date.now() - linkStartedAt
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
 
-      // A fresh window restores the board tab the link opened, which already
-      // shows the mentioned comment, so the inbox click is measured from the
-      // board home just like the link above.
+      // Reload restores the same mentioned comment. Let that restored highlight
+      // finish so the inbox must issue a new focus request, not reuse its flash.
       await reloadMainWindow(
         control,
         'The main window did not come back after reloading for the inbox click'
@@ -306,6 +305,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'waitFor',
         `${activeSurface} [data-testid="collaboration-platform-root"]`,
         { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${commentSelectorFor(activeSurface, message.messageId)}:not([data-flash="true"])`,
+        { visible: true, stableMs: LANDED_STABILITY_MS }
       )
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-refresh"]')

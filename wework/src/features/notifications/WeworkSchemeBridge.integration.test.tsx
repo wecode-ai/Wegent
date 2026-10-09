@@ -6,6 +6,10 @@ import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContext
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { WeworkSchemeBridge } from './WeworkSchemeBridge'
 import { openWeworkScheme } from './schemeEvents'
+import {
+  CloudConnectionContext,
+  type CloudConnectionContextValue,
+} from '@/features/cloud-connection/CloudConnectionContext'
 
 vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime: () => false }))
 
@@ -56,6 +60,40 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/todo')
 })
 afterEach(cleanup)
+
+test('repeated comment notifications update real tab routing without duplicating the board', () => {
+  render(
+    <CloudConnectionContext.Provider
+      value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+    >
+      <Harness
+        tabs={[
+          { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        ]}
+      />
+    </CloudConnectionContext.Provider>
+  )
+
+  const open = () => {
+    act(() => {
+      openWeworkScheme('wework://boards/12/issues/WEG-1/comments/comment-1')
+    })
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('projectId')).toBe('12')
+    expect(params.get('itemId')).toBe('WEG-1')
+    expect(params.get('commentId')).toBe('comment-1')
+    expect(params.get('commentFocusKey')).toBeTruthy()
+    expect(screen.getByTestId('active-route')).toHaveTextContent(
+      `commentFocusKey=${params.get('commentFocusKey')}`
+    )
+    return params.get('commentFocusKey')
+  }
+  const first = open()
+  const second = open()
+  expect(second).not.toBe(first)
+  expect(screen.getByTestId('tab-count')).toHaveTextContent('1')
+  expect(screen.getByTestId('active-tab')).toHaveTextContent('boards')
+})
 
 test('repeated first-turn notifications reuse the existing task surface with real tab routing', () => {
   render(

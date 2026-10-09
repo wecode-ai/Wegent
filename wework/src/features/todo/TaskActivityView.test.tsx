@@ -3832,11 +3832,12 @@ describe('TaskActivityView', () => {
         dispose: vi.fn(),
       } satisfies ProjectChatClient
 
-      render(
+      const activity = (requestKey: string) => (
         <TaskActivityView
           client={client}
           currentUserId={1}
           focusedCommentId="message-1"
+          focusedCommentRequestKey={requestKey}
           project={{ id: '11', name: 'Wework' } as never}
           task={
             {
@@ -3849,6 +3850,7 @@ describe('TaskActivityView', () => {
           }
         />
       )
+      const { rerender } = render(activity('first-notification'))
 
       const comment = await screen.findByTestId('cloud-task-activity-message-message-1')
       expect(comment).toHaveAttribute('data-message-id', 'message-1')
@@ -3857,6 +3859,20 @@ describe('TaskActivityView', () => {
         'data-flash'
       )
 
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+
+      // Restoring the same route must not flash again without a new navigation.
+      rerender(activity('first-notification'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50)
+      })
+      expect(comment).not.toHaveAttribute('data-flash')
+
+      rerender(activity('second-notification'))
+      await waitFor(() => expect(comment).toHaveAttribute('data-flash', 'true'))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2500)
       })

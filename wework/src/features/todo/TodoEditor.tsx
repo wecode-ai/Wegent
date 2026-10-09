@@ -86,6 +86,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   allItems: CloudLoopItem[]
   /** Opens the activity list on one comment instead of the newest message. */
   focusedCommentId?: string | null
+  focusedCommentRequestKey?: string | null
   onClose: () => void
   onEscape?: () => void
   presentation?: 'modal' | 'workspace-panel'
@@ -212,6 +213,7 @@ export function TodoEditor(props: TodoEditorProps) {
           members={context.members}
           agents={context.agents}
           focusedCommentId={props.focusedCommentId}
+          focusedCommentRequestKey={props.focusedCommentRequestKey}
           linear
         />
       ) : null,

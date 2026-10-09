@@ -48,6 +48,14 @@ function scoped(selector) {
   return `${CONTENT} ${selector}`
 }
 
+async function setExecutionDetailsExpanded(control, expanded) {
+  const toggle = scoped('[data-testid="cloud-todo-toggle-tasks"]')
+  await control.command('scrollIntoView', toggle)
+  const current = await control.command('getAttribute', toggle, { value: 'aria-expanded' })
+  if (current !== String(expanded)) await control.command('click', toggle, { visible: true })
+  await control.command('waitFor', `${toggle}[aria-expanded="${expanded}"]`, { visible: true })
+}
+
 function writeEvents(response, responseId, events) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
@@ -729,12 +737,12 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="cloud-todo-create-task"]', { visible: true })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
-      await control.command('click', '[data-testid="cloud-todo-toggle-tasks"]', { visible: true })
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`,
-        { visible: true }
-      )
+      await setExecutionDetailsExpanded(control, true)
+      const boundTask = scoped(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
+      await control.command('waitFor', boundTask)
+      await control.command('scrollIntoView', boundTask)
+      await control.command('waitFor', boundTask, { visible: true })
+      await control.command('click', boundTask, { visible: true })
       const boundModelSelector =
         '[data-testid="work-item-task-chat-panel"] [data-testid="model-selector-button"]'
       await control.command('waitFor', boundModelSelector, {
@@ -751,7 +759,8 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
-      await control.command('click', '[data-testid="cloud-todo-toggle-tasks"]', { visible: true })
+      await setExecutionDetailsExpanded(control, false)
+      await control.command('scrollIntoView', scoped('[data-testid="human-issue-use-ai-draft"]'))
       await control.command('waitFor', '[data-testid="human-issue-use-ai-draft"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
