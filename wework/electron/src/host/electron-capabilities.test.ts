@@ -242,6 +242,7 @@ function createIsolatedClipboardRouter(
   focused = true,
   popoutHost?: {
     openPopoutTaskInMain: (taskAddressId: string) => void
+    scheduleCoreDshRestart?: () => void
     setPopoutMode: (mode: 'composer' | 'menu' | 'conversation') => void
   },
   smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> }
@@ -286,6 +287,34 @@ function createIsolatedClipboardRouter(
   )
   return { router, targetWindow }
 }
+
+describe('Core DSH runtime capabilities', () => {
+  test('schedules a restart only after the host response is sent', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(true, {
+      openPopoutTaskInMain: vi.fn(),
+      scheduleCoreDshRestart,
+      setPopoutMode: vi.fn(),
+    })
+
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.restartCoreDsh',
+        {},
+        {
+          onResponseSent: completion => completions.push(completion),
+        }
+      )
+    ).resolves.toEqual({ scheduled: true })
+
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledOnce()
+  })
+})
 
 describe('Popout Window sizing capabilities', () => {
   test('forwards validated conversation and menu states to the native window', async () => {

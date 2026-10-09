@@ -45,6 +45,7 @@ import {
   IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   IssueStatusHistoryList,
+  issueExecutionElapsedMinutes,
   Tooltip,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -1214,18 +1215,9 @@ export function TodoEditor(props: TodoEditorProps) {
     executionTaskCount > 0 ||
     deliveries.length > 0 ||
     (showChildren && childItems.length > 0);
-  const executionStartedAt = displayedTasks
-    .map((task) => task.linked_at)
-    .filter(Boolean)
-    .sort()[0];
-  const executionElapsedMinutes = executionStartedAt
-    ? Math.max(
-        1,
-        Math.floor(
-          (Date.now() - new Date(executionStartedAt).getTime()) / 60_000,
-        ),
-      )
-    : null;
+  const executionElapsedMinutes = issueExecutionElapsedMinutes(
+    displayedTasks.map((task) => task.linked_at),
+  );
   const executionElapsedLabel =
     executionElapsedMinutes === null
       ? t("todo.not_started", "未开始")
@@ -3139,7 +3131,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         </Tooltip>
                       ) : null}
                     </span>
-                    {executionTaskCount > 0 || executionStartedAt ? (
+                    {executionTaskCount > 0 ||
+                    executionElapsedMinutes !== null ? (
                       <span className="task-detail-state-metrics">
                         {executionTaskCount > 0 ? (
                           <Tooltip
@@ -3156,7 +3149,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             </span>
                           </Tooltip>
                         ) : null}
-                        {executionStartedAt ? (
+                        {executionElapsedMinutes !== null ? (
                           <Tooltip
                             label={t(
                               "todo.execution_duration_help",
@@ -3167,7 +3160,9 @@ export function TodoEditor(props: TodoEditorProps) {
                           >
                             <span className="task-detail-state-metric">
                               <History aria-hidden="true" size={15} />
-                              <strong>{executionElapsedLabel}</strong>
+                              <strong data-testid="issue-execution-duration">
+                                {executionElapsedLabel}
+                              </strong>
                             </span>
                           </Tooltip>
                         ) : null}

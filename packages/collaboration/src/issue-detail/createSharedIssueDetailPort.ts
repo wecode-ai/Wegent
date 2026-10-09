@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAttachment,
   CollaborationGroup,
@@ -20,7 +21,7 @@ export interface SharedIssueDetailTaskBinding {
   task_id: string;
   task_title: string | null;
   backend_task_id: number | null;
-  modelSelection?: Record<string, unknown> | null;
+  modelSelection?: ModelSelectionConfig | null;
   binding_type?: "system" | "user";
   linked_at: string;
 }
