@@ -4351,9 +4351,8 @@ def _should_include_wework_space_mcp(request: RuntimeTaskCreateRequest) -> bool:
     """Expose project-space tools only to user-directed project-space tasks."""
 
     origin = request.origin if isinstance(request.origin, dict) else {}
-    if origin.get("type") == "project_automation" or (
-        origin.get("dispatchRole") or origin.get("dispatch_role")
-    ):
+    dispatch_role = origin.get("dispatchRole") or origin.get("dispatch_role")
+    if origin.get("type") == "project_automation" or dispatch_role == "manager":
         return False
     context = request.additional_context or {}
     return bool(

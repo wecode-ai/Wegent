@@ -1327,8 +1327,8 @@ function projectSpaceMcpServers(
 ): Array<Record<string, unknown>> {
   if (
     input.origin?.type === 'project_automation' ||
-    input.origin?.dispatchRole ||
-    input.origin?.dispatch_role
+    input.origin?.dispatchRole === 'manager' ||
+    input.origin?.dispatch_role === 'manager'
   ) {
     return []
   }
