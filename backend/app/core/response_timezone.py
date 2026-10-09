@@ -18,10 +18,12 @@ response boundary only:
   serialization), so internal call sites of fastapi.encoders are unaffected.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import fastapi.routing
+from fastapi._compat import v2 as _compat_v2
+from starlette.responses import JSONResponse
 
 from app.core.config import settings
 from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
@@ -44,10 +46,28 @@ _DATETIME_SUFFIX = _resolve_suffix()
 def _encode_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         return value.isoformat() + _DATETIME_SUFFIX
+    if value.utcoffset() == timedelta(0):
+        # Preserve pydantic's previous 'Z' rendering for aware UTC values.
+        return value.isoformat().replace("+00:00", "Z")
     return value.isoformat()
 
 
 _original_jsonable_encoder = fastapi.routing.jsonable_encoder
+_original_model_field_serialize = _compat_v2.ModelField.serialize
+_original_json_render = JSONResponse.render
+
+
+def _python_mode_serialize(self, value: Any, **kwargs: Any) -> Any:
+    """Keep datetime objects alive through response-model serialization.
+
+    FastAPI's default mode="json" converts datetimes to plain ISO strings
+    before jsonable_encoder runs, which would bypass the timezone suffix.
+    ModelField.serialize is only used for HTTP response serialization in
+    fastapi.routing, so python mode is safe here; the patched JSONResponse
+    renderer performs the final datetime encoding.
+    """
+    kwargs["mode"] = "python"
+    return _original_model_field_serialize(self, value, **kwargs)
 
 
 def _tz_aware_jsonable_encoder(obj: Any, *args: Any, **kwargs: Any) -> Any:
@@ -58,6 +78,18 @@ def _tz_aware_jsonable_encoder(obj: Any, *args: Any, **kwargs: Any) -> Any:
     )
 
 
+def _tz_aware_render(self: JSONResponse, content: Any) -> bytes:
+    """Encode datetimes with the session offset at the final JSON boundary.
+
+    Content may already be jsonable_encoder'd (dict-returning routes) or may
+    still hold datetime objects (response-model routes in python mode). The
+    timezone-aware encoder covers both.
+    """
+    return _original_json_render(self, _tz_aware_jsonable_encoder(content))
+
+
 def patch_response_timezone() -> None:
     """Route HTTP response serialization through the timezone-aware encoder."""
     fastapi.routing.jsonable_encoder = _tz_aware_jsonable_encoder
+    _compat_v2.ModelField.serialize = _python_mode_serialize
+    JSONResponse.render = _tz_aware_render

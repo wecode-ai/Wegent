@@ -35,6 +35,11 @@ def runtime_app(test_db: Session) -> FastAPI:
         )
     )
     test_db.flush()
+    # Response timezone patch is global once applied; apply it here so this
+    # test's expectations do not depend on execution order.
+    from app.core.response_timezone import patch_response_timezone
+
+    patch_response_timezone()
     app = FastAPI()
     app.include_router(tasks.router, prefix="/api/tasks")
     app.dependency_overrides[get_db] = lambda: test_db
@@ -49,7 +54,11 @@ def runtime_app(test_db: Session) -> FastAPI:
         ({"subtask_id": None}, None),
         (
             {"subtask_id": "77", "last_activity_at": "2026-09-18T11:50:01"},
-            {"subtask_id": 77, "cursor": 3, "last_activity_at": "2026-09-18T11:50:01"},
+            {
+                "subtask_id": 77,
+                "cursor": 3,
+                "last_activity_at": "2026-09-18T11:50:01+08:00",
+            },
         ),
     ],
 )
@@ -86,7 +95,7 @@ async def test_runtime_api_preserves_checkpoint_and_runs_db_off_loop(
     assert response.json() == {
         "task_id": 42,
         "task_status": "RUNNING",
-        "status_updated_at": "2026-09-18T11:50:00",
+        "status_updated_at": "2026-09-18T11:50:00+08:00",
         "active_stream": expected,
     }
     assert len(worker_threads) == 1

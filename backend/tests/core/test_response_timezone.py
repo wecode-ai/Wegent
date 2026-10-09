@@ -8,8 +8,14 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.core.response_timezone import patch_response_timezone
+
+
+class _Doc(BaseModel):
+    name: str
+    created_at: datetime
 
 
 def _make_client() -> TestClient:
@@ -28,6 +34,10 @@ def _make_client() -> TestClient:
     def aware():
         return {"ts": datetime(2026, 10, 9, 7, 0, 0, tzinfo=timezone.utc)}
 
+    @app.get("/model", response_model=_Doc)
+    def model():
+        return _Doc(name="x", created_at=datetime(2026, 10, 9, 15, 7, 46))
+
     return TestClient(app)
 
 
@@ -43,7 +53,12 @@ def test_nested_naive_datetime_carries_session_offset():
 
 def test_aware_datetime_is_left_untouched():
     body = _make_client().get("/aware").json()
-    assert body["ts"] == "2026-10-09T07:00:00+00:00"
+    assert body["ts"] == "2026-10-09T07:00:00Z"
+
+
+def test_response_model_datetime_carries_session_offset():
+    body = _make_client().get("/model").json()
+    assert body["created_at"] == "2026-10-09T15:07:46+08:00"
 
 
 def test_suffix_matches_database_dialect():

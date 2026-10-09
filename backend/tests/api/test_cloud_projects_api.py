@@ -2936,7 +2936,7 @@ def test_cloud_workspace_lists_immutable_delivery_files(
             "display_name": "report.pdf",
             "content_type": "application/pdf",
             "size_bytes": 6,
-            "delivered_at": "2026-07-22T12:00:00",
+            "delivered_at": "2026-07-22T12:00:00+08:00",
             "loop_item_path": [
                 {"id": item["id"], "title": "Release issue"},
                 {"id": task["id"], "title": "Publish report"},
