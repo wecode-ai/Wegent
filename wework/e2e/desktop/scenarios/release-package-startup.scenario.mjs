@@ -259,6 +259,38 @@ async function assertMacosMicrophoneSigning(appBinary) {
   assert.ok(description.trim(), 'The release package must explain microphone access')
 }
 
+async function assertCompressedHostUpdatePackage(appVersion) {
+  if (process.env.WEWORK_E2E_REQUIRE_COMPRESSED_HOST_UPDATE !== 'true') return null
+  assert.equal(process.platform, 'darwin', 'Compressed Host update verification requires macOS')
+
+  const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
+  const appRoot = resolve(appBinary, '..', '..', '..')
+  const installerRoot = resolve(appRoot, '..', '..')
+  const onlineUpdateRoot = resolve(installerRoot, '..', 'release-online-update')
+  const archiveName = `WeWorkHostUpdate_${appVersion}_macos_${process.arch}.zip`
+  const archivePath = join(onlineUpdateRoot, archiveName)
+  const summary = execFileSync('zipinfo', ['-l', archivePath], { encoding: 'utf8' })
+  const match = /(\d+) files, (\d+) bytes uncompressed, (\d+) bytes compressed:\s*([\d.]+)%/.exec(
+    summary
+  )
+  assert.ok(match, `Could not read compression summary for ${archiveName}`)
+
+  const uncompressedBytes = Number(match[2])
+  const compressedBytes = Number(match[3])
+  assert.ok(uncompressedBytes > 0, `The Host update archive is empty: ${archiveName}`)
+  assert.ok(
+    compressedBytes < uncompressedBytes,
+    `The Host update archive is not compressed: ${compressedBytes} of ${uncompressedBytes} bytes`
+  )
+  return {
+    archiveName,
+    entries: Number(match[1]),
+    uncompressedBytes,
+    compressedBytes,
+    savingsPercent: Number(match[4]),
+  }
+}
+
 export async function createDesktopScenario({
   electronUserDataDirectory,
   resultDir,
@@ -266,6 +298,15 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const packagedComponents = await assertReleasePackageResources()
+  const hostUpdateCompression = await assertCompressedHostUpdatePackage(
+    packagedComponents.appVersion
+  )
+  if (hostUpdateCompression) {
+    await writeFile(
+      join(resultDir, 'host-update-compression.json'),
+      `${JSON.stringify(hostUpdateCompression, null, 2)}\n`
+    )
+  }
   await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
@@ -353,6 +394,7 @@ export async function createDesktopScenario({
       return {
         nativeDshPluginCompatibility: true,
         seededNativeDshProfile: true,
+        hostUpdateCompression,
       }
     },
   }
