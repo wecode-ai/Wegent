@@ -897,6 +897,11 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       await captureScreenshot(control, 'github-cli-ordinary-chat-recovered.png', 'body')
       // Return to the visible plugin detail after a long background-only workflow.
       await control.command('click', '[data-testid="plugins-button"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="plugins-installed-strip-item-${installedId}"]`
+      )
+      await control.command('click', `[data-testid="plugins-installed-strip-item-${installedId}"]`)
       await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
       const finalPage = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(!finalPage.testIds.some(id => id.startsWith('plugin-account-')))

@@ -608,15 +608,18 @@ export function PluginsWorkspace({
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
+  const deviceSyncLifetimeRef = useRef<symbol | null>(null)
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    deviceSyncLifetimeRef.current = Symbol('plugin-device-sync-lifetime')
+    return () => {
+      deviceSyncLifetimeRef.current = null
       if (deviceStatusReportRetryTimerRef.current !== null) {
         window.clearTimeout(deviceStatusReportRetryTimerRef.current)
+        deviceStatusReportRetryTimerRef.current = null
       }
-    },
-    []
-  )
+    }
+  }, [])
   usePluginMarketplaceCatalog({
     installedPlugins,
     setPluginMarketplaceState,
@@ -3839,9 +3842,15 @@ export function PluginsWorkspace({
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
+    const lifetime = deviceSyncLifetimeRef.current
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+    const syncScopeIsCurrent = () =>
+      lifetime !== null &&
+      deviceSyncLifetimeRef.current === lifetime &&
+      marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue &&
+      currentDeviceIdRef.current === deviceId
     const syncIsCurrent = () =>
-      currentDeviceIdRef.current === deviceId &&
+      syncScopeIsCurrent() &&
       pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)
     const reports = collectPluginDeviceStatusReports(
       installedPlugins.map(plugin => plugin.raw),
@@ -3926,7 +3935,7 @@ export function PluginsWorkspace({
           return refreshCatalog().catch(() => undefined)
         })
         .catch(() => {
-          if (currentDeviceIdRef.current !== deviceId) return
+          if (!syncScopeIsCurrent()) return
           const failureCount = (deviceStatusReportFailureCountsRef.current.get(deviceId) ?? 0) + 1
           deviceStatusReportFailureCountsRef.current.set(deviceId, failureCount)
           if (
@@ -3936,7 +3945,7 @@ export function PluginsWorkspace({
             const delay = DEVICE_STATUS_REPORT_RETRY_BASE_MS * 2 ** (failureCount - 1)
             deviceStatusReportRetryTimerRef.current = window.setTimeout(() => {
               deviceStatusReportRetryTimerRef.current = null
-              if (currentDeviceIdRef.current === deviceId) {
+              if (syncScopeIsCurrent()) {
                 setMarketplaceRefreshTick(previous => previous + 1)
               }
             }, delay)
@@ -3966,19 +3975,19 @@ export function PluginsWorkspace({
     }))
 
     // Do not cancel on items/deps churn (optimistic pending updates re-enter this
-    // effect). Only ignore the result if the active device changed.
+    // effect). Ignore results after unmount or an account/device scope change.
     void pluginApi
       .syncInstalledPluginsToDevice(deviceId)
       .catch(() => undefined)
       .then(refreshCatalog)
       .then(() => {
-        if (currentDeviceIdRef.current === deviceId) {
+        if (syncScopeIsCurrent()) {
           markPluginDeviceAutoSyncSettled(deviceId)
           setDeviceAutoSyncSettled(true)
         }
       })
       .catch(() => {
-        if (currentDeviceIdRef.current === deviceId) {
+        if (syncScopeIsCurrent()) {
           markPluginDeviceAutoSyncSettled(deviceId)
           setDeviceAutoSyncSettled(true)
         }

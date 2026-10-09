@@ -46,6 +46,11 @@ export async function createDesktopScenario({
       }
       await openPlugin(control, fixtures[0])
       await control.command('click', testId('plugins-refresh-button'))
+      // Composer catalogs load on demand; open the real picker before checking its projection.
+      await control.command('click', testId('new-chat-button'))
+      await control.command('click', testId('composer-plugin-picker-button'))
+      const picker = testId('composer-plugin-picker')
+      await control.command('waitFor', picker)
       await until(
         () => inventory(control),
         state =>
@@ -58,10 +63,6 @@ export async function createDesktopScenario({
         'Not all 24 real plugins reached the shared inventory and composer',
         workbenchReadyTimeoutMs
       )
-      await control.command('click', testId('new-chat-button'))
-      await control.command('click', testId('composer-plugin-picker-button'))
-      const picker = testId('composer-plugin-picker')
-      await control.command('waitFor', picker)
       const snapshot = JSON.parse(await control.command('snapshot', picker))
       const itemIds = snapshot.testIds.filter(id => id.startsWith('composer-plugin-picker-item-'))
       for (const fixture of fixtures) {

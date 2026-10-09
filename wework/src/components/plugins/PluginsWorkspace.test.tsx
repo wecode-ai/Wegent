@@ -512,6 +512,7 @@ function mockSystemSkillsFetch(
     marketplaceDisplayName: string
     deviceAutoSyncSucceeds: boolean
     reportDeviceFailures: number
+    reportDeviceGate: Promise<void>
     localVersionEvidence: string
     marketplaceUpdateAvailable: boolean
     marketplaceUpdatePolicy: 'manual' | 'auto'
@@ -1048,7 +1049,7 @@ function mockSystemSkillsFetch(
           })
         }
         marketplaceDeviceState = 'installed'
-        return Promise.resolve({
+        return (overrides.reportDeviceGate ?? Promise.resolve()).then(() => ({
           ok: true,
           status: 200,
           json: () =>
@@ -1057,7 +1058,7 @@ function mockSystemSkillsFetch(
               acknowledgedCount: 1,
               acknowledgedInstalledPluginIds: [101],
             }),
-        })
+        }))
       }
       if (
         requestUrl.pathname === '/api/plugins/installed/sync-device' ||
@@ -4126,6 +4127,68 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByText('同步中')).not.toBeInTheDocument()
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
     await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(1))
+  })
+
+  test('does not refresh device inventory after an unmounted status report completes', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let finishReport!: () => void
+    const reportDeviceGate = new Promise<void>(resolve => {
+      finishReport = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      reportDeviceGate,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wegent',
+          path: '/Users/test/.wework/capabilities/store/plugins',
+          plugins: [defaultCodexPlugin],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(1))
+    view.unmount()
+
+    // A late response must not use the next page/test's transport and republish old local state.
+    mockSystemSkillsFetch({ marketplaceInstalled: false })
+    await act(async () => {
+      finishReport()
+      await reportDeviceGate
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  test('does not refresh device inventory after an unmounted sync completes', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let finishSync!: () => void
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      finishSync = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    view.unmount()
+
+    mockSystemSkillsFetch({ marketplaceInstalled: false })
+    await act(async () => {
+      finishSync()
+      await deviceAutoSyncGate
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
   test('does not auto-sync before live plugin/installed membership returns', async () => {
