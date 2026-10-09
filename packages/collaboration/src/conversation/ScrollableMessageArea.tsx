@@ -44,6 +44,7 @@ function ScrollableMessagePaneContent({
   renderGapAfterMessage,
   turns,
   loading = false,
+  historyError,
   isWaitingForAssistant = false,
   hasMoreBefore = false,
   loadingMoreBefore = false,
@@ -757,6 +758,8 @@ function ScrollableMessagePaneContent({
               >
                 {t('workbench.loading_conversation')}
               </div>
+            ) : historyError ? (
+              historyError
             ) : (
               <div
                 data-testid="chat-empty-state"
@@ -772,6 +775,7 @@ function ScrollableMessagePaneContent({
             )
           ) : (
             <>
+              {historyError}
               {hasMoreBefore && (
                 <div className="flex justify-center px-4 pb-2 pt-4">
                   <button

@@ -307,6 +307,25 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
   })
 
+  test('shows history failure and retries instead of displaying a new conversation', () => {
+    const retry = vi.fn()
+    const { rerender } = render(
+      <ScrollableMessageArea
+        messages={[]}
+        transcriptError="Transfer interrupted"
+        onRetryTranscript={retry}
+      />
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('会话历史加载失败')
+    expect(screen.getByRole('alert')).toHaveTextContent('Transfer interrupted')
+    expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('runtime-transcript-retry'))
+    expect(retry).toHaveBeenCalledOnce()
+    rerender(<ScrollableMessageArea messages={[]} loading />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-loading-state')).toBeInTheDocument()
+  })
+
   test('top-aligns short conversations below the workspace header', () => {
     render(
       <ScrollableMessageArea
