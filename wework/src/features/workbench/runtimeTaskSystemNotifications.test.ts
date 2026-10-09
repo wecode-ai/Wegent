@@ -38,11 +38,28 @@ describe('runtime task system notifications', () => {
     expect(invokeDesktopHostMock).toHaveBeenCalledWith('notification.show', {
       title: 'Task completed',
       body: 'The local task has finished.',
-      taskAddressId: 'device-1:task-1',
+      url: 'wework://tasks/device-1/task-1',
     })
   })
 
-  test('keeps notifications without a task target non-clickable', async () => {
+  test('preserves a project notification destination', async () => {
+    runtime.electron = true
+    invokeDesktopHostMock.mockResolvedValue(undefined)
+
+    await sendSystemNotification({
+      title: 'Assigned',
+      body: 'A project task was assigned.',
+      url: 'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    })
+
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('notification.show', {
+      title: 'Assigned',
+      body: 'A project task was assigned.',
+      url: 'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
+    })
+  })
+
+  test('keeps notifications without a destination non-clickable', async () => {
     runtime.electron = true
     invokeDesktopHostMock.mockResolvedValue(undefined)
 

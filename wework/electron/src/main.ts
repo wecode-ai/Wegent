@@ -275,6 +275,13 @@ function queueScheme(url: string): void {
   desktopHostEvents.publish('wework-scheme-requested', {})
 }
 
+function openSchemeInMainWindow(url: string): void {
+  queueScheme(url)
+  void reactivateMainWindow().catch(error => {
+    console.error('[navigation] failed to activate main window for scheme navigation', error)
+  })
+}
+
 app.on('open-url', (event, url) => {
   event.preventDefault()
   queueScheme(url)
@@ -1623,7 +1630,7 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
-          openScheme: queueScheme,
+          openScheme: openSchemeInMainWindow,
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
