@@ -334,6 +334,10 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'collaboration-shared-core') {
+    // Exercise timezone-less UTC API timestamps outside the UTC timezone.
+    nextEnv.TZ = 'Asia/Shanghai'
+  }
   if (
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'browser-multi-tabs' ||

@@ -1,4 +1,5 @@
 import type { RuntimeConversationClient } from "@wegent/chat-core";
+import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -114,7 +115,7 @@ export interface WorkspaceTaskBinding {
   taskId: string;
   taskTitle: string | null;
   backendTaskId: number | null;
-  modelSelection?: Record<string, unknown> | null;
+  modelSelection?: ModelSelectionConfig | null;
   bindingType?: "system" | "user";
   humanAssignmentId?: string | null;
   dispatchId?: string | null;
@@ -911,7 +912,7 @@ export interface WorkspaceRuntimeTaskAddress {
   taskId: string;
   backendTaskId?: number | null;
   wegentTeamId?: number | null;
-  modelSelection?: Record<string, unknown> | null;
+  modelSelection?: ModelSelectionConfig | null;
 }
 
 /** Wework-only bridge between cloud issues and the local desktop runtime. */

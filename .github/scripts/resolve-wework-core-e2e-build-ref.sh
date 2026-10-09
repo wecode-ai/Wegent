@@ -22,6 +22,7 @@ git -c "safe.directory=$PWD" ls-files -s -- \
   .github/scripts/restore-oci-runtime-binary.sh \
   package.json \
   packages/chat-core \
+  packages/collaboration \
   pnpm-lock.yaml \
   pnpm-workspace.yaml \
   wework \

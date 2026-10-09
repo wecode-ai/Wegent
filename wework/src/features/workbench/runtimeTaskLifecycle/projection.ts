@@ -111,6 +111,7 @@ export function shouldReplaceRuntimeTaskProjection(
     if (candidateCompleted) return true
     if (!isRuntimeTaskConfirmedActive(candidate)) return false
     const candidateTime = runtimeTaskProjectionTime(candidate)
+    // Native completion can be second-precision while the accepted start is milliseconds.
     return candidateTime === 0 || candidateTime > runtimeTaskProjectionTime(current)
   }
 

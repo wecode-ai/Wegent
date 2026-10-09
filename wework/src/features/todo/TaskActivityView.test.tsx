@@ -876,27 +876,27 @@ describe('TaskActivityView', () => {
       return address
     })
 
-    render(
-      <TaskActivityView
-        client={client}
-        currentUserId={1}
-        project={{ id: '11', name: 'Wework' } as never}
-        task={
-          {
-            id: 'WEG-1',
-            title: 'Inspect changes',
-            description: 'Review the current diff',
-            status: 'inbox',
-            version: 1,
-            assignee_agent_id: '12',
-          } as never
-        }
-      />
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
+    // Flush roster/model initialization before checking the inherited selection.
+    await act(async () => {
+      render(
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+              assignee_agent_id: '12',
+            } as never
+          }
+        />
+      )
     })
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('GPT 5.5 Codex')
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
 
@@ -3456,6 +3456,7 @@ describe('TaskActivityView', () => {
         cloudProjectId: '11',
         origin: {
           type: 'board_comment',
+          dispatchRole: 'executor',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
           rootCommentId: userMessage.messageId,

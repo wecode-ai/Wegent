@@ -38,6 +38,7 @@ repo="$temp_dir/repo"
 mkdir -p \
   "$repo/.github/scripts" \
   "$repo/packages/chat-core" \
+  "$repo/packages/collaboration" \
   "$repo/wework/e2e" \
   "$repo/wework/src"
 cp \
@@ -78,6 +79,15 @@ printf 'changed source\n' >"$repo/wework/src/app.ts"
 (cd "$repo" && git add wework/src/app.ts)
 reference_after_source="$(resolve_reference)"
 test "$reference_before" != "$reference_after_source"
+
+printf 'shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
+(cd "$repo" && git add packages/collaboration/issue.ts)
+reference_after_collaboration="$(resolve_reference)"
+test "$reference_after_source" != "$reference_after_collaboration"
+
+printf 'changed shared issue UI\n' >"$repo/packages/collaboration/issue.ts"
+(cd "$repo" && git add packages/collaboration/issue.ts)
+test "$reference_after_collaboration" != "$(resolve_reference)"
 
 (
   cd "$repo"

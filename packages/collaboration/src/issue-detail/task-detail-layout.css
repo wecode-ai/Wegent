@@ -2167,28 +2167,24 @@
 }
 
 .task-detail-thread-message-header {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 3px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: var(--text-base);
 }
 
-.task-detail-thread-message-header > :first-child {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.task-detail-thread-message-header:has(.task-detail-thread-message-metadata)
-  > :first-child {
-  grid-row: 1 / span 2;
+.task-detail-thread-message-identity {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
 }
 
 .task-detail-thread-message-author {
   min-width: 0;
-  grid-column: 2;
-  grid-row: 1;
   overflow: hidden;
   color: rgb(var(--color-text-primary));
   font-weight: 500;
@@ -2199,27 +2195,20 @@
 .task-detail-thread-message-metadata {
   display: flex;
   min-width: 0;
-  grid-column: 2 / 4;
-  grid-row: 2;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--color-text-muted));
+}
+
+.task-detail-thread-message-aside {
+  display: flex;
+  min-height: 32px;
+  flex: none;
   align-items: center;
   gap: 8px;
 }
 
-.task-detail-thread-message-metadata > :not(.task-detail-execution-pill) {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-detail-thread-message-metadata .task-detail-execution-pill {
-  flex: none;
-}
-
 .task-detail-thread-message-time {
-  grid-column: 3;
-  grid-row: 1;
   color: rgb(var(--color-text-muted));
   font-size: var(--text-xs);
   white-space: nowrap;
@@ -2606,11 +2595,23 @@
 }
 
 .task-detail-workspace-panel .task-detail-thread.is-timeline {
-  border-bottom: 1px solid rgb(var(--color-border));
-  padding: 8px 0 12px;
+  position: relative;
+  border-bottom: 0;
+  padding: 10px 0 14px;
+}
+
+.task-detail-workspace-panel .task-detail-thread.is-timeline::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 15px;
+  width: 1px;
+  background: rgb(var(--color-border));
+  content: "";
 }
 
 .task-detail-workspace-panel .is-timeline .task-detail-comment-card {
+  position: relative;
   margin: 0;
   border: 0;
   border-radius: 0;
@@ -2619,11 +2620,21 @@
 }
 
 .task-detail-workspace-panel .is-timeline .task-detail-thread-message {
+  position: relative;
   padding: 4px 0;
 }
 
+.task-detail-workspace-panel
+  .is-timeline
+  .task-detail-thread-message-header
+  > :first-child {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 4px rgb(var(--color-bg-base));
+}
+
 .task-detail-workspace-panel .is-timeline .task-detail-thread-message-body {
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .task-detail-workspace-panel .is-timeline .task-detail-thread-message-header {
@@ -2632,7 +2643,7 @@
 
 .task-detail-workspace-panel
   .is-timeline
-  .task-detail-thread-message-metadata
+  .task-detail-thread-message-aside
   .task-detail-execution-pill {
   flex: none;
 }
@@ -2735,6 +2746,54 @@
 .task-detail-workspace-panel .task-detail-comments-list {
   max-height: none;
   overflow: visible;
+  padding: 0;
+}
+
+.task-detail-timeline-system-event {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.task-detail-timeline-marker {
+  position: relative;
+  display: block;
+  align-self: stretch;
+  min-height: 32px;
+}
+
+.task-detail-timeline-marker::before {
+  position: absolute;
+  top: -10px;
+  bottom: -10px;
+  left: 15px;
+  width: 1px;
+  background: rgb(var(--color-border));
+  content: "";
+}
+
+.task-detail-timeline-marker::after {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  left: 12px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid rgb(var(--color-bg-base));
+  border-radius: 999px;
+  background: rgb(var(--color-text-muted));
+  box-shadow: 0 0 0 1px rgb(var(--color-border));
+  content: "";
+}
+
+.task-detail-timeline-system-content {
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.task-detail-timeline-system-content
+  [data-testid^="cloud-todo-status-history-entry-"] {
   padding: 0;
 }
 

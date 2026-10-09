@@ -295,6 +295,31 @@ describe('runtimeTaskProjection', () => {
     ).toBe(true)
   })
 
+  test('rejects the same active snapshot after a second-precision completion', () => {
+    const started = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_791_522_458_204,
+    })
+    const completed = {
+      ...started,
+      running: false,
+      status: 'done',
+      turnStatus: 'completed',
+      completedAt: 1_791_522_458_000,
+    }
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, started)).toBe(false)
+    expect(
+      shouldReplaceRuntimeTaskProjection(completed, {
+        ...started,
+        updatedAt: 1_791_522_459_000,
+      })
+    ).toBe(true)
+  })
+
   test('rejects a stale active projection that still carries completion', () => {
     const completed = task({
       running: false,

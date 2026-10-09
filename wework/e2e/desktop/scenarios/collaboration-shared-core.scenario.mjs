@@ -528,6 +528,33 @@ export function createDesktopScenario({
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
+        const durationSelector = scoped('[data-testid="cloud-todo-execution-duration"]')
+        await control.command('waitFor', durationSelector, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        // Compare actual execution start/end instants, not the binding creation time.
+        const executionState = (await request(`/api/v1/loop-items/${issue.id}`)).ai_state
+        assert.ok(executionState?.started_at, 'The real execution must have a start time')
+        const utcInstant = timestamp =>
+          Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`)
+        const startedAt = utcInstant(executionState.started_at)
+        const endedAt = executionState.completed_at
+          ? utcInstant(executionState.completed_at)
+          : Date.now()
+        assert.ok(Number.isFinite(startedAt) && Number.isFinite(endedAt))
+        const elapsedMinutes = Math.max(1, Math.floor((endedAt - startedAt) / 60_000))
+        assert.ok(elapsedMinutes < 60, 'The fresh Issue fixture must be less than an hour old')
+        const durationText = await control.command('getText', durationSelector)
+        assert.match(
+          durationText,
+          /^\d+\s*分钟$/,
+          'A fresh execution must not include a timezone-sized offset'
+        )
+        assert.ok(
+          Math.abs(Number.parseInt(durationText, 10) - elapsedMinutes) <= 1,
+          `Execution duration ${durationText} must match the actual execution ${elapsedMinutes} minutes`
+        )
         const previousTaskIds = new Set(
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )

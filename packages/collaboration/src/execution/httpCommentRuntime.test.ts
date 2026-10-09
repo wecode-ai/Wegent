@@ -148,6 +148,7 @@ describe('shared comment execution using the real HTTP adapter', () => {
         },
         origin: {
           type: 'board_comment',
+          dispatchRole: 'executor',
           projectStore: 'backend',
           cloudProjectId: project.id,
           loopItemId: task.id,
