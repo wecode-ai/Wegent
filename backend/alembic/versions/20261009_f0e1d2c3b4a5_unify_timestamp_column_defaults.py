@@ -77,6 +77,41 @@ TABLES_UPDATED_ONLY = [
     "plugin_device_installations",
 ]
 
+# Tables whose columns already carried a server default before this migration.
+# downgrade() must restore these definitions instead of dropping them.
+# Values: column -> extra default clause appended after the nullability.
+PRIOR_DEFAULTS = {
+    "oauth_refresh_tokens": {"created_at": "DEFAULT CURRENT_TIMESTAMP"},
+    "marketplace_resources": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP",
+    },
+    "project_chat_messages": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP",
+    },
+    "wework_notifications": {"created_at": "DEFAULT CURRENT_TIMESTAMP"},
+    "knowledge_artifacts": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP",
+    },
+    "smart_apps": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP(6)",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
+    },
+    "smart_app_submissions": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP(6)",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
+    },
+    "smart_app_releases": {"created_at": "DEFAULT CURRENT_TIMESTAMP(6)"},
+    "wework_transcripts": {
+        "created_at": "DEFAULT CURRENT_TIMESTAMP(6)",
+        "updated_at": "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
+    },
+    "wework_transcript_archives": {"created_at": "DEFAULT CURRENT_TIMESTAMP(6)"},
+    "wework_transcript_turns": {"created_at": "DEFAULT CURRENT_TIMESTAMP(6)"},
+}
+
 
 def _existing_tables() -> set:
     bind = op.get_bind()
@@ -154,6 +189,14 @@ def downgrade() -> None:
     def revert(table: str, column: str) -> None:
         column_type, is_nullable = _column_definition(table, column)
         null_clause = "NOT NULL" if is_nullable == "NO" else "NULL"
+        prior = PRIOR_DEFAULTS.get(table, {}).get(column)
+        if prior:
+            # This column had a server default before this migration; restore it.
+            op.execute(
+                f"ALTER TABLE `{table}` MODIFY `{column}` "
+                f"{column_type} {null_clause} {prior}"
+            )
+            return
         op.execute(
             f"ALTER TABLE `{table}` MODIFY `{column}` {column_type} {null_clause}"
         )
