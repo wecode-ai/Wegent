@@ -38,8 +38,8 @@ class NamespaceMember(Base):
     invited_by_user_id = Column(Integer, nullable=False, default=0)
     # Is membership active
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     # Relationships (no foreign key constraints as per requirements)
     # Note: This model is deprecated. Namespace.members now uses ResourceMember.

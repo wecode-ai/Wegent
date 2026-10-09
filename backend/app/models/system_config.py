@@ -30,8 +30,8 @@ class SystemConfig(Base):
     _config_value = Column("config_value", String(4096), nullable=False, default="{}")
     version = Column(Integer, nullable=False, default=1)
     updated_by = Column(Integer, nullable=True)  # User ID who last updated
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
 
     __table_args__ = (
         {

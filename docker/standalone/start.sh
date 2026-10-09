@@ -265,6 +265,7 @@ chown mysql:mysql /run/mysqld
 mysqld \
     --user=mysql \
     --datadir="$MYSQL_DATA_DIR" \
+    --default-time-zone='+08:00' \
     --bind-address=127.0.0.1 \
     --port="$MYSQL_PORT" \
     --socket=/run/mysqld/mysqld.sock \

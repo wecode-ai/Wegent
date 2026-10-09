@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     event,
+    func,
     inspect,
 )
 from sqlalchemy.dialects import mysql
@@ -54,8 +55,13 @@ class PluginPublicationRequest(Base):
         default=EPOCH_TIME,
         server_default="1970-01-01 00:00:00.000000",
     )
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
-    updated_at = Column(_DATETIME, nullable=False, default=_utc_now, onupdate=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
+    updated_at = Column(
+        _DATETIME,
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
     __table_args__ = (
         Index(
@@ -126,8 +132,13 @@ class PluginPublicationRevision(Base):
         default=EPOCH_TIME,
         server_default="1970-01-01 00:00:00.000000",
     )
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
-    updated_at = Column(_DATETIME, nullable=False, default=_utc_now, onupdate=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
+    updated_at = Column(
+        _DATETIME,
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -166,8 +177,13 @@ class PluginPublicationCheck(Base):
     acknowledgement_required = Column(Boolean, nullable=False, default=False)
     acknowledged = Column(Boolean, nullable=False, default=False)
     acknowledged_by_user_id = Column(big_integer_id_type(), nullable=False, default=0)
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
-    updated_at = Column(_DATETIME, nullable=False, default=_utc_now, onupdate=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
+    updated_at = Column(
+        _DATETIME,
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -196,7 +212,7 @@ class PluginPublicationEvent(Base):
     message = Column(String(1000), nullable=False, default="")
     payload_json = Column(JSON, nullable=False, default=dict)
     external_event_id = Column(String(200), nullable=False, default="")
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint(
@@ -227,8 +243,13 @@ class PluginPublicationIdempotency(Base):
         String(20), nullable=False, default="processing", server_default="processing"
     )
     response_json = Column(JSON, nullable=False, default=dict)
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
-    updated_at = Column(_DATETIME, nullable=False, default=_utc_now, onupdate=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
+    updated_at = Column(
+        _DATETIME,
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -264,8 +285,13 @@ class PluginReleaseIdempotency(Base):
     plugin_id = Column(big_integer_id_type(), nullable=False, default=0)
     release_id = Column(big_integer_id_type(), nullable=False, default=0)
     last_error = Column(String(1000), nullable=False, default="")
-    created_at = Column(_DATETIME, nullable=False, default=_utc_now)
-    updated_at = Column(_DATETIME, nullable=False, default=_utc_now, onupdate=_utc_now)
+    created_at = Column(_DATETIME, nullable=False, server_default=func.now())
+    updated_at = Column(
+        _DATETIME,
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uniq_plugin_release_idempotency_key"),

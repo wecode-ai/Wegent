@@ -2707,7 +2707,6 @@ class PluginMarketplaceService:
         plugin.status = "deleted"
         plugin.allow_copy = False
         plugin.featured_rank = 0
-        plugin.updated_at = datetime.now()
         db.commit()
         return installations
 

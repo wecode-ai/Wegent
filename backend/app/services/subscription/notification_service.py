@@ -159,7 +159,6 @@ class SubscriptionNotificationService:
 
         # Update follow record
         follow.config = config.model_dump_json()
-        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(
@@ -319,8 +318,6 @@ class SubscriptionNotificationService:
                 follow_type=FollowType.DIRECT.value,
                 invitation_status=InvitationStatus.ACCEPTED.value,
                 config="",
-                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             db.add(follow)
 
@@ -330,7 +327,6 @@ class SubscriptionNotificationService:
             notification_channel_ids=notification_channel_ids,
         )
         follow.config = config.model_dump_json()
-        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         if channel_binding_configs is not None:
             subscription = self._get_subscription_for_owner(
@@ -355,7 +351,6 @@ class SubscriptionNotificationService:
             internal["notification_channel_bindings"] = channel_binding_map
             json_data["_internal"] = internal
             subscription.json = json_data
-            subscription.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(
@@ -420,8 +415,6 @@ class SubscriptionNotificationService:
             follow_type=FollowType.DIRECT.value,
             invitation_status=InvitationStatus.ACCEPTED.value,
             config=config.model_dump_json(),
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db.add(follow)
         db.commit()
@@ -788,7 +781,6 @@ class SubscriptionNotificationService:
         internal["notification_channel_bindings"] = binding_map
         json_data["_internal"] = internal
         subscription.json = json_data
-        subscription.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
         db.refresh(subscription)
         logger.info(

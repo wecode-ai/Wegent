@@ -59,10 +59,9 @@ class MarketplaceResource(Base):
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=func.now(),
-        server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=func.now(),
+        server_default=func.now(),
         comment="Marketplace resource update time",
+        server_onupdate=func.now(),
     )
 
     __table_args__ = (

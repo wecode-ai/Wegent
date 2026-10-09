@@ -1345,15 +1345,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")
             db.add(ghost)
 
-        # Update timestamps
-        bot.updated_at = utc_now_naive()
-        if ghost:
-            ghost.updated_at = utc_now_naive()
         # Note: shell is now a reference to user's custom shell or public shell,
-        # we don't update its timestamp as it's not owned by this bot
-        if model and hasattr(model, "updated_at"):
-            model.updated_at = utc_now_naive()
-
+        # we don't update its timestamp as it's not owned by this bot.
+        # Timestamps are maintained by the database (ON UPDATE CURRENT_TIMESTAMP).
         db.commit()
         db.refresh(bot)
         if ghost:

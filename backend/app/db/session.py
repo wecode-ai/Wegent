@@ -114,6 +114,25 @@ def _configure_async_engine_dialect(async_engine: AsyncEngine) -> None:
         dialect._send_false_to_ping = True
 
 
+def _configure_async_engine_session_timezone(async_engine: AsyncEngine) -> None:
+    """Set the MySQL session time zone on every new async connection.
+
+    asyncmy does not support PyMySQL's ``init_command`` connect arg, so the
+    session time zone must be applied through the SQLAlchemy connect event.
+    Without this, NOW()/CURRENT_TIMESTAMP on async connections fall back to
+    the server global time zone (often UTC), diverging from the sync engine
+    which pins every session to +08:00.
+    """
+
+    @event.listens_for(async_engine.sync_engine, "connect")
+    def set_session_timezone(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'")
+        finally:
+            cursor.close()
+
+
 def _create_async_engine() -> AsyncEngine:
     """Create async database engine."""
     async_url = _get_async_database_url()
@@ -135,6 +154,7 @@ def _create_async_engine() -> AsyncEngine:
         pool_recycle=settings.DB_POOL_RECYCLE,
     )
     _configure_async_engine_dialect(async_engine)
+    _configure_async_engine_session_timezone(async_engine)
     register_pool(
         async_engine.pool,
         engine_role="async",

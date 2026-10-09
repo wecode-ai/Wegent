@@ -391,8 +391,6 @@ class KnowledgeService:
             name=kb_name,
             namespace=data.namespace,
             json=resource_data,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
         )
 
         db.add(db_resource)

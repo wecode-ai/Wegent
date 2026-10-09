@@ -112,16 +112,14 @@ class KnowledgeArtifactRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=func.now(),
         server_default=text("CURRENT_TIMESTAMP"),
         comment="Creation time",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=func.now(),
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=func.now(),
+        server_onupdate=text("CURRENT_TIMESTAMP"),
         comment="Last update time",
     )
     __table_args__ = (

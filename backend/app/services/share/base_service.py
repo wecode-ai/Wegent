@@ -336,7 +336,6 @@ class UnifiedShareService(ABC):
             else:
                 # Set to far future instead of None to avoid NOT NULL constraint
                 existing_link.expires_at = datetime.utcnow() + timedelta(days=365 * 100)
-            existing_link.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing_link)
 
@@ -471,7 +470,6 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Share link not found")
 
         share_link.is_active = False
-        share_link.updated_at = datetime.utcnow()
         db.commit()
 
         return True
@@ -672,7 +670,6 @@ class UnifiedShareService(ABC):
             # For PENDING status, use 0 as placeholder; for APPROVED, use owner_id
             existing_member.reviewed_by_user_id = 0 if is_pending else owner_id
             existing_member.reviewed_at = datetime.utcnow()
-            existing_member.updated_at = datetime.utcnow()
 
             member = existing_member
         else:
@@ -997,7 +994,6 @@ class UnifiedShareService(ABC):
             existing.invited_by_user_id = current_user_id
             existing.reviewed_by_user_id = current_user_id
             existing.reviewed_at = datetime.utcnow()
-            existing.updated_at = datetime.utcnow()
             if entity_display_name is not None:
                 existing.entity_display_name = entity_display_name
             member = existing
@@ -1287,7 +1283,6 @@ class UnifiedShareService(ABC):
                 existing.invited_by_user_id = current_user_id
                 existing.reviewed_by_user_id = current_user_id
                 existing.reviewed_at = datetime.utcnow()
-                existing.updated_at = datetime.utcnow()
                 succeeded.append(existing)
                 processed_user_ids.add(target_user_id)
             else:
@@ -1351,7 +1346,6 @@ class UnifiedShareService(ABC):
                 existing.invited_by_user_id = current_user_id
                 existing.reviewed_by_user_id = current_user_id
                 existing.reviewed_at = datetime.utcnow()
-                existing.updated_at = datetime.utcnow()
                 if entity_display_name is not None:
                     existing.entity_display_name = entity_display_name
                 succeeded.append(existing)
@@ -1451,7 +1445,6 @@ class UnifiedShareService(ABC):
 
         # Update role
         member.set_role(role.value)
-        member.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(member)
 
@@ -1894,7 +1887,6 @@ class UnifiedShareService(ABC):
 
         member.reviewed_by_user_id = reviewer_id
         member.reviewed_at = datetime.utcnow()
-        member.updated_at = datetime.utcnow()
 
         db.commit()
         db.refresh(member)

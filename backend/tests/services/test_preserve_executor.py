@@ -673,7 +673,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                     "updatedAt": datetime.now().isoformat(),
                 },
             },
-            updated_at=datetime.now() - timedelta(hours=48),
+            updated_at=datetime.utcnow() - timedelta(hours=48),
         )
         async_test_db.add(task)
         await async_test_db.commit()
@@ -690,9 +690,9 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             executor_name="executor-subscription-1",
             executor_namespace="default",
             executor_deleted_at=False,
-            created_at=datetime.now() - timedelta(hours=48),
-            updated_at=datetime.now() - timedelta(hours=48),
-            completed_at=datetime.now() - timedelta(hours=48),
+            created_at=datetime.utcnow() - timedelta(hours=48),
+            updated_at=datetime.utcnow() - timedelta(hours=48),
+            completed_at=datetime.utcnow() - timedelta(hours=48),
         )
         async_test_db.add(subtask)
         await async_test_db.commit()
@@ -757,7 +757,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                     "updatedAt": datetime.now().isoformat(),
                 },
             },
-            updated_at=datetime.now() - timedelta(hours=48),
+            updated_at=datetime.utcnow() - timedelta(hours=48),
         )
         async_test_db.add(task)
         await async_test_db.commit()
@@ -774,9 +774,9 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             executor_name="executor-pending-1",
             executor_namespace="default",
             executor_deleted_at=False,
-            created_at=datetime.now() - timedelta(hours=48),
-            updated_at=datetime.now() - timedelta(hours=48),
-            completed_at=datetime.now() - timedelta(hours=48),
+            created_at=datetime.utcnow() - timedelta(hours=48),
+            updated_at=datetime.utcnow() - timedelta(hours=48),
+            completed_at=datetime.utcnow() - timedelta(hours=48),
         )
         async_test_db.add(subtask)
         await async_test_db.commit()

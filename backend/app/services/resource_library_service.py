@@ -1486,7 +1486,6 @@ class ResourceLibraryService:
                 member.role = BaseRole.Reporter.value
             member.reviewed_by_user_id = installed_by
             member.reviewed_at = datetime.utcnow()
-            member.updated_at = datetime.utcnow()
             return member, was_installed
 
         member = ResourceMember.create(
@@ -2112,7 +2111,6 @@ class ResourceLibraryService:
         if publication:
             publication.owner_user_id = source.user_id
             publication.resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
-            publication.updated_at = now
             return
         db.add(
             MarketplaceResource(

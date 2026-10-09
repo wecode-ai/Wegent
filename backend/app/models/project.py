@@ -93,15 +93,15 @@ class Project(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=func.now(),
         comment="Creation timestamp",
+        server_default=func.now(),
     )
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=func.now(),
-        onupdate=func.now(),
         comment="Last update timestamp",
+        server_default=func.now(),
+        server_onupdate=func.now(),
     )
 
     __table_args__ = (

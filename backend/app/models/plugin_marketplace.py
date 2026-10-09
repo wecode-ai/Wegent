@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     event,
+    func,
     inspect,
 )
 from sqlalchemy.dialects import mysql
@@ -198,17 +199,14 @@ class Plugin(Base):
         comment="Featured sort rank; 0 means not featured",
     )
     created_at = Column(
-        _DATETIME,
-        nullable=False,
-        default=datetime.now,
-        comment="Creation time",
+        _DATETIME, nullable=False, comment="Creation time", server_default=func.now()
     )
     updated_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
         comment="Last update time",
+        server_default=func.now(),
+        server_onupdate=func.now(),
     )
     published_at = Column(
         _DATETIME,
@@ -353,10 +351,7 @@ class PluginRelease(Base):
         comment="Protected source commit SHA; empty means not GitLab-published",
     )
     created_at = Column(
-        _DATETIME,
-        nullable=False,
-        default=datetime.now,
-        comment="Creation time",
+        _DATETIME, nullable=False, comment="Creation time", server_default=func.now()
     )
     published_at = Column(
         _DATETIME,
@@ -662,9 +657,9 @@ class PluginDeviceInstallation(Base):
     updated_at = Column(
         _DATETIME,
         nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
         comment="Last update time",
+        server_default=func.now(),
+        server_onupdate=func.now(),
     )
 
     __table_args__ = (

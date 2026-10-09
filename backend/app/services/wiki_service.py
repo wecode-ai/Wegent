@@ -233,7 +233,6 @@ class WikiService:
                     content_item.ext = section.ext or {}
                     if path:
                         set_page_path(content_item, path)
-                    content_item.updated_at = now
                     updated_sections += 1
                 else:
                     content_record = WikiContent(
@@ -310,7 +309,6 @@ class WikiService:
 
         ext["content_write"] = content_meta
         generation.ext = ext
-        generation.updated_at = now
 
         # A code wiki does not simply record its outcome: a successful version has to
         # pass the publish gate and be projected into the knowledge base, and that runs

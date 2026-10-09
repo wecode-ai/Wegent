@@ -308,14 +308,12 @@ class ArtifactService:
         except Exception as exc:
             artifact.status = KnowledgeArtifactStatus.FAILED
             artifact.error_message = str(exc) or "Failed to start artifact generation"
-            artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.repository.update_execution(artifact)
             raise
 
         artifact.task_id = launch.task_id
         artifact.assistant_subtask_id = launch.assistant_subtask_id
         artifact.status = KnowledgeArtifactStatus.RUNNING
-        artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return self.repository.update_execution(artifact) or artifact
 
     async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
@@ -335,7 +333,6 @@ class ArtifactService:
         )
         if subtask is None:
             if execution_ids_changed:
-                artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 artifact = self.repository.update_execution(artifact) or artifact
             return self._apply_execution_health(artifact)
         reconciled = await self._apply_subtask_status(
@@ -379,9 +376,6 @@ class ArtifactService:
             subtask = subtasks_by_id.get(artifact.assistant_subtask_id)
             if subtask is None:
                 if artifact.artifact_id in repaired_ids:
-                    artifact.updated_at = datetime.now(timezone.utc).replace(
-                        tzinfo=None
-                    )
                     artifact = self.repository.update_execution(artifact) or artifact
                 reconciled.append(self._apply_execution_health(artifact))
                 continue

@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from app.api.ws.events import ServerEvents
+from app.db.timezone import db_now_iso
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 
 logger = logging.getLogger(__name__)
@@ -408,7 +409,7 @@ class WebSocketEmitter:
                 "subtask_id": subtask_id,
                 "content": content,
                 "result": result,
-                "created_at": datetime.now().isoformat(),
+                "created_at": db_now_iso(),
             },
             room=f"user:{user_id}",
             namespace=self.namespace,
@@ -513,7 +514,7 @@ class WebSocketEmitter:
                 "title": title,
                 "team_id": team_id,
                 "team_name": team_name,
-                "created_at": datetime.now().isoformat(),
+                "created_at": db_now_iso(),
                 "is_group_chat": is_group_chat,
             },
             room=f"user:{user_id}",
@@ -582,7 +583,7 @@ class WebSocketEmitter:
             payload["completed_at"] = completed_at
         elif status in ("COMPLETED", "FAILED", "CANCELLED"):
             # Auto-generate completed_at for terminal states if not provided
-            payload["completed_at"] = datetime.now().isoformat()
+            payload["completed_at"] = db_now_iso()
 
         await self.sio.emit(
             ServerEvents.TASK_STATUS,
@@ -651,7 +652,7 @@ class WebSocketEmitter:
                 "team_name": team_name,
                 "invited_by": invited_by,
                 "is_group_chat": True,
-                "created_at": datetime.now().isoformat(),
+                "created_at": db_now_iso(),
             },
             room=f"user:{user_id}",
             namespace=self.namespace,

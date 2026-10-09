@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    func,
 )
 
 from app.db.base import Base
@@ -80,9 +81,9 @@ class SubscriptionFollow(Base):
     responded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
 
     # Notification settings (JSON)
@@ -135,7 +136,7 @@ class SubscriptionShareNamespace(Base):
     shared_by_user_id = Column(Integer, nullable=False)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     __table_args__ = (
         # Unique constraint: a subscription can only be shared to a namespace once

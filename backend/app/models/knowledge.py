@@ -311,9 +311,9 @@ class KnowledgeDocument(Base):
     chunks = Column(
         JSON, nullable=True
     )  # Chunk metadata including content and position info
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
 
     __table_args__ = (
@@ -360,9 +360,9 @@ class KnowledgeFolder(Base):
         default=ContentOrigin.USER.value,
         server_default=ContentOrigin.USER.value,
     )
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
 
     __table_args__ = (

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_manager
+from app.db.timezone import db_now
 from app.stores import tasks as task_stores
 
 EXECUTOR_CLEANUP_CURSOR_KEY = "executor_cleanup_cursor"
@@ -38,7 +39,7 @@ class ExecutorCleanupCursorService:
 
     async def _build_default_cursor(self, db: AsyncSession) -> ExecutorCleanupCursor:
         """Build the first cleanup cursor from the recent one-week subtask window."""
-        recent_threshold = datetime.now() - timedelta(days=INITIAL_CURSOR_LOOKBACK_DAYS)
+        recent_threshold = db_now(db) - timedelta(days=INITIAL_CURSOR_LOOKBACK_DAYS)
         recent_subtask = await db.run_sync(
             lambda sync_db: (
                 task_stores.subtask_store.get_cleanup_cursor_recent_start_reference(

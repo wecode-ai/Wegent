@@ -356,7 +356,6 @@ class SqlAlchemyTaskStore:
         task.project_id = project_id
         task.client_origin = client_origin
         task.is_group_chat = is_group_chat
-        task.updated_at = datetime.now()
         self._flag_json_modified(task)
         return task
 
@@ -1297,7 +1296,6 @@ class SqlAlchemyTaskStore:
         self, db: Session, *, task: TaskResource, payload: dict[str, Any]
     ) -> TaskResource:
         task.json = payload
-        task.updated_at = datetime.now()
         self._flag_json_modified(task)
         return task
 
@@ -1306,7 +1304,6 @@ class SqlAlchemyTaskStore:
     ) -> TaskResource:
         for field, value in fields.items():
             setattr(task, field, value)
-        task.updated_at = datetime.now()
         return task
 
     def clear_project_for_owned_tasks(
@@ -1370,7 +1367,6 @@ class SqlAlchemyTaskStore:
         self, db: Session, *, task: TaskResource, payload: dict[str, Any]
     ) -> TaskResource:
         task.json = payload
-        task.updated_at = datetime.now()
         task.is_active = TaskResource.STATE_DELETED
         self._flag_json_modified(task)
         return task

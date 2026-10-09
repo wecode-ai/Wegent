@@ -579,7 +579,6 @@ class PetService:
         resource["spec"] = spec
         pet.json = resource
         flag_modified(pet, "json")
-        pet.updated_at = datetime.now()
 
         db.commit()
         db.refresh(pet)
@@ -600,7 +599,6 @@ class PetService:
         resource = self._build_pet_resource(new_spec)
 
         pet.json = resource
-        pet.updated_at = datetime.now()
 
         db.commit()
         db.refresh(pet)
@@ -654,7 +652,6 @@ class PetService:
         resource["spec"] = spec
         pet.json = resource
         flag_modified(pet, "json")
-        pet.updated_at = datetime.now()
 
         db.commit()
         db.refresh(pet)
@@ -696,7 +693,6 @@ class PetService:
         resource = pet.json.copy()
         resource["spec"] = spec
         pet.json = resource
-        pet.updated_at = datetime.now()
 
         db.commit()
         db.refresh(pet)

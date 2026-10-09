@@ -41,8 +41,8 @@ class Subtask(Base):
     progress = Column(Integer, nullable=False, default=0)
     result = Column(JSON)
     error_message = Column(Text)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
     completed_at = Column(
         DateTime,
         nullable=False,

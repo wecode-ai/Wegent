@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.db.timezone import db_now
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -92,7 +93,7 @@ class JobService(BaseService[Kind, None, None]):
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """Clean up task executor Pods that have been inactive long enough."""
-        now = datetime.now()
+        now = db_now(db)
         cutoff = now - timedelta(hours=inactive_hours)
         subtasks = await self._list_runtime_cleanup_subtasks(db)
         task_ids = sorted({subtask.task_id for subtask in subtasks})
@@ -235,7 +236,7 @@ class JobService(BaseService[Kind, None, None]):
                 details={"inactive_hours": inactive_hours, "dry_run": dry_run},
             )
 
-        cutoff = datetime.now() - timedelta(hours=inactive_hours)
+        cutoff = db_now(db) - timedelta(hours=inactive_hours)
         skip_reason = self._get_runtime_cleanup_skip_reason(
             task_map={task_id: task},
             subtasks=subtasks,
@@ -285,7 +286,7 @@ class JobService(BaseService[Kind, None, None]):
         After successful deletion, set executor_deleted_at.
         """
         try:
-            now = datetime.now()
+            now = db_now(db)
             cutoff = now - timedelta(
                 hours=settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS
             )
@@ -593,11 +594,12 @@ class JobService(BaseService[Kind, None, None]):
         candidates: List[Subtask],
         task_map: Dict[int, TaskResource],
         chat_cutoff: datetime,
+        now: datetime,
     ) -> Tuple[List[Subtask], CleanupFilterStats]:
         """Apply task-level cleanup rules to a scanned subtask batch."""
         valid_candidates: List[Subtask] = []
         filter_stats = CleanupFilterStats()
-        code_cutoff = datetime.now() - timedelta(
+        code_cutoff = now - timedelta(
             hours=settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS
         )
         stale_non_terminal_hours = (
@@ -605,9 +607,7 @@ class JobService(BaseService[Kind, None, None]):
         )
         if not isinstance(stale_non_terminal_hours, (int, float)):
             stale_non_terminal_hours = 24
-        stale_non_terminal_cutoff = datetime.now() - timedelta(
-            hours=stale_non_terminal_hours
-        )
+        stale_non_terminal_cutoff = now - timedelta(hours=stale_non_terminal_hours)
 
         for subtask in candidates:
             task = task_map.get(subtask.task_id)
@@ -711,6 +711,7 @@ class JobService(BaseService[Kind, None, None]):
             candidates=candidates,
             task_map=task_map,
             chat_cutoff=chat_cutoff,
+            now=db_now(db),
         )
         deleted_count = await self._cleanup_executor_groups(
             db=db,
@@ -746,7 +747,7 @@ class JobService(BaseService[Kind, None, None]):
         # Groups idle past max_inactive_hours are force-deleted even when
         # archiving fails, so a persistently broken archive cannot pin the pods
         # forever; all associated tasks are still archived first.
-        force_cutoff = datetime.now() - timedelta(hours=max_inactive_hours)
+        force_cutoff = db_now(db) - timedelta(hours=max_inactive_hours)
         deleted_count = 0
 
         for (namespace, name), group in executor_groups.items():
@@ -1036,7 +1037,7 @@ class JobService(BaseService[Kind, None, None]):
 
         # Groups idle past max_inactive_hours are force-deleted even when archiving
         # fails, so a persistently broken archive cannot pin the pods forever.
-        force_cutoff = datetime.now() - timedelta(hours=max_inactive_hours)
+        force_cutoff = db_now(db) - timedelta(hours=max_inactive_hours)
         force_delete_groups: Dict[Tuple[str, str], bool] = {}
         for key, subtask_updated_at in subtasks_executor_updated_at.items():
             last_active_at = self._latest_datetime(subtask_updated_at, task_updated_at)

@@ -63,7 +63,6 @@ def ensure_capability_reference(
         member.role = BaseRole.Reporter.value
         member.reviewed_by_user_id = user_id
         member.reviewed_at = datetime.utcnow()
-        member.updated_at = datetime.utcnow()
         return member, was_active
 
     member = ResourceMember.create(

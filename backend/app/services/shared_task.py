@@ -571,8 +571,6 @@ class SharedTaskService:
                     extracted_text=original_context.extracted_text,
                     text_length=original_context.text_length,
                     type_data=original_context.type_data,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now(),
                 )
                 db.add(new_context)
 
@@ -673,7 +671,6 @@ class SharedTaskService:
             # Reuse existing record to avoid unique constraint violation
             existing_share.copied_resource_id = copied_task.id
             existing_share.status = MemberStatus.APPROVED
-            existing_share.updated_at = datetime.now()
             resource_member = existing_share
         else:
             # Create new share relationship record using ResourceMember
@@ -752,7 +749,6 @@ class SharedTaskService:
             )
 
         resource_member.status = MemberStatus.REJECTED
-        resource_member.updated_at = datetime.now()
         db.commit()
 
         return True

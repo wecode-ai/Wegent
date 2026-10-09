@@ -2440,7 +2440,6 @@ class KnowledgeOrchestrator:
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing
                 document.index_status = DocumentIndexStatus.PENDING_CONVERSION
-                document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
 
                 from app.core.celery_app import celery_app

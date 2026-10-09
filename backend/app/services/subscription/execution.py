@@ -218,7 +218,6 @@ class BackgroundExecutionManager:
         execution.status = BackgroundExecutionStatus.CANCELLED.value
         execution.error_message = "Cancelled by user"
         execution.completed_at = now_utc
-        execution.updated_at = now_utc
 
         # Calculate how long it's been running (if in RUNNING state)
         running_info = ""

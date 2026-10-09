@@ -54,9 +54,9 @@ class DingtalkSyncedNode(Base):
     content_updated_at = Column(DateTime, nullable=False, default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)
     last_synced_at = Column(DateTime, nullable=False, default=func.now())
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
-        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+        DateTime, nullable=False, server_default=func.now(), server_onupdate=func.now()
     )
 
     @property

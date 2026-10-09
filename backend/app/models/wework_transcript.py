@@ -158,15 +158,12 @@ class WeworkTranscript(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=utcnow,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
     updated_at = Column(
         _DATETIME,
         nullable=False,
-        default=utcnow,
-        onupdate=utcnow,
         server_default=_AuditTimestampDefault(on_update=True),
         comment="Last update time",
     )
@@ -231,7 +228,6 @@ class WeworkTranscriptTurn(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=utcnow,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
@@ -323,7 +319,6 @@ class WeworkTranscriptArchive(Base):
     created_at = Column(
         _DATETIME,
         nullable=False,
-        default=utcnow,
         server_default=_AuditTimestampDefault(),
         comment="Creation time",
     )
