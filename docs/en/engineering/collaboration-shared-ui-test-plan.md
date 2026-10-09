@@ -25,6 +25,35 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Execution duration timezone regression
+
+`collaboration-shared-core` runs the real Backend and isolated Electron with
+`TZ=Asia/Shanghai`. After the existing comment execution flow creates task bindings,
+return to Issue details and compare `issue-execution-duration` with the earliest valid
+binding time from the real `/loop-items/{id}/tasks` response, allowing one minute for rounding.
+A fresh execution must show minutes, without adding eight hours by interpreting a
+timezone-less UTC timestamp as local time. Unit tests cover explicit offsets, mixed
+timestamp ordering and invalid values; no duration is shown when all values are invalid.
+The existing cleanup archives the fixture project without touching user projects.
+
+Run: `pnpm --filter wework e2e:desktop --segment collaboration-shared-core`.
+
+Linux and macOS desktop build fingerprints must include `packages/collaboration`
+so shared UI changes cannot reuse stale artifacts. Cache script tests cover both
+adding and modifying shared-package files.
+
+Run the accompanying state regression with `e2e:desktop:cloud --segment model-routing`:
+after a real remote executor completes the text turn, the tool turn must execute and
+write its artifact instead of remaining queued behind a stale running snapshot. State
+tests replay a millisecond-precision start and a same-second, second-precision completion;
+the old snapshot must not revive the task, while a newer execution remains accepted.
+`e2e:desktop:cloud --segment goal-lifecycle` covers reading the mounted remote directory
+control and the complete Goal lifecycle. Mounting and value checks share the original
+step timeout; isolated devices and databases are cleaned up after each scenario.
+Executor task lists must preserve `goalExecutionStatus` so a restarted UI can recognize
+running or recovering Goals between turns. Response serialization tests cover running,
+recovering, needs-attention, and ordinary tasks without this field.
+
 This plan must prove more than “both hosts appear to work”:
 
 1. Wegent Web and Wework mount the same collaboration root component exported by
