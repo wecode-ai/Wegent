@@ -11,12 +11,30 @@ const mocks = vi.hoisted(() => ({
   },
   distribution: 'public' as 'internal' | 'public',
   flushInternalSinks: vi.fn(),
+  hostEventHandler: null as
+    | ((event: { type: string; payload: Record<string, unknown> }) => void)
+    | null,
   publish: vi.fn(),
   telemetryEnabled: true,
 }))
 
 vi.mock('@/features/dsh-runtime/useDshSlotEntries', () => ({
   useDshSlotEntries: () => [{ path: '/plugins', telemetryFeature: 'plugins' }],
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  subscribeDesktopHostEvents: (
+    handler: (event: { type: string; payload: Record<string, unknown> }) => void
+  ) => {
+    mocks.hostEventHandler = handler
+    return () => {
+      mocks.hostEventHandler = null
+    }
+  },
+}))
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => true,
 }))
 
 vi.mock('./config', () => ({
@@ -50,6 +68,7 @@ describe('TelemetryAgent', () => {
     mocks.auth.user = { email: 'zhongyang@example.invalid', id: 7, user_name: 'zhongyang' }
     mocks.distribution = 'public'
     mocks.flushInternalSinks.mockReset()
+    mocks.hostEventHandler = null
     mocks.publish.mockReset()
     mocks.telemetryEnabled = true
     window.history.replaceState({}, '', '/sites?app_type=smart_app')
@@ -110,11 +129,26 @@ describe('TelemetryAgent', () => {
     const view = render(<TelemetryAgent />)
 
     expect(mocks.publish).not.toHaveBeenCalled()
+    expect(mocks.hostEventHandler).not.toBeNull()
+
+    act(() => {
+      mocks.hostEventHandler?.({
+        type: 'startup.attempted',
+        payload: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
+      })
+    })
+    expect(mocks.publish).not.toHaveBeenCalled()
 
     mocks.telemetryEnabled = true
     view.rerender(<TelemetryAgent />)
 
-    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(2))
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app_startup_attempted',
+        properties: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
+      })
+    )
   })
 
   test('dispatches plugin observations and operation results to internal sinks', async () => {
@@ -156,6 +190,41 @@ describe('TelemetryAgent', () => {
           properties: { domain: 'smart_app', failure_stage: 'install' },
         })
       )
+    )
+  })
+
+  test('turns desktop startup lifecycle events into correlated analytics events', async () => {
+    render(<TelemetryAgent />)
+    await waitFor(() => expect(mocks.hostEventHandler).not.toBeNull())
+
+    act(() => {
+      mocks.hostEventHandler?.({
+        type: 'startup.attempted',
+        payload: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
+      })
+      mocks.hostEventHandler?.({
+        type: 'startup.succeeded',
+        payload: {
+          startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a',
+          duration_ms: 1532,
+        },
+      })
+    })
+
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app_startup_attempted',
+        properties: { startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a' },
+      })
+    )
+    expect(mocks.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app_startup_succeeded',
+        properties: {
+          duration_ms: 1532,
+          startup_id: '13c4ae86-1066-46f5-a3db-4c92e806564a',
+        },
+      })
     )
   })
 
