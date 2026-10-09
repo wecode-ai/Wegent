@@ -21,10 +21,11 @@ mod execution_workspace;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
-    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
-    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind,
-    TaskReorder, TaskUpdate,
+    ArchivedLoopItem, ArchivedLoopItemPage, ChatAgent, ChatAgentCreate, ChatAgentUpdate,
+    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
+    LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
+    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskUpdate,
 };
 
 #[path = "local_automation.rs"]
@@ -2225,10 +2226,41 @@ impl LocalTaskStore {
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        let parent_id = self.get_task(project_id, task_id)?.parent_id;
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let parent_id: Option<String> = transaction
+            .query_row(
+                "SELECT parent_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL",
+                params![task_id, project_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let incomplete_count: i64 = transaction.query_row(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
+             )
+             SELECT COUNT(*) FROM loop_items
+             WHERE id IN (SELECT id FROM task_tree) AND status != 'completed'",
+            params![task_id, project_id],
+            |row| row.get(0),
+        )?;
+        if incomplete_count > 0 {
+            return Err(TaskRuntimeError::Invalid(
+                "Only completed task subtrees can be archived".to_owned(),
+            ));
+        }
         let archived_at = now();
-        let updated = connection.execute(
+        let updated = transaction.execute(
             "WITH RECURSIVE task_tree(id) AS (
                  SELECT id FROM loop_items
                  WHERE id = ?1 AND resource_type = 'task'
@@ -2248,9 +2280,132 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::TaskNotFound);
         }
         if let Some(parent_id) = parent_id.as_deref() {
-            refresh_runtime_projection_additional_context(&connection, parent_id)?;
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
         }
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn list_archived_tasks(
+        &self,
+        project_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT item.id, item.resource_type, item.project_space, item.cloud_project_id,
+                    item.parent_id, item.public_id, item.project_key, item.name, item.title,
+                    item.description, item.sequence_number, item.next_item_number, item.status,
+                    item.priority, item.sort_order, item.current_delivery_id, item.metadata,
+                    item.version, item.created_at, item.updated_at, item.completed_at,
+                    item.assignee_agent_id, item.created_by_user_id, item.assignee_user_id,
+                    item.deleted_at
+             FROM loop_items item
+             LEFT JOIN loop_items parent ON parent.id = item.parent_id
+             WHERE item.resource_type = 'task' AND item.cloud_project_id = ?1
+               AND item.deleted_at IS NOT NULL
+               AND (
+                   item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                   OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+               )
+             ORDER BY item.deleted_at DESC, item.id DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = statement.query_map(
+            params![project_id, limit.saturating_add(1), offset],
+            |row| {
+                Ok(ArchivedLoopItem {
+                    item: map_loop_item(row)?,
+                    archived_at: row.get(24)?,
+                })
+            },
+        )?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        Ok(ArchivedLoopItemPage {
+            items,
+            next_cursor: has_more.then(|| offset.saturating_add(limit).to_string()),
+        })
+    }
+
+    pub fn restore_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (archived_at, parent_id): (String, Option<String>) = transaction
+            .query_row(
+                "SELECT item.deleted_at, item.parent_id
+                 FROM loop_items item
+                 LEFT JOIN loop_items parent ON parent.id = item.parent_id
+                 WHERE item.id = ?1 AND item.resource_type = 'task'
+                   AND item.cloud_project_id = ?2 AND item.deleted_at IS NOT NULL
+                   AND (
+                       item.parent_id IS NULL OR item.parent_id = '' OR parent.id IS NULL
+                       OR parent.deleted_at IS NULL OR parent.deleted_at != item.deleted_at
+                   )",
+                params![task_id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let restored_ids = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE task_tree(id) AS (
+                     SELECT id FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'task'
+                       AND cloud_project_id = ?2 AND deleted_at = ?3
+                     UNION ALL
+                     SELECT child.id FROM loop_items child
+                     JOIN task_tree parent ON child.parent_id = parent.id
+                     WHERE child.resource_type = 'task'
+                       AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+                 )
+                 SELECT id FROM task_tree",
+            )?;
+            let restored_ids = statement
+                .query_map(params![task_id, project_id, archived_at], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<HashSet<_>, _>>()?;
+            restored_ids
+        };
+        let updated = transaction.execute(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at = ?3
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at = ?3
+             )
+             UPDATE loop_items
+             SET deleted_at = NULL, updated_at = ?4, version = version + 1
+             WHERE id IN (SELECT id FROM task_tree)",
+            params![task_id, project_id, archived_at, now()],
+        )?;
+        if updated == 0 {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.list_tasks(project_id).map(|items| {
+            items
+                .into_iter()
+                .filter(|item| restored_ids.contains(&item.id))
+                .collect()
+        })
     }
 
     pub fn reorder_tasks(
@@ -9242,7 +9397,7 @@ mod tests {
                 TaskCreate {
                     title: "Temporary child context".to_owned(),
                     description: String::new(),
-                    status: "inbox".to_owned(),
+                    status: "completed".to_owned(),
                     priority: "none".to_owned(),
                     parent_id: Some(parent_id.clone()),
                     tags: vec![],
@@ -9270,6 +9425,24 @@ mod tests {
                 .unwrap()
                 .metadata["has_additional_context"],
             json!(false)
+        );
+
+        let restored = store
+            .restore_task(DEFAULT_WORK_ITEM_PROJECT_ID, &child.id)
+            .unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![child.id.as_str()]
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
         );
     }
 

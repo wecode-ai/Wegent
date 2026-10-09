@@ -2256,7 +2256,7 @@ class LoopItemService:
         return updated
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Soft delete a TODO subtree; rows are kept for the recycle bin."""
+        """Archive a completed TODO subtree; rows are kept for restoration."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
@@ -2275,13 +2275,23 @@ class LoopItemService:
             )
             pending_parent_ids = [child.id for child in children]
             archived_items.extend(children)
-        # A deleted Issue must not leave a Run owning a real process. Cancel
+        incomplete = [
+            archived_item.id
+            for archived_item in archived_items
+            if archived_item.status != "completed"
+        ]
+        if incomplete:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Only completed TODO subtrees can be archived",
+            )
+        # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
         cancelled_runs = self._cancel_runs_for_items(
             db,
             item_ids=[archived_item.id for archived_item in archived_items],
-            note="Issue was deleted while the Run was active",
+            note="Issue was archived while the Run was active",
         )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
@@ -2325,34 +2335,85 @@ class LoopItemService:
                 cancelled_runs.append(cancelled)
         return cancelled_runs
 
-    def restore(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Restore a soft-deleted TODO from the recycle bin."""
+    def restore(self, db: Session, item_id: str, user_id: int) -> list[LoopItem]:
+        """Restore the TODO subtree archived in the same operation."""
 
         item = self._get_item_row(db, item_id, include_deleted=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         if loop_datetime_value_is_unset(item.deleted_at):
-            raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not deleted")
-        item.deleted_at = None
-        item.version += 1
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not archived")
+        archived_at = item.deleted_at
+        if item.parent_id:
+            parent = self._get_item_row(db, item.parent_id, include_deleted=True)
+            if parent.deleted_at == archived_at:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Restore the archived subtree from its root TODO",
+                )
+        restored_items = [item]
+        pending_parent_ids = [item.id]
+        while pending_parent_ids:
+            children = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == item.cloud_project_id,
+                    LoopItem.parent_id.in_(pending_parent_ids),
+                    LoopItem.deleted_at == archived_at,
+                )
+                .all()
+            )
+            pending_parent_ids = [child.id for child in children]
+            restored_items.extend(children)
+        for restored_item in restored_items:
+            restored_item.deleted_at = None
+            restored_item.version += 1
         db.commit()
-        db.refresh(item)
-        return item
+        for restored_item in restored_items:
+            db.refresh(restored_item)
+        return restored_items
 
     def list_deleted(
-        self, db: Session, cloud_project_id: int, user_id: int
-    ) -> list[LoopItem]:
-        """List soft-deleted TODOs of a project, most recently deleted first."""
+        self,
+        db: Session,
+        cloud_project_id: int,
+        user_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[LoopItem], str | None]:
+        """List archived subtree roots, most recently archived first."""
 
         access = require_cloud_project_role(
             db, cloud_project_id, user_id, BaseRole.Viewer
         )
-        query = db.query(LoopItem).filter(
-            LoopItem.cloud_project_id == cloud_project_id,
-            ~loop_datetime_is_unset(LoopItem.deleted_at),
+        parent = aliased(LoopItem)
+        query = (
+            db.query(LoopItem)
+            .outerjoin(parent, parent.id == LoopItem.parent_id)
+            .filter(
+                LoopItem.cloud_project_id == cloud_project_id,
+                ~loop_datetime_is_unset(LoopItem.deleted_at),
+                or_(
+                    LoopItem.parent_id.is_(None),
+                    LoopItem.parent_id == "",
+                    parent.id.is_(None),
+                    loop_datetime_is_unset(parent.deleted_at),
+                    parent.deleted_at != LoopItem.deleted_at,
+                ),
+            )
         )
         if not has_permission(access.role, BaseRole.Maintainer):
             query = query.filter(visible_item_filter(user_id, access.project))
-        return query.order_by(LoopItem.deleted_at.desc()).all()
+        rows = (
+            query.order_by(LoopItem.deleted_at.desc(), LoopItem.id.desc())
+            .offset(offset)
+            .limit(limit + 1)
+            .all()
+        )
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return items, next_cursor
 
     def _require_parent(
         self, db: Session, parent_id: str, cloud_project_id: int

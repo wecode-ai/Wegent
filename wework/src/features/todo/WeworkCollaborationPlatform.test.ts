@@ -3295,6 +3295,54 @@ describe('Wework collaboration workspace API', () => {
     expect(getCloudBoardSnapshot).not.toHaveBeenCalled()
   })
 
+  it('routes local archived Issue reads and restores to the local project API', async () => {
+    const localIssue = {
+      id: 'local-issue',
+      cloud_project_id: 'local-project',
+    }
+    const listArchivedLoopItems = vi.fn().mockResolvedValue({
+      items: [localIssue],
+      next_cursor: null,
+    })
+    const restoreLoopItem = vi.fn().mockResolvedValue({ items: [localIssue] })
+    const localDeliveryApi = {
+      ...createLocalDeliveryApi(),
+      getLoopItem: vi.fn().mockResolvedValue(localIssue),
+      listArchivedLoopItems,
+      restoreLoopItem,
+    } as unknown as LocalProjectSpaceApi
+    const listCloudArchived = vi.fn()
+    const restoreCloudIssue = vi.fn()
+    const cloudApi = {
+      workspaces: {},
+      projects: {},
+      issues: {
+        listArchived: listCloudArchived,
+        restore: restoreCloudIssue,
+      },
+    } as unknown as SharedWorkspaceApi
+    const api = createWeworkPlatformApi(
+      cloudApi,
+      localDeliveryApi,
+      1,
+      'admin',
+      null,
+      createLocalDetailServices()
+    )
+
+    await expect(api?.issues.listArchived('local-project')).resolves.toEqual({
+      items: [expect.objectContaining({ id: 'local-issue' })],
+      nextCursor: null,
+    })
+    await expect(api?.issues.restore('local-issue')).resolves.toEqual([
+      expect.objectContaining({ id: 'local-issue' }),
+    ])
+    expect(listArchivedLoopItems).toHaveBeenCalledWith('local-project', undefined)
+    expect(restoreLoopItem).toHaveBeenCalledWith('local-issue')
+    expect(listCloudArchived).not.toHaveBeenCalled()
+    expect(restoreCloudIssue).not.toHaveBeenCalled()
+  })
+
   it('uses display names from the local Agent catalog for every board refresh', async () => {
     const agents = [
       {

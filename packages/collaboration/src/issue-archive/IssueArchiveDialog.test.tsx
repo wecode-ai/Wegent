@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CollaborationTranslate } from "../i18n";
 import { collaborationTestIds } from "../testIds";
-import { IssueDeleteDialog } from "./IssueDeleteDialog";
+import { IssueArchiveDialog } from "./IssueArchiveDialog";
 
 const translate: CollaborationTranslate = (key, fallback, options) => {
   let text = fallback ?? key;
@@ -20,7 +20,7 @@ const translate: CollaborationTranslate = (key, fallback, options) => {
   return text;
 };
 
-describe("IssueDeleteDialog", () => {
+describe("IssueArchiveDialog", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -36,9 +36,9 @@ describe("IssueDeleteDialog", () => {
   });
 
   async function renderDialog(
-    overrides: Partial<Parameters<typeof IssueDeleteDialog>[0]> = {},
+    overrides: Partial<Parameters<typeof IssueArchiveDialog>[0]> = {},
   ) {
-    const props: Parameters<typeof IssueDeleteDialog>[0] = {
+    const props: Parameters<typeof IssueArchiveDialog>[0] = {
       busy: false,
       error: null,
       hasChildren: false,
@@ -49,64 +49,55 @@ describe("IssueDeleteDialog", () => {
       ...overrides,
     };
     await act(async () => {
-      root.render(<IssueDeleteDialog {...props} />);
+      root.render(<IssueArchiveDialog {...props} />);
     });
     return props;
   }
 
-  it("names the Issue and explains the soft-delete and execution stop", async () => {
+  it("explains that a task can be restored from the archive box", async () => {
     await renderDialog();
 
     const dialog = container.querySelector(
-      `[data-testid="${collaborationTestIds.issueDeleteDialog}"]`,
+      `[data-testid="${collaborationTestIds.issueArchiveDialog}"]`,
     );
     expect(dialog?.textContent).toContain("整理看板");
-    expect(dialog?.textContent).toContain("将从看板中隐藏");
-    expect(dialog?.textContent).toContain("AI 运行会被停止");
-    expect(dialog?.textContent).toContain("不会立即永久删除");
+    expect(dialog?.textContent).toContain("将从看板中归档");
+    expect(dialog?.textContent).toContain("归档箱恢复");
   });
 
-  it("mentions sub-issues when the Issue has children", async () => {
+  it("describes subtree and batch archives", async () => {
     await renderDialog({ hasChildren: true });
+    expect(container.textContent).toContain("同批已完成子任务");
 
-    const dialog = container.querySelector(
-      `[data-testid="${collaborationTestIds.issueDeleteDialog}"]`,
-    );
-    expect(dialog?.textContent).toContain("及其子任务");
+    await renderDialog({ count: 3 });
+    expect(container.textContent).toContain("归档 3 个已完成任务");
   });
 
-  it("invokes confirm and cancel callbacks", async () => {
+  it("invokes callbacks and disables actions while busy", async () => {
     const props = await renderDialog();
-
     const confirm = container.querySelector<HTMLButtonElement>(
-      `[data-testid="${collaborationTestIds.issueDeleteConfirm}"]`,
+      `[data-testid="${collaborationTestIds.issueArchiveConfirm}"]`,
     );
     const cancel = container.querySelector<HTMLButtonElement>(
-      `[data-testid="${collaborationTestIds.issueDeleteCancel}"]`,
+      `[data-testid="${collaborationTestIds.issueArchiveCancel}"]`,
     );
     await act(async () => {
       confirm?.click();
       cancel?.click();
     });
-
     expect(props.onConfirm).toHaveBeenCalledTimes(1);
     expect(props.onCancel).toHaveBeenCalledTimes(1);
-  });
 
-  it("shows the failure and disables actions while busy", async () => {
-    await renderDialog({ busy: true, error: "停止执行失败" });
-
-    const error = container.querySelector(
-      `[data-testid="${collaborationTestIds.issueDeleteError}"]`,
-    );
-    expect(error?.textContent).toBe("停止执行失败");
-    const confirm = container.querySelector<HTMLButtonElement>(
-      `[data-testid="${collaborationTestIds.issueDeleteConfirm}"]`,
-    );
-    const cancel = container.querySelector<HTMLButtonElement>(
-      `[data-testid="${collaborationTestIds.issueDeleteCancel}"]`,
-    );
-    expect(confirm?.disabled).toBe(true);
-    expect(cancel?.disabled).toBe(true);
+    await renderDialog({ busy: true, error: "归档失败" });
+    expect(
+      container.querySelector(
+        `[data-testid="${collaborationTestIds.issueArchiveError}"]`,
+      )?.textContent,
+    ).toBe("归档失败");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        `[data-testid="${collaborationTestIds.issueArchiveConfirm}"]`,
+      )?.disabled,
+    ).toBe(true);
   });
 });

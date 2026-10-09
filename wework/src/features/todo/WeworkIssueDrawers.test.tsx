@@ -182,6 +182,7 @@ vi.mock('./TodoEditor', () => ({
         data-selected-task-id={props.selectedTaskId ?? ''}
         data-task-status={props.taskExecutionStates?.['binding-1']?.status ?? ''}
         data-current-user-id={props.currentUserId}
+        data-archive-label={props.deleteLabel}
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -335,6 +336,10 @@ describe('Wework Issue conversation drawers', () => {
     render(<Project />)
 
     await userEvent.click(screen.getByText('Open Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute(
+      'data-archive-label',
+      '归档任务'
+    )
 
     expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'false')
   })

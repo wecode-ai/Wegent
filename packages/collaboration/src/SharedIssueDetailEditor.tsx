@@ -603,11 +603,9 @@ export type TodoEditorProps = {
   /** Device display names keyed by the device ID stored in task bindings. */
   deviceNamesById?: Readonly<Record<string, string>>;
   headerActions?: ReactNode;
-  /**
-   * Delete this Issue. Rendered inside the header overflow menu so the
-   * destructive action stays away from the primary edit and save controls.
-   */
+  /** Render the host-provided destructive or lifecycle action in the menu. */
   onDelete?: () => void;
+  deleteLabel?: string;
   selectedTaskId?: string | null;
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
@@ -2590,7 +2588,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   onClick={props.onDelete}
                   type="button"
                 >
-                  {t("todo.delete_issue", "删除任务")}
+                  {props.deleteLabel ?? t("todo.delete_issue", "删除任务")}
                 </button>
               ) : null}
             </IssuePropertiesPopover>

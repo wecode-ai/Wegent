@@ -151,6 +151,7 @@ export interface CollaborationIssue {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  archived_at?: string | null;
   can_view_detail?: boolean;
   can_edit?: boolean;
   security_level?: "open" | "related";

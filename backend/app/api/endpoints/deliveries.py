@@ -39,6 +39,8 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
+    ArchivedLoopItemPageResponse,
+    ArchivedLoopItemResponse,
     CloudTaskContextResponse,
     DeliveryAssetAccessResponse,
     DeliveryAssetResponse,
@@ -60,6 +62,7 @@ from app.schemas.delivery import (
     LoopItemRead,
     LoopItemReorder,
     LoopItemResponse,
+    LoopItemRestoreResponse,
     LoopItemTaskBind,
     LoopItemTaskBindingResponse,
     LoopItemUpdate,
@@ -827,6 +830,85 @@ def archive_loop_item(
         external_loop_item_provider.archive(db, item_id, current_user.id)
         return
     loop_item_service.delete(db, item_id, current_user.id)
+
+
+@router.get(
+    "/cloud-projects/{project_id}/archived-loop-items",
+    response_model=ArchivedLoopItemPageResponse,
+)
+def list_archived_loop_items(
+    project_id: int,
+    cursor: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArchivedLoopItemPageResponse:
+    try:
+        offset = int(cursor or "0")
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Invalid archive cursor",
+        ) from exc
+    if offset < 0:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Invalid archive cursor",
+        )
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    if project.task_provider in {"github", "gitlab"}:
+        external_items, next_cursor = external_loop_item_provider.list_archived(
+            db,
+            project_id,
+            current_user.id,
+            offset=offset,
+            limit=limit,
+        )
+        return ArchivedLoopItemPageResponse(
+            items=[
+                ArchivedLoopItemResponse.model_validate(item) for item in external_items
+            ],
+            next_cursor=next_cursor,
+        )
+    items, next_cursor = loop_item_service.list_deleted(
+        db, project_id, current_user.id, offset=offset, limit=limit
+    )
+    return ArchivedLoopItemPageResponse(
+        items=[
+            ArchivedLoopItemResponse.model_validate(
+                {
+                    **loop_item_service.response_values(db, item, current_user.id),
+                    "archived_at": item.deleted_at,
+                }
+            )
+            for item in items
+        ],
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/loop-items/{item_id}/restore",
+    response_model=LoopItemRestoreResponse,
+)
+def restore_loop_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemRestoreResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        return LoopItemRestoreResponse(
+            items=[
+                LoopItemResponse.model_validate(item)
+                for item in external_loop_item_provider.restore(
+                    db, item_id, current_user.id
+                )
+            ]
+        )
+    items = loop_item_service.restore(db, item_id, current_user.id)
+    return LoopItemRestoreResponse(
+        items=[_loop_item_response(db, item, current_user) for item in items]
+    )
 
 
 @router.post(

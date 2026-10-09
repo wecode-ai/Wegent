@@ -502,6 +502,11 @@ export interface SharedWorkspaceIssuesApi {
     reason?: string,
   ): Promise<CollaborationIssue>;
   archive(issueId: string): Promise<void>;
+  listArchived(
+    projectId: string,
+    input?: { cursor?: string | null; limit?: number },
+  ): Promise<WorkspacePage<CollaborationIssue>>;
+  restore(issueId: string): Promise<CollaborationIssue[]>;
   reorder(
     projectId: string,
     input: { parentId: string | null; status: string; issueIds: string[] },

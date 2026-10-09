@@ -498,9 +498,9 @@ export function WeworkSharedProject({
     }
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
-  // Stop any in-flight run bound to the Issue before it leaves the board, so a
-  // deleted Issue never keeps an orphaned execution running on a device.
-  const prepareIssueDelete = useCallback(
+  // Stop any in-flight run bound to the Issue before it leaves the board, so an
+  // archived Issue never keeps an orphaned execution running on a device.
+  const prepareIssueArchive = useCallback(
     async (issue: CollaborationIssue) => {
       if (!onCancelRuntimeTask) return
       const bindings = await scopedApi.taskBindings.list(issue.id)
@@ -833,8 +833,8 @@ export function WeworkSharedProject({
           locale={locale}
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
-          issueDeleteEnabled
-          onPrepareIssueDelete={prepareIssueDelete}
+          issueArchiveEnabled
+          onPrepareIssueArchive={prepareIssueArchive}
           onCreateTask={
             runtimePort ? async (_taskProject, issue) => openNewTaskConversation(issue) : undefined
           }
@@ -901,6 +901,7 @@ export function WeworkSharedProject({
                   }
                   onCreateTask={onCreateTask}
                   onDelete={onDelete}
+                  deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
                   onOpenTaskConversation={
                     runtimePort
                       ? task =>
@@ -977,7 +978,7 @@ export function WeworkSharedProject({
                   taskBindings={boardTaskBindings}
                   onClick={onOpen}
                   onArchive={onDelete ?? (() => undefined)}
-                  archiveLabel={t('todo.delete_issue', '删除任务')}
+                  archiveLabel={t('todo.archive_issue', '归档任务')}
                   onMarkRead={onMarkRead}
                   issueDetailOnly
                   onOpenRuntimeTask={

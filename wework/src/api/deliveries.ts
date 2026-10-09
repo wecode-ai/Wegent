@@ -237,6 +237,7 @@ export interface CloudLoopItem {
   created_at: string
   updated_at: string
   completed_at: string | null
+  archived_at?: string | null
   source_status?: string | null
   source_record_id?: string | null
   source_cells?: Record<string, unknown>
@@ -987,6 +988,17 @@ export function createDeliveryApi(client: HttpClient) {
     },
     archiveLoopItem(itemId: string): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    listArchivedLoopItems(
+      projectId: CloudProjectIdInput,
+      options: { cursor?: string | null; limit?: number } = {}
+    ): Promise<{ items: CloudLoopItem[]; next_cursor: string | null }> {
+      const query = new URLSearchParams({ limit: String(options.limit ?? 50) })
+      if (options.cursor) query.set('cursor', options.cursor)
+      return client.get(`/v1/cloud-projects/${projectId}/archived-loop-items?${query.toString()}`)
+    },
+    restoreLoopItem(itemId: string): Promise<{ items: CloudLoopItem[] }> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/restore`, {})
     },
     reorderLoopItems(
       projectId: CloudProjectIdInput,

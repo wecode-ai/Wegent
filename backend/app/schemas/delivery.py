@@ -303,6 +303,19 @@ class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
 
 
+class ArchivedLoopItemResponse(LoopItemResponse):
+    archived_at: datetime
+
+
+class ArchivedLoopItemPageResponse(BaseModel):
+    items: list[ArchivedLoopItemResponse]
+    next_cursor: str | None = None
+
+
+class LoopItemRestoreResponse(BaseModel):
+    items: list[LoopItemResponse]
+
+
 class LoopItemCommentCreate(BaseModel):
     body: str = Field(min_length=1)
 

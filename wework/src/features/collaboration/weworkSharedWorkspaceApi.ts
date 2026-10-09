@@ -90,6 +90,8 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'approveRun',
     'rejectRun',
     'archive',
+    'listArchived',
+    'restore',
     'reorder',
     'markRead',
   ],
@@ -545,6 +547,16 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       archive(issueId) {
         return deliveryApi.archiveLoopItem(issueId)
+      },
+      async listArchived(projectId, input) {
+        const page = await deliveryApi.listArchivedLoopItems(projectId, input)
+        return {
+          items: page.items.map(toIssue),
+          nextCursor: page.next_cursor,
+        }
+      },
+      async restore(issueId) {
+        return (await deliveryApi.restoreLoopItem(issueId)).items.map(toIssue)
       },
       async reorder(projectId, input) {
         return (

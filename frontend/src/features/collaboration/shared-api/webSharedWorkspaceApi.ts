@@ -679,6 +679,24 @@ export function createWebSharedWorkspaceApi(
       archive(issueId) {
         return client.delete(`/v1/loop-items/${encoded(issueId)}`)
       },
+      async listArchived(projectId, input) {
+        const query = new URLSearchParams({
+          limit: String(input?.limit ?? 50),
+        })
+        if (input?.cursor) query.set('cursor', input.cursor)
+        const response = await client.get<{
+          items: CollaborationIssue[]
+          next_cursor: string | null
+        }>(`/v1/cloud-projects/${encoded(projectId)}/archived-loop-items?${query.toString()}`)
+        return { items: response.items, nextCursor: response.next_cursor }
+      },
+      async restore(issueId) {
+        const response = await client.post<{ items: CollaborationIssue[] }>(
+          `/v1/loop-items/${encoded(issueId)}/restore`,
+          {}
+        )
+        return response.items
+      },
       async reorder(projectId, input) {
         const response = await client.post<{ items: CollaborationIssue[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/loop-items/reorder`,

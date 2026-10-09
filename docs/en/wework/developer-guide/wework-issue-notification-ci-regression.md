@@ -55,3 +55,8 @@ drawers. ESLint, Prettier, TypeScript and both scenario syntax checks passed.
 Local results do not
 establish real remote-device or desktop E2E success; final verification belongs
 to CI on the fix commit.
+
+After the push, main introduced Issue archiving and conflicted in the properties
+menu. The merge retains the archive label/callback and outside-click dismissal,
+with a regression assertion covering both. Revalidate shared archive components,
+the desktop editor and Backend endpoints after the merge.

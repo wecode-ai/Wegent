@@ -107,6 +107,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   selectedTaskId?: string | null
   /** Delete this Issue; rendered in the header overflow menu in edit mode. */
   onDelete?: () => void
+  deleteLabel?: string
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
@@ -335,6 +336,7 @@ export function TodoEditor(props: TodoEditorProps) {
       project={props.project as SharedEditorProject | undefined}
       onUpdated={item => props.onUpdated(item as CloudLoopItem)}
       onDelete={props.onDelete}
+      deleteLabel={props.deleteLabel}
       onAddChild={props.onAddChild}
       onOpenChildTask={
         props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined

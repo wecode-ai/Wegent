@@ -3905,6 +3905,7 @@ export function CollaborationPlatformApp({
         <CollaborationApp
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
+          issueArchiveEnabled
           locale={locale}
           onProjectChange={commands.registerProject}
           showProjectBack={false}
