@@ -524,6 +524,7 @@ class TestBoundModelPublicWhitelist:
     def _fake_find_model_with_namespace(
         self, db, model_name, user_id, enforce_public_whitelist=True
     ):
+        """Raise the whitelist error for the restricted model when enforced."""
         if model_name == self.RESTRICTED_MODEL and enforce_public_whitelist:
             raise ValueError(
                 f"Model '{self.RESTRICTED_MODEL}' is restricted to whitelisted users"
@@ -531,6 +532,7 @@ class TestBoundModelPublicWhitelist:
         return MagicMock(), {"modelConfig": {}}
 
     def _make_bot_with_restricted_model_ref(self) -> MagicMock:
+        """Create a mock Bot whose legacy modelRef points to a restricted model."""
         bot = _make_bot({})
         bot.json["spec"]["modelRef"] = {
             "name": self.RESTRICTED_MODEL,
@@ -578,11 +580,13 @@ class TestBoundModelRestrictedTreatedAsNotFound:
     RESTRICTED_MODEL = "wecode-claude-sonnet-4-6(overseas)"
 
     def _deny_find(self, db, model_name, user_id, enforce_public_whitelist=True):
+        """Simulate the public-model whitelist rejecting every lookup."""
         raise PublicModelAccessDeniedError(
             f"Model '{model_name}' is restricted to whitelisted users"
         )
 
     def _make_bot_with_restricted_model_ref(self) -> MagicMock:
+        """Create a mock Bot whose legacy modelRef points to a restricted model."""
         bot = _make_bot({})
         bot.json["spec"]["modelRef"] = {
             "name": self.RESTRICTED_MODEL,
