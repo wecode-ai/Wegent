@@ -1404,6 +1404,11 @@ describe('useWorkbenchCloudProjectContext', () => {
     const currentRuntimeTask = {
       deviceId: 'local-device',
       taskId: 'runtime-existing',
+      runtime: 'codex' as const,
+      threadId: 'thread-existing',
+      workspacePath: '/tmp/existing-worktree',
+      workspaceKind: 'worktree' as const,
+      worktreeId: 'worktree-existing',
     }
     const localApi = {
       findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
@@ -1461,6 +1466,11 @@ describe('useWorkbenchCloudProjectContext', () => {
     const currentRuntimeTask = {
       deviceId: 'local-device',
       taskId: 'runtime-existing',
+      runtime: 'codex' as const,
+      threadId: 'thread-existing',
+      workspacePath: '/tmp/existing-worktree',
+      workspaceKind: 'worktree' as const,
+      worktreeId: 'worktree-existing',
     }
     let currentContext = {
       project: sourceProject,

@@ -1188,9 +1188,9 @@ impl LocalTaskStore {
         } = *input;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(message_id) = transaction
+        if let Some((message_id, status)) = transaction
             .query_row(
-                "SELECT message_id FROM loop_item_comments
+                "SELECT message_id, status FROM loop_item_comments
                  WHERE project_id=?1 AND task_id=?2 AND sender_type='agent'
                    AND reply_to_message_id=?3
                    AND json_extract(metadata,'$.runtime_address.deviceId')=?4
@@ -1203,11 +1203,13 @@ impl LocalTaskStore {
                     runtime_device_id,
                     runtime_task_id
                 ],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
         {
-            move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+            if matches!(status.as_str(), "pending" | "streaming") {
+                move_runtime_comment_task_to_in_progress(&transaction, task_id)?;
+            }
             let comment = comment_row(&transaction, &message_id)?;
             transaction.commit()?;
             return Ok(comment);
@@ -5644,6 +5646,28 @@ mod tests {
         assert_eq!(continued.status, "completed");
         assert_eq!(continued.content, "你之前让我看一下");
         assert_eq!(continued.metadata["runtime_address"]["taskId"], "session-1");
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+        let duplicate = store
+            .start_runtime_comment(&LocalRuntimeCommentStart {
+                project_id: &project.id,
+                task_id: &task.id,
+                agent_id: &agent.id,
+                trigger_message_id: &follow_up.message_id,
+                runtime_device_id: "local-device",
+                runtime_task_id: "session-1",
+                prompt: Some("我之前说了什么"),
+                model: None,
+            })
+            .unwrap();
+        assert_eq!(duplicate.message_id, continuation.message_id);
+        assert_eq!(duplicate.status, "completed");
         assert_eq!(
             store
                 .get_task(&project.id, &task.id)

@@ -98,6 +98,15 @@ function runtimeTaskKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
 }
 
+function runtimeTaskAddressForBinding(
+  identity: RuntimeTaskAddress,
+  current: RuntimeTaskAddress | null
+): RuntimeTaskAddress {
+  return current?.deviceId === identity.deviceId && current.taskId === identity.taskId
+    ? current
+    : identity
+}
+
 function executionAddressFromContext(
   task: RuntimeTaskAddress,
   context: Awaited<ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']>>
@@ -607,14 +616,18 @@ export function useWorkbenchCloudProjectContext({
       runtimeTaskTitleRef.current ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||
       t('workbench.untitled_task', '未命名任务')
+    const taskForBinding = runtimeTaskAddressForBinding(
+      contextRuntimeTask,
+      currentRuntimeTaskRef.current
+    )
     let active = true
     const bindingRequest = itemToBind
       ? api
-          .bindTask(itemToBind.id, contextRuntimeTask, bindingTaskTitle)
+          .bindTask(itemToBind.id, taskForBinding, bindingTaskTitle)
           .then(() => ({ item: itemToBind }))
       : api.trackProjectTask(
           projectToBind.id,
-          contextRuntimeTask,
+          taskForBinding,
           bindingTaskTitle,
           pendingBinding?.description ?? ''
         )
@@ -929,13 +942,17 @@ export function useWorkbenchCloudProjectContext({
         t('workbench.untitled_task', '未命名任务')
       try {
         let linkedItem: CloudLoopItem
+        const taskForBinding = runtimeTaskAddressForBinding(
+          contextRuntimeTask,
+          currentRuntimeTaskRef.current
+        )
         if (item) {
-          await api.bindTask(item.id, contextRuntimeTask, taskTitle)
+          await api.bindTask(item.id, taskForBinding, taskTitle)
           linkedItem = item
         } else {
           const tracked = await api.trackProjectTask(
             project.id,
-            contextRuntimeTask,
+            taskForBinding,
             taskTitle,
             runtimeTaskDescription
           )
