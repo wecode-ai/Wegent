@@ -13,6 +13,8 @@ Opening an Issue from the Collaboration board shows creation, status changes, an
 
 A comment initially shows a body preview, with expansion for long content. The author, run status, time, and Reply action remain visible when the body is collapsed. Reply opens that comment's inline composer on demand; comments with an active execution cannot be replied to. Completed runs display their persisted terminal status instead of an unverified status.
 
+The activity list uses one vertical timeline for creation, status changes, and comments. System events use compact nodes, while comment avatars act as timeline nodes; horizontal separators must not break the continuous flow. A comment header keeps the author and role in the main information column, with run status and time in a separate trailing area. Long author or role text may truncate only within the main column and must not push run status below the author or shift the body start position.
+
 For AI managed workflows, the manager writes an execution prompt for each child task from the Issue. Executors report their outcomes to the manager, who then decides whether the Issue moves to In review or Completed. Finishing a child task does not automatically make either transition. These manager decisions appear alongside manual status changes in the activity timeline. The automation summary shows the current stage and child task progress without repeating the full stage chain.
 
 ## Geometry and states

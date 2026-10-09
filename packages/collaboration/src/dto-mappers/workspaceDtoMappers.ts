@@ -10,6 +10,7 @@ import type {
   WorkspaceIssueCollaborator,
   WorkspaceTaskBinding,
 } from "../ports/SharedWorkspaceApi";
+import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
   CollaborationExecution,
@@ -77,8 +78,8 @@ export function mapWorkspaceTaskBindingDto(
     ),
     assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
     modelSelection:
-      (row.modelSelection as Record<string, unknown> | null | undefined) ??
-      (row.model_selection as Record<string, unknown> | null | undefined) ??
+      (row.modelSelection as ModelSelectionConfig | null | undefined) ??
+      (row.model_selection as ModelSelectionConfig | null | undefined) ??
       null,
     ...(bindingType === "system" || bindingType === "user"
       ? { bindingType }

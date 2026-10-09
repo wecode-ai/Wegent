@@ -17,6 +17,7 @@ import {
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
 import {
+  collaborationTaskAddress,
   createLocalWorkspaceApi,
   createWeworkPlatformApi,
   projectRuntimeStatusSignature,
@@ -1341,6 +1342,33 @@ describe('Wework collaboration workspace API', () => {
       },
       binding_type: 'system',
       linked_at: '2026-09-14T00:00:00Z',
+    })
+  })
+
+  it('keeps the executed model on the Issue conversation address', () => {
+    expect(
+      collaborationTaskAddress(
+        {
+          deviceId: 'device-1',
+          taskId: 'task-1',
+          modelSelection: {
+            modelName: 'gpt-5.6-sol',
+            modelType: 'runtime',
+            options: { reasoning: 'high' },
+          },
+        },
+        null
+      )
+    ).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          options: { reasoning: 'high' },
+        },
+      },
     })
   })
 

@@ -71,6 +71,7 @@ import {
 import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import type {
   DeviceInfo,
+  ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -81,6 +82,7 @@ import type {
 import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
@@ -172,6 +174,29 @@ export function toWeworkIssueTaskBinding(binding: WorkspaceTaskBinding): LoopIte
   return {
     ...mapped,
     modelSelection: mapped.modelSelection as LoopItemTaskBinding['modelSelection'],
+  }
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function collaborationTaskAddress(
+  binding: {
+    deviceId: string
+    taskId: string
+    modelSelection?: ModelSelectionConfig | null
+  },
+  runtimeWork?: RuntimeWorkListResponse | null
+): RuntimeTaskAddress {
+  const hydrated = hydrateRuntimeTaskAddress(runtimeWork, {
+    deviceId: binding.deviceId,
+    taskId: binding.taskId,
+  })
+  if (!binding.modelSelection) return hydrated
+  return {
+    ...hydrated,
+    runtimeHandle: {
+      modelSelection: binding.modelSelection,
+      ...(hydrated.runtimeHandle ?? {}),
+    },
   }
 }
 
@@ -641,10 +666,7 @@ export function WeworkSharedProject({
           setTaskComposer({
             issue,
             conversationKey: `${issue.id}:${existing.deviceId}:${existing.taskId}`,
-            address: {
-              deviceId: existing.deviceId,
-              taskId: existing.taskId,
-            },
+            address: collaborationTaskAddress(existing, runtimeWork),
           })
           projectHost.navigate({ ...projectHost.location, issueId: issue.id })
           return
@@ -835,17 +857,27 @@ export function WeworkSharedProject({
                           setTaskComposer({
                             issue,
                             conversationKey: `${issue.id}:${task.device_id}:${task.task_id}`,
-                            address: {
-                              deviceId: task.device_id,
-                              taskId: task.task_id,
-                            },
+                            address: collaborationTaskAddress(
+                              {
+                                deviceId: task.device_id,
+                                taskId: task.task_id,
+                                modelSelection: task.modelSelection,
+                              },
+                              runtimeWork
+                            ),
                           })
                       : onOpenRuntimeTask
                         ? task =>
-                            onOpenRuntimeTask({
-                              deviceId: task.device_id,
-                              taskId: task.task_id,
-                            })
+                            onOpenRuntimeTask(
+                              collaborationTaskAddress(
+                                {
+                                  deviceId: task.device_id,
+                                  taskId: task.task_id,
+                                  modelSelection: task.modelSelection,
+                                },
+                                runtimeWork
+                              )
+                            )
                         : undefined
                   }
                   onEscape={
