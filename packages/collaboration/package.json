@@ -134,6 +134,10 @@
       "types": "./src/conversation/index.ts",
       "import": "./src/conversation/index.ts"
     },
+    "./conversation/conversationDiagnostics": {
+      "types": "./src/conversation/conversationDiagnostics.ts",
+      "import": "./src/conversation/conversationDiagnostics.ts"
+    },
     "./conversation/bottomOriginScroll": {
       "types": "./src/conversation/bottomOriginScroll.ts",
       "import": "./src/conversation/bottomOriginScroll.ts"

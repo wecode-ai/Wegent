@@ -612,6 +612,55 @@ describe('registerRendererStorageCapabilities', () => {
 })
 
 describe('registerDesktopServiceCapabilities', () => {
+  test.each([
+    {
+      label: 'supplied',
+      diagnostics: {
+        schemaVersion: 1,
+        events: [{ name: 'anchor-lost', details: { scrollerId: 1, rowIndex: 4 } }],
+      },
+    },
+    { label: 'null', diagnostics: null },
+    { label: 'omitted', diagnostics: undefined },
+  ])(
+    'forwards $label conversation diagnostics through feedback request parsing',
+    async ({ diagnostics }) => {
+      const handlers = new Map<HostCapability, HostCapabilityHandler>()
+      const router = {
+        register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+          handlers.set(capability, handler)
+        }),
+      } as unknown as HostCapabilityRouter
+      const preview = vi.fn(async () => ({ stagingId: 'stage-1' }))
+      registerDesktopServiceCapabilities(
+        router,
+        { feedback: { preview } } as unknown as Parameters<
+          typeof registerDesktopServiceCapabilities
+        >[1],
+        { openLogDirectory: vi.fn(), openDevTools: vi.fn() }
+      )
+      const request = {
+        includeRuntimeLogs: true,
+        includeTaskInfo: false,
+        includeScreenshot: false,
+        includeSystemInfo: false,
+        note: 'Conversation flickers during upward scrolling',
+        taskContext: null,
+        screenshotDataUrl: null,
+        composerDiagnostics: null,
+        attachments: [],
+        ...(diagnostics === undefined ? {} : { conversationDiagnostics: diagnostics }),
+      }
+
+      await handlers.get('feedback.previewBundle')?.({ request }, { principal: 'test' })
+
+      expect(preview).toHaveBeenCalledWith({
+        ...request,
+        conversationDiagnostics: diagnostics ?? null,
+      })
+    }
+  )
+
   test('allowlists and forwards all migrated desktop capability contracts', async () => {
     const handlers = new Map<HostCapability, HostCapabilityHandler>()
     const router = {
