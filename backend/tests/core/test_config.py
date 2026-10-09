@@ -89,6 +89,21 @@ class TestSettings:
         with pytest.raises(ValidationError):
             build_settings(**{setting_name: invalid_value})
 
+    @pytest.mark.parametrize(
+        "setting_name",
+        [
+            "SOCKETIO_REDIS_SOCKET_TIMEOUT",
+            "SOCKETIO_REDIS_CONNECT_TIMEOUT",
+            "SOCKETIO_REDIS_HEALTH_CHECK_INTERVAL",
+        ],
+    )
+    @pytest.mark.parametrize("invalid_value", [0, -1, float("inf")])
+    def test_socketio_redis_settings_reject_unbounded_timeouts(
+        self, setting_name: str, invalid_value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            build_settings(**{setting_name: invalid_value})
+
     def test_settings_from_env_variables(self, monkeypatch):
         """Test loading settings from environment variables"""
         monkeypatch.setenv("PROJECT_NAME", "Test Project")
