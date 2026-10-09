@@ -533,6 +533,7 @@ export function createDesktopScenario({
           visible: true,
           timeoutMs: uiTimeoutMs,
         })
+        // Keep the expected age independent from the product's timestamp helper.
         const linkedTimes = previousBindings.map(binding => {
           const timestamp = binding.linked_at ?? binding.linkedAt
           assert.ok(timestamp, 'The real backend binding must have a timestamp')
