@@ -350,6 +350,10 @@ struct IndexFileSignature {
 }
 
 impl RuntimeWorkStore {
+    pub(super) fn index_path(&self) -> &Path {
+        &self.index_path
+    }
+
     pub fn new(index_path: PathBuf) -> Self {
         let persisted_index = read_persisted_index_from_path(&index_path);
         let migration_required = persisted_index_requires_migration(&persisted_index);

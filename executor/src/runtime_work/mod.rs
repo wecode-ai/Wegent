@@ -24,6 +24,7 @@ mod store;
 mod task_create_contract;
 mod transcript;
 mod transcript_page;
+mod transcript_transport;
 mod util;
 mod worktrees;
 
