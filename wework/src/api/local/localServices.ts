@@ -1325,7 +1325,13 @@ function projectSpaceMcpServers(
     'additionalContext' | 'cloudModelGateway' | 'message' | 'origin'
   >
 ): Array<Record<string, unknown>> {
-  if (input.origin?.type === 'project_automation') return []
+  if (
+    input.origin?.type === 'project_automation' ||
+    input.origin?.dispatchRole ||
+    input.origin?.dispatch_role
+  ) {
+    return []
+  }
   const hasProjectSpaceContext = Boolean(
     input.additionalContext?.projectSpaceIssue ||
     input.additionalContext?.projectSpaceChat ||

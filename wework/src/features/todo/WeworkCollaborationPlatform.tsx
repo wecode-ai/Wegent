@@ -87,6 +87,7 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { AiChatModal } from './AiChatModal'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
+import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
 import {
   runtimeTaskConversationStatusesByAddress,
   type RuntimeTaskConversationStatus,
@@ -594,11 +595,18 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueDispatchPersonalTaskAction) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const preparedEnvironmentTaskRequest = dispatch
+        ? null
+        : projectExecutionEnvironmentTaskRequest(await scopedApi.projects.get(String(project.id)), {
+            workspace,
+            environments: await scopedApi.projects.listExecutionEnvironments(String(project.id)),
+          })
       setTaskComposer({
         issue,
         conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
         dispatch,
         taskRequest: {
+          ...(preparedEnvironmentTaskRequest ?? {}),
           runtime: 'codex',
           message: '',
           ...(dispatch
@@ -621,7 +629,7 @@ export function WeworkSharedProject({
       })
       projectHost.navigate({ ...projectHost.location, issueId: issue.id })
     },
-    [project.id, projectHost, runtimePort]
+    [project.id, projectHost, runtimePort, scopedApi.projects, workspace]
   )
 
   useIssueDispatchNotificationActionRegistration(

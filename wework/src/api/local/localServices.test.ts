@@ -4827,6 +4827,44 @@ describe('createLocalAppServices', () => {
     ])
   })
 
+  test('does not duplicate project-space tools for collaboration dispatch tasks', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+        backendUrl: 'https://cloud.example.com',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-manager-context',
+      runtime: 'codex',
+      message: '处理当前 Issue',
+      cloudProjectId: 'default-work-items',
+      origin: {
+        type: 'board_task',
+        cloudProjectId: 'default-work-items',
+        loopItemId: 'WORK-806',
+        dispatchRole: 'manager',
+      },
+      additionalContext: {
+        projectSpaceIssue: {
+          kind: 'application',
+          value: 'Current space: default-work-items; current Issue: WORK-806.',
+        },
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.mcp_servers).toEqual([])
+  })
+
   test('automatically deploys and emphasizes dws for a DingTalk AI Table project', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

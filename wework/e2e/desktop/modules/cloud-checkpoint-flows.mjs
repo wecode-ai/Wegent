@@ -194,7 +194,9 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
-    await control.command('click', `[data-testid="${sourceTestId}"]`)
+    await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     return previousMenus
   }
 

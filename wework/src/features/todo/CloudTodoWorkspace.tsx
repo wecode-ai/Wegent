@@ -5382,10 +5382,14 @@ export function CloudTodoWorkspace({
                     setSelectedTaskBinding(null)
                     setBackgroundTaskItemId(null)
                     if (!selectedItemProject) return
+                    const preparedEnvironmentTaskRequest = projectExecutionEnvironmentTaskRequest(
+                      selectedItemProject as CollaborationProject
+                    )
                     openTaskComposer({
                       workItemId: selectedItem.id,
                       initialInput: workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
+                      taskRequest: preparedEnvironmentTaskRequest ?? undefined,
                     })
                   }}
                   onClose={closeIssuePanelStack}
