@@ -91,11 +91,12 @@ def _existing_tables() -> set:
     return {row[0] for row in rows}
 
 
-def _column_type(table: str, column: str) -> str:
+def _column_definition(table: str, column: str) -> tuple:
+    """Return (COLUMN_TYPE, IS_NULLABLE) preserving the existing definition."""
     bind = op.get_bind()
     row = bind.execute(
         sa.text(
-            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "SELECT COLUMN_TYPE, IS_NULLABLE FROM information_schema.COLUMNS "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t "
             "AND COLUMN_NAME = :c"
         ),
@@ -103,15 +104,18 @@ def _column_type(table: str, column: str) -> str:
     ).fetchone()
     if row is None:
         raise RuntimeError(f"column {table}.{column} not found")
-    return row[0]
+    return row[0], row[1]
 
 
 def _modify(table: str, column: str, on_update: bool) -> None:
-    column_type = _column_type(table, column)
+    column_type, is_nullable = _column_definition(table, column)
     # Strip any existing DEFAULT/ON UPDATE clauses leaked into COLUMN_TYPE
     # (MySQL does not include them, but keep this defensive).
     column_type = column_type.split(" DEFAULT ")[0].split(" ON UPDATE ")[0]
-    clause = f"{column_type} NOT NULL DEFAULT CURRENT_TIMESTAMP"
+    # Preserve existing nullability: forcing NOT NULL on a column that
+    # legitimately contains NULL rows would fail the migration or rewrite data.
+    null_clause = "NOT NULL" if is_nullable == "NO" else "NULL"
+    clause = f"{column_type} {null_clause} DEFAULT CURRENT_TIMESTAMP"
     if on_update:
         clause += " ON UPDATE CURRENT_TIMESTAMP"
     if column_type.lower().endswith("(6)"):
@@ -148,8 +152,11 @@ def downgrade() -> None:
     existing = _existing_tables()
 
     def revert(table: str, column: str) -> None:
-        column_type = _column_type(table, column)
-        op.execute(f"ALTER TABLE `{table}` MODIFY `{column}` {column_type} NOT NULL")
+        column_type, is_nullable = _column_definition(table, column)
+        null_clause = "NOT NULL" if is_nullable == "NO" else "NULL"
+        op.execute(
+            f"ALTER TABLE `{table}` MODIFY `{column}` {column_type} {null_clause}"
+        )
 
     for table in TABLES_BOTH:
         if table not in existing:
