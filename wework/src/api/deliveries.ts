@@ -398,6 +398,8 @@ export interface CloudTaskContext {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
+  executionContext?: LoopItemTaskBinding['executionContext']
   project: CloudProject
   loop_item: CloudLoopItem | null
   linked_at: string

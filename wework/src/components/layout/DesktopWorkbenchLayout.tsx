@@ -135,6 +135,13 @@ function isSameRuntimeTask(
   ) {
     return false
   }
+  if (
+    next.issueExecution &&
+    (current.issueExecution?.projectId !== next.issueExecution.projectId ||
+      current.issueExecution?.issueId !== next.issueExecution.issueId)
+  ) {
+    return false
+  }
   return !next.runtimeHandle || current.runtimeHandle === next.runtimeHandle
 }
 

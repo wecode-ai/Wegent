@@ -5633,6 +5633,69 @@ mod tests {
     }
 
     #[test]
+    fn collaboration_runtime_comment_does_not_move_parent_issue_to_review() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Coordinate work".to_owned(),
+                    description: String::new(),
+                    status: "in_progress".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    assignee_user_id: None,
+                    assignee_agent_id: None,
+                    assignee_group_id: None,
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let comment = store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: task.id.clone(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: "manager-agent".to_owned(),
+                sender_name: "Manager".to_owned(),
+                content: String::new(),
+                metadata: json!({
+                    "dispatch_role": "manager",
+                    "runtime_address": {
+                        "deviceId": "local-device",
+                        "taskId": "manager-runtime",
+                    },
+                }),
+                reply_to_message_id: None,
+            })
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_comments SET status='streaming' WHERE message_id=?1",
+                params![comment.message_id],
+            )
+            .unwrap();
+
+        store
+            .finish_runtime_comment("manager-runtime", "completed", "Dispatched")
+            .unwrap();
+
+        assert_eq!(
+            store
+                .get_task(&project.id, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+    }
+
+    #[test]
     fn local_assignment_execution_writeback_stamps_runtime_address() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;

@@ -193,7 +193,8 @@ export function collaborationTaskAddress(
     } | null
   },
   runtimeWork?: RuntimeWorkListResponse | null,
-  projectSession?: RuntimeTaskAddress['projectSession']
+  projectSession?: RuntimeTaskAddress['projectSession'],
+  issueExecution?: RuntimeTaskAddress['issueExecution']
 ): RuntimeTaskAddress {
   const hydrated = hydrateRuntimeTaskAddress(runtimeWork, {
     deviceId: binding.deviceId,
@@ -215,6 +216,7 @@ export function collaborationTaskAddress(
           },
         }
       : {}),
+    ...(issueExecution ? { issueExecution } : {}),
     ...(projectSession ? { projectSession } : {}),
   }
 }
@@ -226,8 +228,10 @@ function issueExecutionAddress(
   >,
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: string,
-  issueId: string
+  issueId: string,
+  projectStore: CloudProject['project_store']
 ): RuntimeTaskAddress {
+  const issueExecution = { projectId, issueId }
   return collaborationTaskAddress(
     {
       deviceId: binding.device_id,
@@ -236,15 +240,18 @@ function issueExecutionAddress(
       executionContext: binding.executionContext,
     },
     runtimeWork,
-    { projectId, issueId }
+    projectStore === 'backend' ? issueExecution : undefined,
+    issueExecution
   )
 }
 
 function workspaceExecutionAddress(
   binding: WorkspaceTaskBinding,
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  issueId: string
+  issueId: string,
+  projectStore: CloudProject['project_store']
 ): RuntimeTaskAddress {
+  const issueExecution = { projectId: binding.projectId, issueId }
   return collaborationTaskAddress(
     {
       deviceId: binding.deviceId,
@@ -253,7 +260,8 @@ function workspaceExecutionAddress(
       executionContext: binding.executionContext,
     },
     runtimeWork,
-    { projectId: binding.projectId, issueId }
+    projectStore === 'backend' ? issueExecution : undefined,
+    issueExecution
   )
 }
 
@@ -720,10 +728,13 @@ export function WeworkSharedProject({
           )
         : undefined
       const resolvedAddress = latestBinding
-        ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id)
+        ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id, project.project_store)
         : {
             ...address,
-            projectSession: { projectId: String(project.id), issueId: issue.id },
+            issueExecution: { projectId: String(project.id), issueId: issue.id },
+            ...(project.project_store === 'backend'
+              ? { projectSession: { projectId: String(project.id), issueId: issue.id } }
+              : {}),
           }
       setTaskComposer({
         issue,
@@ -732,7 +743,7 @@ export function WeworkSharedProject({
       })
       projectHost.navigate({ ...projectHost.location, issueId: issue.id })
     },
-    [project.id, projectHost, runtimeWork, scopedApi.taskBindings]
+    [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
   )
 
   useIssueDispatchNotificationActionRegistration(
@@ -947,12 +958,24 @@ export function WeworkSharedProject({
                       ? task =>
                           void openBoundTaskConversation(
                             issue,
-                            issueExecutionAddress(task, runtimeWork, String(project.id), issue.id)
+                            issueExecutionAddress(
+                              task,
+                              runtimeWork,
+                              String(project.id),
+                              issue.id,
+                              project.project_store
+                            )
                           )
                       : onOpenRuntimeTask
                         ? task =>
                             onOpenRuntimeTask(
-                              issueExecutionAddress(task, runtimeWork, String(project.id), issue.id)
+                              issueExecutionAddress(
+                                task,
+                                runtimeWork,
+                                String(project.id),
+                                issue.id,
+                                project.project_store
+                              )
                             )
                         : undefined
                   }

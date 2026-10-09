@@ -337,6 +337,23 @@ function runtimeTaskForkModelOptions(
   }
 }
 
+function hasResolvedExecutionAddress(
+  current: RuntimeTaskAddress,
+  resolved: RuntimeTaskAddress
+): boolean {
+  return (
+    current.deviceId === resolved.deviceId &&
+    current.taskId === resolved.taskId &&
+    current.runtime === resolved.runtime &&
+    current.threadId === resolved.threadId &&
+    current.workspacePath === resolved.workspacePath &&
+    current.workspaceKind === resolved.workspaceKind &&
+    current.worktreeId === resolved.worktreeId &&
+    JSON.stringify(current.runtimeHandle?.modelSelection ?? null) ===
+      JSON.stringify(resolved.runtimeHandle?.modelSelection ?? null)
+  )
+}
+
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
@@ -1309,6 +1326,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
     boundCloudProject,
+    boundRuntimeTaskAddress,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
@@ -1341,12 +1359,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
+  useEffect(() => {
+    if (
+      !currentRuntimeTask ||
+      !boundRuntimeTaskAddress ||
+      hasResolvedExecutionAddress(currentRuntimeTask, boundRuntimeTaskAddress)
+    ) {
+      return
+    }
+    void openRuntimeTask(boundRuntimeTaskAddress)
+  }, [boundRuntimeTaskAddress, currentRuntimeTask, openRuntimeTask])
   const workItemContextAvailable = Boolean(
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
-  const issueExecutionReadOnly = Boolean(
-    currentProjectSpaceRuntimeTask?.projectSession && workItemContextAvailable
-  )
+  const issueExecutionReadOnly = Boolean(currentProjectSpaceRuntimeTask?.issueExecution)
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`

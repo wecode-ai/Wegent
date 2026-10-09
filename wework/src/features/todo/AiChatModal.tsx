@@ -187,10 +187,13 @@ export function AiChatModal({
   const issueId = task?.id
   const conversationAddress = useMemo(
     () =>
-      currentAddress && issueId && project.project_store === 'backend'
+      currentAddress && issueId
         ? {
             ...currentAddress,
-            projectSession: { projectId: String(project.id), issueId },
+            issueExecution: { projectId: String(project.id), issueId },
+            ...(project.project_store === 'backend'
+              ? { projectSession: { projectId: String(project.id), issueId } }
+              : {}),
           }
         : currentAddress,
     [currentAddress, project.id, project.project_store, issueId]

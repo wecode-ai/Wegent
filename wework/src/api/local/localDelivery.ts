@@ -16,6 +16,7 @@ import {
   type DeliveryCreateInput,
   type DeliveryDetail,
   type DeliveryFinalizeInput,
+  type LoopItemTaskBinding,
 } from '@/api/deliveries'
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
@@ -91,6 +92,7 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: LoopItemTaskBinding['executionContext']
   binding_type: 'system' | 'user'
   linked_at: string
 }

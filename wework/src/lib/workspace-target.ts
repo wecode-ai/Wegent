@@ -298,7 +298,10 @@ export function resolveRuntimeWorkspaceContext({
 
   const workspacePath = currentRuntimeTask.workspacePath?.trim()
   if (!workspacePath) return null
-  if (currentRuntimeTask.workspaceKind === 'worktree' || currentRuntimeTask.worktreeId) {
+  if (
+    (currentRuntimeTask.workspaceKind === 'worktree' || currentRuntimeTask.worktreeId) &&
+    !currentRuntimeTask.issueExecution
+  ) {
     return null
   }
 

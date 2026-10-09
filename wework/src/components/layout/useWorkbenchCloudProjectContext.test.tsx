@@ -508,6 +508,22 @@ describe('useWorkbenchCloudProjectContext', () => {
     const runtimeTask = {
       deviceId: 'device-1',
       taskId: 'runtime-1',
+      issueExecution: {
+        projectId: defaultBoard.id,
+        issueId: trackedItem.id,
+      },
+    }
+    const executionContext = {
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/tmp/issue-execution',
+      workspaceKind: 'worktree',
+      worktreeId: 'worktree-1',
+    }
+    const modelSelection = {
+      modelName: 'gpt-5.6-sol',
+      modelType: 'runtime',
+      options: { reasoning: 'medium' },
     }
     const localApi = {
       listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
@@ -520,6 +536,8 @@ describe('useWorkbenchCloudProjectContext', () => {
         loop_item_id: trackedItem.id,
         project: defaultBoard,
         loop_item: trackedItem,
+        executionContext,
+        modelSelection,
       }),
       trackProjectTask: vi.fn().mockResolvedValue({ item: trackedItem }),
     }
@@ -557,6 +575,11 @@ describe('useWorkbenchCloudProjectContext', () => {
     rerender({ currentRuntimeTask: runtimeTask })
 
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(trackedItem))
+    expect(result.current.boundRuntimeTaskAddress).toEqual({
+      ...runtimeTask,
+      ...executionContext,
+      runtimeHandle: { modelSelection },
+    })
     expect(localApi.trackProjectTask).not.toHaveBeenCalled()
 
     const unchangedFollowup = await result.current.prepareSubmission('继续执行')
@@ -575,6 +598,8 @@ describe('useWorkbenchCloudProjectContext', () => {
       loop_item_id: enrichedItem.id,
       project: defaultBoard,
       loop_item: enrichedItem,
+      executionContext,
+      modelSelection,
     })
     const { publishProjectSpaceTaskContextChanged } =
       await import('@/features/todo/projectSpaceSelection')

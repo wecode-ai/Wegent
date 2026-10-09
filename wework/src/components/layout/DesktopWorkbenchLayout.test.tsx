@@ -3416,6 +3416,10 @@ describe('DesktopWorkbenchLayout', () => {
           },
           currentRuntimeTask: {
             ...runtimeTask,
+            issueExecution: {
+              projectId: project.id,
+              issueId: issue.id,
+            },
             projectSession: {
               projectId: project.id,
               issueId: issue.id,

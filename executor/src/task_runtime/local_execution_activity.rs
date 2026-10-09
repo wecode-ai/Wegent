@@ -323,14 +323,15 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let task_id = transaction
+        let comment_context = transaction
             .query_row(
-                "SELECT task_id FROM loop_item_comments
+                "SELECT task_id, json_extract(metadata, '$.dispatch_role')
+                 FROM loop_item_comments
                  WHERE deleted_at IS NULL AND status IN ('pending','streaming')
                    AND json_extract(metadata,'$.runtime_address.taskId')=?1
                  ORDER BY id DESC LIMIT 1",
                 params![runtime_task_id],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
             )
             .optional()?;
         transaction.execute(
@@ -342,14 +343,16 @@ impl LocalTaskStore {
             params![content, status, now(), runtime_task_id],
         )?;
         if matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
-            if let Some(task_id) = task_id {
-                transaction.execute(
-                    "UPDATE loop_items
-                     SET status='in_review', completed_at=NULL,
-                         version=version+1, updated_at=?1
-                     WHERE id=?2 AND resource_type='task' AND status='in_progress'",
-                    params![now(), task_id],
-                )?;
+            if let Some((task_id, dispatch_role)) = comment_context {
+                if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
+                    transaction.execute(
+                        "UPDATE loop_items
+                         SET status='in_review', completed_at=NULL,
+                             version=version+1, updated_at=?1
+                         WHERE id=?2 AND resource_type='task' AND status='in_progress'",
+                        params![now(), task_id],
+                    )?;
+                }
             }
         }
         transaction.commit()?;

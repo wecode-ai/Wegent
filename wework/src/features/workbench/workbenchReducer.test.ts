@@ -731,6 +731,37 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('keeps local Issue execution context when the route reopens the same task', () => {
+    const opened = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+          runtime: 'codex',
+          workspacePath: '/workspace/worktrees/runtime-1/repo',
+          issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+        },
+      },
+      {
+        type: 'runtime_task_opened',
+        address: {
+          deviceId: 'device-1',
+          taskId: 'runtime-1',
+        },
+        project: null,
+      }
+    )
+
+    expect(opened.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      runtime: 'codex',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      issueExecution: { projectId: 'project-1', issueId: 'issue-1' },
+    })
+  })
+
   test('replaces an ordinary task address when the same task is opened explicitly', () => {
     const opened = workbenchReducer(
       {

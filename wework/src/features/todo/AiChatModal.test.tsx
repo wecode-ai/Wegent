@@ -826,7 +826,32 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
       projectSession: { projectId: String(project.id), issueId: task.id },
+    })
+  })
+
+  it('marks a local bound task as an Issue execution without cloud session routing', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    render(
+      <AiChatModal
+        project={{ ...project, project_store: 'local' }}
+        localProjects={localProjects}
+        task={task}
+        taskTitle="实现本地交付"
+        initialAddress={address}
+        open
+        onClose={vi.fn()}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      ...address,
+      issueExecution: { projectId: String(project.id), issueId: task.id },
     })
   })
 
