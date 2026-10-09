@@ -66,7 +66,7 @@ import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
-import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
+import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
@@ -1931,8 +1931,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'activateRuntimeTaskCompletionNotification': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
-      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
-        taskAddressId: createTrayTaskMenuId(address),
+      await invokeDesktopHost('e2e.activateNotification', {
+        url: weworkTaskScheme(address),
       })
       return ''
     }
@@ -1948,6 +1948,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
                 title: string
                 body: string
                 address?: RuntimeTaskAddress
+                url?: string
               }>
             }
           }
@@ -1960,6 +1961,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             title: string
             body: string
             address?: RuntimeTaskAddress
+            url?: string
           }>
         }
       }

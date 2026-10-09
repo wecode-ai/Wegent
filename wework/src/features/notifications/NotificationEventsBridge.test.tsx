@@ -56,6 +56,13 @@ describe('application notification events', () => {
       })
       expect(refresh).toHaveBeenCalledOnce()
       expect(send).toHaveBeenCalledTimes(label === 'main' ? 1 : 0)
+      if (label === 'main') {
+        expect(send).toHaveBeenCalledWith({
+          title: 'workbench.project_task_assigned_notification_title',
+          body: 'workbench.project_task_assigned_notification_body',
+          url: 'wework://boards/12/issues/ISSUE-1',
+        })
+      }
       view.unmount()
       expect(listeners.size).toBe(0)
       window.removeEventListener('wework-notifications-changed', refresh)
