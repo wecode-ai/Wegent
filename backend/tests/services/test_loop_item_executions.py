@@ -2363,7 +2363,12 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert payload["additionalContext"] == {}
     assert payload["projectPlugins"][0]["id"] == "github@openai"
     assert execution_request["project_plugin_ids"] == ["github@openai"]
-    assert execution_request["mcp_servers"] == []
+    assert len(execution_request["mcp_servers"]) == 1
+    project_space_server = execution_request["mcp_servers"][0]
+    assert project_space_server["name"] == "wegent-wework-space"
+    assert project_space_server["type"] == "streamable-http"
+    assert project_space_server["url"].endswith("/mcp/wework-space/sse")
+    assert project_space_server["headers"]["Authorization"].startswith("Bearer ")
     assert execution_request["preload_skills"] == []
     assert execution_request["user_selected_skills"] == []
     assert execution_request["new_session"] is True
