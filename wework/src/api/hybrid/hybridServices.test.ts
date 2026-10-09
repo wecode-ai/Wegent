@@ -522,6 +522,21 @@ describe('execution status write-back on history reads', () => {
     expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
   })
 
+  it('keeps local Issue execution context on the local runtime route', async () => {
+    const request = {
+      ...address,
+      issueExecution: { projectId: 'local-project', issueId: 'issue-1' },
+    }
+    mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue({
+      ...response,
+      origin: { projectStore: 'local' },
+    })
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockClear()
+    await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
     mocks.localServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(response)
     mocks.cloudServices.projectChatClient.reconcileExecutionSnapshot.mockResolvedValue([])

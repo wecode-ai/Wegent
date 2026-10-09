@@ -89,6 +89,13 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: {
+    runtime?: string | null
+    threadId?: string | null
+    workspacePath?: string | null
+    workspaceKind?: string | null
+    worktreeId?: string | null
+  } | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
 }
@@ -293,11 +300,35 @@ function RuntimeTaskProgressSummary({
     () => ({
       deviceId: binding.device_id,
       taskId: binding.task_id,
+      ...(binding.executionContext?.runtime ? { runtime: binding.executionContext.runtime } : {}),
+      ...(binding.executionContext?.threadId
+        ? { threadId: binding.executionContext.threadId }
+        : {}),
+      ...(binding.executionContext?.workspacePath
+        ? { workspacePath: binding.executionContext.workspacePath }
+        : {}),
+      ...(binding.executionContext?.workspaceKind
+        ? { workspaceKind: binding.executionContext.workspaceKind }
+        : {}),
+      ...(binding.executionContext?.worktreeId
+        ? { worktreeId: binding.executionContext.worktreeId }
+        : {}),
       ...(binding.modelSelection
         ? { runtimeHandle: { modelSelection: binding.modelSelection } }
         : {}),
+      projectSession: {
+        projectId: String(item.cloud_project_id),
+        issueId: String(item.id),
+      },
     }),
-    [binding.device_id, binding.modelSelection, binding.task_id]
+    [
+      binding.device_id,
+      binding.executionContext,
+      binding.modelSelection,
+      binding.task_id,
+      item.cloud_project_id,
+      item.id,
+    ]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
@@ -356,6 +387,7 @@ function RuntimeTaskProgressSummary({
             initialAddress={taskAddress}
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
+            readOnly
             collapseComposerWhenIdle
             initialScrollPosition="latest"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}

@@ -973,6 +973,11 @@ describe('local delivery API', () => {
     const runtimeTask = {
       deviceId: 'local-device',
       taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/runtime-1',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
       runtimeHandle: {
         modelSelection: {
           modelName: 'gpt-5.6-sol',
@@ -993,8 +998,20 @@ describe('local delivery API', () => {
         deviceId: 'local-device',
         taskId: 'runtime-1',
         runtimeHandle: runtimeTask.runtimeHandle,
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
         taskTitle: 'Runtime',
         modelSelection: runtimeTask.runtimeHandle.modelSelection,
+        executionContext: {
+          runtime: 'codex',
+          threadId: 'thread-1',
+          workspacePath: '/workspace/runtime-1',
+          workspaceKind: 'worktree',
+          worktreeId: 'runtime-1',
+        },
       },
     })
   })

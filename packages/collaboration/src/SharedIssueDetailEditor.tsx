@@ -833,8 +833,16 @@ export function TodoEditor(props: TodoEditorProps) {
     attachments.forEach((attachment) => merged.set(attachment.id, attachment));
     return Array.from(merged.values());
   }, [attachments, description]);
-  const effectiveTasks =
-    tasks.length > 0 ? tasks : (props.initialTaskBindings ?? tasks);
+  const effectiveTasks = useMemo(() => {
+    if (!props.initialTaskBindings) return tasks;
+    const initialTaskIds = new Set(
+      props.initialTaskBindings.map((task) => String(task.id)),
+    );
+    return [
+      ...props.initialTaskBindings,
+      ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
+    ];
+  }, [props.initialTaskBindings, tasks]);
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++taskBindingsRequestIdRef.current;

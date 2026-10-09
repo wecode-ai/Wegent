@@ -1,13 +1,21 @@
-import { isDefaultWorkItemProject, type CloudLoopItem, type CloudProject } from '@/api/deliveries'
+import {
+  isDefaultWorkItemProject,
+  type CloudLoopItem,
+  type CloudProject,
+  type CloudTaskContext,
+} from '@/api/deliveries'
 import { canEditCollaborationIssue } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
 export type ProjectSpaceApi = NonNullable<WorkbenchServices['deliveryApi']>
 export interface ProjectSpaceTaskContextApi {
-  findCloudContextForTask(
-    task: RuntimeTaskAddress
-  ): Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>
+  findCloudContextForTask(task: RuntimeTaskAddress): Promise<{
+    project: CloudProject
+    loop_item: CloudLoopItem | null
+    modelSelection?: CloudTaskContext['modelSelection']
+    executionContext?: CloudTaskContext['executionContext']
+  }>
 }
 export interface ProjectSpaceTaskContextSource<TApi extends ProjectSpaceTaskContextApi> {
   api: TApi

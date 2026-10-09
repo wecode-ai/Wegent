@@ -16,6 +16,7 @@ import {
   type DeliveryCreateInput,
   type DeliveryDetail,
   type DeliveryFinalizeInput,
+  type LoopItemTaskBinding,
 } from '@/api/deliveries'
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
@@ -92,6 +93,7 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: LoopItemTaskBinding['executionContext']
   binding_type: 'system' | 'user'
   linked_at: string
 }
@@ -1404,6 +1406,13 @@ export function createLocalDeliveryApi(
       const projectId = await resolveProjectId(itemId)
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
+      const executionContext = {
+        runtime: task.runtime,
+        threadId: task.threadId,
+        workspacePath: task.workspacePath,
+        workspaceKind: task.workspaceKind,
+        worktreeId: task.worktreeId,
+      }
       await request('todos.bind', {
         project_id: projectId,
         item_id: itemId,
@@ -1411,6 +1420,9 @@ export function createLocalDeliveryApi(
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
           ...(modelSelection ? { modelSelection } : {}),
+          ...(Object.values(executionContext).some(value => value != null && value !== '')
+            ? { executionContext }
+            : {}),
         },
       })
     },

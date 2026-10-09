@@ -69,6 +69,11 @@ describe('createDeliveryApi queue and assignment routes', () => {
       {
         deviceId: 'local-device',
         taskId: 'runtime-1',
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
         runtimeHandle: {
           modelSelection: {
             modelName: 'gpt-5.6-codex',
@@ -83,6 +88,11 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(post).toHaveBeenCalledWith('/v1/loop-items/WEG-1/tasks', {
       deviceId: 'local-device',
       taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/runtime-1',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
       runtimeHandle: {
         modelSelection: {
           modelName: 'gpt-5.6-codex',
@@ -95,6 +105,13 @@ describe('createDeliveryApi queue and assignment routes', () => {
         modelName: 'gpt-5.6-codex',
         modelType: 'public',
         options: { reasoning: 'high' },
+      },
+      executionContext: {
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
       },
     })
   })

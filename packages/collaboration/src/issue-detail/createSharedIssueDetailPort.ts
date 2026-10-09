@@ -22,6 +22,13 @@ export interface SharedIssueDetailTaskBinding {
   task_title: string | null;
   backend_task_id: number | null;
   modelSelection?: ModelSelectionConfig | null;
+  executionContext?: {
+    runtime?: string | null;
+    threadId?: string | null;
+    workspacePath?: string | null;
+    workspaceKind?: string | null;
+    worktreeId?: string | null;
+  } | null;
   binding_type?: "system" | "user";
   linked_at: string;
 }
@@ -194,6 +201,7 @@ export function toSharedIssueDetailTaskBinding(
     task_title: binding.taskTitle,
     backend_task_id: binding.backendTaskId,
     modelSelection: binding.modelSelection,
+    executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     linked_at: binding.linkedAt,
   };
