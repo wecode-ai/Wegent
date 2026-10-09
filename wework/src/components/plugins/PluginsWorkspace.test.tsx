@@ -5607,7 +5607,7 @@ describe('PluginsWorkspace', () => {
         {
           name: 'openai-primary-runtime',
           displayName: 'openai-primary-runtime',
-          path: 'openai-primary-runtime',
+          path: '/tmp/openai-primary-runtime',
         },
       ],
     })
@@ -5624,6 +5624,109 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
   })
+
+  test.each([false, true])(
+    'installed local GitHub detail ignores stale catalog routing and offers recoverable login (failure=%s)',
+    async failFirst => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      seedDurableOpenAiGithubPeek({ seedInventory: true })
+      const staleCatalog = JSON.parse(
+        window.localStorage.getItem('wework.plugins.codexCatalog.v1')!
+      )
+      for (const entry of Object.values(staleCatalog.entries) as Array<{
+        state: { marketplaceItems: unknown[]; installedPlugins: unknown[] }
+      }>) {
+        entry.state.marketplaceItems = []
+        entry.state.installedPlugins = []
+      }
+      window.localStorage.setItem('wework.plugins.codexCatalog.v1', JSON.stringify(staleCatalog))
+      const snapshot = getPluginMarketplaceCache('|anon')!
+      const source = { id: 'openai-official', path: '/tmp/github-marketplace', name: 'OpenAI' }
+      setPluginMarketplaceCache(
+        {
+          ...snapshot,
+          marketplaces: [{ ...source, key: 'local:openai-official', kind: 'local' }],
+          installedPlugins: snapshot.installedPlugins.map(plugin => ({
+            ...plugin,
+            metadata: {
+              ...plugin.metadata,
+              namespace: source.id,
+              labels: { id: `github@${source.id}` },
+            },
+            spec: {
+              ...plugin.spec,
+              source: { ...plugin.spec.source, providerKey: source.id, marketplace: source.id },
+              sourcePayload: {
+                marketplaceName: source.id,
+                marketplacePath: source.path,
+                pluginName: 'github',
+              },
+            },
+          })),
+          marketplaceItems: snapshot.marketplaceItems.map(item => ({
+            ...item,
+            id: `github@${source.id}`,
+            installedPluginId: `github@${source.id}`,
+            manifest: { marketplaceId: source.id },
+          })),
+        },
+        { remoteCatalog: true }
+      )
+      mockCodexAppServerInvoke({
+        deviceId: 'local-device',
+        marketplaces: [
+          {
+            name: source.id,
+            path: source.path,
+            plugins: [{ id: `github@${source.id}`, name: 'github', displayName: 'GitHub' }],
+          },
+        ],
+        installedPluginNames: ['github'],
+        localConnectorAuthHealth: async () => ({ status: 'need_login' }),
+      })
+      const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()
+      let rejected = false
+      vi.mocked(requestLocalExecutor).mockImplementation((command: string, args?: unknown) => {
+        if (command === 'executor.plugins.manifest.read') {
+          return Promise.resolve({ connectors: [{ slug: 'github', authPolicy: 'on_use' }] })
+        }
+        if (command === 'codex.app_server_request') {
+          const request = args as { method?: string; params?: Record<string, unknown> }
+          if (request.method === 'plugin/list') return new Promise(() => undefined)
+          if (request.method === 'plugin/read') {
+            expect(request.params).toMatchObject({
+              marketplacePath: source.path,
+              remoteMarketplaceName: null,
+              pluginName: 'github',
+            })
+            if (failFirst && !rejected) {
+              rejected = true
+              return Promise.reject(new Error('403 <html><svg>upstream response</svg></html>'))
+            }
+          }
+        }
+        return previousInvoke?.(command, args) as Promise<unknown>
+      })
+
+      render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+      await userEvent.click(await screen.findByTestId(`plugin-marketplace-row-github@${source.id}`))
+      if (failFirst) {
+        expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+          '插件详情加载失败，请重试。'
+        )
+        expect(screen.queryByText(/upstream response/)).not.toBeInTheDocument()
+        await userEvent.click(screen.getByTestId('plugin-detail-load-retry'))
+      }
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-connection-manage-connector:github')).toHaveTextContent(
+          '登录'
+        )
+      )
+      expect(screen.queryByTestId('plugin-detail-action-error')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('plugin-connection-manage-connector:github'))
+      expect(await screen.findByTestId('plugin-github-cli-auth-dialog')).toBeInTheDocument()
+    }
+  )
 
   test('shows OpenAI official plugin skills and apps from plugin/read without plugin/list', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

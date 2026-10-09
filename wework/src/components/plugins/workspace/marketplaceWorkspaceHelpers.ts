@@ -12,6 +12,7 @@ import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import {
   isBuiltInMarketplaceId,
   isOpenAiOfficialMarketplaceId,
+  isOpenAiOfficialRemoteMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceNameForVisibility } from '@/features/plugins/pluginMarketplaceIdentity'
 import { queuePluginPromptTrial, queuePluginTrial } from '@/features/plugins/pluginTrial'
@@ -440,6 +441,19 @@ export function isUserAddedMarketplace(marketplace: MarketplaceOption): boolean 
 
 export function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
   return marketplaceItemMarketplaceId(item)
+}
+
+export function marketplacePluginDetailSource(
+  item: PluginMarketplaceItem,
+  marketplaces: MarketplaceOption[]
+): LocalCodexMarketplace {
+  const id = localMarketplaceIdFromItem(item)
+  if (!id) throw new Error('Plugin marketplace source is unavailable')
+  const marketplace = marketplaces.find(entry => entry.kind === 'local' && entry.id === id)
+  const path = marketplace?.path?.trim()
+  if (marketplace && path) return { id, name: marketplace.name, path }
+  if (isOpenAiOfficialRemoteMarketplaceId(id)) return { id, name: id, path: id }
+  throw new Error('Local plugin marketplace path is unavailable')
 }
 
 export function marketplacePluginDetailSelectionKey(item: PluginMarketplaceItem): string {

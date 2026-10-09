@@ -2490,6 +2490,7 @@
     "plugins_more_actions": "更多操作",
     "plugins_loading_plugins": "正在加载插件",
     "plugins_load_failed": "加载插件失败",
+    "plugins_detail_load_failed": "插件详情加载失败，请重试。",
     "plugins_loading_marketplace": "正在加载插件市场",
     "plugins_no_marketplace_results": "没有匹配的插件",
     "plugins_no_marketplace_results_hint": "可以清除搜索和分类后重新浏览。",

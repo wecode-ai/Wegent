@@ -263,7 +263,10 @@ export interface LocalCodexPluginApi {
     marketplaceKinds?: Array<'local'>
     refresh?: boolean
   }): Promise<LocalCodexPluginsState>
-  readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
+  readMarketplacePluginDetail(
+    marketplace: LocalCodexMarketplace,
+    pluginName: string
+  ): Promise<InstalledPlugin>
   readRemoteCatalog(options?: {
     forceRefetch?: boolean
   }): Promise<PluginMarketplaceListResponse & { deviceId: string }>
@@ -2127,19 +2130,6 @@ function pluginNameFromInstalledPlugin(plugin: InstalledPlugin): string {
   return typeof plugin.metadata.name === 'string' ? plugin.metadata.name.trim() : ''
 }
 
-function marketplaceMetaForPluginRead(marketplaceId: string): LocalCodexMarketplace {
-  const peeked =
-    cachedState ??
-    peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
-    peekLocalCodexPluginsReadState()
-  const existing = peeked?.marketplaces.find(entry => entry.id === marketplaceId)
-  return {
-    id: marketplaceId,
-    name: existing?.name?.trim() || marketplaceId,
-    path: existing?.path?.trim() || marketplaceId,
-  }
-}
-
 function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
   if (!cachedState) return
   const detailedId = String(installedPluginId(detailed) ?? '')
@@ -2670,18 +2660,24 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           ),
       }
     },
-    async readMarketplacePluginDetail(marketplaceId, pluginName) {
+    async readMarketplacePluginDetail(marketplace, pluginName) {
       if (!isDesktopRuntime()) {
         throw new Error('Reading local plugin detail requires the Wework desktop app')
       }
-      const normalizedMarketplaceId = marketplaceId.trim()
+      const normalizedMarketplaceId = marketplace.id.trim()
       const normalizedPluginName = pluginName.trim()
       if (!normalizedMarketplaceId || !normalizedPluginName) {
         throw new Error('Marketplace id and plugin name are required')
       }
-      // Never wait on plugin/list here. OpenAI catalog paint skips GitHub reconcile;
-      // detail skills/apps come from plugin/read against the known marketplace id.
-      const marketplaceMeta = marketplaceMetaForPluginRead(normalizedMarketplaceId)
+      // The caller owns the inventory source. Never infer local/remote routing
+      // from a separate catalog snapshot or wait on plugin/list here.
+      const marketplaceMeta = { ...marketplace, id: normalizedMarketplaceId }
+      if (
+        !isLocalMarketplacePath(marketplace.path) &&
+        !isOpenAiOfficialRemoteMarketplaceId(normalizedMarketplaceId)
+      ) {
+        throw new Error('Local plugin marketplace path is unavailable')
+      }
       const detail = await readPluginDetail(marketplaceMeta, normalizedPluginName)
       const detailed = toInstalledPlugin(
         {

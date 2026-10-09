@@ -2492,6 +2492,7 @@
     "plugins_more_actions": "More actions",
     "plugins_loading_plugins": "Loading plugins",
     "plugins_load_failed": "Failed to load plugins",
+    "plugins_detail_load_failed": "Failed to load plugin details. Please retry.",
     "plugins_loading_marketplace": "Loading plugin marketplace",
     "plugins_no_marketplace_results": "No matching plugins",
     "plugins_no_marketplace_results_hint": "Clear the search and category filters to browse again.",

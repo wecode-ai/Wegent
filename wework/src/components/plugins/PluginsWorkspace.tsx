@@ -200,6 +200,7 @@ import {
   localMarketplaceKey,
   marketplaceComponentCount,
   marketplacePluginDetailSelectionKey,
+  marketplacePluginDetailSource,
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
   nonCodexCatalogItems,
@@ -352,6 +353,8 @@ export function PluginsWorkspace({
     pluginId: string | number
     message: string
   } | null>(null)
+  const [marketplaceDetailLoadError, setMarketplaceDetailLoadError] = useState<string | null>(null)
+  const [marketplaceDetailRevision, setMarketplaceDetailRevision] = useState(0)
   const connectorActionInFlight = useRef(false)
   const [connectorActionSlug, setConnectorActionSlug] = useState<string | null>(null)
   const [pendingCodexAuthorization, setPendingCodexAuthorization] = useState<{
@@ -1772,7 +1775,10 @@ export function PluginsWorkspace({
     const marketplaceId = localMarketplaceIdFromItem(item)
     if (!marketplaceId) return detailedItem
     try {
-      const detail = await localPluginApi.readMarketplacePluginDetail(marketplaceId, item.name)
+      const detail = await localPluginApi.readMarketplacePluginDetail(
+        marketplacePluginDetailSource(item, marketplacesRef.current),
+        item.name
+      )
       return withMarketplaceDetailComponents(item, toInstalledPluginItem(detail))
     } catch {
       return detailedItem
@@ -4255,10 +4261,16 @@ export function PluginsWorkspace({
   const installedPluginsForDetailRef = useRef(installedPlugins)
   installedPluginsForDetailRef.current = installedPlugins
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? marketplacePluginDetailSelectionKey(selectedMarketplacePlugin)
+    ? JSON.stringify([
+        marketplacePluginDetailSelectionKey(selectedMarketplacePlugin),
+        marketplaces.find(
+          entry => entry.id === localMarketplaceIdFromItem(selectedMarketplacePlugin)
+        )?.path,
+      ])
     : ''
 
   useEffect(() => {
+    setMarketplaceDetailLoadError(null)
     if (!selectedMarketplaceDetailKey) {
       setSelectedMarketplacePluginDetail(null)
       return
@@ -4288,8 +4300,14 @@ export function PluginsWorkspace({
 
     let disposed = false
     setSelectedMarketplacePluginDetail(baseDetail)
-    void localPluginApi
-      .readMarketplacePluginDetail(marketplaceId!, selected.name)
+    const readDetail = async () =>
+      installedDetail
+        ? localPluginApi.readInstalledPluginDetail(installedDetail.raw)
+        : localPluginApi.readMarketplacePluginDetail(
+            marketplacePluginDetailSource(selected, marketplacesRef.current),
+            selected.name
+          )
+    void readDetail()
       .then(detail => {
         if (disposed) return
         setSelectedMarketplacePluginDetail(previous =>
@@ -4299,12 +4317,18 @@ export function PluginsWorkspace({
           )
         )
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!disposed) {
+          setMarketplaceDetailLoadError(
+            t('workbench.plugins_detail_load_failed', '插件详情加载失败，请重试。')
+          )
+        }
+      })
 
     return () => {
       disposed = true
     }
-  }, [localPluginApi, selectedMarketplaceDetailKey])
+  }, [localPluginApi, selectedMarketplaceDetailKey, marketplaceDetailRevision, t])
 
   useEffect(() => {
     if (!selectedMarketplacePlugin) {
@@ -5175,8 +5199,14 @@ export function PluginsWorkspace({
             marketplacePluginDistribution(selectedMarketplacePlugin) === 'public'
           }
           actionError={
+            marketplaceDetailLoadError ||
             (isFailed && selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
             pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
+          }
+          onRetryAction={
+            marketplaceDetailLoadError
+              ? () => setMarketplaceDetailRevision(revision => revision + 1)
+              : undefined
           }
           primaryActionLabel={
             isActionPending

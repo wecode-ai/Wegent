@@ -1602,7 +1602,10 @@ describe('local codex plugin readState cache', () => {
     )
 
     const api = createLocalCodexPluginApi()
-    const detailed = await api.readMarketplacePluginDetail('openai-curated-remote', 'github')
+    const detailed = await api.readMarketplacePluginDetail(
+      { id: 'openai-curated-remote', name: 'OpenAI', path: 'openai-curated-remote' },
+      'github'
+    )
     expect(pluginListCalls).toBe(0)
     expect(detailed.spec.components.skills.map(skill => skill.name)).toEqual(['Review Follow-up'])
     expect(detailed.spec.components.apps?.map(app => app.name)).toEqual(['GitHub'])
