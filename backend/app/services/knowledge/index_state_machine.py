@@ -1027,6 +1027,10 @@ def mark_document_conversion_succeeded(
     """
     update_payload = {
         KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
+        # Bulk updates bypass ORM events; on MySQL ON UPDATE CURRENT_TIMESTAMP
+        # maintains updated_at, but SQLite has no such mechanism, so set it
+        # explicitly (db_now keeps the dialect's naive basis).
+        KnowledgeDocument.updated_at: db_now(db),
     }
     # No longer update file_extension / name / file_size.
     # These fields keep their original file values so users can download the source document.
