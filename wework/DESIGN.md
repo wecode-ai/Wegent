@@ -644,6 +644,12 @@ Dropdown and popover surfaces use:
 - `4px` default trigger offset and `6px–8px` viewport collision padding;
 - maximum width and height constrained to the viewport minus `16px`.
 
+Anchor the menu edge facing its trigger: the bottom edge when opening above,
+the top edge when opening below. A `max-height` is only a size limit, never the
+rendered height used to calculate an offset. Content filtering and resizing
+must keep the trigger gap stable. Portal regressions must check that geometry,
+in addition to checking that the menu escapes clipping ancestors.
+
 Menu items use `14px` text, an `8px` radius, `8px–10px` horizontal padding,
 `4px` vertical padding, a `6px` icon gap, and a neutral hover/focus surface.
 Icons default to `16px` at `75%` opacity and become fully visible on hover or
@@ -776,6 +782,11 @@ semantics for all three.
 
 - Acknowledge input immediately with pressed, pending, or local state.
 - Keep useful content visible during refresh, reconnect, and long-running work.
+- 设备刷新须分别维护本地结果与云端快照。本地刷新不能清除已加载的云端设备；
+  云端成功返回的新结果（包括空列表）才更新云端设备，保持选择框和有效选择稳定。
+  Device refreshes preserve the loaded cloud snapshot when updating local devices.
+  A successful cloud response, including an empty list, updates cloud devices so
+  device controls and valid selections remain stable while refreshing.
 - Prevent duplicate submissions while pending.
 - Preserve unsent input and valid form values after recoverable failure.
 - Never convert a failed cloud or local-runtime action into apparent success.
@@ -1832,6 +1843,39 @@ flowchart LR
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not
   mark anything read. “Mark all read” acknowledges every available source.
+- System notifications carry the same `wework://` destination as the in-app
+  entry. Task completion targets the device-owned runtime conversation; project
+  assignment targets the backend project Issue. Register the native click action
+  before showing the notification, restore and focus the main window, and retain
+  the destination in the host scheme queue until the renderer navigates. Cloud
+  destinations remain pending while authentication is restored. Only the main
+  window consumes and acknowledges the global host scheme queue; popout and
+  workspace windows must not take requests, even when their hidden renderers
+  remain mounted. Do not route
+  new system notifications through task-only tray events. Regression coverage
+  must check the notification capability's native click callback and its exact
+  destination, plus navigation to a newly created task after its first turn
+  when the main window is hidden. Retain the native notification's JavaScript
+  object until click, close, or delivery failure; Electron's platform delegate
+  does not keep that wrapper alive. Garbage-collection regression coverage must
+  verify that delayed clicks survive and terminal events release the wrapper.
+  Notification navigation must select an existing tab for the same device and
+  task first. Otherwise reuse the active tab of the destination kind, its fixed
+  default tab, or another tab of that kind. Create a tab only when that kind has
+  no existing tab; repeated notification clicks must not accumulate tabs.
+
+  ```mermaid
+  flowchart LR
+    TaskCompletion[Runtime completion with task URL] --> Native[System notification]
+    Assignment[Project assignment with Issue URL] --> Native
+    Lifetime[Host retains JavaScript notification until terminal event] --> Native
+    Native -->|Click| Queue[Host scheme queue]
+    Queue --> Main[Restore and focus main window]
+    Queue --> Bridge[Main-window WeworkSchemeBridge]
+    BellEntry[In-app notification link] --> Bridge
+    Bridge -->|Navigate then acknowledge| Tabs[Destination workspace tab]
+  ```
+
 - The bell's settings view is the single notification-preference surface.
   Preferences are account-scoped and grouped by Task updates, Collaboration,
   and Other notifications. Each category exposes only channels that it can

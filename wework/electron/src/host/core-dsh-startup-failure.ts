@@ -1,4 +1,5 @@
 const DSH_BOOT_SELECTOR = '[data-dsh-boot]'
+const DSH_ROOT_SELECTOR = '#root'
 const DSH_PLUGIN_FAILURE_TITLE = 'Failed to load plugins'
 const DETECTION_TIMEOUT_MS = 60_000
 
@@ -20,6 +21,7 @@ export function detectionScript(pluginNames: string[]): string {
   return `(() => new Promise(resolve => {
     const candidates = ${JSON.stringify(pluginNames)}
     const rootSelector = ${JSON.stringify(DSH_BOOT_SELECTOR)}
+    const containerSelector = ${JSON.stringify(DSH_ROOT_SELECTOR)}
     const failureTitle = ${JSON.stringify(DSH_PLUGIN_FAILURE_TITLE)}
     let settled = false
     let observer
@@ -32,7 +34,11 @@ export function detectionScript(pluginNames: string[]): string {
     }
     const inspect = () => {
       const root = document.querySelector(rootSelector)
-      if (!root || !root.textContent?.includes(failureTitle)) return
+      if (!root) {
+        if (document.querySelector(containerSelector)?.childElementCount) complete(null)
+        return
+      }
+      if (!root.textContent?.includes(failureTitle)) return
       const texts = new Set(
         [...root.querySelectorAll('*')]
           .map(element => element.textContent?.trim())

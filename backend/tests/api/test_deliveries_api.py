@@ -540,6 +540,7 @@ def test_delivery_returns_service_unavailable_without_repeating_cleanup(
 def test_delivery_flow_creates_immutable_snapshot(
     test_client: TestClient,
     test_token: str,
+    test_db: Session,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
     monkeypatch: pytest.MonkeyPatch,
@@ -558,6 +559,9 @@ def test_delivery_flow_creates_immutable_snapshot(
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "local-device",
         "taskId": "runtime-task-1",
@@ -607,6 +611,13 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert finalized.json()["status"] == "delivered"
     assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
     assert published_events == [(item_id, "delivery_finalized")]
+    test_db.expire_all()
+    item = test_db.get(LoopItem, item_id)
+    assert item is not None
+    assert item.status == "inbox"
+    assert item.completed_at is None
+    assert item.current_delivery_id == delivery_id
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
 
     detail = test_client.get(
         f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
@@ -640,6 +651,9 @@ def test_collaboration_human_delivery_closes_assignment_without_completing_issue
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "human-device",
         "taskId": "human-runtime-task",
@@ -702,10 +716,13 @@ def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     item_response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Prepare release notes", "status": "in_progress"},
+        json={"title": "Prepare release notes", "status": "inbox"},
     )
     assert item_response.status_code == 201
     item_id = item_response.json()["id"]
+    initial_history = list(
+        (test_db.get(LoopItem, item_id).metadata_json or {}).get("status_history", [])
+    )
     source_task = {
         "deviceId": "human-device",
         "taskId": "direct-human-runtime-task",
@@ -742,9 +759,10 @@ def test_direct_human_ai_delivery_stays_a_draft_until_person_submits(
     test_db.expire_all()
     item = test_db.get(LoopItem, item_id)
     assert item is not None
-    assert item.status == "in_progress"
+    assert item.status == "inbox"
     assert item.completed_at is None
     assert item.current_delivery_id == delivery_id
+    assert (item.metadata_json or {}).get("status_history", []) == initial_history
     assert item.metadata_json["human_work"]["ai_draft_delivery_id"] == delivery_id
 
 

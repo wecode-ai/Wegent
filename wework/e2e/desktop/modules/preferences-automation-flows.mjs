@@ -182,6 +182,9 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
       Object.prototype.hasOwnProperty.call(
         {
           app_started: true,
+          app_startup_attempted: true,
+          app_startup_failed: true,
+          app_startup_succeeded: true,
           feature_opened: true,
           telemetry_preference_changed: true,
         },

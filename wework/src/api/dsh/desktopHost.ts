@@ -29,8 +29,13 @@ interface DesktopHostEventBatch {
 }
 
 type DesktopHostEventHandler = (event: DesktopHostEvent) => void
+interface DesktopHostEventSubscriptionOptions {
+  readonly replay?: (event: DesktopHostEvent) => boolean
+}
 
 const desktopHostEventHandlers = new Set<DesktopHostEventHandler>()
+const desktopHostEventHistory: DesktopHostEvent[] = []
+const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
 const DESKTOP_HOST_EVENT_POLL_INTERVAL_MS = 500
 let desktopHostEventAfter = loadDesktopHostEventCursor()
@@ -61,8 +66,16 @@ export async function invokeDesktopHost<Result>(
   return body.result as Result
 }
 
-export function subscribeDesktopHostEvents(handler: DesktopHostEventHandler): () => void {
+export function subscribeDesktopHostEvents(
+  handler: DesktopHostEventHandler,
+  options: DesktopHostEventSubscriptionOptions = {}
+): () => void {
   desktopHostEventHandlers.add(handler)
+  if (options.replay) {
+    for (const event of desktopHostEventHistory) {
+      if (options.replay(event)) dispatchDesktopHostEvent(handler, event)
+    }
+  }
   startDesktopHostEventLoop()
   return () => {
     desktopHostEventHandlers.delete(handler)
@@ -92,12 +105,12 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
       }
       desktopHostEventAfter = batch.latestSequence
       for (const event of coalesceDesktopHostEvents(batch.events)) {
+        desktopHostEventHistory.push(event)
+        if (desktopHostEventHistory.length > MAX_DESKTOP_HOST_EVENT_HISTORY) {
+          desktopHostEventHistory.shift()
+        }
         desktopHostEventHandlers.forEach(handler => {
-          try {
-            handler(event)
-          } catch (error) {
-            console.error('[Wework] Desktop host event handler failed', error)
-          }
+          dispatchDesktopHostEvent(handler, event)
         })
       }
       saveDesktopHostEventCursor(desktopHostEventAfter)
@@ -107,6 +120,14 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
       console.error('[Wework] Failed to receive Electron host events', error)
       await waitForNextDesktopHostEventPoll()
     }
+  }
+}
+
+function dispatchDesktopHostEvent(handler: DesktopHostEventHandler, event: DesktopHostEvent): void {
+  try {
+    handler(event)
+  } catch (error) {
+    console.error('[Wework] Desktop host event handler failed', error)
   }
 }
 

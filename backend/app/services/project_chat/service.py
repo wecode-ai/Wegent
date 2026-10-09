@@ -1845,7 +1845,7 @@ class ProjectChatService:
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
-        """Move the work item to human review when its assigned AI finishes."""
+        """Move an Issue assigned to this project agent into human review."""
 
         if not row.task_id:
             return
@@ -1861,12 +1861,7 @@ class ProjectChatService:
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
-        if row.agent_id:
-            if task.assignee_agent_id != row.agent_id:
-                return
-        else:
-            # AI managers are audit-only comments. Only an assigned project
-            # robot can complete work and advance the task to review.
+        if not row.agent_id or task.assignee_agent_id != row.agent_id:
             return
         task_metadata = (
             dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
@@ -1877,8 +1872,6 @@ class ProjectChatService:
             or task_metadata.get("dispatch_child") is True
             or isinstance(task_metadata.get("workflow_plan"), dict)
         ):
-            # External providers and dispatch/workflow tasks own their status
-            # transitions outside Runtime chat projection.
             return
         project = db.get(CloudProject, task.cloud_project_id)
         if project is not None:

@@ -451,12 +451,16 @@ def test_self_assignment_uses_maintainer_fallback(
     assert developer_view["human_work"]["can_review"] is False
 
 
-def test_reassignment_resets_pending_review(
+@pytest.mark.parametrize("initial_status", ["in_review", "completed"])
+@pytest.mark.parametrize("unassign_first", [False, True])
+def test_reassignment_preserves_status_until_new_assignee_starts(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
     project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
+    initial_status: str,
+    unassign_first: bool,
 ) -> None:
     monkeypatch.setattr(
         "app.core.socketio.get_sio", lambda: SimpleNamespace(emit=AsyncMock())
@@ -478,6 +482,34 @@ def test_reassignment_resets_pending_review(
             "summary": "Done",
         },
     ).json()["issue"]
+    if initial_status == "completed":
+        accepted = test_client.post(
+            f"/api/v1/loop-items/{issue['id']}/work/review",
+            headers=_auth(test_token),
+            json={
+                "version": submitted["version"],
+                "request_id": str(uuid4()),
+                "decision": "accept",
+            },
+        )
+        assert accepted.status_code == 200, accepted.text
+        submitted = accepted.json()["issue"]
+    assert submitted["status"] == initial_status
+    repeated_start = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/start",
+        headers=_auth(first_token),
+        json={"version": submitted["version"]},
+    )
+    assert repeated_start.status_code == 409
+    if unassign_first:
+        unassigned = test_client.patch(
+            f"/api/v1/loop-items/{issue['id']}",
+            headers=_auth(test_token),
+            json={"version": submitted["version"], "assignee_user_id": None},
+        )
+        assert unassigned.status_code == 200, unassigned.text
+        submitted = unassigned.json()
+        assert submitted["status"] == initial_status
     reassigned = test_client.post(
         f"/api/v1/cloud-projects/{project.id}/loop-items/{issue['id']}/assign",
         headers=_auth(test_token),
@@ -488,7 +520,7 @@ def test_reassignment_resets_pending_review(
         },
     )
     assert reassigned.status_code == 200, reassigned.text
-    assert reassigned.json()["status"] == "pending"
+    assert reassigned.json()["status"] == initial_status
     assert reassigned.json()["human_work"]["state"] == "none"
     second_view = test_client.get(
         f"/api/v1/loop-items/{issue['id']}", headers=_auth(second_token)
@@ -498,3 +530,17 @@ def test_reassignment_resets_pending_review(
         f"/api/v1/loop-items/{issue['id']}", headers=_auth(first_token)
     ).json()
     assert old_view["human_work"]["can_start"] is False
+    old_assignee_start = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/start",
+        headers=_auth(first_token),
+        json={"version": reassigned.json()["version"]},
+    )
+    assert old_assignee_start.status_code == 403
+    resumed = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/work/start",
+        headers=_auth(second_token),
+        json={"version": reassigned.json()["version"]},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["issue"]["status"] == "in_progress"
+    assert resumed.json()["issue"]["completed_at"] is None

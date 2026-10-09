@@ -22,6 +22,7 @@ const chatPreparations = vi.hoisted(
 
 const issue = {
   id: 'TEST-1',
+  sequence_number: 1,
   title: 'Execute pwd',
   status: 'pending',
   can_edit: true,
@@ -169,6 +170,7 @@ vi.mock('./TodoEditor', () => ({
         data-read-first={props.readFirst ? 'true' : 'false'}
         data-selected-task-id={props.selectedTaskId ?? ''}
         data-task-status={props.taskExecutionStates?.['binding-1']?.status ?? ''}
+        data-current-user-id={props.currentUserId}
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -186,9 +188,7 @@ vi.mock('./TodoEditor', () => ({
         />
         <div data-testid="cloud-todo-detail-scroll" />
         <div data-testid="cloud-todo-detail-device-name">{props.deviceNamesById?.device ?? ''}</div>
-        {props.showAdditionalTaskAction && (
-          <button onClick={() => props.onCreateTask?.()}>Add task</button>
-        )}
+        {props.onCreateTask && <button onClick={() => props.onCreateTask?.()}>Add task</button>}
         {['run-1', 'run-2'].map(taskId => (
           <button
             key={taskId}
@@ -219,6 +219,7 @@ vi.mock('./AiChatModal', () => ({
         data-testid="ai-chat-modal"
         data-address={props.initialAddress?.taskId}
         data-device-id={props.initialTaskRequest?.deviceId}
+        data-initial-input={props.initialTaskInput}
         data-mount-id={mountId}
         data-workspace-path={props.initialTaskRequest?.workspacePath}
         data-origin={JSON.stringify(props.initialTaskRequest?.origin)}
@@ -282,8 +283,10 @@ function Project({
       project={
         {
           id: 'project',
+          project_key: 'TEST',
           name: 'Project',
           project_store: 'backend',
+          current_user_id: 1,
           // The shell snapshot can predate settings saved inside CollaborationApp.
           execution_environment: undefined,
         } as never
@@ -301,7 +304,7 @@ function Project({
       runtimeWork={runtimeWork}
       runtimePort={runtimePort}
       sendRuntimePaneMessage={vi.fn(async () => true)}
-      userId={1}
+      userId={9001}
     />
   )
 }
@@ -367,7 +370,7 @@ describe('Wework Issue conversation drawers', () => {
     expect(screen.getByTestId('cloud-todo-detail-device-name')).toHaveTextContent('Wework 开发设备')
   })
 
-  it('refreshes the prepared execution environment before starting manual work', async () => {
+  it('lets the personal task composer choose the current computer', async () => {
     taskBindings = [
       {
         id: 'binding-existing',
@@ -398,15 +401,14 @@ describe('Wework Issue conversation drawers', () => {
     )
 
     await user.click(screen.getByText('Open Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-current-user-id', '1')
     await user.click(screen.getByRole('button', { name: 'Add task' }))
 
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-device-id')
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-workspace-path')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-device-id',
-      'shared-runtime-device'
-    )
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-workspace-path',
-      '/srv/collaboration/project'
+      'data-initial-input',
+      '[$TEST-1 · Execute pwd](wework-issue://project/TEST-1)'
     )
   })
 

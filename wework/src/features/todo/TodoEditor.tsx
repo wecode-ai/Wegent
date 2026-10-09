@@ -1,4 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from 'react'
+import { LockKeyhole, Send } from 'lucide-react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -100,7 +101,6 @@ export type TodoEditorProps = TodoEditorApiProps & {
   taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
   deviceNamesById?: Readonly<Record<string, string>>
   headerActions?: ReactNode
-  showAdditionalTaskAction?: boolean
   onAddAssigneeMember?: () => void
   onAddAssigneeAgent?: () => void
   selectedTaskId?: string | null
@@ -111,8 +111,31 @@ export type TodoEditorProps = TodoEditorApiProps & {
   onOpenChildTask?: (task: CloudLoopItem) => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
+function canCreatePersonalTask(props: TodoEditorProps): boolean {
+  if (props.mode !== 'edit' || !props.onCreateTask || props.currentUserId === undefined) {
+    return false
+  }
+
+  if (props.item.assignee_user_id !== null) {
+    return String(props.item.assignee_user_id) === String(props.currentUserId)
+  }
+  if (props.item.assignee_agent_id || props.item.assignee_group_id || props.item.assignee_team_id) {
+    return false
+  }
+
+  if (props.currentAssignment?.status === 'active') {
+    return (
+      props.currentAssignment.target_type === 'human' &&
+      String(props.currentAssignment.target_id) === String(props.currentUserId)
+    )
+  }
+
+  return true
+}
+
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const showPersonalTaskAction = canCreatePersonalTask(props)
   const collaborationTranslate = useMemo(
     () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
     [i18n.language]
@@ -218,6 +241,27 @@ export function TodoEditor(props: TodoEditorProps) {
     ),
     renderCreateOptions:
       props.mode === 'create' && props.createOptions ? () => props.createOptions : undefined,
+    renderPersonalTaskAction:
+      showPersonalTaskAction && props.onCreateTask
+        ? ({ onCreateTask }) => (
+            <section
+              className="task-detail-personal-task"
+              data-testid="cloud-todo-personal-task-action"
+            >
+              <span className="task-detail-personal-task-icon" aria-hidden="true">
+                <LockKeyhole size={14} />
+              </span>
+              <span className="task-detail-personal-task-copy">
+                <strong>{t('todo.personal_task_title')}</strong>
+                <small>{t('todo.personal_task_description')}</small>
+              </span>
+              <button type="button" data-testid="cloud-todo-create-task" onClick={onCreateTask}>
+                <Send aria-hidden="true" size={14} />
+                {t('todo.create_personal_task')}
+              </button>
+            </section>
+          )
+        : undefined,
   }
 
   const commonProps = {
@@ -244,21 +288,7 @@ export function TodoEditor(props: TodoEditorProps) {
     initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
-    headerActions: (
-      <>
-        {props.headerActions}
-        {props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
-          <button
-            type="button"
-            data-testid="cloud-todo-create-task"
-            onClick={() => props.onCreateTask?.()}
-            className="task-detail-workspace-edit"
-          >
-            {t('todo.add_task', '新增任务')}
-          </button>
-        ) : null}
-      </>
-    ),
+    headerActions: props.headerActions,
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,

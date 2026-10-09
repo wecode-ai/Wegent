@@ -18,7 +18,7 @@ sidebar_position: 26
 4. Issue 分配给 Wegent Chat 智能体后，Skill 与 MCP 能被加载、调用并产生可验证结果。
 5. Issue 分配给 Wegent ClaudeCode 智能体后，Skill 与 MCP 能被加载、调用并产生可验证结果。
 6. Issue 分配给 Codex 智能体后，Skill、MCP 和 Plugin 能被加载、调用并产生可验证结果。
-7. Issue 分配给人后，Wework 能收到通知，用户能从 Issue 创建任务，在真实运行时执行，提交产物，并推动 Issue 状态变化。
+7. Issue 分配给人后，Wework 能收到通知，用户能从 Issue 创建私人本地任务，在真实运行时执行，并按明确指令操作共享 Issue。
 8. 执行失败、Executor 离线、页面刷新、进程重启和重复事件不会伪造成功或破坏最终一致性。
 9. 每个关键步骤都有结构化断言、后端证据和截图证据。
 
@@ -74,13 +74,13 @@ ProjectChatAgent
 Issue assignment
   -> Wework notification
     -> User opens Issue
-      -> User creates Task
-        -> Wework Runtime executes Task
-          -> Artifact / delivery
-            -> Issue status projection
+      -> User creates private local Task
+        -> Local Wework Runtime starts
+          -> Issue moves to in progress
+            -> Runtime completes without advancing Issue again
 ```
 
-分配给人首先产生通知和协作上下文。用户可以从通知进入 Issue，也可以在未被分配时主动进入 Issue 并创建任务。
+分配给人首先产生通知和协作上下文。用户可以从通知进入 Issue，也可以在未被分配时主动进入 Issue 并创建任务。私人任务的对话和终态不自动写入共享 Issue；评论、交付和后续状态变化由用户手动执行，或由 AI 在收到明确指令后通过项目空间工具执行。
 
 ## 测试边界与真实性原则
 
@@ -343,7 +343,8 @@ Issues:
 
 ### E2E-07：Issue 分配给人并由 Wework 执行
 
-目标：证明人的分配不是只创建负责人字段，而是形成通知、执行、产物和状态闭环。
+目标：证明负责人可以从共享 Issue 创建仅自己可见的本地任务，把 AI
+作为个人工具执行工作，同时保持私人执行流与共享协作状态的边界。
 
 步骤：
 
@@ -352,28 +353,37 @@ Issues:
 3. 验证 Wework 出现系统通知和应用内未读标识。
 4. 用户点击通知，深链进入正确 Workspace、Project 和 Issue。
 5. 用户在 Issue 中点击“创建任务”。
-6. 新任务自动保留 Workspace、Project 和 Issue 上下文。
-7. 用户提交执行要求。
-8. Wework 使用真实本地或云端 Runtime 执行任务。
-9. 运行时生成 `human-result.txt` 或等价交付物。
-10. 用户把产物同步到 Issue。
-11. Task 完成。
-12. Issue 状态进入等待确认或已完成。
+6. 新任务仅对当前用户可见，并自动保留 Workspace、Project 和 Issue 上下文。
+7. Composer 以原生 Issue 气泡展示当前 Issue，而不是普通文本或错误状态标签。
+8. 用户提交执行要求，本地 Runtime 开始运行后，Issue 从收集箱或待处理进入进行中。
+9. Runtime 能使用 `wework_space` 工具读取当前 Issue；只有用户明确要求时才更新
+   Issue、添加评论或提交交付物。
+10. 运行时生成 `human-result.txt` 或等价本地产物并完成 Task。
+11. Task 完成、失败、停止或产生交付物时，不自动把 Issue 推进到待确认或已完成。
+12. 用户手动修改 Issue 状态，或明确要求 AI 使用 `wework_space` 修改状态。
 
 必须验证：
 
 - 通知接收人、分配事件和 Issue ID 正确。
 - 重复分配事件不会产生重复通知。
 - 点击通知进入正确 Issue，不只是打开协作首页。
-- 新建 Task 绑定正确 Workspace、Project、Issue 和用户。
-- 执行由真实 Runtime 完成。
-- 产物真实存在，并能从 Issue 动态或交付物区域读取。
-- Task 终态和 Issue 状态投影一致。
+- 新建 Task 绑定正确 Workspace、Project、Issue、用户和当前本地设备。
+- 发送后的 Issue 引用保持原生气泡样式，不出现 `[blocked]` 等状态文本污染。
+- 执行由真实本地 Runtime 完成，并具备项目空间工具。
+- Runtime 启动会把可开始的 Issue 自动标记为进行中。
+- Runtime 终态、停止和交付不会继续改动 Issue 状态或负责人。
+- 私人任务中的普通对话不会自动发布为共享 Issue 评论。
+- 用户明确要求 AI 更新 Issue 时，工具调用使用当前项目和 Issue 的显式 ID。
 
 补充场景：
 
 - 未分配给当前用户时，用户仍可主动进入 Issue 创建任务。
 - 主动参与不得伪造“已分配给我”的通知或分配事件。
+- Issue 已处于待确认或已完成时，启动私人任务不得把状态回退到进行中。
+- 人工处理面板的“接手处理”是独立的显式动作：待确认或已完成的事项转交后，
+  保留原 Issue 状态并清除旧人工提交；新处理人点击接手才进入进行中。
+  旧处理人不能接手，当前指派下已经提交或验收的结果也不能重复接手。
+  `project-assignment-notification` 覆盖验收后重新指派与显式接手，不发起 AI 请求。
 
 ### E2E-08：跨端一致性
 
@@ -460,7 +470,7 @@ runtimeDeviceId
 
 ### 2. 后端与运行时终态
 
-至少断言：
+智能体直接承接 Issue 的场景至少断言：
 
 ```text
 Task status == COMPLETED
@@ -470,6 +480,10 @@ Project message metadata.run_status == completed
 Issue ai_state.status == completed
 Issue status == in_review | completed
 ```
+
+人工负责人创建私人本地 Task 的场景单独断言：Task 和 Runtime 已完成，
+Issue 保持 Runtime 启动后的 `in_progress`，直到用户手动修改或明确要求 AI
+使用项目空间工具修改。
 
 不同运行时没有对应字段时，文档化映射关系，并断言该运行时的权威终态字段。
 
@@ -544,8 +558,8 @@ Skill locator or content enters runtime
 25. `25-human-issue-opened.png`：点击通知后打开正确 Issue。
 26. `26-human-task-created.png`：从 Issue 创建并绑定的任务。
 27. `27-human-task-running.png`：真实 Runtime 执行中。
-28. `28-human-artifact.png`：产物已生成并同步。
-29. `29-human-issue-completed.png`：Task 和 Issue 最终状态。
+28. `28-human-artifact.png`：本地产物已生成。
+29. `29-human-task-completed.png`：Task 已完成且 Issue 仍保持进行中。
 
 ### 恢复与跨端
 
@@ -757,9 +771,10 @@ Workspace 归档前必须先归档其中所有 active Project；历史已归档 
 
 - Wework 收到目标用户的真实分配通知。
 - 点击通知进入正确 Issue。
-- 从 Issue 创建的 Task 保留完整协作上下文。
-- 真实 Runtime 完成任务并生成产物。
-- 产物同步到 Issue，Task 与 Issue 状态一致。
+- 从 Issue 创建的私人 Task 保留完整协作上下文和原生 Issue 气泡。
+- 真实本地 Runtime 具备 `wework_space` 工具并完成任务。
+- Runtime 启动后 Issue 进入进行中；Task 终态不自动推进 Issue。
+- Issue 评论、交付和后续状态只由用户手动操作或明确指令触发。
 
 ### 证据
 

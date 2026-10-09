@@ -1668,14 +1668,6 @@ class LoopItemService:
                 if target_type == "user" and item.assignee_user_id != int(target_id):
                     metadata.pop("human_work", None)
                     updates["metadata_json"] = metadata
-                if (
-                    target_type == "user"
-                    and item.assignee_user_id != int(target_id)
-                    and item.status in {"in_progress", "in_review", "completed"}
-                ):
-                    updates["status"] = "pending"
-                    updates["completed_at"] = None
-                    updates["sort_order"] = 0
                 cancelled_runs = self._sync_execution_for_assignment(
                     db,
                     item=item,
@@ -2012,25 +2004,11 @@ class LoopItemService:
             )
             if assignment_created and previous_assignee_user_id != target_user_id:
                 metadata.pop("human_work", None)
-                if item.status in {"in_progress", "in_review", "completed"}:
-                    write_status_change(
-                        metadata,
-                        project=project,
-                        from_status=item.status,
-                        to_status="pending",
-                        trigger="reassignment",
-                        by_user_id=user_id,
-                    )
             assignee_updates = {
                 "assignee_user_id": target_user_id,
                 "assignee_agent_id": "",
                 "assignee_team_id": None,
             }
-            if assignment_created and previous_assignee_user_id != target_user_id:
-                if item.status in {"in_progress", "in_review", "completed"}:
-                    assignee_updates.update(
-                        status="pending", completed_at=None, sort_order=0
-                    )
             target = db.get(User, target_user_id)
             self._write_assignment_change(
                 metadata,

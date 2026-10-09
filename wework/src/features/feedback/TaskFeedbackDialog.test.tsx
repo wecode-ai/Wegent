@@ -5,6 +5,11 @@ import {
   recordComposerDiagnostic,
   resetComposerDiagnosticsForTest,
 } from '@/components/chat/composer/composerDiagnostics'
+import {
+  recordConversationDiagnostic,
+  resetConversationDiagnosticsForTest,
+  startConversationDiagnosticCapture,
+} from '@wegent/collaboration/conversation/conversationDiagnostics'
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -76,6 +81,7 @@ const previewResult = {
 describe('TaskFeedbackDialog', () => {
   beforeEach(() => {
     resetComposerDiagnosticsForTest()
+    resetConversationDiagnosticsForTest()
     invokeMock.mockReset()
     trackMock.mockReset()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
@@ -166,6 +172,76 @@ describe('TaskFeedbackDialog', () => {
               }),
             ],
           }),
+        }),
+      })
+    )
+  })
+
+  test('includes recent conversation diagnostics with standard runtime logs', async () => {
+    invokeMock.mockResolvedValue(previewResult)
+    startConversationDiagnosticCapture()
+    recordConversationDiagnostic('anchor-lost', { scrollerId: 1, rowIndex: 4 })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The conversation flickers while scrolling upward' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'feedback.previewBundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          includeRuntimeLogs: true,
+          conversationDiagnostics: expect.objectContaining({
+            schemaVersion: 1,
+            events: [
+              expect.objectContaining({
+                name: 'anchor-lost',
+                details: { scrollerId: 1, rowIndex: 4 },
+              }),
+            ],
+          }),
+        }),
+      })
+    )
+  })
+
+  test('omits conversation diagnostics when runtime logs are unselected', async () => {
+    invokeMock.mockResolvedValue(previewResult)
+    startConversationDiagnosticCapture()
+    recordConversationDiagnostic('anchor-lost', { scrollerId: 1, rowIndex: 4 })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Do not include runtime logs in this report' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'feedback.previewBundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          includeRuntimeLogs: false,
+          composerDiagnostics: null,
+          conversationDiagnostics: null,
         }),
       })
     )

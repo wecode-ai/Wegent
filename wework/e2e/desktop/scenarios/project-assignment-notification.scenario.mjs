@@ -426,6 +426,41 @@ async function verifyManualReviewCycle(control, request, projectId, owner, uiTim
   )
   assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
   await capture('assignment-07-manual-resubmitted-accepted.png', CONTENT)
+
+  // Establish a new assignment without changing the completed Issue's status.
+  const acceptedIssue = await request(`/api/v1/loop-items/${manualIssue.id}`)
+  const unassigned = await request(`/api/v1/loop-items/${manualIssue.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version: acceptedIssue.version, assignee_user_id: null }),
+  })
+  assert.equal(unassigned.status, 'completed')
+  const reassigned = await request(
+    `/api/v1/cloud-projects/${projectId}/loop-items/${manualIssue.id}/assign`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        version: unassigned.version,
+        assignee_type: 'user',
+        assignee_id: String(owner.id),
+      }),
+    }
+  )
+  assert.equal(reassigned.status, 'completed')
+  assert.equal(reassigned.human_work?.state, 'none')
+  assert.equal(reassigned.human_work?.can_start, true)
+  await control.command('waitFor', '[data-testid="human-issue-start"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="human-issue-start"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${manualIssue.id}`),
+    value => value.status === 'in_progress',
+    '重新指派后的显式接手没有进入进行中',
+    uiTimeoutMs
+  )
+  assert.deepEqual(await request(`/api/v1/loop-items/${manualIssue.id}/tasks`), [])
+  await capture('assignment-08-reassigned-human-work-started.png', CONTENT)
 }
 
 export function createDesktopScenario({
