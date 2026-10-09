@@ -23,6 +23,13 @@ export function createIssueTaskBindingApi(client: BindingHttpClient) {
       const modelSelection =
         task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       const team = task.runtimeHandle?.wegentTeam as { id?: number } | undefined
+      const executionContext = {
+        runtime: task.runtime,
+        threadId: task.threadId,
+        workspacePath: task.workspacePath,
+        workspaceKind: task.workspaceKind,
+        worktreeId: task.worktreeId,
+      }
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
@@ -30,6 +37,9 @@ export function createIssueTaskBindingApi(client: BindingHttpClient) {
         ...(dispatch ?? {}),
         ...(modelSelection ? { modelSelection } : {}),
         ...(team?.id ? { wegentTeamId: team.id } : {}),
+        ...(Object.values(executionContext).some(value => value != null && value !== '')
+          ? { executionContext }
+          : {}),
       })
     },
     unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {

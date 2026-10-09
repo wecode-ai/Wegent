@@ -60,3 +60,13 @@ After the push, main introduced Issue archiving and conflicted in the properties
 menu. The merge retains the archive label/callback and outside-click dismissal,
 with a regression assertion covering both. Revalidate shared archive components,
 the desktop editor and Backend endpoints after the merge.
+
+Main subsequently unified Issue execution state and replies. The merge must keep
+both the agent Team/model binding and the execution thread, workspace and Issue
+session context, including bindings with no selected model. Focused tests caught
+a missing database argument in the successful continuation status push to
+`to_view`; it has been corrected. Verify original-session continuation, queued
+replies, reassignment and manually bound agent models. The panel-reopening unit
+test establishes its active project directly, reuses its interaction device and
+asserts that the old panel closed before reopening. It retains the late-address
+isolation assertion without increasing the timeout.

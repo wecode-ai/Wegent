@@ -155,6 +155,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  queueIfBusy?: boolean
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean

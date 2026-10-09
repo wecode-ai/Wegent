@@ -258,9 +258,16 @@ async def _continue_runtime(
     response = _response(
         db, request, trigger, execution.agent_id, target.sender_name, execution
     )
-    response.status = "streaming"
-    # A follow-up owns a new turn, not the already completed automation run.
-    response.metadata_json = {**response.metadata_json, "run_status": "running"}
+    project_chat_service._set_task_ai_state(
+        db,
+        row=response,
+        trigger=trigger,
+        agent=None,
+        status_value="running",
+        prompt=trigger.content,
+        user_id=int(trigger.sender_id),
+    )
+    response.metadata_json = {**response.metadata_json, "run_status": "queued"}
     response.runtime_activity_key = project_chat_service._runtime_activity_key(
         execution.runtime_device_id, execution.runtime_task_id, trigger.message_id
     )
@@ -273,6 +280,7 @@ async def _continue_runtime(
             "taskId": execution.runtime_task_id,
             "message": trigger.content,
             "clientUserMessageId": trigger.message_id,
+            "queueIfBusy": True,
             "executionRequest": compiled.payload["executionRequest"],
             "attachments": attachments,
         }
@@ -294,6 +302,21 @@ async def _continue_runtime(
             raise HTTPException(
                 502, str(result.get("error") or "Runtime rejected the reply")
             )
+        queued = result.get("status") == "queued"
+        response.status = "pending" if queued else "streaming"
+        response.metadata_json = {
+            **response.metadata_json,
+            "run_status": "queued" if queued else "running",
+            **(
+                {"queue_position": result.get("queuePosition")}
+                if result.get("queuePosition") is not None
+                else {}
+            ),
+        }
+        db.commit()
+        push_project_chat_message(
+            project_chat_service.to_view(response, db=db).model_dump(by_alias=True)
+        )
     except Exception as exc:
         error = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         failed = project_chat_service.fail_agent_response(
@@ -355,8 +378,6 @@ async def execute_comment(
     if target is None:
         response = _new_execution(db, user_id, request, trigger, attachments)
         return [project_chat_service.to_view(response, db=db)] if response else []
-    if target.status in {"pending", "streaming"}:
-        raise HTTPException(409, "The previous reply is still running")
     execution = _execution(db, request, target)
     if execution.agent_id:
         project_chat_service._agent_row(

@@ -51,22 +51,14 @@ export function cardSessionActive(
   card: TaskReplyCard,
   busy: (address: RuntimeTaskAddress) => boolean | undefined,
 ): boolean {
-  return [card.root, ...card.replies].some((message) => {
-    if (message.sender.type !== "agent") return false;
-    const recordedStatus = message.status.toLowerCase();
-    if (
-      ["completed", "failed", "cancelled", "canceled"].includes(recordedStatus)
-    ) {
-      return false;
-    }
-    const running = message.runtimeAddress
-      ? busy(message.runtimeAddress)
-      : undefined;
-    return (
-      running ??
-      (message.status === "pending" || message.status === "streaming")
-    );
-  });
+  const messages = [card.root, ...card.replies].filter(
+    (message) => message.sender.type === "agent",
+  );
+  const currentAddress = cardSessionAddress(card);
+  const live = currentAddress ? busy(currentAddress) : undefined;
+  if (live !== undefined) return live;
+  const current = messages.at(-1);
+  return current?.status === "pending" || current?.status === "streaming";
 }
 export interface TaskCardReplyInput<
   Project,
@@ -77,6 +69,7 @@ export interface TaskCardReplyInput<
 > {
   card: TaskReplyCard;
   reply: RuntimePaneQueuedMessage;
+  sessionAddress?: RuntimeTaskAddress | null;
   agent?: { id: string; name: string; systemPrompt?: string; runtime?: string };
   selfManagedExecution?: boolean;
   prepareComment?(
@@ -119,7 +112,7 @@ export async function dispatchTaskCardReply<
     : input.agent;
   const rootId = card.root.messageId;
   const attachments = reply.attachments ?? [];
-  const address = cardSessionAddress(card);
+  const address = input.sessionAddress ?? cardSessionAddress(card);
   let persisted = false;
   let executionError: string | null = null;
   const onError = (error: string) => {
@@ -189,6 +182,7 @@ export async function dispatchTaskCardReply<
             ? {
                 runtimeDeviceId: address.deviceId,
                 runtimeTaskId: address.taskId,
+                address,
               }
             : null,
           threadRootId: rootId,

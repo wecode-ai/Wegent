@@ -197,7 +197,6 @@ async def test_old_thread_survives_reassignment(scenario):
         "other_issue",
         "binding",
         "inactive",
-        "busy",
     ],
 )
 async def test_rejects_invalid_collaboration_without_runtime_dispatch(
@@ -219,12 +218,30 @@ async def test_rejects_invalid_collaboration_without_runtime_dispatch(
         s.execution.cloud_project_id = "different-project"
     elif boundary == "inactive":
         s.agent.status = "archived"
-    elif boundary == "busy":
-        s.root.status = "streaming"
     s.db.commit()
     with pytest.raises(HTTPException):
         await execute_comment(s.db, user_id=s.member.id, request=request)
     s.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_busy_session_accepts_follow_up_into_runtime_queue(scenario):
+    s = scenario
+    s.root.status = "streaming"
+    s.rpc.return_value = {
+        "accepted": True,
+        "status": "queued",
+        "queuePosition": 2,
+    }
+    s.db.commit()
+
+    result = await execute_comment(s.db, user_id=s.member.id, request=comment(s))
+
+    assert result[0].status == "pending"
+    assert result[0].metadata["run_status"] == "queued"
+    assert result[0].metadata["queue_position"] == 2
+    assert s.issue.status == "in_progress"
+    assert s.rpc.call_args.kwargs["payload"]["queueIfBusy"] is True
 
 
 @pytest.mark.asyncio

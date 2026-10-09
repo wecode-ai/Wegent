@@ -84,7 +84,11 @@ export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecu
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
-  replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
+  replyTo?: {
+    runtimeDeviceId: string
+    runtimeTaskId: string
+    address?: RuntimeTaskAddress
+  } | null
   threadRootId?: string | null
   deviceId?: string | null
   attachments?: Attachment[]
@@ -322,13 +326,15 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
     let continued = false
     try {
       stopWatching = await watchRuntimeFailure(replyTo.runtimeDeviceId, replyTo.runtimeTaskId)
+      const continuationAddress = replyTo.address ?? {
+        deviceId: replyTo.runtimeDeviceId,
+        taskId: replyTo.runtimeTaskId,
+      }
       continued = await runtime.sendRuntimePaneMessage(
         {
-          address: {
-            deviceId: replyTo.runtimeDeviceId,
-            taskId: replyTo.runtimeTaskId,
-          },
+          address: continuationAddress,
           message: prompt,
+          queueIfBusy: true,
           ...(executionModel
             ? {
                 ...(executionModel.modelId ? { modelId: executionModel.modelId } : {}),

@@ -2087,6 +2087,7 @@ esac
                     task_title: Some("AI Table task".to_owned()),
                     backend_task_id: None,
                     model_selection: None,
+                    execution_context: None,
                     workflow_node_id: None,
                 },
             )

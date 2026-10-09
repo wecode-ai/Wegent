@@ -1420,6 +1420,34 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
+  it('keeps the execution thread and Issue session even without a selected model', () => {
+    const issueExecution = { projectId: 'project-1', issueId: 'issue-1' }
+    expect(
+      collaborationTaskAddress(
+        {
+          deviceId: 'device-1',
+          taskId: 'task-1',
+          executionContext: {
+            runtime: 'codex',
+            threadId: 'thread-1',
+            workspacePath: '/tmp/issue-worktree',
+          },
+        },
+        null,
+        issueExecution,
+        issueExecution
+      )
+    ).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/tmp/issue-worktree',
+      projectSession: issueExecution,
+      issueExecution,
+    })
+  })
+
   it.each([false, true])(
     'uses the latest project environment and Issue reference (human work: %s)',
     async humanWork => {

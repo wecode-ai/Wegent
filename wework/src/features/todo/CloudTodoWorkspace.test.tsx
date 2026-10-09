@@ -2750,6 +2750,7 @@ describe('CloudTodoWorkspace', () => {
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()
+    const user = userEvent.setup()
     let resolveBinding: (() => void) | null = null
     const binding = new Promise<void>(resolve => {
       resolveBinding = resolve
@@ -2761,19 +2762,21 @@ describe('CloudTodoWorkspace', () => {
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
         services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
 
-    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    await user.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     await openIssueFromBoard()
-    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await user.click(screen.getByTestId('cloud-todo-create-task'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
       'true'

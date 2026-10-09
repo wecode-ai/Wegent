@@ -329,6 +329,7 @@ function toWeworkTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding
     task_title: binding.taskTitle,
     backend_task_id: binding.backendTaskId,
     modelSelection: binding.modelSelection as LoopItemTaskBinding['modelSelection'],
+    executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     linked_at: binding.linkedAt,
   }
@@ -408,11 +409,14 @@ function ProjectChangeRequestAutoRepairObserver({
 }
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
-  'id' | 'device_id' | 'task_id' | 'task_title' | 'modelSelection'
+  'id' | 'device_id' | 'task_id' | 'task_title' | 'modelSelection' | 'executionContext'
 > & {
   work_item_id: string
 }
-type TaskBindingAddressInput = Pick<LoopItemTaskBinding, 'device_id' | 'task_id' | 'modelSelection'>
+type TaskBindingAddressInput = Pick<
+  LoopItemTaskBinding,
+  'device_id' | 'task_id' | 'modelSelection' | 'executionContext'
+>
 
 function selectedTaskBindingAddress(
   binding: TaskBindingAddressInput,

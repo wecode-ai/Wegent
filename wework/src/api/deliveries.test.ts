@@ -69,6 +69,11 @@ describe('createDeliveryApi queue and assignment routes', () => {
       {
         deviceId: 'local-device',
         taskId: 'runtime-1',
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
         runtimeHandle: {
           modelSelection: {
             modelName: 'gpt-5.6-codex',
@@ -83,6 +88,11 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(post).toHaveBeenCalledWith('/v1/loop-items/WEG-1/tasks', {
       deviceId: 'local-device',
       taskId: 'runtime-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace/runtime-1',
+      workspaceKind: 'worktree',
+      worktreeId: 'runtime-1',
       runtimeHandle: {
         modelSelection: {
           modelName: 'gpt-5.6-codex',
@@ -95,6 +105,13 @@ describe('createDeliveryApi queue and assignment routes', () => {
         modelName: 'gpt-5.6-codex',
         modelType: 'public',
         options: { reasoning: 'high' },
+      },
+      executionContext: {
+        runtime: 'codex',
+        threadId: 'thread-1',
+        workspacePath: '/workspace/runtime-1',
+        workspaceKind: 'worktree',
+        worktreeId: 'runtime-1',
       },
     })
   })
@@ -119,14 +136,30 @@ describe('createDeliveryApi queue and assignment routes', () => {
   it('persists the immutable Team identity of a manually started agent session', async () => {
     const post = vi.fn(async () => undefined)
     const api = createDeliveryApi(clientWith({ post }))
+    const modelSelection = {
+      modelName: 'agent-model',
+      modelType: 'public',
+      options: {},
+    }
     await api.bindTask('WEG-1', {
       deviceId: 'local-device',
       taskId: 'runtime-team',
-      runtimeHandle: { wegentTeam: { id: 1880 } },
+      runtime: 'codex',
+      threadId: 'team-thread',
+      workspacePath: '/tmp/team-worktree',
+      runtimeHandle: { wegentTeam: { id: 1880 }, modelSelection },
     })
     expect(post).toHaveBeenCalledWith(
       '/v1/loop-items/WEG-1/tasks',
-      expect.objectContaining({ wegentTeamId: 1880 })
+      expect.objectContaining({
+        wegentTeamId: 1880,
+        modelSelection,
+        executionContext: expect.objectContaining({
+          runtime: 'codex',
+          threadId: 'team-thread',
+          workspacePath: '/tmp/team-worktree',
+        }),
+      })
     )
   })
 

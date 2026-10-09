@@ -90,6 +90,13 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   modelSelection?: ModelSelectionConfig | null
+  executionContext?: {
+    runtime?: string | null
+    threadId?: string | null
+    workspacePath?: string | null
+    workspaceKind?: string | null
+    worktreeId?: string | null
+  } | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
 }
@@ -291,13 +298,26 @@ function RuntimeTaskProgressSummary({
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () =>
-      runtimeTaskBindingAddress({
+    () => ({
+      ...runtimeTaskBindingAddress({
         device_id: binding.device_id,
         task_id: binding.task_id,
         modelSelection: binding.modelSelection,
+        executionContext: binding.executionContext,
       }),
-    [binding.device_id, binding.modelSelection, binding.task_id]
+      projectSession: {
+        projectId: String(item.cloud_project_id),
+        issueId: String(item.id),
+      },
+    }),
+    [
+      binding.device_id,
+      binding.executionContext,
+      binding.modelSelection,
+      binding.task_id,
+      item.cloud_project_id,
+      item.id,
+    ]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
@@ -356,6 +376,7 @@ function RuntimeTaskProgressSummary({
             initialAddress={taskAddress}
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
+            readOnly
             collapseComposerWhenIdle
             initialScrollPosition="latest"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}

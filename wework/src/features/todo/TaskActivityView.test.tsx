@@ -1493,7 +1493,7 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
   })
 
-  it('hides replies while the comment execution is running', async () => {
+  it('allows replies to queue while the comment execution is running', async () => {
     const runningComment = {
       ...agentMessage,
       rootMessageId: null,
@@ -1525,7 +1525,7 @@ describe('TaskActivityView', () => {
     expect(
       within(card).getByTestId('cloud-task-activity-execution-badge-message-2')
     ).toHaveAttribute('data-status', 'running')
-    expect(within(card).queryByTestId('cloud-task-activity-reply-toggle-message-2')).toBeNull()
+    expect(within(card).getByTestId('cloud-task-activity-reply-toggle-message-2')).toBeVisible()
   })
 
   it('shows creation and allows replies when a completed run is persisted', async () => {
@@ -2792,14 +2792,13 @@ describe('TaskActivityView', () => {
 
       runtimeWorkMock.value = {
         projects: [],
-        chats: [
-          {
-            deviceId: 'device-1',
-            projectId: null,
-            tasks: [{ taskId: 'parent-session-1', title: '执行任务' }],
-          },
-        ],
-        totalTasks: 1,
+        chats: [],
+        totalTasks: 0,
+      }
+      const boundModelSelection = {
+        modelName: 'wework-custom-desktop-e2e-responses',
+        modelType: 'runtime' as const,
+        options: { reasoning: 'medium' },
       }
       render(
         <TaskActivityView
@@ -2816,6 +2815,26 @@ describe('TaskActivityView', () => {
               assignee_agent_id: '12',
             } as never
           }
+          taskBindings={[
+            {
+              id: 'binding-1',
+              loop_item_id: 'WEG-1',
+              task_user_id: 1,
+              device_id: 'device-1',
+              task_id: 'parent-session-1',
+              task_title: '执行任务',
+              backend_task_id: null,
+              modelSelection: boundModelSelection,
+              executionContext: {
+                runtime: 'codex',
+                threadId: 'thread-1',
+                workspacePath: '/workspace',
+                workspaceKind: 'worktree',
+                worktreeId: 'worktree-1',
+              },
+              linked_at: '2026-10-09T00:00:00Z',
+            },
+          ]}
           linear
         />
       )
@@ -2843,7 +2862,16 @@ describe('TaskActivityView', () => {
       await waitFor(() =>
         expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
           expect.objectContaining({
-            address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+            address: {
+              deviceId: 'device-1',
+              taskId: 'parent-session-1',
+              runtime: 'codex',
+              threadId: 'thread-1',
+              workspacePath: '/workspace',
+              workspaceKind: 'worktree',
+              worktreeId: 'worktree-1',
+              runtimeHandle: { modelSelection: boundModelSelection },
+            },
             message: '继续处理',
             attachmentIds: [7],
           }),

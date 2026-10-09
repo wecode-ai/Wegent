@@ -32,4 +32,49 @@ describe('runtimeTaskBindingAddress', () => {
       runtimeTaskBindingAddress({ device_id: 'device', task_id: 'task', modelSelection: null })
     ).toEqual({ deviceId: 'device', taskId: 'task' })
   })
+
+  it('preserves the bound execution workspace and thread together with its model', () => {
+    const modelSelection: ModelSelectionConfig = {
+      modelName: 'agent-model',
+      modelType: 'public',
+      options: {},
+    }
+    const executionContext = {
+      runtime: 'codex',
+      threadId: 'original-thread',
+      workspacePath: '/tmp/issue-worktree',
+      workspaceKind: 'worktree',
+      worktreeId: 'issue-task',
+    }
+
+    expect(
+      runtimeTaskBindingAddress({
+        device_id: 'remote-device',
+        task_id: 'issue-task',
+        modelSelection,
+        executionContext,
+      })
+    ).toEqual({
+      deviceId: 'remote-device',
+      taskId: 'issue-task',
+      ...executionContext,
+      runtimeHandle: { modelSelection },
+    })
+  })
+
+  it('retains execution context without requiring a selected model', () => {
+    expect(
+      runtimeTaskBindingAddress({
+        device_id: 'device',
+        task_id: 'task',
+        modelSelection: null,
+        executionContext: { threadId: 'thread', workspacePath: '/tmp/issue' },
+      })
+    ).toEqual({
+      deviceId: 'device',
+      taskId: 'task',
+      threadId: 'thread',
+      workspacePath: '/tmp/issue',
+    })
+  })
 })

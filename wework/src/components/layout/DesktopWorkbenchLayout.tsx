@@ -115,13 +115,34 @@ function isSameRuntimeTask(
   current: RuntimeTaskAddress | null | undefined,
   next: RuntimeTaskAddress
 ): boolean {
-  const currentPath = current?.workspacePath?.trim()
-  const nextPath = next.workspacePath?.trim()
-  return (
-    current?.deviceId === next.deviceId &&
-    current.taskId === next.taskId &&
-    (!currentPath || !nextPath || currentPath === nextPath)
-  )
+  if (current?.deviceId !== next.deviceId || current.taskId !== next.taskId) return false
+  const resolvedFields = [
+    ['runtime', current.runtime, next.runtime],
+    ['threadId', current.threadId, next.threadId],
+    ['workspacePath', current.workspacePath?.trim(), next.workspacePath?.trim()],
+    ['workspaceKind', current.workspaceKind, next.workspaceKind],
+    ['worktreeId', current.worktreeId, next.worktreeId],
+  ] as const
+  if (
+    resolvedFields.some(([, currentValue, nextValue]) => nextValue && currentValue !== nextValue)
+  ) {
+    return false
+  }
+  if (
+    next.projectSession &&
+    (current.projectSession?.projectId !== next.projectSession.projectId ||
+      current.projectSession?.issueId !== next.projectSession.issueId)
+  ) {
+    return false
+  }
+  if (
+    next.issueExecution &&
+    (current.issueExecution?.projectId !== next.issueExecution.projectId ||
+      current.issueExecution?.issueId !== next.issueExecution.issueId)
+  ) {
+    return false
+  }
+  return !next.runtimeHandle || current.runtimeHandle === next.runtimeHandle
 }
 
 interface DesktopWorkbenchLayoutProps {

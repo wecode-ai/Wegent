@@ -545,6 +545,63 @@ describe('TodoEditor external item sync', () => {
     )
   })
 
+  it('uses refreshed board binding context instead of the stale detail copy', async () => {
+    const never = new Promise<never>(() => undefined)
+    const onOpenTaskConversation = vi.fn()
+    const pendingBindingsApi = {
+      listDeliveries: vi.fn(() => never),
+      listTaskBindings: vi.fn(() => never),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const initialBinding = {
+      id: 8,
+      device_id: 'local-device',
+      task_id: 'board-task',
+      task_title: '看板任务',
+    }
+    const renderEditor = (executionContext?: { workspacePath: string; workspaceKind: string }) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={pendingBindingsApi}
+        initialTaskBindings={[
+          {
+            ...initialBinding,
+            executionContext,
+          },
+        ]}
+        onOpenTaskConversation={onOpenTaskConversation}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor())
+
+    view.rerender(
+      renderEditor({
+        workspacePath: '/tmp/issue-worktree',
+        workspaceKind: 'worktree',
+      })
+    )
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    await userEvent.click(screen.getByTestId('cloud-todo-open-task-conversation-8'))
+
+    expect(onOpenTaskConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionContext: {
+          workspacePath: '/tmp/issue-worktree',
+          workspaceKind: 'worktree',
+        },
+      })
+    )
+  })
+
   it('keeps same-item data during refresh and clears it when switching items', async () => {
     const staleRefresh = deferred<LoopItemTaskBinding[]>()
     const switchingApi = {
