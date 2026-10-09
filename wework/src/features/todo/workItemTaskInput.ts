@@ -16,7 +16,7 @@ export function workItemTaskInput(item: Pick<CloudLoopItem, 'title' | 'descripti
 }
 
 export function workItemStartedUpdate(
-  item: Pick<CloudLoopItem, 'status' | 'tags' | 'version'>,
+  item: { status: string; tags?: string[] | null; version: number },
   associatedTags: string[]
 ): { version: number; status?: 'in_progress'; tags?: string[] } | null {
   const shouldStartIssue = item.status === 'inbox' || item.status === 'pending'

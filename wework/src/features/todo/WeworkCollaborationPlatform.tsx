@@ -92,7 +92,7 @@ import {
   type RuntimeTaskConversationStatus,
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
-import { workItemComposerReference } from './workItemTaskInput'
+import { workItemComposerReference, workItemStartedUpdate } from './workItemTaskInput'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
@@ -728,7 +728,12 @@ export function WeworkSharedProject({
             })
           }
         }}
-        onTaskCreated={address => {
+        onTaskCreated={async address => {
+          const latestIssue = await scopedApi.issues.get(taskComposer.issue.id)
+          const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
+          if (startUpdate) {
+            await scopedApi.issues.update(latestIssue.id, startUpdate)
+          }
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
               ? { ...current, address }
