@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   loadProjectSpaceCodeWorkspacePreference,
@@ -12,6 +12,7 @@ const project = {
 
 describe('projectSpaceCodeWorkspacePreference', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     localStorage.clear()
   })
 
@@ -57,5 +58,18 @@ describe('projectSpaceCodeWorkspacePreference', () => {
     )
 
     expect(loadProjectSpaceCodeWorkspacePreference(1, project)).toBeNull()
+  })
+
+  it('does not fail task creation when the device cannot persist the mapping', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage quota exceeded', 'QuotaExceededError')
+    })
+
+    expect(() =>
+      saveProjectSpaceCodeWorkspacePreference(1, project, {
+        localProjectId: 91,
+        deviceWorkspaceId: 201,
+      })
+    ).not.toThrow()
   })
 })

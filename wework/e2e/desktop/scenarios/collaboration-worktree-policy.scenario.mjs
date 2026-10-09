@@ -81,10 +81,19 @@ async function createIssue(control, label) {
   })
 }
 
-async function createTask(control, label, timeoutMs) {
+async function createTask(control, label, timeoutMs, executionMode = 'current_workspace') {
   await createIssue(control, label)
   await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
   await control.command('waitFor', COMPOSER)
+  if (executionMode === 'git_worktree') {
+    const modeButton = `${PANEL} [data-testid="execution-mode-button"]`
+    await control.command('click', modeButton)
+    await control.command(
+      'clickWhenEnabled',
+      `${PANEL} [data-testid="execution-mode-git-worktree-button"]`
+    )
+    await control.command('waitFor', modeButton, { text: '新工作树' })
+  }
   const before = new Set((await tasks(control)).map(task => task.taskId))
   await control.command('fill', COMPOSER, { value: `${MARKER} ${label}` })
   await control.command('press', COMPOSER, { key: 'Enter' })
@@ -203,12 +212,17 @@ export function createDesktopScenario({
       const sharedConfig = await configurePolicy(control, 'project')
       const shared = await createTask(control, 'Shared directory', modelResponseTimeoutMs)
       assert.notEqual(shared.workspaceKind, 'worktree')
-      assert.equal(shared.workspacePath, Object.values(sharedConfig.devices)[0].workspace_path)
+      assert.equal(shared.workspacePath, workspacePath)
       await closeIssue(control)
       const isolatedConfig = await configurePolicy(control, 'git_worktree')
       assert.equal(isolatedConfig.fingerprint, sharedConfig.fingerprint)
       assert.deepEqual(isolatedConfig.devices, sharedConfig.devices)
-      const isolated = await createTask(control, 'Isolated directory', modelResponseTimeoutMs)
+      const isolated = await createTask(
+        control,
+        'Isolated directory',
+        modelResponseTimeoutMs,
+        'git_worktree'
+      )
       assert.equal(isolated.workspaceKind, 'worktree')
       assert.notEqual(isolated.workspacePath, shared.workspacePath)
       await access(join(isolated.workspacePath, '.git'))

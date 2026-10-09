@@ -730,11 +730,6 @@ describe('AiChatModal', () => {
 
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
       'data-execution-mode',
-      'git_worktree'
-    )
-    await userEvent.click(screen.getByTestId('mock-select-current-workspace-mode'))
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-      'data-execution-mode',
       'current_workspace'
     )
     await userEvent.click(screen.getByTestId('mock-select-worktree-mode'))
@@ -763,6 +758,41 @@ describe('AiChatModal', () => {
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('does not inherit the Agent prepared environment workspace policy', () => {
+    const gitProject: ProjectWithTasks = {
+      ...localProjects[0],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'local-device' },
+        workspace: { source: 'local_path', localPath: '/workspace/operations' },
+      },
+    }
+    render(
+      <AiChatModal
+        project={{
+          ...project,
+          execution_environment: {
+            workspace_policy: 'git_worktree',
+            repositories: [],
+            setup_steps: [],
+            devices: {},
+          },
+        }}
+        localProjects={[gitProject]}
+        task={task}
+        initialLocalProjectId={gitProject.id}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-execution-mode',
+      'current_workspace'
+    )
   })
 
   it('keeps workspace selection editable when the task request only carries metadata', async () => {
@@ -796,6 +826,7 @@ describe('AiChatModal', () => {
       'data-execution-mode-locked',
       'no'
     )
+    await userEvent.click(screen.getByTestId('mock-select-worktree-mode'))
     await userEvent.click(screen.getByTestId('mock-select-worktree-branch'))
     await userEvent.click(screen.getByTestId('mock-chat-send'))
 

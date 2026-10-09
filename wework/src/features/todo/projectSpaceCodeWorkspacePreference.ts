@@ -46,5 +46,11 @@ export function saveProjectSpaceCodeWorkspacePreference(
   project: RuntimeProjectSpaceRef,
   preference: ProjectSpaceCodeWorkspacePreference
 ): void {
-  window.localStorage.setItem(storageKey(userId, project), JSON.stringify(preference))
+  try {
+    window.localStorage.setItem(storageKey(userId, project), JSON.stringify(preference))
+  } catch {
+    // The runtime task already exists when this preference is saved. Storage
+    // quota or privacy failures must not turn successful task creation into an
+    // error.
+  }
 }

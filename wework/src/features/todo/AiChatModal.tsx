@@ -22,7 +22,6 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
-import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
@@ -59,7 +58,6 @@ interface AiChatModalProps {
 }
 
 interface AutomaticIssueTaskComposerProps {
-  workspacePolicy?: 'git_worktree' | 'project'
   project: ProjectWithTasks | null
   deviceWorkspaceId: number | null
   projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']
@@ -86,7 +84,6 @@ interface IssueTaskWorkspaceSelection {
 
 function AutomaticIssueTaskComposer({
   project,
-  workspacePolicy,
   deviceWorkspaceId,
   projectWork,
   selectedExecutionMode,
@@ -110,7 +107,7 @@ function AutomaticIssueTaskComposer({
         : 'current_workspace'
       : selectedExecutionMode
         ? selectedExecutionMode
-        : collaborationExecutionMode(project, workspacePolicy, projectWork?.worktreeAvailability)
+        : 'current_workspace'
   const worktreeBranch = taskRequestWorkspace?.branch ?? selectedWorktreeBranch
   const selectedWorkspaceExecution: RuntimeTaskCreateRequest['execution'] | undefined =
     executionMode === 'git_worktree'
@@ -358,7 +355,6 @@ export function AiChatModal({
       <AutomaticIssueTaskComposer
         key={options.key}
         project={selectedLocalProject}
-        workspacePolicy={project.execution_environment?.workspace_policy}
         deviceWorkspaceId={localDeviceWorkspaceId}
         projectWork={projectWork}
         selectedExecutionMode={activeWorkspaceSelection?.executionMode}

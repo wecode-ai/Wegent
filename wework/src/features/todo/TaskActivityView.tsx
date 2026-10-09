@@ -106,6 +106,8 @@ interface TaskActivityViewProps {
   agents?: CollaborationAgent[]
   /** Opens the comment list on this comment and flashes it once. */
   focusedCommentId?: string | null
+  /** Changes for each navigation request, including reopening the same comment. */
+  focusedCommentRequestKey?: string | null
 }
 
 interface ActivityExecutionDetail {
@@ -211,6 +213,7 @@ export function TaskActivityView({
   members = [],
   agents = [],
   focusedCommentId = null,
+  focusedCommentRequestKey = null,
 }: TaskActivityViewProps) {
   const { t, i18n } = useTranslation('common')
   const activityTranslate = createCollaborationTranslator(
@@ -434,17 +437,19 @@ export function TaskActivityView({
   // A notification can point at one comment. Land on it once, flash it, and
   // then leave the list under the reader's control.
   const [flashedCommentId, setFlashedCommentId] = useState<string | null>(null)
-  const revealedCommentRef = useRef<string | null>(null)
+  const revealedCommentRequestRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!focusedCommentId || revealedCommentRef.current === focusedCommentId) return
+    if (!focusedCommentId) return
+    const requestKey = focusedCommentRequestKey ?? focusedCommentId
+    if (revealedCommentRequestRef.current === requestKey) return
     const target = Array.from(
       listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []
     ).find(node => node.dataset.messageId === focusedCommentId)
     if (!target) return
-    revealedCommentRef.current = focusedCommentId
+    revealedCommentRequestRef.current = requestKey
     target.scrollIntoView?.({ block: 'center' })
     setFlashedCommentId(focusedCommentId)
-  }, [focusedCommentId, listRef, threadMessages])
+  }, [focusedCommentId, focusedCommentRequestKey, listRef, threadMessages])
   useEffect(() => {
     if (!flashedCommentId) return
     const timer = window.setTimeout(() => setFlashedCommentId(null), COMMENT_FLASH_MS)

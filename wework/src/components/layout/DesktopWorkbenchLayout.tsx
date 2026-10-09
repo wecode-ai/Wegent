@@ -1409,6 +1409,11 @@ export function DesktopWorkbenchLayout({
                       ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'commentId')
                       : undefined
                   }
+                  focusedCommentRequestKey={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'focusRequest')
+                      : undefined
+                  }
                   onFocusedItemHandled={() => {
                     if (
                       !workspaceTabs ||

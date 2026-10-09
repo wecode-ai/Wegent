@@ -367,6 +367,10 @@ export async function createDesktopScenario({
       const activityHeader = `${activityMessage} header`
       const activityBody = `${activityMessage} .task-detail-thread-message-body`
       const openTask = `[data-testid="cloud-task-activity-open-task-${activityId}"]`
+      await control.command('waitFor', openTask, {
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       assert.equal(
         (await control.command('getText', activityHeader)).includes(ASSIGNED_TASK),
         false,

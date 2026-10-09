@@ -295,6 +295,7 @@ export interface WeworkCollaborationPlatformProps {
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
   focusedCommentId?: string | null
+  focusedCommentRequestKey?: string | null
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedProjectSpace | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -340,6 +341,7 @@ export function WeworkSharedProject({
   detailServices,
   devices,
   focusedCommentId,
+  focusedCommentRequestKey,
   focusedItemId,
   localProjects,
   locale,
@@ -361,6 +363,7 @@ export function WeworkSharedProject({
   detailServices?: ProjectSpaceDetailServices
   devices?: DeviceInfo[]
   focusedCommentId?: string | null
+  focusedCommentRequestKey?: string | null
   focusedItemId?: string | null
   localProjects: ProjectWithTasks[]
   locale: 'zh-CN' | 'en'
@@ -944,6 +947,9 @@ export function WeworkSharedProject({
                   key={issue.id}
                   mode="edit"
                   focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
+                  focusedCommentRequestKey={
+                    focusedItemId === issue.id ? focusedCommentRequestKey : null
+                  }
                   sharedApi={issueApi}
                   api={services.deliveryApi}
                   presentation="workspace-panel"
@@ -1593,6 +1599,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
               }
               devices={props.devices}
               focusedCommentId={props.focusedCommentId}
+              focusedCommentRequestKey={props.focusedCommentRequestKey}
               focusedItemId={props.focusedItemId}
               localProjects={props.localProjects}
               locale={locale}
