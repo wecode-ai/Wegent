@@ -923,6 +923,7 @@ async function retainSecondTaskWorkspace(control, timeoutMs) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  resultDir,
   standalone,
   uiTimeoutMs,
   workspacePath,
