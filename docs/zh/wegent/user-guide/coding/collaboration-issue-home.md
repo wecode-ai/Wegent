@@ -33,6 +33,16 @@ sidebar_position: 12
 
 这些操作会记录状态历史和项目活动，并向相关成员发送通知。改派负责人会清除旧的待验收结果；人工处理中的状态应通过上述操作推进。
 
+## 归档已完成的 Issue
+
+项目看板和表格支持归档状态为 **已完成** 的 Issue。未完成的 Issue 不显示归档操作，也不能通过批量操作归档。
+
+- 单个归档：打开已完成 Issue 的操作菜单并选择 **归档**。
+- 批量归档：在表格中选择一个或多个已完成 Issue，然后选择 **归档**。
+- 查看与恢复：打开项目的 **已归档 Issue** 抽屉，可以分页查看归档记录并逐项恢复。恢复后，Issue 回到归档前所属项目的活动列表。
+
+归档父 Issue 时会同时归档它的子 Issue，确保任务树不会留下失去父节点的活动项；从归档列表恢复该父 Issue 时会恢复整棵子树。直接恢复某个被单独归档的子 Issue，只恢复该 Issue。云端原生项目、本地项目以及 GitHub/GitLab 外部项目使用同一套交互；外部项目的归档和恢复分别对应关闭与重新打开外部 Issue。
+
 ## 回归验证
 
 `pnpm --filter wework e2e:desktop --segment collaboration-shared-core` 使用隔离 Electron、真实后端和本地 Executor，新增以下验证（仅模型服务使用模拟）：
@@ -44,3 +54,5 @@ sidebar_position: 12
 5. 通过任务项目真实写入接口建立本地项目，重新加载两次后检查本地空间仅出现一个项目，并能从其入口开始协作。
 
 云端数据沿用该 checkpoint 的独立项目夹具，结束时归档；本地项目在测试专用 Executor home 中创建，不接触用户项目目录。失败保留 runner 日志用于定位，不通过跳过或重试掩盖失败。
+
+`pnpm --filter wework e2e:desktop --segment collaboration-issue-archive` 通过真实本地项目验证未完成 Issue 不可归档、单个归档与恢复、批量归档，以及归档抽屉中的记录更新。
