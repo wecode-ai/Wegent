@@ -27,6 +27,7 @@ export function ProjectIssueTable({
   deleteLabel,
   statusName = (status) => status,
   onCreate,
+  canDelete = () => true,
   onDelete,
   onOpen,
 }: {
@@ -49,6 +50,7 @@ export function ProjectIssueTable({
   deleteLabel?: string;
   statusName?(status: string): string;
   onCreate?(): void;
+  canDelete?(issue: CollaborationIssue): boolean;
   onDelete?(issue: CollaborationIssue): void;
   onOpen(issue: CollaborationIssue): void;
 }) {
@@ -285,7 +287,7 @@ export function ProjectIssueTable({
                 <td>{issue.updated_at.slice(0, 10)}</td>
                 {onDelete ? (
                   <td className="collaboration-issue-table-actions">
-                    {canEditCollaborationIssue(issue) ? (
+                    {canEditCollaborationIssue(issue) && canDelete(issue) ? (
                       <button
                         aria-label={deleteLabel}
                         className="collaboration-issue-table-delete"

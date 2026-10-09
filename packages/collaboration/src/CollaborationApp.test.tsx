@@ -746,7 +746,7 @@ describe("CollaborationApp API boundary", () => {
     expect(table?.props.onDelete).toBeUndefined();
   });
 
-  it("wires Issue deletion into board, table, and detail when enabled", () => {
+  it("wires completed Issue archiving into board, table, and detail", () => {
     const host = createHost(false, "home");
     host.location = {
       projectId: "project-1",
@@ -763,7 +763,7 @@ describe("CollaborationApp API boundary", () => {
       assignee_user_id: null,
       title: "Issue",
       description: "",
-      status: "inbox",
+      status: "completed",
       priority: "none",
       due_at: null,
       tags: [],
@@ -788,7 +788,7 @@ describe("CollaborationApp API boundary", () => {
     const app = CollaborationApp({
       api: createApi(),
       host,
-      issueDeleteEnabled: true,
+      issueArchiveEnabled: true,
       renderIssueDetail,
     });
     const shell = findByType(app, CollaborationProjectViewShell);
@@ -819,7 +819,7 @@ describe("CollaborationApp API boundary", () => {
       assignee_user_id: null,
       title: "Issue",
       description: "",
-      status: "inbox",
+      status: "completed",
       priority: "none",
       due_at: null,
       tags: [],
@@ -844,7 +844,7 @@ describe("CollaborationApp API boundary", () => {
     CollaborationApp({
       api: createApi(),
       host,
-      issueDeleteEnabled: true,
+      issueArchiveEnabled: true,
       renderIssueDetail,
     });
 

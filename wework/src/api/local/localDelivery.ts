@@ -75,6 +75,7 @@ interface LocalLoopItemRecord {
   created_at: string
   updated_at: string
   completed_at: string | null
+  archived_at?: string | null
   assignee_user_id?: number | null
   assignee_agent_id?: string | null
   execution_id?: number | null
@@ -818,6 +819,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     created_at: record.created_at,
     updated_at: record.updated_at,
     completed_at: record.completed_at,
+    archived_at: record.archived_at ?? null,
     source_status:
       typeof record.metadata.source_status === 'string' ? record.metadata.source_status : null,
     source_record_id:
@@ -1274,6 +1276,33 @@ export function createLocalDeliveryApi(
         task_id: itemId,
       })
       taskProjects.delete(itemId)
+    },
+    async listArchivedLoopItems(
+      projectId: CloudProjectId,
+      options: { cursor?: string | null; limit?: number } = {}
+    ) {
+      const response = await request<{
+        items: LocalLoopItemRecord[]
+        next_cursor: string | null
+      }>('todos.archived.list', {
+        project_id: projectId,
+        cursor: options.cursor ?? null,
+        limit: options.limit ?? 50,
+      })
+      rememberTasks(projectId, response.items)
+      return {
+        items: response.items.map(record => localTask(record)),
+        next_cursor: response.next_cursor,
+      }
+    },
+    async restoreLoopItem(itemId: string) {
+      const projectId = await resolveProjectId(itemId)
+      const records = await request<LocalLoopItemRecord[]>('todos.restore', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      rememberTasks(projectId, records)
+      return { items: records.map(record => localTask(record)) }
     },
     async reorderLoopItems(
       projectId: CloudProjectId,

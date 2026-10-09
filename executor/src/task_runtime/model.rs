@@ -543,6 +543,19 @@ pub struct LoopItem {
     pub execution_state: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItem {
+    #[serde(flatten)]
+    pub item: LoopItem,
+    pub archived_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArchivedLoopItemPage {
+    pub items: Vec<ArchivedLoopItem>,
+    pub next_cursor: Option<String>,
+}
+
 pub fn default_status() -> String {
     "inbox".to_owned()
 }
