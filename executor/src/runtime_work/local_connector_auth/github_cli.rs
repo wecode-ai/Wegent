@@ -39,12 +39,15 @@ fn error(code: &str) -> Value {
     json!({"status": "error", "errorCode": code})
 }
 
-fn classify_health(success: bool, stderr: &[u8]) -> Value {
-    if success {
+fn classify_health(exit_code: Option<i32>, stderr: &[u8]) -> Value {
+    if exit_code == Some(0) {
         return json!({"status": "ok"});
     }
     let text = String::from_utf8_lossy(stderr).to_lowercase();
-    if text.contains("http 401")
+    // gh uses exit code 4 for authentication required, including its distinct
+    // GitHub Actions prompt. Transport failures must still remain errors.
+    if exit_code == Some(4)
+        || text.contains("http 401")
         || (text.contains("to get started with github cli") && text.contains("gh auth login"))
     {
         json!({"status": "need_login"})
@@ -82,7 +85,7 @@ pub(super) async fn health() -> Result<Value, AppIpcError> {
             }
         }
         let status = child.wait().await?;
-        Ok::<_, std::io::Error>(classify_health(status.success(), &tail))
+        Ok::<_, std::io::Error>(classify_health(status.code(), &tail))
     };
     match tokio::time::timeout(Duration::from_secs(20), check).await {
         Ok(Ok(result)) => Ok(result),
@@ -228,27 +231,38 @@ mod tests {
     fn github_cli_does_not_treat_network_failure_as_missing_auth() {
         assert_eq!(
             classify_health(
-                false,
+                Some(4),
                 b"To get started with GitHub CLI, please run: gh auth login"
             )["status"],
             "need_login"
         );
         assert_eq!(
-            classify_health(false, b"gh: Bad credentials (HTTP 401)")["status"],
+            classify_health(Some(1), b"gh: Bad credentials (HTTP 401)")["status"],
             "need_login"
         );
         assert_eq!(
-            classify_health(false, b"connection timeout")["status"],
+            classify_health(Some(1), b"connection timeout")["status"],
             "error"
         );
         assert_eq!(
-            classify_health(false, b"gh: Forbidden (HTTP 403)")["errorCode"],
+            classify_health(Some(1), b"gh: Forbidden (HTTP 403)")["errorCode"],
             "gh_health_failed"
         );
         assert_eq!(
-            classify_health(true, b"Token: [SECRET]"),
+            classify_health(Some(0), b"Token: [SECRET]"),
             json!({"status": "ok"})
         );
+    }
+
+    #[test]
+    fn github_cli_recognizes_auth_required_in_actions_without_parsing_prompt_text() {
+        for prompt in [
+            b"gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(classify_health(Some(4), prompt), json!({"status": "need_login"}));
+        }
+        assert_eq!(classify_health(None, b""), error("gh_health_failed"));
     }
 
     #[test]

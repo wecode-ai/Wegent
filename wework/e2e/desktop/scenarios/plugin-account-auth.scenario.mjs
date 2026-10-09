@@ -841,7 +841,11 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
           }),
         })
       )
-      assert.equal(ghHealth.status, 'need_login', 'Isolated gh unexpectedly inherited an account')
+      assert.equal(
+        ghHealth.status,
+        'need_login',
+        `Isolated gh health must require login: ${JSON.stringify(ghHealth)}`
+      )
       await verifyGithubManageConnectionConsent(control, slug, release.pluginId)
       for (const action of ['cancel', 'ordinary', 'resume']) {
         await control.command('click', '[data-testid="new-chat-button"]')
