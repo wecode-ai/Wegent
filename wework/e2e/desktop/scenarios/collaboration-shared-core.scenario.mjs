@@ -528,6 +528,34 @@ export function createDesktopScenario({
         await verifyIssueConversationDrawers(control, scoped, uiTimeoutMs)
         await capture(control, 'collaboration-shared-core-06-cloud-model-reply.png')
         const previousBindings = await request(`/api/v1/loop-items/${issue.id}/tasks`)
+        const durationSelector = scoped('[data-testid="issue-execution-duration"]')
+        await control.command('waitFor', durationSelector, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        const linkedTimes = previousBindings.map(binding => {
+          const timestamp = binding.linked_at ?? binding.linkedAt
+          assert.ok(timestamp, 'The real backend binding must have a timestamp')
+          return Date.parse(
+            /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`
+          )
+        })
+        assert.ok(linkedTimes.length > 0 && linkedTimes.every(Number.isFinite))
+        const elapsedMinutes = Math.max(
+          1,
+          Math.floor((Date.now() - Math.min(...linkedTimes)) / 60_000)
+        )
+        assert.ok(elapsedMinutes < 60, 'The fresh Issue fixture must be less than an hour old')
+        const durationText = await control.command('getText', durationSelector)
+        assert.match(
+          durationText,
+          /^\d+\s*分钟$/,
+          'A fresh execution must not include a timezone-sized offset'
+        )
+        assert.ok(
+          Math.abs(Number.parseInt(durationText, 10) - elapsedMinutes) <= 1,
+          `Execution duration ${durationText} must match the real binding age ${elapsedMinutes} minutes`
+        )
         const previousTaskIds = new Set(
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )

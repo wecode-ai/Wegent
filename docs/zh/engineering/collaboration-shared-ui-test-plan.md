@@ -24,6 +24,17 @@ sidebar_position: 25
 
 ## 目标
 
+### 执行时长时区回归
+
+`collaboration-shared-core` 在 `TZ=Asia/Shanghai` 下运行真实 Backend 和隔离 Electron。
+通过现有评论执行流程创建任务绑定，返回 Issue 详情后读取 `issue-execution-duration`，
+与真实 `/loop-items/{id}/tasks` 的最早有效绑定时间比较，允许一分钟的显示取整误差。
+新建执行必须显示分钟数，不能因无时区后缀的 UTC 时间被当成本地时间而多出八小时。
+单元测试同时覆盖显式偏移、混合时间排序和无效时间；全部无效时不显示时长。
+场景沿用现有清理流程归档测试项目，不接触用户项目。
+
+运行命令：`pnpm --filter wework e2e:desktop --segment collaboration-shared-core`。
+
 本计划用于证明以下结论，而不只是证明两个宿主“看起来都能用”：
 
 1. Wegent Web 与 Wework 挂载的是 `@wegent/collaboration` 导出的同一个协作 UI 根组件。

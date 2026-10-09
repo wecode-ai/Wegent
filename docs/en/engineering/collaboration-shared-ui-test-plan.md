@@ -25,6 +25,19 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Execution duration timezone regression
+
+`collaboration-shared-core` runs the real Backend and isolated Electron with
+`TZ=Asia/Shanghai`. After the existing comment execution flow creates task bindings,
+return to Issue details and compare `issue-execution-duration` with the earliest valid
+binding time from the real `/loop-items/{id}/tasks` response, allowing one minute for rounding.
+A fresh execution must show minutes, without adding eight hours by interpreting a
+timezone-less UTC timestamp as local time. Unit tests cover explicit offsets, mixed
+timestamp ordering and invalid values; no duration is shown when all values are invalid.
+The existing cleanup archives the fixture project without touching user projects.
+
+Run: `pnpm --filter wework e2e:desktop --segment collaboration-shared-core`.
+
 This plan must prove more than “both hosts appear to work”:
 
 1. Wegent Web and Wework mount the same collaboration root component exported by
