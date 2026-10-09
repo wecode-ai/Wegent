@@ -50,6 +50,10 @@ def _make_client() -> TestClient:
             amount=Decimal("19.99"), created_at=datetime(2026, 10, 9, 15, 7, 46)
         )
 
+    @app.get("/bare-model")
+    def bare_model():
+        return _Doc(name="x", created_at=datetime(2026, 10, 9, 15, 7, 46))
+
     return TestClient(app)
 
 
@@ -77,6 +81,11 @@ def test_response_model_decimal_keeps_pydantic_json_format():
     body = _make_client().get("/priced").json()
     # pydantic JSON mode renders Decimal as a string to preserve precision.
     assert body["amount"] == "19.99"
+    assert body["created_at"] == "2026-10-09T15:07:46+08:00"
+
+
+def test_bare_model_return_carries_session_offset():
+    body = _make_client().get("/bare-model").json()
     assert body["created_at"] == "2026-10-09T15:07:46+08:00"
 
 

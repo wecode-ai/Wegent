@@ -24,6 +24,7 @@ from typing import Any
 
 import fastapi.routing
 from fastapi._compat import v2 as _compat_v2
+from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
 from app.core.config import settings
@@ -72,6 +73,13 @@ def _python_mode_serialize(self, value: Any, **kwargs: Any) -> Any:
 
 
 def _tz_aware_jsonable_encoder(obj: Any, *args: Any, **kwargs: Any) -> Any:
+    # A route returning a bare BaseModel (no response_model) reaches
+    # jsonable_encoder, which would dump it with mode="json" and stringify
+    # datetimes before our custom encoder can see them. Dump in python mode
+    # instead so datetimes survive to the custom encoder below.
+    if isinstance(obj, BaseModel):
+        # Match jsonable_encoder's default by_alias=True for response output.
+        obj = obj.model_dump(mode="python", by_alias=kwargs.get("by_alias", True))
     custom_encoder = dict(kwargs.pop("custom_encoder", None) or {})
     custom_encoder.setdefault(datetime, _encode_datetime)
     # Python-mode serialization (see _python_mode_serialize) keeps Decimal
