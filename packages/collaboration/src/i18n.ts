@@ -532,7 +532,7 @@ const sharedMessages: Record<
     "todo.collapse_content": "收起全文",
     "todo.reply_placeholder": "回复此讨论（继续原执行任务）…",
     "todo.send_message": "发送消息",
-    "todo.comment_placeholder": "发起新讨论（将创建新的执行任务）…",
+    "todo.comment_placeholder": "发起新讨论…",
     "todo.execution_settings": "执行设置",
     "todo.show_text_attachment": "在文本框中显示",
     "todo.pasted_text_attachment": "粘贴的文本",
@@ -963,7 +963,7 @@ const sharedMessages: Record<
       "Reply in this thread (continues the existing execution)…",
     "todo.send_message": "Send message",
     "todo.comment_placeholder":
-      "Start a new discussion (creates a new execution)…",
+      "Start a new discussion…",
     "todo.execution_settings": "Execution settings",
     "todo.show_text_attachment": "Show in text box",
     "todo.pasted_text_attachment": "Pasted text",

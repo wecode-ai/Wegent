@@ -78,7 +78,7 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
-  it('labels compact Issue properties and explains the current status in a tooltip', async () => {
+  it('keeps compact Issue properties unlabeled and explains the current status in a tooltip', async () => {
     const user = userEvent.setup()
     render(
       <TodoEditor
@@ -96,13 +96,162 @@ describe('TodoEditor external item sync', () => {
     )
 
     const summary = screen.getByTestId('cloud-todo-state-summary')
-    expect(summary).toHaveTextContent('负责人')
+    expect(summary).not.toHaveTextContent('负责人')
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('agent-1')
+    expect(screen.getByTestId('cloud-todo-state-due-date')).toHaveTextContent('未设置')
 
     await user.hover(screen.getByTestId('cloud-todo-detail-status').parentElement!)
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       '状态：进行中。表示 Issue 当前所处的处理阶段。'
     )
+  })
+
+  it('opens the due date picker from the bottom property row and saves the date', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
+      ...baseItem,
+      ...values,
+      version: 2,
+    }))
+    const editableApi = {
+      ...api,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={editableApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-state-due-date')).toHaveTextContent('未设置')
+    const dueDateInput = screen.getByTestId('cloud-todo-detail-due-date')
+    const showPicker = vi.fn()
+    Object.defineProperty(dueDateInput, 'showPicker', {
+      configurable: true,
+      value: showPicker,
+    })
+
+    await user.click(dueDateInput)
+    expect(showPicker).toHaveBeenCalledOnce()
+
+    await user.type(dueDateInput, '2026-10-31')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        baseItem.id,
+        expect.objectContaining({ due_at: '2026-10-31' })
+      )
+    )
+  })
+
+  it('edits priority and tags from the more-properties menu and saves them', async () => {
+    const user = userEvent.setup()
+    const updateLoopItem = vi.fn(async (_itemId: string, values: Record<string, unknown>) => ({
+      ...baseItem,
+      ...values,
+      version: 2,
+    }))
+    const editableApi = {
+      ...api,
+      updateLoopItem,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={editableApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-priority'), 'urgent')
+    const tagInput = screen.getByTestId('cloud-todo-detail-tag-input')
+    await user.click(tagInput)
+    expect(tagInput).toHaveFocus()
+    await user.type(tagInput, 'release{Enter}')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledWith(
+        baseItem.id,
+        expect.objectContaining({
+          priority: 'urgent',
+          tags: ['release'],
+        })
+      )
+    )
+  })
+
+  it('keeps the more-properties menu actions operable', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    const addLoopItemCollaborator = vi.fn(async () => ({
+      id: 'collaborator-7',
+      loop_item_id: baseItem.id,
+      user_id: 7,
+      user_name: '张三',
+      email: null,
+      source: 'manual',
+      added_by_user_id: 1,
+      created_at: '2026-10-09T00:00:00Z',
+    }))
+    const menuApi = {
+      ...api,
+      listCloudProjectMembers: vi.fn(async () => [
+        {
+          id: 7,
+          user_id: 7,
+          user_name: '张三',
+          email: null,
+          role: 'Developer',
+        },
+      ]),
+      addLoopItemCollaborator,
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onDelete={onDelete}
+        api={menuApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.click(screen.getByTestId('cloud-todo-more-properties'))
+    await user.click(screen.getByTestId('cloud-todo-add-collaborator'))
+    await user.selectOptions(screen.getByTestId('cloud-todo-collaborator-select'), '7')
+    await user.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+
+    await vi.waitFor(() => expect(addLoopItemCollaborator).toHaveBeenCalledWith(baseItem.id, 7))
+    expect(await screen.findByRole('button', { name: '移除参与者 张三' })).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('cloud-todo-detail-delete'))
+    expect(onDelete).toHaveBeenCalledOnce()
   })
 
   it('uses collaboration translations for runtime configuration notices', async () => {
@@ -271,7 +420,7 @@ describe('TodoEditor external item sync', () => {
       '让 AI 帮我处理'
     )
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '创建一个仅自己可见的任务，并在当前电脑上运行'
+      '基于当前 Issue 创建任务，并在当前电脑上运行'
     )
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledOnce()
@@ -2083,7 +2232,7 @@ describe('TodoEditor shared attachments', () => {
     expect(sharedApi.collaborators.list).toHaveBeenCalledWith('WEG-1')
     expect(sharedApi.members.list).toHaveBeenCalledWith('11')
     expect(sharedApi.agents.list).toHaveBeenCalledWith('11')
-    expect(screen.getByText('1.5 KB')).toBeInTheDocument()
+    expect(screen.queryByText('1.5 KB')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-attachment-input')).toBeInTheDocument()
 
     await user.click(screen.getByTestId('cloud-todo-attachment-delete-attachment-1'))

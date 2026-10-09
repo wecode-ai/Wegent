@@ -5393,6 +5393,7 @@ export function CloudTodoWorkspace({
                   key={selectedItem.id}
                   mode="edit"
                   presentation="workspace-panel"
+                  readFirst
                   selectedTaskId={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_id
