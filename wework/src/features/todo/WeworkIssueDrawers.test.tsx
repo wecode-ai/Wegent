@@ -299,12 +299,12 @@ describe('Wework Issue conversation drawers', () => {
     )
   })
 
-  it('opens an editable Issue without the read-first content lock', async () => {
+  it('opens an Issue in read-first mode', async () => {
     render(<Project />)
 
     await userEvent.click(screen.getByText('Open Issue'))
 
-    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'false')
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-read-first', 'true')
   })
 
   it('keeps the assignee directory scoped to the current project', async () => {

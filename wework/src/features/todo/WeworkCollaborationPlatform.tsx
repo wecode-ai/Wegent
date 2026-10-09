@@ -954,8 +954,8 @@ export function WeworkSharedProject({
                   api={services.deliveryApi}
                   presentation="workspace-panel"
                   workspacePanelFill
+                  readFirst
                   showPanelControls
-                  showFullscreenControl={false}
                   item={issue as unknown as CloudLoopItem}
                   project={editorProject}
                   allItems={allIssues as unknown as CloudLoopItem[]}

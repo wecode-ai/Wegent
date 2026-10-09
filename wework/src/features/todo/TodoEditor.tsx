@@ -1,10 +1,11 @@
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
+  formatIssueAttachmentSize,
   type SharedEditorIssue,
   type SharedEditorProject,
   type SharedIssueDetailCreateInput,
@@ -30,6 +31,7 @@ import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
+import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -128,6 +130,12 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
   const showPersonalTaskAction = canCreatePersonalTask(props)
+  const [previewAttachment, setPreviewAttachment] = useState<{
+    id: string
+    filename: string
+    contentType: string | null
+    sizeBytes: number
+  } | null>(null)
   const collaborationTranslate = useMemo(
     () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
     [i18n.language]
@@ -160,12 +168,16 @@ export function TodoEditor(props: TodoEditorProps) {
   const extensions: SharedIssueDetailExtensions = {
     normalizeDescription: normalizeTaskDescription,
     isExecutionActive: item => isLoopItemExecutionActive(item as CloudLoopItem),
+    openAttachment: async (id, filename, contentType, sizeBytes) => {
+      setPreviewAttachment({ id, filename, contentType, sizeBytes })
+    },
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
         onChange={context.onChange}
         onPasteFiles={context.onPasteFiles}
         readAttachment={context.readAttachment}
+        onInlineAttachmentIdsChange={context.onInlineAttachmentIdsChange}
         disabled={!context.editable}
       />
     ),
@@ -292,42 +304,65 @@ export function TodoEditor(props: TodoEditorProps) {
       : undefined,
   }
 
-  return props.mode === 'create' ? (
-    <SharedIssueDetailEditor
-      {...commonProps}
-      mode="create"
-      project={props.project as SharedEditorProject}
-      initialParent={props.initialParent as SharedEditorIssue | null}
-      initialStatus={props.initialStatus}
-      initialTitle={props.initialTitle}
-      onCreated={item => props.onCreated(item as CloudLoopItem)}
-      onCreateError={
-        props.onCreateError
-          ? (error, retry) =>
-              props.onCreateError?.(error, overrides =>
-                retry(overrides).then(item => item as CloudLoopItem)
-              ) ?? false
-          : undefined
-      }
-    />
-  ) : (
-    <SharedIssueDetailEditor
-      {...commonProps}
-      mode="edit"
-      item={props.item as SharedEditorIssue}
-      editable={canEditProjectSpaceIssue({
-        ...props.item,
-        project_store:
-          (props.item as CloudLoopItem & { project_store?: 'local' | 'backend' }).project_store ??
-          props.project?.project_store,
-      })}
-      project={props.project as SharedEditorProject | undefined}
-      onUpdated={item => props.onUpdated(item as CloudLoopItem)}
-      onDelete={props.onDelete}
-      onAddChild={props.onAddChild}
-      onOpenChildTask={
-        props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined
-      }
-    />
+  const editor =
+    props.mode === 'create' ? (
+      <SharedIssueDetailEditor
+        {...commonProps}
+        mode="create"
+        project={props.project as SharedEditorProject}
+        initialParent={props.initialParent as SharedEditorIssue | null}
+        initialStatus={props.initialStatus}
+        initialTitle={props.initialTitle}
+        onCreated={item => props.onCreated(item as CloudLoopItem)}
+        onCreateError={
+          props.onCreateError
+            ? (error, retry) =>
+                props.onCreateError?.(error, overrides =>
+                  retry(overrides).then(item => item as CloudLoopItem)
+                ) ?? false
+            : undefined
+        }
+      />
+    ) : (
+      <SharedIssueDetailEditor
+        {...commonProps}
+        mode="edit"
+        item={props.item as SharedEditorIssue}
+        editable={canEditProjectSpaceIssue({
+          ...props.item,
+          project_store:
+            (props.item as CloudLoopItem & { project_store?: 'local' | 'backend' }).project_store ??
+            props.project?.project_store,
+        })}
+        project={props.project as SharedEditorProject | undefined}
+        onUpdated={item => props.onUpdated(item as CloudLoopItem)}
+        onDelete={props.onDelete}
+        onAddChild={props.onAddChild}
+        onOpenChildTask={
+          props.onOpenChildTask ? item => props.onOpenChildTask?.(item as CloudLoopItem) : undefined
+        }
+      />
+    )
+
+  return (
+    <>
+      {editor}
+      {previewAttachment ? (
+        <CloudFilePreviewDialog
+          filename={previewAttachment.filename}
+          contentType={previewAttachment.contentType}
+          sizeLabel={
+            previewAttachment.sizeBytes > 0
+              ? formatIssueAttachmentSize(previewAttachment.sizeBytes)
+              : null
+          }
+          loadFile={() => port.attachments.read(previewAttachment.id)}
+          onDownload={() =>
+            port.attachments.download(previewAttachment.id, previewAttachment.filename)
+          }
+          onClose={() => setPreviewAttachment(null)}
+        />
+      ) : null}
+    </>
   )
 }

@@ -3724,6 +3724,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     const file = new File(['context'], 'brief.txt', { type: 'text/plain' })
     await userEvent.upload(screen.getByTestId('cloud-todo-attachment-input'), file)
 
@@ -3739,6 +3740,16 @@ describe('CloudTodoWorkspace', () => {
 
   it('shows existing Issue attachments in the detail panel', async () => {
     const workbenchServices = services()
+    const createObjectURL = vi.fn(() => 'blob:https://example.test/feedback')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     workbenchServices.deliveryApi!.listLoopItemAttachments = vi.fn(async () => [
       {
         id: 'attachment-existing',
@@ -3753,7 +3764,23 @@ describe('CloudTodoWorkspace', () => {
         markdown:
           '[feedback.png](wegent://attachments/attachment-existing)\n<!-- wegent-attachment:attachment-existing -->',
       },
+      {
+        id: 'attachment-pdf',
+        loop_item_id: item.id,
+        display_name: 'spec.pdf',
+        content_type: 'application/pdf',
+        size_bytes: 4096,
+        sha256: 'pdf-hash',
+        created_by_user_id: 1,
+        created_at: '2026-08-26T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-pdf',
+        markdown:
+          '[spec.pdf](wegent://attachments/attachment-pdf)\n<!-- wegent-attachment:attachment-pdf -->',
+      },
     ])
+    workbenchServices.deliveryApi!.readLoopItemAttachment = vi.fn(
+      async () => new Blob(['image'], { type: 'image/png' })
+    )
 
     render(
       <CloudTodoWorkspace
@@ -3768,16 +3795,46 @@ describe('CloudTodoWorkspace', () => {
     await openIssueFromBoard()
 
     expect(await screen.findByText('feedback.png')).toBeInTheDocument()
+    const imageCard = screen
+      .getByTestId('cloud-todo-attachment-open-attachment-existing')
+      .closest('.task-detail-rail-file')
+    const pdfCard = screen
+      .getByTestId('cloud-todo-attachment-open-attachment-pdf')
+      .closest('.task-detail-rail-file')
+    expect(imageCard).toBeInTheDocument()
+    expect(pdfCard).toBeInTheDocument()
     expect(
-      screen.getByTestId('cloud-todo-attachment-download-attachment-existing')
-    ).toBeInTheDocument()
+      await screen.findByTestId('issue-detail-attachment-thumbnail-attachment-existing')
+    ).toHaveAttribute('src', 'blob:https://example.test/feedback')
+    expect(
+      screen.queryByTestId('issue-detail-attachment-thumbnail-attachment-pdf')
+    ).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).not.toHaveBeenCalledWith(
+      'attachment-pdf'
+    )
 
-    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-existing'))
+    await userEvent.click(screen.getByTestId('cloud-todo-attachment-open-attachment-existing'))
 
+    expect(await screen.findByTestId('cloud-file-preview-size')).toHaveTextContent('2.0 KB')
+    expect(await screen.findByTestId('cloud-file-preview-image')).toHaveAttribute(
+      'src',
+      'blob:https://example.test/feedback'
+    )
+    expect(workbenchServices.deliveryApi?.readLoopItemAttachment).toHaveBeenCalledWith(
+      'attachment-existing'
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-file-preview-download'))
     expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
       'attachment-existing',
       'feedback.png'
     )
+
+    await userEvent.click(screen.getByTestId('cloud-file-preview-close'))
+    expect(screen.queryByTestId('cloud-file-preview-dialog')).not.toBeInTheDocument()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://example.test/feedback')
+    delete (URL as Partial<typeof URL>).createObjectURL
+    delete (URL as Partial<typeof URL>).revokeObjectURL
   })
 
   it('shows attachment download failures and allows another attempt', async () => {
@@ -3813,10 +3870,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
-    const download = await screen.findByTestId('cloud-todo-attachment-download-attachment-existing')
+    await userEvent.click(
+      await screen.findByTestId('cloud-todo-attachment-open-attachment-existing')
+    )
+    const download = await screen.findByTestId('cloud-file-preview-download')
 
     await userEvent.click(download)
-    expect(await screen.findByRole('alert')).toHaveTextContent('下载服务不可用')
+    expect(await screen.findByText('下载服务不可用')).toBeInTheDocument()
 
     await userEvent.click(download)
     await waitFor(() =>
@@ -4893,6 +4953,7 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
     await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
     await userEvent.click(screen.getByTestId('cloud-todo-save'))
